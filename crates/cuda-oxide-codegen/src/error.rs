@@ -7,6 +7,8 @@
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub enum PipelineError {
+    /// The requested MIR pass pipeline is invalid for this compilation.
+    InvalidMirPassPipeline(String),
     /// Function has no MIR body (shouldn't happen for collected functions).
     NoBody(String),
     /// MIR→Pliron IR translation failed.
@@ -26,6 +28,8 @@ pub enum PipelineError {
     },
     /// Standalone PTX contains declarations that require a link step.
     UnsupportedLinking { symbols: Vec<String> },
+    /// Libdevice linking was requested, but the toolchain cannot perform it.
+    LibdeviceUnavailable { message: String },
     /// LLVM IR export failed.
     Export(String),
     /// The requested CUDA target could not be parsed, or cannot lower a
@@ -43,6 +47,9 @@ pub enum PipelineError {
 impl std::fmt::Display for PipelineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidMirPassPipeline(message) => {
+                write!(f, "invalid MIR pass pipeline: {message}")
+            }
             Self::NoBody(name) => write!(f, "Function '{}' has no MIR body", name),
             Self::Translation(msg) => write!(f, "Translation failed: {}", msg),
             Self::Verification {
@@ -70,6 +77,9 @@ impl std::fmt::Display for PipelineError {
                 f,
                 "standalone PTX cannot resolve external symbols: {symbols:?}"
             ),
+            Self::LibdeviceUnavailable { message } => {
+                write!(f, "libdevice linking is unavailable: {message}")
+            }
             Self::Export(msg) => write!(f, "Export failed: {}", msg),
             Self::TargetSelection { reason, .. } => write!(f, "{reason}"),
             Self::PtxGeneration(msg) => write!(f, "PTX generation failed: {}", msg),

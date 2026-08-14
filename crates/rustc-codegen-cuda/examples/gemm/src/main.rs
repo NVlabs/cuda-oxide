@@ -46,7 +46,8 @@ mod kernels {
         let row = thread::index_2d_row();
         let col = thread::index_2d_col();
 
-        if let Some(c_idx) = unsafe { thread::index_2d_runtime(n as usize) } {
+        // The row width comes from `c`, bound on the host to this same `n`.
+        if let Some(c_idx) = thread::index_2d_runtime(&c) {
             // col < n guaranteed by index_2d_runtime returning Some
             if row < m as usize {
                 let n_size = n as usize;
@@ -112,11 +113,7 @@ fn main() {
     let b_dev = DeviceBuffer::from_host(&stream, &b).unwrap();
     let mut c_dev = DeviceBuffer::from_host(&stream, &c).unwrap();
 
-    let module = ctx
-        .load_module_from_file("gemm.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // Configure launch: 16x16 threads per block
     let block_size = 16u32;
     let grid_x = (N as u32).div_ceil(block_size);
@@ -152,7 +149,7 @@ fn main() {
             &a_dev,
             &b_dev,
             BETA,
-            &mut c_dev,
+            cuda_host::RowWidth::new(&mut c_dev, n_arg),
         )
     }
     .expect("Kernel launch failed");
@@ -175,7 +172,7 @@ fn main() {
                 &a_dev,
                 &b_dev,
                 BETA,
-                &mut c_dev,
+                cuda_host::RowWidth::new(&mut c_dev, n_arg),
             )
         }
         .expect("Kernel launch failed");

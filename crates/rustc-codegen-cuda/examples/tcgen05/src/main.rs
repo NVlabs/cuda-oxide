@@ -31,7 +31,7 @@
 
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig, sys};
 use cuda_device::barrier::Barrier;
-use cuda_device::shared::SharedArray;
+use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     self, Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor,
     Tcgen05MmaShape, Tcgen05SmemDescriptor, Tcgen05SwizzleMode, tcgen05_alloc, tcgen05_alloc_cg2,
@@ -62,7 +62,7 @@ mod kernels {
             let gid = thread::index_1d();
 
             // Test SMEM descriptor builder (single-thread)
-            let smem_addr = &raw const SMEM as *const u8 as u64;
+            let smem_addr = cvta_generic_to_shared_offset(&raw const SMEM as *const u8);
             let desc = Tcgen05SmemDescriptor::builder()
                 .address(smem_addr)
                 .leading_dim_bytes(128)
@@ -133,7 +133,7 @@ mod kernels {
             }
             thread::sync_threads();
 
-            let smem_addr = &raw const SMEM as *const u8 as u64;
+            let smem_addr = cvta_generic_to_shared_offset(&raw const SMEM as *const u8);
             let desc = Tcgen05SmemDescriptor::builder()
                 .address(smem_addr)
                 .leading_dim_bytes(128)
@@ -191,7 +191,7 @@ mod kernels {
 
             // Step 3: Copy A from SMEM to TMEM
             if tid == 0 {
-                let smem_a_addr = &raw const SMEM_A as *const u8 as u64;
+                let smem_a_addr = cvta_generic_to_shared_offset(&raw const SMEM_A as *const u8);
                 let a_desc = Tcgen05SmemDescriptor::builder()
                     .address(smem_a_addr)
                     .leading_dim_bytes(1024)
@@ -206,7 +206,7 @@ mod kernels {
 
             // Step 4: Issue MMA
             if tid == 0 {
-                let smem_b_addr = &raw const SMEM_B as *const u8 as u64;
+                let smem_b_addr = cvta_generic_to_shared_offset(&raw const SMEM_B as *const u8);
                 let b_desc = Tcgen05SmemDescriptor::builder()
                     .address(smem_b_addr)
                     .leading_dim_bytes(1024)
@@ -688,7 +688,7 @@ mod kernels {
             let tmem_addr = *(&raw const TMEM_ADDR as *const u32);
 
             if tid == 0 && block_rank == 0 {
-                let smem_b_addr = &raw const SMEM_B as *const u8 as u64;
+                let smem_b_addr = cvta_generic_to_shared_offset(&raw const SMEM_B as *const u8);
                 let b_desc = Tcgen05SmemDescriptor::builder()
                     .address(smem_b_addr)
                     .leading_dim_bytes(1024)
@@ -704,7 +704,7 @@ mod kernels {
                     .build()
                     .raw();
 
-                let a_smem_addr = &raw const SMEM_A as *const u8 as u64;
+                let a_smem_addr = cvta_generic_to_shared_offset(&raw const SMEM_A as *const u8);
                 let a_desc = Tcgen05SmemDescriptor::builder()
                     .address(a_smem_addr)
                     .leading_dim_bytes(1024)
@@ -804,14 +804,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return verify_ptx_only();
     }
 
-    let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tcgen05.ptx");
-    println!("\nLoading PTX from: {}", ptx_path.display());
-    let ptx_file = ptx_path.to_str().ok_or("PTX path is not valid UTF-8")?;
-    let module = match ctx.load_module_from_file(ptx_file) {
+    let module = match kernels::load(&ctx) {
         Ok(m) => m,
         Err(e) => {
-            println!("\n❌ cuModuleLoad failed: {:?} (CUresult = {:?})", e, e.0);
-            if e.0 == sys::cudaError_enum_CUDA_ERROR_INVALID_PTX {
+            // `load` wraps the driver's own status, so reach through its
+            // `Driver` variant for the code the arms below key on. Anything
+            // else (a missing or unsupported payload) is not "right PTX, wrong
+            // GPU" and falls through to the error return.
+            let driver_status = match &e {
+                cuda_host::EmbeddedModuleError::Driver(driver) => Some(driver.0),
+                _ => None,
+            };
+            println!("\n❌ embedded module load failed: {e:?} (driver status = {driver_status:?})");
+            if driver_status == Some(sys::cudaError_enum_CUDA_ERROR_INVALID_PTX) {
                 println!("   CUDA_ERROR_INVALID_PTX — the driver rejected the PTX.");
                 println!("   PTX target: sm_100a, GPU: sm_{}{}", major, minor);
                 println!(
@@ -822,7 +827,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     };
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
     println!("✓ PTX loaded successfully\n");
 
     run_tcgen05_fence_test(&stream, &module)?;

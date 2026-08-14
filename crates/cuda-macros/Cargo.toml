@@ -6,13 +6,34 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Procedural macros for CUDA kernel development (#[kernel], #[device], etc.)"
+readme = "README.md"
 
 [lib]
 proc-macro = true
 
 [features]
-default = []
+default = ["host"]
 async = []
+# Emit the host-side surface: the `#[cuda_module]` `LoadedModule` loader and
+# launchers, and the `CudaKernel` impl for non-generic `#[kernel]`s. All of it
+# names `::cuda_host` / `::cuda_core`, so a device-only kernel crate that never
+# loads or launches anything still has to depend on `cuda-host` -> `cuda-core`
+# -> `cuda-bindings` -> `cuda.h`. On by default; turn it off with
+# `default-features = false` in a crate that only compiles kernels.
+#
+# Mixed graphs: proc-macro features unify globally per build graph. If any
+# crate in the graph enables `cuda-macros/host`, every crate that expands
+# these macros gets the host-emitting expansion, including a device-only
+# kernel crate that took `default-features = false` and has no `cuda-host`
+# to resolve the generated `cuda_host::` paths (E0433). A device-only kernel
+# crate consumed by a host application must therefore forward the feature
+# itself:
+#
+#   host = ["dep:cuda-host", "cuda-macros/host"]
+#
+# so the same switch that turns host emission on also adds the dependency
+# that resolves it.
+host = []
 
 [dependencies]
 quote = { workspace = true }

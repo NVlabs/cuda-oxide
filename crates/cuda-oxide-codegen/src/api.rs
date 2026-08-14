@@ -96,6 +96,21 @@ pub enum DebugInfo {
     Full,
 }
 
+/// Whether compilation may resolve libdevice calls at the LLVM IR level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Linking {
+    /// Reject every unresolved external symbol. The generated PTX is
+    /// self-contained and the CUDA driver can load it with no further step.
+    #[default]
+    SelfContained,
+    /// Link `libdevice.10.bc` into the module at the LLVM IR level, resolving
+    /// `__nv_*` calls before `llc` runs. Unresolved symbols that are not
+    /// libdevice are still rejected, and the output is still a single
+    /// self-contained PTX artifact.
+    Libdevice,
+}
+
 /// Typed options for one standalone PTX compilation.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -105,6 +120,8 @@ pub struct CompileOptions {
     fma_contraction: bool,
     debug_info: DebugInfo,
     verbose: bool,
+    linking: Linking,
+    mir_pass_pipeline: Option<String>,
 }
 
 impl CompileOptions {
@@ -116,6 +133,8 @@ impl CompileOptions {
             fma_contraction: true,
             debug_info: DebugInfo::None,
             verbose: false,
+            linking: Linking::SelfContained,
+            mir_pass_pipeline: None,
         }
     }
 
@@ -136,6 +155,24 @@ impl CompileOptions {
     /// [`DebugInfo::Full`] must be paired with [`Optimization::None`].
     pub fn with_debug_info(mut self, debug_info: DebugInfo) -> Self {
         self.debug_info = debug_info;
+        self
+    }
+
+    /// Select whether libdevice calls may be resolved by an IR-level link.
+    ///
+    /// [`Linking::SelfContained`], the default, rejects any unresolved
+    /// external symbol. [`Linking::Libdevice`] resolves `__nv_*` calls
+    /// against `libdevice.10.bc` and fails with
+    /// [`CompileError::LibdeviceUnavailable`] when the toolchain cannot
+    /// perform that link.
+    pub fn with_linking(mut self, linking: Linking) -> Self {
+        self.linking = linking;
+        self
+    }
+
+    /// Select an optional staged MIR pass pipeline.
+    pub fn with_mir_pass_pipeline(mut self, pipeline: impl Into<String>) -> Self {
+        self.mir_pass_pipeline = Some(pipeline.into());
         self
     }
 
@@ -168,6 +205,16 @@ impl CompileOptions {
     /// Requested device debug-information tier.
     pub fn debug_info(&self) -> DebugInfo {
         self.debug_info
+    }
+
+    /// Requested libdevice linking policy.
+    pub fn linking(&self) -> Linking {
+        self.linking
+    }
+
+    /// Requested optional staged MIR pass pipeline.
+    pub fn mir_pass_pipeline(&self) -> Option<&str> {
+        self.mir_pass_pipeline.as_deref()
     }
 
     /// Whether progress and tool-selection diagnostics were requested.
@@ -260,6 +307,7 @@ impl CodegenModule {
             })?;
         let mut context = Context::new();
         dialect_mir::register(&mut context);
+        dialect_iket::register(&mut context);
         dialect_nvvm::register(&mut context);
         let module = ModuleOp::new(&mut context, name);
         Ok(Self { context, module })
@@ -619,6 +667,7 @@ impl Compiler {
         let ll_path = scratch.path().join("module.ll");
         let ptx_path = scratch.path().join("module.ptx");
         let backend_options = BackendOptions {
+            iket: crate::options::IketInstrumentation::Auto,
             target_arch: Some(options.target.sm()),
             target_arch_source: "the requested Target",
             device_arch_hint: None,
@@ -627,11 +676,13 @@ impl Compiler {
             verbose: options.verbose,
             llc_override: None,
             opt_override: None,
+            mir_pass_pipeline: options.mir_pass_pipeline.clone(),
         };
         let request = ModulePipelineRequest::for_standalone_ptx(
             &backend_options,
             debug_kind,
             &self.toolchain.inner,
+            options.linking == Linking::Libdevice,
             OutputFiles {
                 llvm_ir: &ll_path,
                 ptx: &ptx_path,
@@ -642,7 +693,15 @@ impl Compiler {
         (|| {
             let generated =
                 compile_translated_module(ctx, module, &request).map_err(CompileError::from)?;
-            debug_assert_eq!(generated.artifact_kind, ModuleArtifactKind::Ptx);
+            if generated.artifact_kind != ModuleArtifactKind::Ptx {
+                return Err(CompileError::Codegen {
+                    message: format!(
+                        "the standalone pipeline produced {:?} where PTX was required; \
+                         this path never emits NVVM IR",
+                        generated.artifact_kind
+                    ),
+                });
+            }
             let ptx = std::fs::read(&ptx_path).map_err(|source| CompileError::Io {
                 action: "read generated PTX",
                 path: ptx_path.clone(),
@@ -868,6 +927,13 @@ pub enum CompileError {
         /// Sorted, deduplicated unresolved symbol names.
         symbols: Vec<String>,
     },
+    /// Libdevice linking was requested, but the toolchain cannot perform it.
+    #[error("libdevice linking is unavailable: {message}")]
+    LibdeviceUnavailable {
+        /// Which piece is missing: `libdevice.10.bc`, or a same-major
+        /// `llvm-link`.
+        message: String,
+    },
     /// LLVM text export failed.
     #[error("LLVM IR export failed: {message}")]
     Export {
@@ -908,7 +974,9 @@ impl CompileError {
             }
             Self::Verification { .. } => CompilationStage::MirPreparation,
             Self::Lowering { .. } | Self::LoweredVerification { .. } => CompilationStage::Lowering,
-            Self::UnsupportedLinking { .. } => CompilationStage::Linking,
+            Self::UnsupportedLinking { .. } | Self::LibdeviceUnavailable { .. } => {
+                CompilationStage::Linking
+            }
             Self::Export { .. } => CompilationStage::Export,
             Self::Codegen { .. } | Self::Io { .. } => CompilationStage::Codegen,
         }
@@ -927,6 +995,7 @@ impl CompileError {
 impl From<PipelineError> for CompileError {
     fn from(error: PipelineError) -> Self {
         match error {
+            PipelineError::InvalidMirPassPipeline(message) => Self::InvalidOptions { message },
             PipelineError::Verification {
                 message, operation, ..
             } => Self::Verification { message, operation },
@@ -935,6 +1004,9 @@ impl From<PipelineError> for CompileError {
                 Self::LoweredVerification { message, operation }
             }
             PipelineError::UnsupportedLinking { symbols } => Self::UnsupportedLinking { symbols },
+            PipelineError::LibdeviceUnavailable { message } => {
+                Self::LibdeviceUnavailable { message }
+            }
             PipelineError::Export(message) => Self::Export { message },
             PipelineError::TargetSelection { target, reason } => {
                 Self::TargetSelection { target, reason }
@@ -948,6 +1020,26 @@ impl From<PipelineError> for CompileError {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod mir_pass_tests {
+    use super::*;
+
+    #[test]
+    fn mir_pass_pipeline_is_a_typed_compile_option() {
+        let options = CompileOptions::new(Target::parse("sm_90").unwrap())
+            .with_mir_pass_pipeline("future-pass");
+        assert_eq!(options.mir_pass_pipeline(), Some("future-pass"));
+    }
+
+    #[test]
+    fn invalid_mir_pass_pipeline_is_an_input_error() {
+        let error = CompileError::from(PipelineError::InvalidMirPassPipeline(
+            "bad pass".to_string(),
+        ));
+        assert_eq!(error.stage(), CompilationStage::Input);
     }
 }
 
@@ -977,6 +1069,17 @@ mod tests {
         assert!(
             cloned.try_deref(&module.context).is_err(),
             "the cloned operation should be erased even though the guarded closure panicked"
+        );
+    }
+
+    #[test]
+    fn linking_defaults_to_self_contained() {
+        let options = CompileOptions::new(Target::parse("sm_90").unwrap());
+        assert_eq!(options.linking(), Linking::SelfContained);
+        assert_eq!(Linking::default(), Linking::SelfContained);
+        assert_eq!(
+            options.with_linking(Linking::Libdevice).linking(),
+            Linking::Libdevice
         );
     }
 }

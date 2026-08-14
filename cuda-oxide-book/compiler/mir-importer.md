@@ -65,8 +65,9 @@ matches what `CrateDef::name()` returns for the same function.
 For each function, the pipeline:
 
 1. Retrieves the MIR body via `instance.body()`.
-2. Calls `translate_function()` to produce a pliron module containing the
-   `dialect-mir` representation (using `mir.alloca` slots for locals).
+2. Calls `translator::body::translate_body()` to produce the function's
+   `dialect-mir` representation (using `mir.alloca` slots for locals), then
+   appends it to the one `builtin.module` the whole run shares.
 3. Runs pliron's verifier on the module to catch structural errors early --
    mismatched types, missing operands, broken dominance -- before they turn
    into cryptic LLVM failures downstream.
@@ -107,8 +108,8 @@ handles one level of MIR structure, and they compose neatly:
 The call flow follows MIR's structure top-down:
 
 ```text
-translate_function()
-  └─ body::translate_body()
+pipeline::run_pipeline()
+  └─ body::translate_body()               // once per collected function
        ├─ emit_entry_allocas()            // one mir.alloca per non-ZST local
        │     └─ SlotAddrSpaceMap::analyze // pointer slot addrspace inference
        └─ For each basic block:
@@ -284,13 +285,27 @@ name (FQDN)** of the callee, obtained from `CrateDef::name()`:
 
 ```rust
 match name {
-    "cuda_device::thread::threadIdx_x" => emit_nvvm_intrinsic(ReadPtxSregTidXOp),
-    "cuda_device::warp::shuffle_xor"   => emit_warp_shuffle_i32(ShflSyncBflyI32Op),
-    "cuda_device::sync::syncthreads"   => emit_nvvm_intrinsic(Barrier0Op),
+    // condensed; the real arms also match re-export and ABI-alias paths
+    "cuda_device::thread::threadIdx_x"  => emit_generated_nvvm_intrinsic(ReadPtxSregTidXOp),
+    "cuda_device::thread::sync_threads" => { /* builds a Barrier0Op in place */ }
     // ... 100+ intrinsics
     _ => translate_as_normal_call()
 }
 ```
+
+Most arms are not written out by hand. Anything described by
+`intrinsics/catalog.json` has its arm generated into
+`crates/mir-importer/src/translator/terminator/intrinsics/generated.rs`.
+Both arms above are of that kind, and so are the warp shuffles: the matched
+strings are the masked `_sync` forms (`shuffle_xor_sync`,
+`shuffle_xor_f32_sync`, `shuffle_xor_u64_sync`, and the
+`shuffle_up_*`/`shuffle_down_*` families). The bare `warp::shuffle_xor` is
+never a match string. It is an `#[inline(always)]` wrapper in
+`crates/cuda-device/src/warp.rs` that supplies the full-warp mask
+(`u32::MAX`) and calls `shuffle_xor_sync`, so the dispatcher only ever
+intercepts the `_sync` call. The hand-written arms in `terminator/mod.rs`
+and the `intrinsics/` modules beside the generated file hold the cases the
+catalog does not describe.
 
 The full FQDN (e.g. `cuda_device::thread::threadIdx_x`, not just `threadIdx_x`)
 is used for matching to avoid ambiguity between identically-named functions in

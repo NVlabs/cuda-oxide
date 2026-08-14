@@ -11,6 +11,7 @@ license = "Apache-2.0"
 # - `ptr_offset_from_unsigned::<T>` via `offset_from_unsigned`
 # - `ptr_offset_from::<T>` via `offset_from`
 # - byte-oriented wrappers via `byte_offset_from*`
+# - `arith_offset::<T>` via safe wrapping pointer offsets
 #
 # Build and run with:
 #   cargo oxide run ptr_offset_from

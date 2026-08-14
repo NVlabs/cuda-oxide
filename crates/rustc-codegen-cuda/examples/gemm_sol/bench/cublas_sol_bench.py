@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """cuBLAS SoL benchmark — measures the FP16/BF16 GEMM ceiling on this GPU.
 
 Uses cublasGemmEx (same API Modular uses for their cuBLAS reference)

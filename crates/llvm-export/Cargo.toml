@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Re-exports pliron-llvm and emits the LLVM dialect as textual LLVM IR"
+readme = "README.md"
 
 [dependencies]
 pliron = { workspace = true }

@@ -32,7 +32,7 @@ components. Rustup picks it up automatically:
 # rust-toolchain.toml (already in the repo root)
 [toolchain]
 channel = "nightly-2026-04-03"
-components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "llvm-tools"]
+components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "rustfmt", "llvm-tools"]
 ```
 
 If you need to install manually:

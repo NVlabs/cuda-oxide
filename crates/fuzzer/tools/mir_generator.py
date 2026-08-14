@@ -6,9 +6,17 @@
 """Generate one small rustlantis custom-MIR case for cuda-oxide.
 
 This is a deliberately small Stage 2 adapter. It does not try to support the
-full rustlantis output space. It generates one scalar-only program, extracts the
-first generated custom-MIR function, and rewrites rustlantis' `dump_var(...)`
-terminators into calls to the cuda-oxide harness' generic `dump_var`.
+full rustlantis output space. It generates one program built from scalars and
+composites, extracts the first generated custom-MIR function, and rewrites
+rustlantis' `dump_var(...)` terminators into calls to the cuda-oxide harness'
+generic `dump_var`.
+
+Composites reach the device, and the trace boundary now takes them: a dump site
+or return position holding a tuple or an array folds as its leaves. What is
+still refused there is a shape with no leaf reading, such as a reference, a
+slice, or a tuple wider than the arity the trace API implements. An aggregate
+in an argument position is refused separately, by `literal_for_type`, which has
+no literal to construct for one.
 
 By default it emits a complete `generated_case.rs` module for the
 `rustlantis-smoke` example: imports, adapted MIR function, deterministic call
@@ -39,7 +47,7 @@ tuple_max_len = 2
 array_max_len = 2
 struct_max_fields = 2
 adt_max_variants = 2
-composite_count = 0
+composite_count = 3
 adt_count = 0
 
 [backends.llvm]
@@ -122,6 +130,28 @@ def split_args(args: str) -> list[str]:
     return parts
 
 
+def split_type_at_semicolon(text: str) -> tuple[str, int] | None:
+    """Split a Rust type off the front of `text`, up to its terminating `;`.
+
+    Returns the type and the offset just past that semicolon, or `None` when
+    `text` holds no terminator.
+
+    An array type carries a semicolon inside its brackets (`[u128; 1]`), so
+    the terminator is the first `;` at bracket depth zero rather than the
+    first `;` at all. Depth is tracked over `(` and `[` exactly as
+    `split_args` does, and for the same reason.
+    """
+    depth = 0
+    for idx, ch in enumerate(text):
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch == ";" and depth == 0:
+            return text[:idx].strip(), idx + 1
+    return None
+
+
 def normalize_dump_arg(arg: str) -> str:
     arg = arg.strip()
     for wrapper in ("Move", "Copy"):
@@ -142,8 +172,10 @@ def collect_types(fn_src: str) -> dict[str, str]:
         if match:
             types[match.group("name")] = match.group("ty").strip()
 
-    for match in re.finditer(r"let\s+(?P<name>_\d+)\s*:\s*(?P<ty>[^;]+);", fn_src):
-        types[match.group("name")] = match.group("ty").strip()
+    for match in re.finditer(r"let\s+(?P<name>_\d+)\s*:\s*", fn_src):
+        parsed = split_type_at_semicolon(fn_src[match.end() :])
+        if parsed is not None:
+            types[match.group("name")] = parsed[0]
 
     return types
 
@@ -224,8 +256,8 @@ def literal_for_type(ty: str, idx: int) -> str:
     return values[idx % len(values)]
 
 
-def supported_trace_type(ty: str) -> bool:
-    return ty in {
+SCALAR_TRACE_TYPES = frozenset(
+    {
         "bool",
         "i8",
         "i16",
@@ -243,6 +275,36 @@ def supported_trace_type(ty: str) -> bool:
         "f32",
         "f64",
     }
+)
+
+# `TraceValue` is implemented for tuples up to arity 5, matching `TraceDump`.
+MAX_TRACE_TUPLE_ARITY = 5
+
+
+def supported_trace_type(ty: str) -> bool:
+    """Report whether the harness can fold a value of this type into the trace.
+
+    A scalar folds directly. An aggregate folds as its leaves, so it is
+    supported exactly when every leaf is, which makes this a recursive
+    question rather than a set membership one.
+    """
+    ty = ty.strip()
+    if ty in SCALAR_TRACE_TYPES:
+        return True
+
+    if ty.startswith("[") and ty.endswith("]"):
+        parsed = split_type_at_semicolon(ty[1:-1])
+        if parsed is None:
+            return False
+        return supported_trace_type(parsed[0])
+
+    if ty.startswith("(") and ty.endswith(")"):
+        fields = split_args(ty[1:-1])
+        if len(fields) > MAX_TRACE_TUPLE_ARITY:
+            return False
+        return all(supported_trace_type(field) for field in fields)
+
+    return False
 
 
 def adapt_function(fn_src: str, fn_name: str) -> str:
@@ -300,12 +362,24 @@ def adapt_function(fn_src: str, fn_name: str) -> str:
         local_decls = "\n".join(
             f"        let {name}: {tuple_type(local_types)};" for name, local_types in dump_locals
         )
-        adapted = re.sub(
-            r"(type RET\s*=\s*[^;]+;)",
-            lambda match: f"{match.group(1)}\n{local_decls}",
-            adapted,
-            count=1,
-        )
+        # Insert after the whole `type RET = ..;` alias. Matching its type
+        # with `[^;]+` would stop inside an array return type and leave the
+        # remainder of that type stranded after the inserted declarations,
+        # which rustc then reads as a statement.
+        #
+        # A missing anchor is an adapter failure, not something to skip:
+        # silently dropping the declarations leaves the rewritten dump calls
+        # referencing undeclared locals, and the resulting rustc error would
+        # be misreported as a backend COMPILE_FAIL instead of
+        # UNSUPPORTED [adapter].
+        anchor = re.search(r"type RET\s*=\s*", adapted)
+        if anchor is None:
+            raise SystemExit("expected a `type RET = ..;` alias to anchor the dump-local declarations")
+        parsed = split_type_at_semicolon(adapted[anchor.end() :])
+        if parsed is None:
+            raise SystemExit("expected a depth-0 `;` terminating the `type RET` alias")
+        end = anchor.end() + parsed[1]
+        adapted = f"{adapted[:end]}\n{local_decls}{adapted[end:]}"
 
     return format_rust_block(adapted)
 

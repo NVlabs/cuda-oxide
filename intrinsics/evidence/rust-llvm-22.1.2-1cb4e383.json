@@ -347,17 +347,27 @@
       "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x1_b16",
       "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16",
       "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16.p3",
-      "llvm_arguments": ["anyptr"],
-      "llvm_results": ["i32"],
-      "concrete_llvm_arguments": ["ptr addrspace(3)"],
-      "concrete_llvm_results": ["i32"],
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_75",
       "ptx_feature": "+ptx65",
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_75"],
+          "targets": [
+            "sm_75"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16.p3(ptr addrspace(3))",
           "stage": "declaration_canonicalization",
           "mechanism": "typed_nvvm",
@@ -365,7 +375,10 @@
           "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.b16.p3(ptr addrspace(3))",
           "stage": "backend_codegen",
           "mechanism": "typed_nvvm",
@@ -373,7 +386,10 @@
           "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x1.shared.b16 PTX."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
           "stage": "ptx_assembly",
           "mechanism": "typed_nvvm",
@@ -388,10 +404,22 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "ldmatrix",
-        "modifiers": ["sync", "aligned", "m8n8", "x1", "shared", "b16"],
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x1",
+          "shared",
+          "b16"
+        ],
         "operands": [
-          { "kind": "register_list", "length": 1 },
-          { "kind": "address" }
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "address"
+          }
         ]
       }
     },
@@ -400,17 +428,27 @@
       "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x1_trans_b16",
       "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16",
       "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16.p3",
-      "llvm_arguments": ["anyptr"],
-      "llvm_results": ["i32"],
-      "concrete_llvm_arguments": ["ptr addrspace(3)"],
-      "concrete_llvm_results": ["i32"],
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_75",
       "ptx_feature": "+ptx65",
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_75"],
+          "targets": [
+            "sm_75"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16.p3(ptr addrspace(3))",
           "stage": "declaration_canonicalization",
           "mechanism": "typed_nvvm",
@@ -418,7 +456,10 @@
           "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x1.trans.b16.p3(ptr addrspace(3))",
           "stage": "backend_codegen",
           "mechanism": "typed_nvvm",
@@ -426,7 +467,10 @@
           "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 PTX."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
           "stage": "ptx_assembly",
           "mechanism": "typed_nvvm",
@@ -441,10 +485,23 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "ldmatrix",
-        "modifiers": ["sync", "aligned", "m8n8", "x1", "trans", "shared", "b16"],
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x1",
+          "trans",
+          "shared",
+          "b16"
+        ],
         "operands": [
-          { "kind": "register_list", "length": 1 },
-          { "kind": "address" }
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "address"
+          }
         ]
       }
     },
@@ -453,17 +510,29 @@
       "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x2_b16",
       "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16",
       "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16.p3",
-      "llvm_arguments": ["anyptr"],
-      "llvm_results": ["i32", "i32"],
-      "concrete_llvm_arguments": ["ptr addrspace(3)"],
-      "concrete_llvm_results": ["i32", "i32"],
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_75",
       "ptx_feature": "+ptx65",
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_75"],
+          "targets": [
+            "sm_75"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16.p3(ptr addrspace(3))",
           "stage": "declaration_canonicalization",
           "mechanism": "typed_nvvm",
@@ -471,7 +540,10 @@
           "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.b16.p3(ptr addrspace(3))",
           "stage": "backend_codegen",
           "mechanism": "typed_nvvm",
@@ -479,7 +551,10 @@
           "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x2.shared.b16 PTX."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
           "stage": "ptx_assembly",
           "mechanism": "typed_nvvm",
@@ -494,10 +569,22 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "ldmatrix",
-        "modifiers": ["sync", "aligned", "m8n8", "x2", "shared", "b16"],
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x2",
+          "shared",
+          "b16"
+        ],
         "operands": [
-          { "kind": "register_list", "length": 2 },
-          { "kind": "address" }
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
         ]
       }
     },
@@ -506,17 +593,29 @@
       "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x2_trans_b16",
       "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16",
       "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16.p3",
-      "llvm_arguments": ["anyptr"],
-      "llvm_results": ["i32", "i32"],
-      "concrete_llvm_arguments": ["ptr addrspace(3)"],
-      "concrete_llvm_results": ["i32", "i32"],
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_75",
       "ptx_feature": "+ptx65",
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_75"],
+          "targets": [
+            "sm_75"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16.p3(ptr addrspace(3))",
           "stage": "declaration_canonicalization",
           "mechanism": "typed_nvvm",
@@ -524,7 +623,10 @@
           "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x2.trans.b16.p3(ptr addrspace(3))",
           "stage": "backend_codegen",
           "mechanism": "typed_nvvm",
@@ -532,7 +634,10 @@
           "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 PTX."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
           "stage": "ptx_assembly",
           "mechanism": "typed_nvvm",
@@ -547,10 +652,23 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "ldmatrix",
-        "modifiers": ["sync", "aligned", "m8n8", "x2", "trans", "shared", "b16"],
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x2",
+          "trans",
+          "shared",
+          "b16"
+        ],
         "operands": [
-          { "kind": "register_list", "length": 2 },
-          { "kind": "address" }
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
         ]
       }
     },
@@ -559,17 +677,33 @@
       "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n8_x4_trans_b16",
       "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16",
       "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16.p3",
-      "llvm_arguments": ["anyptr"],
-      "llvm_results": ["i32", "i32", "i32", "i32"],
-      "concrete_llvm_arguments": ["ptr addrspace(3)"],
-      "concrete_llvm_results": ["i32", "i32", "i32", "i32"],
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_75",
       "ptx_feature": "+ptx65",
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_75"],
+          "targets": [
+            "sm_75"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16.p3(ptr addrspace(3))",
           "stage": "declaration_canonicalization",
           "mechanism": "typed_nvvm",
@@ -577,7 +711,10 @@
           "detail": "The recognized declaration retains convergent, nocallback, argument-read, readonly, and no-capture attributes."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "opaque-pointer typed intrinsic llvm.nvvm.ldmatrix.sync.aligned.m8n8.x4.trans.b16.p3(ptr addrspace(3))",
           "stage": "backend_codegen",
           "mechanism": "typed_nvvm",
@@ -585,7 +722,10 @@
           "detail": "Emitted exact ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 PTX."
         },
         {
-          "targets": ["sm_75", "ptx65"],
+          "targets": [
+            "sm_75",
+            "ptx65"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM ldmatrix probe",
           "stage": "ptx_assembly",
           "mechanism": "typed_nvvm",
@@ -600,10 +740,23 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "ldmatrix",
-        "modifiers": ["sync", "aligned", "m8n8", "x4", "trans", "shared", "b16"],
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n8",
+          "x4",
+          "trans",
+          "shared",
+          "b16"
+        ],
         "operands": [
-          { "kind": "register_list", "length": 4 },
-          { "kind": "address" }
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
         ]
       }
     },
@@ -2835,7 +2988,10 @@
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_30", "ptx60"],
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
           "representation": "one convergent side-effecting inline PTX block that splits i64, runs two shfl.sync.idx.b32 instructions with shared operands, and reassembles i64",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -2843,7 +2999,10 @@
           "detail": "The selected Rust LLVM backend emitted the reviewed low-half then high-half recipe with register-only lane and member-mask operands."
         },
         {
-          "targets": ["sm_75", "ptx60"],
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM 64-bit idx shuffle probe",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -2857,13 +3016,30 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "shfl",
-        "modifiers": ["sync", "idx", "b32"],
+        "modifiers": [
+          "sync",
+          "idx",
+          "b32"
+        ],
         "operands": [
-          { "kind": "exact", "value": "lo" },
-          { "kind": "exact", "value": "lo" },
-          { "kind": "register" },
-          { "kind": "exact", "value": "31" },
-          { "kind": "register" }
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register"
+          }
         ]
       }
     },
@@ -2879,7 +3055,10 @@
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_30", "ptx60"],
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
           "representation": "one convergent side-effecting inline PTX block that splits i64, runs two shfl.sync.bfly.b32 instructions with shared operands, and reassembles i64",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -2887,7 +3066,10 @@
           "detail": "The selected Rust LLVM backend emitted the reviewed low-half then high-half recipe with register-only lane and member-mask operands."
         },
         {
-          "targets": ["sm_75", "ptx60"],
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM 64-bit butterfly shuffle probe",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -2901,13 +3083,30 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "shfl",
-        "modifiers": ["sync", "bfly", "b32"],
+        "modifiers": [
+          "sync",
+          "bfly",
+          "b32"
+        ],
         "operands": [
-          { "kind": "exact", "value": "lo" },
-          { "kind": "exact", "value": "lo" },
-          { "kind": "register" },
-          { "kind": "exact", "value": "31" },
-          { "kind": "register" }
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register"
+          }
         ]
       }
     },
@@ -2923,7 +3122,10 @@
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_30", "ptx60"],
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
           "representation": "one convergent side-effecting inline PTX block that splits i64, runs two shfl.sync.down.b32 instructions with shared operands, and reassembles i64",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -2931,7 +3133,10 @@
           "detail": "The selected Rust LLVM backend emitted the reviewed low-half then high-half recipe with register-only lane and member-mask operands."
         },
         {
-          "targets": ["sm_75", "ptx60"],
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM 64-bit down shuffle probe",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -2945,13 +3150,30 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "shfl",
-        "modifiers": ["sync", "down", "b32"],
+        "modifiers": [
+          "sync",
+          "down",
+          "b32"
+        ],
         "operands": [
-          { "kind": "exact", "value": "lo" },
-          { "kind": "exact", "value": "lo" },
-          { "kind": "register" },
-          { "kind": "exact", "value": "31" },
-          { "kind": "register" }
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "31"
+          },
+          {
+            "kind": "register"
+          }
         ]
       }
     },
@@ -2967,7 +3189,10 @@
       "status": "validated",
       "stages": [
         {
-          "targets": ["sm_30", "ptx60"],
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
           "representation": "one convergent side-effecting inline PTX block that splits i64, runs two shfl.sync.up.b32 instructions with shared operands, and reassembles i64",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -2975,7 +3200,10 @@
           "detail": "The selected Rust LLVM backend emitted the reviewed low-half then high-half recipe with register-only lane and member-mask operands."
         },
         {
-          "targets": ["sm_75", "ptx60"],
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
           "representation": "PTX emitted by the selected Rust LLVM 64-bit up shuffle probe",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -2989,13 +3217,30 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "shfl",
-        "modifiers": ["sync", "up", "b32"],
+        "modifiers": [
+          "sync",
+          "up",
+          "b32"
+        ],
         "operands": [
-          { "kind": "exact", "value": "lo" },
-          { "kind": "exact", "value": "lo" },
-          { "kind": "register" },
-          { "kind": "exact", "value": "0" },
-          { "kind": "register" }
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "exact",
+            "value": "lo"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "0"
+          },
+          {
+            "kind": "register"
+          }
         ]
       }
     },
@@ -4729,16 +4974,26 @@
     },
     {
       "id": "trap",
-      "source": {"kind": "ptx_native", "instruction": "trap"},
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "trap"
+      },
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_20",
       "ptx_feature": "+ptx32",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "trap", "modifiers": [], "operands": []},
+      "expected_ptx": {
+        "mnemonic": "trap",
+        "modifiers": [],
+        "operands": []
+      },
       "stages": [
         {
-          "targets": ["sm_20", "ptx32"],
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
           "representation": "side-effect inline PTX trap in the combined debug-control probe",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -4746,7 +5001,10 @@
           "detail": "The pinned Rust LLVM emitted PTX 3.2 containing trap; source SHA-256 cbe8cd68385d281ecb4edeb5458a63f1e851ee0ab2539c7b5d335b79e91e543e and PTX SHA-256 df263240edffc345f2c5a65b953c362a49878e08e9fdf1c2a06858829643dad5."
         },
         {
-          "targets": ["sm_75", "ptx32"],
+          "targets": [
+            "sm_75",
+            "ptx32"
+          ],
           "representation": "LLVM-produced PTX module containing trap",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -4761,16 +5019,26 @@
     },
     {
       "id": "breakpoint",
-      "source": {"kind": "ptx_native", "instruction": "brkpt"},
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "brkpt"
+      },
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_20",
       "ptx_feature": "+ptx32",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "brkpt", "modifiers": [], "operands": []},
+      "expected_ptx": {
+        "mnemonic": "brkpt",
+        "modifiers": [],
+        "operands": []
+      },
       "stages": [
         {
-          "targets": ["sm_20", "ptx32"],
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
           "representation": "side-effect inline PTX brkpt in the combined debug-control probe",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -4778,7 +5046,10 @@
           "detail": "The pinned Rust LLVM emitted PTX 3.2 containing brkpt; source SHA-256 cbe8cd68385d281ecb4edeb5458a63f1e851ee0ab2539c7b5d335b79e91e543e and PTX SHA-256 df263240edffc345f2c5a65b953c362a49878e08e9fdf1c2a06858829643dad5."
         },
         {
-          "targets": ["sm_75", "ptx32"],
+          "targets": [
+            "sm_75",
+            "ptx32"
+          ],
           "representation": "LLVM-produced PTX module containing brkpt",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -4793,7 +5064,10 @@
     },
     {
       "id": "pmevent",
-      "source": {"kind": "ptx_native", "instruction": "pmevent"},
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "pmevent"
+      },
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_20",
       "ptx_feature": "+ptx32",
@@ -4802,11 +5076,18 @@
       "expected_ptx": {
         "mnemonic": "pmevent",
         "modifiers": [],
-        "operands": [{"kind": "immediate"}]
+        "operands": [
+          {
+            "kind": "immediate"
+          }
+        ]
       },
       "stages": [
         {
-          "targets": ["sm_20", "ptx32"],
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
           "representation": "side-effect inline PTX pmevent 15 in the combined debug-control probe",
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
@@ -4814,7 +5095,10 @@
           "detail": "The pinned Rust LLVM emitted PTX 3.2 containing pmevent 15; source SHA-256 cbe8cd68385d281ecb4edeb5458a63f1e851ee0ab2539c7b5d335b79e91e543e and PTX SHA-256 df263240edffc345f2c5a65b953c362a49878e08e9fdf1c2a06858829643dad5."
         },
         {
-          "targets": ["sm_75", "ptx32"],
+          "targets": [
+            "sm_75",
+            "ptx32"
+          ],
           "representation": "LLVM-produced PTX module containing pmevent 15",
           "stage": "ptx_assembly",
           "mechanism": "inline_ptx",
@@ -4898,7 +5182,11 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "wgmma",
-        "modifiers": ["fence", "sync", "aligned"],
+        "modifiers": [
+          "fence",
+          "sync",
+          "aligned"
+        ],
         "operands": []
       }
     },
@@ -4915,7 +5203,11 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "wgmma",
-        "modifiers": ["commit_group", "sync", "aligned"],
+        "modifiers": [
+          "commit_group",
+          "sync",
+          "aligned"
+        ],
         "operands": []
       }
     },
@@ -4923,7 +5215,9 @@
       "id": "wgmma_wait_group",
       "source_record": "int_nvvm_wgmma_wait_group_sync_aligned",
       "llvm_symbol": "llvm.nvvm.wgmma.wait_group.sync.aligned",
-      "llvm_arguments": ["i64"],
+      "llvm_arguments": [
+        "i64"
+      ],
       "llvm_results": [],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_90a",
@@ -4932,138 +5226,1795 @@
       "runtime_validation": "unexecuted",
       "expected_ptx": {
         "mnemonic": "wgmma",
-        "modifiers": ["wait_group", "sync", "aligned"],
-        "operands": [{"kind": "immediate"}]
+        "modifiers": [
+          "wait_group",
+          "sync",
+          "aligned"
+        ],
+        "operands": [
+          {
+            "kind": "immediate"
+          }
+        ]
       }
     },
     {
       "id": "map_shared_rank",
       "source_record": "int_nvvm_mapa_shared_cluster",
       "llvm_symbol": "llvm.nvvm.mapa.shared.cluster",
-      "llvm_arguments": ["shared_ptr", "i32"],
-      "llvm_results": ["shared_cluster_ptr"],
+      "llvm_arguments": [
+        "shared_ptr",
+        "i32"
+      ],
+      "llvm_results": [
+        "shared_cluster_ptr"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_90",
       "ptx_feature": "+ptx78",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "mapa", "modifiers": ["shared::cluster", "u64"], "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]}
+      "expected_ptx": {
+        "mnemonic": "mapa",
+        "modifiers": [
+          "shared::cluster",
+          "u64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
     },
     {
       "id": "dsmem_read_u32",
-      "source": {"kind": "ptx_native", "instruction": "mapa.shared::cluster.u64 + ld.shared::cluster.u32"},
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mapa.shared::cluster.u64 + ld.shared::cluster.u32"
+      },
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_90",
       "ptx_feature": "+ptx78",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "ld", "modifiers": ["shared::cluster", "u32"], "operands": [{"kind": "register"}, {"kind": "address"}]}
+      "expected_ptx": {
+        "mnemonic": "ld",
+        "modifiers": [
+          "shared::cluster",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
     },
     {
       "id": "clc_try_cancel",
       "source_record": "int_nvvm_clusterlaunchcontrol_try_cancel_async_shared",
       "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.shared",
-      "llvm_arguments": ["shared_ptr", "shared_ptr"],
+      "llvm_arguments": [
+        "shared_ptr",
+        "shared_ptr"
+      ],
       "llvm_results": [],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_100",
       "ptx_feature": "+ptx86",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["try_cancel", "async", "shared::cta", "mbarrier::complete_tx::bytes", "b128"], "operands": [{"kind": "address"}, {"kind": "address"}]}
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "try_cancel",
+          "async",
+          "shared::cta",
+          "mbarrier::complete_tx::bytes",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
     },
     {
       "id": "clc_try_cancel_multicast",
       "source_record": "int_nvvm_clusterlaunchcontrol_try_cancel_async_multicast_shared",
       "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.try_cancel.async.multicast.shared",
-      "llvm_arguments": ["shared_ptr", "shared_ptr"],
+      "llvm_arguments": [
+        "shared_ptr",
+        "shared_ptr"
+      ],
       "llvm_results": [],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_100a",
       "ptx_feature": "+ptx86",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["try_cancel", "async", "shared::cta", "mbarrier::complete_tx::bytes", "multicast::cluster::all", "b128"], "operands": [{"kind": "address"}, {"kind": "address"}]}
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "try_cancel",
+          "async",
+          "shared::cta",
+          "mbarrier::complete_tx::bytes",
+          "multicast::cluster::all",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
     },
     {
       "id": "clc_query_is_canceled",
       "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_is_canceled",
       "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.is_canceled",
-      "llvm_arguments": ["i128"],
-      "llvm_results": ["i1"],
+      "llvm_arguments": [
+        "i128"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_100",
       "ptx_feature": "+ptx86",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "is_canceled", "pred", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]}
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "query_cancel",
+          "is_canceled",
+          "pred",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clc_handle"
+          }
+        ]
+      }
     },
     {
       "id": "clc_query_get_first_ctaid_x",
       "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_x",
       "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.x",
-      "llvm_arguments": ["i128"],
-      "llvm_results": ["i32"],
+      "llvm_arguments": [
+        "i128"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_100",
       "ptx_feature": "+ptx86",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::x", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]}
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "query_cancel",
+          "get_first_ctaid::x",
+          "b32",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clc_handle"
+          }
+        ]
+      }
     },
     {
       "id": "clc_query_get_first_ctaid_y",
       "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_y",
       "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.y",
-      "llvm_arguments": ["i128"],
-      "llvm_results": ["i32"],
+      "llvm_arguments": [
+        "i128"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_100",
       "ptx_feature": "+ptx86",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::y", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]}
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "query_cancel",
+          "get_first_ctaid::y",
+          "b32",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clc_handle"
+          }
+        ]
+      }
     },
     {
       "id": "clc_query_get_first_ctaid_z",
       "source_record": "int_nvvm_clusterlaunchcontrol_query_cancel_get_first_ctaid_z",
       "llvm_symbol": "llvm.nvvm.clusterlaunchcontrol.query_cancel.get_first_ctaid.z",
-      "llvm_arguments": ["i128"],
-      "llvm_results": ["i32"],
+      "llvm_arguments": [
+        "i128"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
       "target_triple": "nvptx64-nvidia-cuda",
       "gpu_target": "sm_100",
       "ptx_feature": "+ptx86",
       "status": "validated",
       "runtime_validation": "unexecuted",
-      "expected_ptx": {"mnemonic": "clusterlaunchcontrol", "modifiers": ["query_cancel", "get_first_ctaid::z", "b32", "b128"], "operands": [{"kind": "register"}, {"kind": "exact", "value": "%clc_handle"}]}
+      "expected_ptx": {
+        "mnemonic": "clusterlaunchcontrol",
+        "modifiers": [
+          "query_cancel",
+          "get_first_ctaid::z",
+          "b32",
+          "b128"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "exact",
+            "value": "%clc_handle"
+          }
+        ]
+      }
     },
-    {"id":"cp_async_bulk_tensor_1d_g2s","source_record":"int_nvvm_cp_async_bulk_tensor_g2s_tile_1d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.g2s.tile.1d","llvm_arguments":["shared_cluster_ptr","shared_ptr","ptr","i32","i16","i64","i1","i1","i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","1d","shared::cluster","global","tile","mbarrier::complete_tx::bytes"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_2d_g2s","source_record":"int_nvvm_cp_async_bulk_tensor_g2s_tile_2d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d","llvm_arguments":["shared_cluster_ptr","shared_ptr","ptr","i32","i32","i16","i64","i1","i1","i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","2d","shared::cluster","global","tile","mbarrier::complete_tx::bytes"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_2d_g2s_multicast","source_record":"int_nvvm_cp_async_bulk_tensor_g2s_tile_2d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d","llvm_arguments":["shared_cluster_ptr","shared_ptr","ptr","i32","i32","i16","i64","i1","i1","i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","2d","shared::cluster","global","tile","mbarrier::complete_tx::bytes","multicast::cluster"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"address"},{"kind":"register"}]}},
-    {"id":"cp_async_bulk_tensor_2d_g2s_multicast_cg2","source_record":"int_nvvm_cp_async_bulk_tensor_g2s_tile_2d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d","llvm_arguments":["shared_cluster_ptr","shared_ptr","ptr","i32","i32","i16","i64","i1","i1","i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","2d","shared::cluster","global","tile","mbarrier::complete_tx::bytes","multicast::cluster","cta_group::2"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"address"},{"kind":"register"}]}},
-    {"id":"cp_async_bulk_tensor_3d_g2s","source_record":"int_nvvm_cp_async_bulk_tensor_g2s_tile_3d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.g2s.tile.3d","llvm_arguments":["shared_cluster_ptr","shared_ptr","ptr","i32","i32","i32","i16","i64","i1","i1","i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","3d","shared::cluster","global","tile","mbarrier::complete_tx::bytes"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_4d_g2s","source_record":"int_nvvm_cp_async_bulk_tensor_g2s_tile_4d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.g2s.tile.4d","llvm_arguments":["shared_cluster_ptr","shared_ptr","ptr","i32","i32","i32","i32","i16","i64","i1","i1","i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","4d","shared::cluster","global","tile","mbarrier::complete_tx::bytes"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_5d_g2s","source_record":"int_nvvm_cp_async_bulk_tensor_g2s_tile_5d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.g2s.tile.5d","llvm_arguments":["shared_cluster_ptr","shared_ptr","ptr","i32","i32","i32","i32","i32","i16","i64","i1","i1","i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","5d","shared::cluster","global","tile","mbarrier::complete_tx::bytes"],"operands":[{"kind":"address"},{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_1d_s2g","source_record":"int_nvvm_cp_async_bulk_tensor_s2g_tile_1d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.s2g.tile.1d","llvm_arguments":["shared_ptr","ptr","i32","i64","i1"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","1d","global","shared::cta","tile","bulk_group"],"operands":[{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_2d_s2g","source_record":"int_nvvm_cp_async_bulk_tensor_s2g_tile_2d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.s2g.tile.2d","llvm_arguments":["shared_ptr","ptr","i32","i32","i64","i1"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","2d","global","shared::cta","tile","bulk_group"],"operands":[{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_3d_s2g","source_record":"int_nvvm_cp_async_bulk_tensor_s2g_tile_3d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.s2g.tile.3d","llvm_arguments":["shared_ptr","ptr","i32","i32","i32","i64","i1"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","3d","global","shared::cta","tile","bulk_group"],"operands":[{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_4d_s2g","source_record":"int_nvvm_cp_async_bulk_tensor_s2g_tile_4d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.s2g.tile.4d","llvm_arguments":["shared_ptr","ptr","i32","i32","i32","i32","i64","i1"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","4d","global","shared::cta","tile","bulk_group"],"operands":[{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_tensor_5d_s2g","source_record":"int_nvvm_cp_async_bulk_tensor_s2g_tile_5d","llvm_symbol":"llvm.nvvm.cp.async.bulk.tensor.s2g.tile.5d","llvm_arguments":["shared_ptr","ptr","i32","i32","i32","i32","i32","i64","i1"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","tensor","5d","global","shared::cta","tile","bulk_group"],"operands":[{"kind":"address"},{"kind":"address"}]}},
-    {"id":"cp_async_bulk_commit_group","source_record":"int_nvvm_cp_async_bulk_commit_group","llvm_symbol":"llvm.nvvm.cp.async.bulk.commit.group","llvm_arguments":[],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","commit_group"],"operands":[]}},
-    {"id":"cp_async_bulk_wait_group","source_record":"int_nvvm_cp_async_bulk_wait_group","llvm_symbol":"llvm.nvvm.cp.async.bulk.wait.group","llvm_arguments":["i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","wait_group"],"operands":[{"kind":"immediate"}]}},
-    {"id":"cp_async_bulk_wait_group_read","source_record":"int_nvvm_cp_async_bulk_wait_group_read","llvm_symbol":"llvm.nvvm.cp.async.bulk.wait.group.read","llvm_arguments":["i32"],"llvm_results":[],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"cp","modifiers":["async","bulk","wait_group","read"],"operands":[{"kind":"immediate"}]}},
-    {"id":"elect_sync","source_record":"int_nvvm_elect_sync","llvm_symbol":"llvm.nvvm.elect.sync","llvm_arguments":["i32"],"llvm_results":["i32","i1"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_90","ptx_feature":"+ptx80","status":"validated","runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"elect","modifiers":["sync"],"operands":[{"kind":"register_predicate_pair"},{"kind":"register_or_immediate"}]}},
-    {"id":"ldmatrix_m16n16_x1_trans_b8","source_record":"int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m16n16","x1","trans","shared","b8"],"operands":[{"kind":"register_list","length":2},{"kind":"address"}]}},
-    {"id":"ldmatrix_m16n16_x1_trans_b8x16_b4x16_p64","source_record":"int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8x16_b4x16_p64","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m16n16","x1","trans","shared","b8x16","b4x16_p64"],"operands":[{"kind":"register_list","length":2},{"kind":"address"}]}},
-    {"id":"ldmatrix_m16n16_x1_trans_b8x16_b6x16_p32","source_record":"int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8x16_b6x16_p32","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b6x16_p32","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b6x16_p32.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m16n16","x1","trans","shared","b8x16","b6x16_p32"],"operands":[{"kind":"register_list","length":2},{"kind":"address"}]}},
-    {"id":"ldmatrix_m16n16_x2_trans_b8","source_record":"int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32","i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32","i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m16n16","x2","trans","shared","b8"],"operands":[{"kind":"register_list","length":4},{"kind":"address"}]}},
-    {"id":"ldmatrix_m16n16_x2_trans_b8x16_b4x16_p64","source_record":"int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8x16_b4x16_p64","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b4x16_p64","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b4x16_p64.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32","i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32","i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m16n16","x2","trans","shared","b8x16","b4x16_p64"],"operands":[{"kind":"register_list","length":4},{"kind":"address"}]}},
-    {"id":"ldmatrix_m16n16_x2_trans_b8x16_b6x16_p32","source_record":"int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8x16_b6x16_p32","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b6x16_p32","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b6x16_p32.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32","i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32","i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m16n16","x2","trans","shared","b8x16","b6x16_p32"],"operands":[{"kind":"register_list","length":4},{"kind":"address"}]}},
-    {"id":"ldmatrix_m8n16_x1_b8x16_b4x16_p64","source_record":"int_nvvm_ldmatrix_sync_aligned_m8n16_x1_b8x16_b4x16_p64","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b4x16_p64","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b4x16_p64.p3","llvm_arguments":["anyptr"],"llvm_results":["i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m8n16","x1","shared","b8x16","b4x16_p64"],"operands":[{"kind":"register_list","length":1},{"kind":"address"}]}},
-    {"id":"ldmatrix_m8n16_x1_b8x16_b6x16_p32","source_record":"int_nvvm_ldmatrix_sync_aligned_m8n16_x1_b8x16_b6x16_p32","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b6x16_p32","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b6x16_p32.p3","llvm_arguments":["anyptr"],"llvm_results":["i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m8n16","x1","shared","b8x16","b6x16_p32"],"operands":[{"kind":"register_list","length":1},{"kind":"address"}]}},
-    {"id":"ldmatrix_m8n16_x2_b8x16_b4x16_p64","source_record":"int_nvvm_ldmatrix_sync_aligned_m8n16_x2_b8x16_b4x16_p64","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b4x16_p64","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b4x16_p64.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m8n16","x2","shared","b8x16","b4x16_p64"],"operands":[{"kind":"register_list","length":2},{"kind":"address"}]}},
-    {"id":"ldmatrix_m8n16_x2_b8x16_b6x16_p32","source_record":"int_nvvm_ldmatrix_sync_aligned_m8n16_x2_b8x16_b6x16_p32","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b6x16_p32","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b6x16_p32.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m8n16","x2","shared","b8x16","b6x16_p32"],"operands":[{"kind":"register_list","length":2},{"kind":"address"}]}},
-    {"id":"ldmatrix_m8n16_x4_b8x16_b4x16_p64","source_record":"int_nvvm_ldmatrix_sync_aligned_m8n16_x4_b8x16_b4x16_p64","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b4x16_p64","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b4x16_p64.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32","i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32","i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m8n16","x4","shared","b8x16","b4x16_p64"],"operands":[{"kind":"register_list","length":4},{"kind":"address"}]}},
-    {"id":"ldmatrix_m8n16_x4_b8x16_b6x16_p32","source_record":"int_nvvm_ldmatrix_sync_aligned_m8n16_x4_b8x16_b6x16_p32","llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b6x16_p32","resolved_llvm_symbol":"llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b6x16_p32.p3","llvm_arguments":["anyptr"],"llvm_results":["i32","i32","i32","i32"],"concrete_llvm_arguments":["ptr addrspace(3)"],"concrete_llvm_results":["i32","i32","i32","i32"],"target_triple":"nvptx64-nvidia-cuda","gpu_target":"sm_100a","ptx_feature":"+ptx86","status":"validated","declaration_attributes_canonicalized":true,"runtime_validation":"unexecuted","expected_ptx":{"mnemonic":"ldmatrix","modifiers":["sync","aligned","m8n16","x4","shared","b8x16","b6x16_p32"],"operands":[{"kind":"register_list","length":4},{"kind":"address"}]}}
+    {
+      "id": "cp_async_bulk_tensor_1d_g2s",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_1d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.1d",
+      "llvm_arguments": [
+        "shared_cluster_ptr",
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i16",
+        "i64",
+        "i1",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "1d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_2d_g2s",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+      "llvm_arguments": [
+        "shared_cluster_ptr",
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i16",
+        "i64",
+        "i1",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "2d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_2d_g2s_multicast",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+      "llvm_arguments": [
+        "shared_cluster_ptr",
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i16",
+        "i64",
+        "i1",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "2d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes",
+          "multicast::cluster"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_2d_g2s_multicast_cg2",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_2d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d",
+      "llvm_arguments": [
+        "shared_cluster_ptr",
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i16",
+        "i64",
+        "i1",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "2d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes",
+          "multicast::cluster",
+          "cta_group::2"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_3d_g2s",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_3d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.3d",
+      "llvm_arguments": [
+        "shared_cluster_ptr",
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i32",
+        "i16",
+        "i64",
+        "i1",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "3d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_4d_g2s",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_4d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.4d",
+      "llvm_arguments": [
+        "shared_cluster_ptr",
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i16",
+        "i64",
+        "i1",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "4d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_5d_g2s",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_g2s_tile_5d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.g2s.tile.5d",
+      "llvm_arguments": [
+        "shared_cluster_ptr",
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i16",
+        "i64",
+        "i1",
+        "i1",
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "5d",
+          "shared::cluster",
+          "global",
+          "tile",
+          "mbarrier::complete_tx::bytes"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_1d_s2g",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_1d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.1d",
+      "llvm_arguments": [
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i64",
+        "i1"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "1d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_2d_s2g",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_2d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.2d",
+      "llvm_arguments": [
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i64",
+        "i1"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "2d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_3d_s2g",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_3d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.3d",
+      "llvm_arguments": [
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i32",
+        "i64",
+        "i1"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "3d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_4d_s2g",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_4d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.4d",
+      "llvm_arguments": [
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i64",
+        "i1"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "4d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_tensor_5d_s2g",
+      "source_record": "int_nvvm_cp_async_bulk_tensor_s2g_tile_5d",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.tensor.s2g.tile.5d",
+      "llvm_arguments": [
+        "shared_ptr",
+        "ptr",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i64",
+        "i1"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "tensor",
+          "5d",
+          "global",
+          "shared::cta",
+          "tile",
+          "bulk_group"
+        ],
+        "operands": [
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_commit_group",
+      "source_record": "int_nvvm_cp_async_bulk_commit_group",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.commit.group",
+      "llvm_arguments": [],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "commit_group"
+        ],
+        "operands": []
+      }
+    },
+    {
+      "id": "cp_async_bulk_wait_group",
+      "source_record": "int_nvvm_cp_async_bulk_wait_group",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.wait.group",
+      "llvm_arguments": [
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "wait_group"
+        ],
+        "operands": [
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cp_async_bulk_wait_group_read",
+      "source_record": "int_nvvm_cp_async_bulk_wait_group_read",
+      "llvm_symbol": "llvm.nvvm.cp.async.bulk.wait.group.read",
+      "llvm_arguments": [
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cp",
+        "modifiers": [
+          "async",
+          "bulk",
+          "wait_group",
+          "read"
+        ],
+        "operands": [
+          {
+            "kind": "immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "elect_sync",
+      "source_record": "int_nvvm_elect_sync",
+      "llvm_symbol": "llvm.nvvm.elect.sync",
+      "llvm_arguments": [
+        "i32"
+      ],
+      "llvm_results": [
+        "i32",
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_90",
+      "ptx_feature": "+ptx80",
+      "status": "validated",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "elect",
+        "modifiers": [
+          "sync"
+        ],
+        "operands": [
+          {
+            "kind": "register_predicate_pair"
+          },
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m16n16_x1_trans_b8",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n16",
+          "x1",
+          "trans",
+          "shared",
+          "b8"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m16n16_x1_trans_b8x16_b4x16_p64",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8x16_b4x16_p64",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b4x16_p64.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n16",
+          "x1",
+          "trans",
+          "shared",
+          "b8x16",
+          "b4x16_p64"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m16n16_x1_trans_b8x16_b6x16_p32",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x1_trans_b8x16_b6x16_p32",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b6x16_p32",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x1.trans.b8x16.b6x16_p32.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n16",
+          "x1",
+          "trans",
+          "shared",
+          "b8x16",
+          "b6x16_p32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m16n16_x2_trans_b8",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n16",
+          "x2",
+          "trans",
+          "shared",
+          "b8"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m16n16_x2_trans_b8x16_b4x16_p64",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8x16_b4x16_p64",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b4x16_p64",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b4x16_p64.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n16",
+          "x2",
+          "trans",
+          "shared",
+          "b8x16",
+          "b4x16_p64"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m16n16_x2_trans_b8x16_b6x16_p32",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m16n16_x2_trans_b8x16_b6x16_p32",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b6x16_p32",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m16n16.x2.trans.b8x16.b6x16_p32.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m16n16",
+          "x2",
+          "trans",
+          "shared",
+          "b8x16",
+          "b6x16_p32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n16_x1_b8x16_b4x16_p64",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x1_b8x16_b4x16_p64",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b4x16_p64",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b4x16_p64.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n16",
+          "x1",
+          "shared",
+          "b8x16",
+          "b4x16_p64"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n16_x1_b8x16_b6x16_p32",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x1_b8x16_b6x16_p32",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b6x16_p32",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x1.b8x16.b6x16_p32.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n16",
+          "x1",
+          "shared",
+          "b8x16",
+          "b6x16_p32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 1
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n16_x2_b8x16_b4x16_p64",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x2_b8x16_b4x16_p64",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b4x16_p64",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b4x16_p64.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n16",
+          "x2",
+          "shared",
+          "b8x16",
+          "b4x16_p64"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n16_x2_b8x16_b6x16_p32",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x2_b8x16_b6x16_p32",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b6x16_p32",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x2.b8x16.b6x16_p32.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n16",
+          "x2",
+          "shared",
+          "b8x16",
+          "b6x16_p32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n16_x4_b8x16_b4x16_p64",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x4_b8x16_b4x16_p64",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b4x16_p64",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b4x16_p64.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n16",
+          "x4",
+          "shared",
+          "b8x16",
+          "b4x16_p64"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ldmatrix_m8n16_x4_b8x16_b6x16_p32",
+      "source_record": "int_nvvm_ldmatrix_sync_aligned_m8n16_x4_b8x16_b6x16_p32",
+      "llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b6x16_p32",
+      "resolved_llvm_symbol": "llvm.nvvm.ldmatrix.sync.aligned.m8n16.x4.b8x16.b6x16_p32.p3",
+      "llvm_arguments": [
+        "anyptr"
+      ],
+      "llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "ptr addrspace(3)"
+      ],
+      "concrete_llvm_results": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_100a",
+      "ptx_feature": "+ptx86",
+      "status": "validated",
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "ldmatrix",
+        "modifiers": [
+          "sync",
+          "aligned",
+          "m8n16",
+          "x4",
+          "shared",
+          "b8x16",
+          "b6x16_p32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "address"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fma_ftz_f16x2",
+      "source_record": "int_nvvm_fma_rn_ftz_f16x2",
+      "llvm_symbol": "llvm.nvvm.fma.rn.ftz.f16x2",
+      "llvm_arguments": [
+        "v2f16",
+        "v2f16",
+        "v2f16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_70",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_70",
+            "ptx60"
+          ],
+          "representation": "pure inline PTX fma.rn.ftz.f16x2 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc retained all 3 exact instruction head(s) in 1,855-byte PTX (SHA-256 3cec642b59813f21bc9f86d2d39e00dac4defde30827f4bcd0ba7361810ec441) lowered from the 499-byte fixture (SHA-256 be3dbf17dd609b89c4f12fa6e8532498a1914e1c5ddbbd99c37ae4fc75db80f2). Independent typed calls to the exact llvm.nvvm symbols emitted the same instruction heads."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "inline PTX assembled by the pinned CUDA 13.3 ptxas",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted the module at sm_75 and produced a 1,464-byte cubin (SHA-256 0869784cef1bfc816ca2564c97cb80d49645941a74c4658c829baaee24f8f30b). The admitted floor is sm_70, but CUDA 13.3 ptxas no longer accepts that target, so assembly is checked at sm_75 as it is for the other PTX 4.2 packed-f16x2 forms.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "ftz",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fma_sat_f16x2",
+      "source_record": "int_nvvm_fma_rn_sat_f16x2",
+      "llvm_symbol": "llvm.nvvm.fma.rn.sat.f16x2",
+      "llvm_arguments": [
+        "v2f16",
+        "v2f16",
+        "v2f16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_70",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_70",
+            "ptx60"
+          ],
+          "representation": "pure inline PTX fma.rn.sat.f16x2 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc retained all 3 exact instruction head(s) in 1,855-byte PTX (SHA-256 3cec642b59813f21bc9f86d2d39e00dac4defde30827f4bcd0ba7361810ec441) lowered from the 499-byte fixture (SHA-256 be3dbf17dd609b89c4f12fa6e8532498a1914e1c5ddbbd99c37ae4fc75db80f2). Independent typed calls to the exact llvm.nvvm symbols emitted the same instruction heads."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "inline PTX assembled by the pinned CUDA 13.3 ptxas",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted the module at sm_75 and produced a 1,464-byte cubin (SHA-256 0869784cef1bfc816ca2564c97cb80d49645941a74c4658c829baaee24f8f30b). The admitted floor is sm_70, but CUDA 13.3 ptxas no longer accepts that target, so assembly is checked at sm_75 as it is for the other PTX 4.2 packed-f16x2 forms.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "sat",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fma_ftz_sat_f16x2",
+      "source_record": "int_nvvm_fma_rn_ftz_sat_f16x2",
+      "llvm_symbol": "llvm.nvvm.fma.rn.ftz.sat.f16x2",
+      "llvm_arguments": [
+        "v2f16",
+        "v2f16",
+        "v2f16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_70",
+      "ptx_feature": "+ptx60",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_70",
+            "ptx60"
+          ],
+          "representation": "pure inline PTX fma.rn.ftz.sat.f16x2 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc retained all 3 exact instruction head(s) in 1,855-byte PTX (SHA-256 3cec642b59813f21bc9f86d2d39e00dac4defde30827f4bcd0ba7361810ec441) lowered from the 499-byte fixture (SHA-256 be3dbf17dd609b89c4f12fa6e8532498a1914e1c5ddbbd99c37ae4fc75db80f2). Independent typed calls to the exact llvm.nvvm symbols emitted the same instruction heads."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx60"
+          ],
+          "representation": "inline PTX assembled by the pinned CUDA 13.3 ptxas",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted the module at sm_75 and produced a 1,464-byte cubin (SHA-256 0869784cef1bfc816ca2564c97cb80d49645941a74c4658c829baaee24f8f30b). The admitted floor is sm_70, but CUDA 13.3 ptxas no longer accepts that target, so assembly is checked at sm_75 as it is for the other PTX 4.2 packed-f16x2 forms.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "ftz",
+          "sat",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fma_ftz_relu_f16x2",
+      "source_record": "int_nvvm_fma_rn_ftz_relu_f16x2",
+      "llvm_symbol": "llvm.nvvm.fma.rn.ftz.relu.f16x2",
+      "llvm_arguments": [
+        "v2f16",
+        "v2f16",
+        "v2f16"
+      ],
+      "llvm_results": [
+        "v2f16"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "pure inline PTX fma.rn.ftz.relu.f16x2 with =r,r,r,r",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc retained all 1 exact instruction head(s) in 682-byte PTX (SHA-256 ee283e72de7ddec2258b4eb628ca180889b67d9f79d13ba926719724bec1c01f) lowered from the 196-byte fixture (SHA-256 fa242c0f862cc57936c53949b30d4ce59871e59cde0349570a44122c3a164006). Independent typed calls to the exact llvm.nvvm symbols emitted the same instruction heads."
+        },
+        {
+          "targets": [
+            "sm_80",
+            "ptx70"
+          ],
+          "representation": "inline PTX assembled by the pinned CUDA 13.3 ptxas",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 ptxas accepted the module at sm_80 and produced a 1,464-byte cubin (SHA-256 6bcec1b1eab13da703fdade053704aa6ab00591a1b38dd7daf48ac0dec541df2).",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "ftz",
+          "relu",
+          "f16x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    }
   ]
 }

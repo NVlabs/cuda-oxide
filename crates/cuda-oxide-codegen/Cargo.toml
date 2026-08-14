@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 [package]
 name = "cuda-oxide-codegen"
@@ -7,15 +8,19 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Experimental rustc-independent cuda-oxide PTX backend"
+readme = "README.md"
 
 [dependencies]
 pliron = { workspace = true }
 thiserror = { workspace = true }
 dialect-mir = { workspace = true }
+dialect-iket = { workspace = true }
 dialect-nvvm = { workspace = true }
+iket-lower = { workspace = true }
 mir-lower = { workspace = true }
 mir-transforms = { workspace = true }
 llvm-export = { workspace = true }
 libnvvm-sys = { workspace = true }
 nvvm-transforms = { workspace = true }
 tempfile = { workspace = true }
+rustc-demangle = { workspace = true }

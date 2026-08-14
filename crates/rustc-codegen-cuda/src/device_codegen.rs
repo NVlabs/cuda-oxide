@@ -102,6 +102,7 @@ use rustc_middle::ty::{EarlyBinder, InstanceKind, TypingEnv};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_session::config::DebugInfo;
 use rustc_span::{Span, hygiene};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -277,6 +278,8 @@ pub struct DeviceCodegenResult {
     /// stages must preserve this policy instead of silently compiling with
     /// their own defaults.
     pub debug_kind: llvm_export::export::DebugKind,
+    /// Source launch bounds for kernel entries, keyed by exported kernel name.
+    pub kernel_launch_bounds: BTreeMap<String, mir_importer::KernelLaunchBounds>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -801,6 +804,7 @@ pub fn generate_device_code<'tcx>(
                     artifact,
                     allow_fma_contraction: compilation_result.allow_fma_contraction,
                     debug_kind,
+                    kernel_launch_bounds: compilation_result.kernel_launch_bounds,
                 })
             }
             Err(pipeline_err) => Err(DeviceCodegenError::PtxGeneration(format!(
@@ -826,15 +830,19 @@ fn device_debug_kind_with_override(
     rustc_debug: DebugInfo,
     override_value: Option<&str>,
 ) -> llvm_export::export::DebugKind {
-    if let Some(value) = override_value {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "0" | "off" | "none" => return llvm_export::export::DebugKind::Off,
-            "1" | "line" | "lines" | "line-tables" | "line-tables-only" => {
-                return llvm_export::export::DebugKind::LineTables;
+    // The alias table lives in cuda-artifact-finalizer so cargo-oxide's
+    // build policy (full debug disables MIR optimization) and this DWARF
+    // emission level can never disagree about what a value means.
+    if let Some(policy) =
+        override_value.and_then(cuda_artifact_finalizer::DebugPolicy::parse_env_override)
+    {
+        return match policy {
+            cuda_artifact_finalizer::DebugPolicy::None => llvm_export::export::DebugKind::Off,
+            cuda_artifact_finalizer::DebugPolicy::LineTables => {
+                llvm_export::export::DebugKind::LineTables
             }
-            "2" | "full" => return llvm_export::export::DebugKind::Full,
-            _ => {}
-        }
+            cuda_artifact_finalizer::DebugPolicy::Full => llvm_export::export::DebugKind::Full,
+        };
     }
 
     match rustc_debug {
@@ -913,6 +921,12 @@ mod tests {
             device_debug_kind_with_override(DebugInfo::None, Some("full")),
             llvm_export::export::DebugKind::Full
         );
+        // The nvcc-style numeric spelling goes through the same shared
+        // parser, so it must select full debug here exactly like "full".
+        assert_eq!(
+            device_debug_kind_with_override(DebugInfo::None, Some("2")),
+            llvm_export::export::DebugKind::Full
+        );
     }
 
     #[test]
@@ -931,6 +945,7 @@ mod tests {
             artifact_kind: mir_importer::CompilationArtifactKind::NvvmIr,
             target: "sm_90".to_string(),
             allow_fma_contraction: false,
+            kernel_launch_bounds: BTreeMap::new(),
         };
 
         let artifact = read_compilation_artifact(&result).unwrap().unwrap();
@@ -957,6 +972,7 @@ mod tests {
             artifact_kind: mir_importer::CompilationArtifactKind::Cubin,
             target: "sm_90".to_string(),
             allow_fma_contraction: true,
+            kernel_launch_bounds: BTreeMap::new(),
         };
 
         let artifact = read_compilation_artifact(&result).unwrap().unwrap();

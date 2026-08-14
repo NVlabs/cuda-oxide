@@ -1,0 +1,27 @@
+error[E0599]: the method `get` exists for struct `ThreadIndex<'_, Runtime2DIndex>`, but its trait bounds were not satisfied
+  --> tests/compile_fail/thread_index_runtime_flat_accessors.rs:20:21
+   |
+20 |     let _flat = idx.get();
+   |                     ^^^ method cannot be called on `ThreadIndex<'_, Runtime2DIndex>` due to unsatisfied trait bounds
+   |
+  ::: src/thread.rs
+   |
+   | pub enum Runtime2DIndex {}
+   | ----------------------- doesn't satisfy `Runtime2DIndex: FlatIndexSpace`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Runtime2DIndex: FlatIndexSpace`
+
+error[E0599]: the method `in_bounds` exists for struct `ThreadIndex<'_, Runtime2DIndex>`, but its trait bounds were not satisfied
+  --> tests/compile_fail/thread_index_runtime_flat_accessors.rs:21:23
+   |
+21 |     let _within = idx.in_bounds(slice.len());
+   |                       ^^^^^^^^^ method cannot be called on `ThreadIndex<'_, Runtime2DIndex>` due to unsatisfied trait bounds
+   |
+  ::: src/thread.rs
+   |
+   | pub enum Runtime2DIndex {}
+   | ----------------------- doesn't satisfy `Runtime2DIndex: FlatIndexSpace`
+   |
+   = note: the following trait bounds were not satisfied:
+           `Runtime2DIndex: FlatIndexSpace`

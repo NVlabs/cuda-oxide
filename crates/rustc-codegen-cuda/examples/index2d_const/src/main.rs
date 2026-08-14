@@ -44,11 +44,7 @@ fn main() {
     let input_dev = DeviceBuffer::from_host(&stream, &input_host).unwrap();
     let mut output_dev = DeviceBuffer::<f32>::zeroed(&stream, WIDTH * HEIGHT).unwrap();
 
-    let module = ctx
-        .load_module_from_file("index2d_const.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
     unsafe {
         module.copy_2d_const_width(

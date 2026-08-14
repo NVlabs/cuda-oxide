@@ -37,6 +37,7 @@
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
+use crate::translator::payload_store;
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_mir::ops::{
@@ -85,6 +86,24 @@ pub fn translate_statement(
                         return translate_array_agg_into_alloca(
                             ctx, body, place, operands, value_map, block_ptr, prev_op, loc,
                         );
+                    }
+                    // A fully-constant array: copy it in from an immutable
+                    // device global rather than storing it element by element in
+                    // every thread. Falls through when the constant is not a
+                    // shape that can be reduced to a byte image.
+                    mir::Rvalue::Use(mir::Operand::Constant(constant)) => {
+                        if let Some(last) = rvalue::translate_array_constant_into_alloca(
+                            ctx,
+                            body,
+                            place,
+                            constant,
+                            value_map,
+                            block_ptr,
+                            prev_op,
+                            loc.clone(),
+                        )? {
+                            return Ok(Some(last));
+                        }
                     }
                     mir::Rvalue::Repeat(operand, count) => {
                         let n = count.eval_target_usize().map_err(|e| {
@@ -237,6 +256,7 @@ pub fn translate_statement(
                                 ))
                             );
                         };
+                        reject_raw_field_index_on_enum_pointee(ctx, slot, &place.projection, &loc)?;
 
                         let field_type = types::translate_type(ctx, field_ty)?;
                         let slot_mutable = pointer_is_mutable(ctx, slot);
@@ -487,6 +507,12 @@ pub fn translate_statement(
                             loc.clone(),
                         )?;
                         current_prev = prev_op_after_ptr.or(current_prev);
+                        reject_raw_field_index_on_enum_pointee(
+                            ctx,
+                            ptr_val,
+                            &place.projection,
+                            &loc,
+                        )?;
 
                         let ptr_mutable = pointer_is_mutable(ctx, ptr_val);
                         let ptr_addr_space = pointer_address_space(ctx, ptr_val);
@@ -570,6 +596,7 @@ pub fn translate_statement(
                                 ))
                             );
                         };
+                        reject_raw_field_index_on_enum_pointee(ctx, slot, &place.projection, &loc)?;
                         let slot_mutable = pointer_is_mutable(ctx, slot);
                         let slot_addr_space = pointer_address_space(ctx, slot);
 
@@ -603,6 +630,12 @@ pub fn translate_statement(
                         }
                         current_prev = Some(outer_addr_op);
                         let outer_ptr = outer_addr_op.deref(ctx).get_result(0);
+                        reject_raw_field_index_on_enum_pointee(
+                            ctx,
+                            outer_ptr,
+                            &place.projection,
+                            &loc,
+                        )?;
 
                         let inner_field_type = types::translate_type(ctx, inner_field_ty)?;
                         let inner_ptr_ty = dialect_mir::types::MirPtrType::get(
@@ -670,17 +703,25 @@ pub fn translate_statement(
                         )
                     }
                     (
-                        mir::ProjectionElem::Index(_outer_index_local),
-                        mir::ProjectionElem::Index(_inner_index_local),
+                        mir::ProjectionElem::Index(_) | mir::ProjectionElem::ConstantIndex { .. },
+                        mir::ProjectionElem::Index(_) | mir::ProjectionElem::ConstantIndex { .. },
                     ) => {
-                        // `_local[i][j] = value` for nested arrays. The shared
-                        // walk-and-store path already handles chained runtime
-                        // indexes, so delegate to it instead of re-deriving the
-                        // address here. That keeps this 2-level arm from drifting
-                        // from the (Deref, Index) arm above and the N-projection
-                        // fallback below, which use the same helper. The store
-                        // target of an assignment is always a mutable place, so
-                        // the helper's mutable-address request is correct here.
+                        // Nested array element assignment with any mix of
+                        // runtime and constant indexes: `_local[i][j]`,
+                        // `_local[CONST][j]`, `_local[i][CONST]`, or
+                        // `_local[CONST][CONST]` (the last two arise when GVN
+                        // or user code fixes one level). The shared
+                        // walk-and-store path already handles chained indexes
+                        // of either kind, so delegate to it instead of
+                        // re-deriving the address here. That keeps this
+                        // 2-level arm from drifting from the (Deref, Index)
+                        // arm above and the N-projection fallback below,
+                        // which use the same helper. The store target of an
+                        // assignment is always a mutable place, so the
+                        // helper's mutable-address request is correct here.
+                        // `ConstantIndex { from_end: true, .. }` is accepted
+                        // by the walker only when it follows a fat-slice deref,
+                        // which supplies the runtime length metadata.
                         store_through_place_address(
                             ctx,
                             body,
@@ -725,6 +766,26 @@ pub fn translate_statement(
                         // arms above. The store target of an assignment is always
                         // a mutable place, so the helper's mutable-address request
                         // is correct here.
+                        store_through_place_address(
+                            ctx,
+                            body,
+                            value_map,
+                            place,
+                            result_value,
+                            rvalue_op_opt,
+                            last_inserted,
+                            prev_op,
+                            block_ptr,
+                            loc,
+                        )
+                    }
+                    (mir::ProjectionElem::Downcast(_), mir::ProjectionElem::Field(_, _)) => {
+                        // `(_local as Variant).field = value`, which is how a
+                        // write through `&mut` to an enum payload arrives once
+                        // the borrow is inlined away. The payload shares the
+                        // enum's storage, so the walk-and-store path resolves
+                        // the flattened payload position and the store lands in
+                        // the enum itself rather than in a copy.
                         store_through_place_address(
                             ctx,
                             body,
@@ -1030,6 +1091,26 @@ fn store_through_place_address(
         current_prev = Some(prev);
     }
 
+    // A payload whose bytes use canonical storage has no address to write
+    // through: bool payloads occupy a full byte and shared-memory pointers
+    // are stored generic, while a store through an escaped address carries
+    // the semantic type. Rebuild the enum around the new payload instead,
+    // which coerces on the way in exactly as a whole-enum assignment does.
+    if let Some(payload_store) = payload_store::classify(ctx, body, place)?
+        && let Some(result) = payload_store::rebuild_and_store(
+            ctx,
+            body,
+            value_map,
+            &payload_store,
+            result_value,
+            block_ptr,
+            current_prev,
+            loc.clone(),
+        )?
+    {
+        return Ok(result);
+    }
+
     // The destination is written through, so request a mutable address.
     let walked = rvalue::translate_place_address(
         ctx,
@@ -1078,7 +1159,7 @@ fn store_through_place_address(
 /// error when the pointer's pointee isn't a [`MirArrayType`], which signals
 /// a structural mismatch (most likely the wrong MIR projection reaching
 /// this path).
-fn slot_array_element_ty(
+pub(crate) fn slot_array_element_ty(
     ctx: &pliron::context::Context,
     arr_ptr: Value,
     loc: &Location,
@@ -1113,7 +1194,7 @@ fn slot_array_element_ty(
 /// The caller owns positioning (`prev_op`): we chain the address op after
 /// it, then chain the store after the address op.
 #[allow(clippy::too_many_arguments)]
-fn emit_array_element_store(
+pub(crate) fn emit_array_element_store(
     ctx: &mut pliron::context::Context,
     array_ptr: Value,
     index: Value,
@@ -1163,7 +1244,7 @@ fn emit_array_element_store(
 /// other sources (loads, field-addr ops, ...), which may be immutable.
 /// Derived addresses inherit the base pointer's mutability to keep pliron
 /// type checking consistent.
-fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
+pub(crate) fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);
     ty_ref
@@ -1173,13 +1254,51 @@ fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
 
 /// Return the address space of a pointer value. Defaults to 0 (the generic
 /// address space) if the value is not a [`MirPtrType`].
-fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
+pub(crate) fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);
     ty_ref
         .downcast_ref::<dialect_mir::types::MirPtrType>()
         .map(|p| p.address_space)
         .unwrap_or(0)
+}
+
+/// Fail closed if a raw per-variant `Field` index is about to be applied to
+/// an enum pointee by one of the fast assignment paths.
+///
+/// Valid MIR never applies `Field` to an enum place without a `Downcast`
+/// naming the variant first, and every Downcast-bearing assignment routes
+/// through the walk-and-store path, so the 1- and 2-level fast paths can
+/// only meet an enum pointee through an importer bug or invalid MIR.
+/// `MirFieldAddrOp` reads an enum-pointee index as a FLATTENED
+/// (variant, field) position, so letting a raw per-variant index through
+/// could silently address another variant's payload. This mirrors the
+/// enum-pointee guard in the address walker's `Field` arm: an equally loud
+/// failure at the only layer that can still tell the two index spaces apart.
+pub(crate) fn reject_raw_field_index_on_enum_pointee(
+    ctx: &Context,
+    base_ptr: Value,
+    projection: &[mir::ProjectionElem],
+    loc: &Location,
+) -> TranslationResult<()> {
+    let pointee = base_ptr
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirPtrType>()
+        .map(|ptr| ptr.pointee);
+    let pointee_is_enum = pointee.is_some_and(|pointee| pointee.deref(ctx).is::<MirEnumType>());
+    if pointee_is_enum {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "Field assignment on an enum place without a preceding Downcast \
+                 (projection {:?}); a raw per-variant field index would be misread \
+                 as a flattened (variant, field) position",
+                projection
+            ))
+        );
+    }
+    Ok(())
 }
 
 /// Assign an array aggregate element-by-element into addressable storage.
@@ -1304,4 +1423,55 @@ fn translate_array_agg_into_alloca(
     }
 
     Ok(current_prev)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dialect_mir::types::{EnumVariant, MirEnumType, MirPtrType, MirStructType};
+    use pliron::r#type::TypeHandle;
+
+    /// The fast-path guard must refuse a raw `Field` index over an enum
+    /// pointee (MirFieldAddrOp would misread it as a flattened
+    /// (variant, field) position) and accept every non-enum pointee shape
+    /// the fast paths legitimately handle.
+    #[test]
+    fn raw_field_index_guard_rejects_enum_pointees_only() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let struct_ty: TypeHandle =
+            MirStructType::get(&mut ctx, "Plain".into(), vec!["a".into()], vec![u32_ty]).into();
+        let enum_ty: TypeHandle = MirEnumType::get(
+            &mut ctx,
+            "Guarded".into(),
+            u32_ty,
+            vec![0, 1],
+            vec![
+                EnumVariant::new("A".into(), vec![u32_ty]),
+                EnumVariant::unit("B".into()),
+            ],
+        )
+        .into();
+        let struct_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, struct_ty, true).into();
+        let enum_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, enum_ty, true).into();
+
+        let block = BasicBlock::new(&mut ctx, None, vec![struct_ptr_ty, enum_ptr_ty]);
+        let struct_ptr = block.deref(&ctx).get_argument(0);
+        let enum_ptr = block.deref(&ctx).get_argument(1);
+
+        assert!(
+            reject_raw_field_index_on_enum_pointee(&ctx, struct_ptr, &[], &Location::Unknown)
+                .is_ok(),
+            "a struct pointee is the fast paths' ordinary case and must pass"
+        );
+
+        let err = reject_raw_field_index_on_enum_pointee(&ctx, enum_ptr, &[], &Location::Unknown)
+            .expect_err("an enum pointee must be refused loudly");
+        assert!(
+            format!("{err:?}").contains("without a preceding Downcast"),
+            "unexpected error: {err:?}"
+        );
+    }
 }

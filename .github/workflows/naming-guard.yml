@@ -23,39 +23,11 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v4
 
-      # Reject any Rust source line (outside the canonical
-      # `reserved-oxide-symbols` crate) that hardcodes a `cuda_oxide_*`
-      # prefix as a string literal. The single source of truth for these
-      # prefixes is `crates/reserved-oxide-symbols/`; everything else must
-      # route through that crate's constants, builders, and predicates.
-      #
-      # The pipeline is two-step:
-      #   1. ripgrep finds candidate lines containing `"cuda_oxide_*_`.
-      #   2. grep -v drops lines whose content (after `file:lineno:`)
-      #      starts with optional whitespace then `//` — i.e. pure
-      #      comment lines, which are free to mention the legacy
-      #      prefix forms in prose.
-      #
-      # We avoid PCRE2 negative-lookahead because some ripgrep builds
-      # tickle catastrophic backtracking on `.*"…"` patterns over the
-      # full repo.
+      # The search, its canary self-test, and the reasoning behind the exact
+      # pattern all live in the script, so they can be run and mutation-tested
+      # locally instead of only inside this job. That reasoning is worth
+      # reading before changing the pattern: it records why bare
+      # `cuda_oxide_` is deliberately not matched, and why a search that
+      # cannot run has to fail rather than report an empty result.
       - name: Search for hardcoded reserved-prefix literals
-        run: |
-          set -euo pipefail
-          matches="$(rg --type rust -n \
-              '"cuda_oxide_(kernel|device|instantiate)_' \
-              crates \
-              -g '!crates/reserved-oxide-symbols/**' \
-              -g '!**/target/**' \
-              || true)"
-          violations="$(echo "$matches" | grep -vE ':[0-9]+:[[:space:]]*//' || true)"
-          if [ -n "$violations" ]; then
-              echo "::error::Hardcoded cuda_oxide_* prefix literals found outside reserved-oxide-symbols:"
-              echo "$violations"
-              echo
-              echo "Use the constants, builders, and predicates from"
-              echo "crates/reserved-oxide-symbols/ instead. See its README"
-              echo "for the layered API."
-              exit 1
-          fi
-          echo "OK: no hardcoded reserved-prefix literals outside reserved-oxide-symbols."
+        run: bash scripts/check-reserved-prefixes.sh

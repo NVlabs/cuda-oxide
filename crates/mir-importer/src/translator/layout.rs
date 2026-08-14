@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 //! Shared readers over rustc's aggregate layout metadata.
 //!
 //! Both the type importer (`translator/types.rs`, which records tag and

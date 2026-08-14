@@ -16,9 +16,10 @@ use llvm_export::{
         AddrSpaceCastOp, AddressOfOp, AllocaOp, BitcastOp, BrOp, CallOp, CondBrOp, ConstantOp,
         DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourcePosition, DebugSourceScope,
         DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueOp, FuncOp, GepIndex,
-        GetElementPtrOp, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
+        GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp,
+        ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
     },
-    types::{ArrayType, FuncType, HalfType, PointerType, VoidType},
+    types::{ArrayType, FuncType, HalfType, PointerType, StructType, VoidType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -305,6 +306,46 @@ fn legacy_gep_rejects_a_result_address_space_different_from_its_base() {
 }
 
 #[test]
+fn gep_inbounds_marker_controls_exported_pointer_semantics() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "gep_semantics".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let pointer = PointerType::get(&ctx, 0);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.into(), vec![pointer.into()], false);
+    let func = FuncOp::new(&mut ctx, "offsets".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let base = entry.deref(&ctx).get_argument(0);
+
+    let ordinary = GetElementPtrOp::new(&mut ctx, base, vec![GepIndex::Constant(1)], i32_ty.into());
+    ordinary.get_operation().insert_at_back(entry, &ctx);
+
+    let wrapping = GetElementPtrOp::new(&mut ctx, base, vec![GepIndex::Constant(2)], i32_ty.into());
+    llvm_export::ops::set_gep_inbounds(&mut ctx, wrapping.get_operation(), false);
+    wrapping.get_operation().insert_at_back(entry, &ctx);
+
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("GEP export succeeds");
+    let gep_lines: Vec<_> = ir
+        .lines()
+        .filter(|line| line.contains("getelementptr"))
+        .collect();
+    assert_eq!(gep_lines.len(), 2, "{ir}");
+    assert!(gep_lines[0].contains("getelementptr inbounds"), "{ir}");
+    assert!(
+        gep_lines[1].contains("getelementptr i32")
+            && !gep_lines[1].contains("getelementptr inbounds"),
+        "{ir}"
+    );
+}
+
+#[test]
 fn legacy_pointer_select_keeps_one_canonical_type() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "legacy_pointer_select".try_into().unwrap());
@@ -483,6 +524,74 @@ fn exporter_deduplicates_identical_values_on_duplicate_conditional_edges() {
         .find(|line| line.contains(" = phi i32 "))
         .expect("destination block must contain a PHI");
     assert_eq!(phi.matches("%entry").count(), 1, "{phi}");
+}
+
+#[test]
+fn phi_can_reference_undef_from_a_later_block() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "later_undef_phi".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let func_ty = FuncType::get(
+        &ctx,
+        i32_ty.into(),
+        vec![i1_ty.into(), i32_ty.into()],
+        false,
+    );
+    let func = FuncOp::new(&mut ctx, "choose_undef".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let condition = entry.deref(&ctx).get_argument(0);
+    let fallback = entry.deref(&ctx).get_argument(1);
+    let region = func.get_operation().deref(&ctx).get_region(0);
+
+    // The join precedes both predecessors in print order, so its PHI depends
+    // on the exporter's whole-function value-name pre-pass.
+    let join = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
+    join.insert_at_back(region, &ctx);
+    let undef_block = BasicBlock::new(&mut ctx, None, vec![]);
+    undef_block.insert_at_back(region, &ctx);
+    let value_block = BasicBlock::new(&mut ctx, None, vec![]);
+    value_block.insert_at_back(region, &ctx);
+
+    CondBrOp::new(
+        &mut ctx,
+        condition,
+        undef_block,
+        vec![],
+        value_block,
+        vec![],
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    let undef = UndefOp::new(&mut ctx, i32_ty.into());
+    let undef_value = undef.get_operation().deref(&ctx).get_result(0);
+    undef.get_operation().insert_at_back(undef_block, &ctx);
+    BrOp::new(&mut ctx, join, vec![undef_value])
+        .get_operation()
+        .insert_at_back(undef_block, &ctx);
+    BrOp::new(&mut ctx, join, vec![fallback])
+        .get_operation()
+        .insert_at_back(value_block, &ctx);
+
+    let result = join.deref(&ctx).get_argument(0);
+    ReturnOp::new(&mut ctx, Some(result))
+        .get_operation()
+        .insert_at_back(join, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    )
+    .expect("later-block undef must be available while exporting an earlier PHI");
+    assert!(
+        ir.lines()
+            .any(|line| line.contains(" = phi i32 ") && line.contains("[ undef,")),
+        "{ir}"
+    );
 }
 
 #[test]
@@ -1235,6 +1344,55 @@ fn legacy_kernel_metadata_uses_typed_function_references() {
 }
 
 #[test]
+fn llvm_used_roots_only_explicitly_retained_globals() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "retained_globals".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+
+    let retained = GlobalOp::new(&mut ctx, "IKET_META".try_into().unwrap(), i32_ty.into());
+    retained.set_address_space(&mut ctx, 1);
+    retained.mark_retained(&mut ctx);
+    retained.get_operation().insert_at_back(module_block, &ctx);
+
+    let ordinary = GlobalOp::new(&mut ctx, "ORDINARY".try_into().unwrap(), i32_ty.into());
+    ordinary.set_address_space(&mut ctx, 1);
+    ordinary.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string_with_config(&ctx, &module, &PtxExportConfig)
+        .expect("retained global export succeeds");
+    assert!(
+        ir.contains(
+            "@llvm.used = appending global [1 x ptr] [ptr addrspacecast (ptr addrspace(1) @IKET_META to ptr)], section \"llvm.metadata\""
+        ),
+        "{ir}"
+    );
+    assert!(!ir.contains("@ORDINARY to ptr"), "{ir}");
+}
+
+#[test]
+fn legacy_llvm_used_roots_retained_address_space_global() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "legacy_retained_global".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let retained = GlobalOp::new(&mut ctx, "IKET_META".try_into().unwrap(), i32_ty.into());
+    retained.set_address_space(&mut ctx, 1);
+    retained.mark_retained(&mut ctx);
+    retained.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7);
+    let ir = export_module_to_string_with_config(&ctx, &module, &config)
+        .expect("legacy retained global export succeeds");
+    assert!(
+        ir.contains(
+            "@llvm.used = appending global [1 x i8*] [i8* addrspacecast (i32 addrspace(1)* @IKET_META to i8*)], section \"llvm.metadata\""
+        ),
+        "{ir}"
+    );
+}
+
+#[test]
 fn ptx_export_records_kernel_roots_for_internalization() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "ptx_roots".try_into().unwrap());
@@ -1278,11 +1436,13 @@ fn ptx_export_records_standalone_device_function_roots_for_internalization() {
     let module = ModuleOp::new(&mut ctx, "ptx_device_root".try_into().unwrap());
     let module_block = module_top_block(&mut ctx, &module);
     let func_ty = FuncType::get(&ctx, VoidType::get(&ctx).into(), vec![], false);
+    let prefixed_name = format!(
+        "{}standalone_export",
+        reserved_oxide_symbols::LEGACY_DEVICE_PREFIX
+    );
     let func = FuncOp::new(
         &mut ctx,
-        "cuda_oxide_device_246e25db_standalone_export"
-            .try_into()
-            .unwrap(),
+        prefixed_name.as_str().try_into().unwrap(),
         func_ty,
     );
     let entry = func.get_or_create_entry_block(&mut ctx);
@@ -1476,6 +1636,76 @@ fn export_addressof_uses_symbol_when_definition_block_prints_later() {
     assert_no_undefined_temporaries(&legacy);
 }
 
+/// Export a module holding one shared global, optionally labelled with the
+/// Rust path of the `static` it came from.
+fn export_shared_global_with_source_name(source_name: Option<&str>) -> String {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let array_ty = ArrayType::get(&ctx, i32_ty.to_handle(), 64);
+    let global = GlobalOp::new(
+        &mut ctx,
+        "__shared_mem_7".try_into().unwrap(),
+        array_ty.to_handle(),
+    );
+    global.set_address_space(&mut ctx, 3);
+    if let Some(source_name) = source_name {
+        global.set_shared_source_name(&mut ctx, source_name);
+    }
+    global.get_operation().insert_at_back(module_block, &ctx);
+
+    export_module_to_string(&ctx, &module).expect("export succeeds")
+}
+
+#[test]
+fn shared_global_source_name_is_exported_as_a_comment_above_the_definition() {
+    let ir = export_shared_global_with_source_name(Some("my_kernel::TILE"));
+
+    let definition_index = ir
+        .find("@__shared_mem_7 = addrspace(3) global")
+        .expect("module must declare the shared global");
+    let comment_index = ir
+        .find("; shared source: my_kernel::TILE")
+        .unwrap_or_else(|| panic!("shared global must name its Rust source:\n{ir}"));
+    assert!(
+        comment_index < definition_index,
+        "the source comment must precede the definition it describes:\n{ir}"
+    );
+}
+
+#[test]
+fn shared_global_without_a_source_name_exports_no_comment() {
+    let ir = export_shared_global_with_source_name(None);
+
+    assert!(
+        ir.contains("@__shared_mem_7 = addrspace(3) global"),
+        "module must declare the shared global:\n{ir}"
+    );
+    assert!(
+        !ir.contains("; shared source:"),
+        "an unlabelled global must not gain a comment:\n{ir}"
+    );
+}
+
+#[test]
+fn shared_global_source_name_cannot_escape_its_comment_line() {
+    // A newline in the label would end the comment and leave the remainder to
+    // be parsed as IR. Nothing in the current pipeline produces such a name,
+    // so this pins the exporter's own guarantee rather than a live bug.
+    let ir = export_shared_global_with_source_name(Some("EVIL\n@injected = addrspace(3) global"));
+
+    assert!(
+        ir.lines().all(|line| !line.starts_with("@injected")),
+        "a control character in the label must not open a new IR line:\n{ir}"
+    );
+    assert!(
+        ir.contains("; shared source: EVIL @injected = addrspace(3) global"),
+        "the label must survive on one line with controls flattened:\n{ir}"
+    );
+}
+
 #[test]
 fn nvvm_export_rejects_invalid_global_address_spaces() {
     let mut ctx = Context::new();
@@ -1553,6 +1783,240 @@ fn initialized_globals_export_exact_bytes() {
             "repr(C) layout bytes changed:\n{ir}"
         );
     }
+}
+
+#[test]
+fn immutable_globals_export_the_constant_keyword() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "constant_keyword".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let table_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+
+    // The compiler's own promoted table: marked never-written, so it must
+    // export as `constant`. That keyword is the whole point of the marker:
+    // it is what lets `opt` treat reads as invariant (deleting a copy into a
+    // stack slot) and what makes `llc` select `ld.global.nc`.
+    let promoted = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "promoted_table".try_into().unwrap(),
+        table_ty.into(),
+        4,
+    );
+    promoted.set_address_space(&mut ctx, 1);
+    promoted.set_initializer_hex(&mut ctx, "01020304");
+    promoted.mark_immutable(&mut ctx);
+    promoted.get_operation().insert_at_back(module_block, &ctx);
+
+    // An identically shaped global without the marker: the host may still
+    // write such storage by symbol, so it must keep `global`. Immutability is
+    // opt-in per global, never inferred from the shape of the initializer.
+    let plain = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "plain_static".try_into().unwrap(),
+        table_ty.into(),
+        4,
+    );
+    plain.set_address_space(&mut ctx, 1);
+    plain.set_initializer_hex(&mut ctx, "01020304");
+    plain.get_operation().insert_at_back(module_block, &ctx);
+
+    for config in [
+        NvvmExportConfig::new(NvvmIrDialect::Modern),
+        NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    ] {
+        let ir = export_module_to_string_with_config(&ctx, &module, &config)
+            .expect("immutable global export succeeds");
+        assert!(
+            ir.contains(
+                r#"@promoted_table = addrspace(1) constant [4 x i8] c"\01\02\03\04", align 4"#
+            ),
+            "promoted global lost the constant keyword:\n{ir}"
+        );
+        assert!(
+            ir.contains(r#"@plain_static = addrspace(1) global [4 x i8] c"\01\02\03\04", align 4"#),
+            "unmarked global must not become constant:\n{ir}"
+        );
+    }
+}
+
+#[test]
+fn initialized_global_exports_static_pointer_relocation() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "static_relocation".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+
+    // Insert the reference first. Module symbol indexing must make relocation
+    // resolution independent of textual global order.
+    let reference_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into()]);
+    let reference = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "reference".try_into().unwrap(),
+        reference_ty.into(),
+        8,
+    );
+    reference.set_address_space(&mut ctx, 1);
+    reference.set_source_global_key(&mut ctx, "REFERENCE");
+    reference.set_initializer_hex(&mut ctx, "0000000000000000");
+    let encoded = encode_global_initializer_relocations(&[GlobalInitializerRelocation {
+        source_offset: 0,
+        width_bytes: 8,
+        target_address_space: 1,
+        target_addend: 0,
+        target_key: "TARGET".to_string(),
+    }]);
+    reference.set_initializer_relocations(&mut ctx, &encoded);
+    reference.get_operation().insert_at_back(module_block, &ctx);
+
+    let target_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+    let target =
+        GlobalOp::new_with_alignment(&mut ctx, "target".try_into().unwrap(), target_ty.into(), 4);
+    target.set_address_space(&mut ctx, 1);
+    target.set_source_global_key(&mut ctx, "TARGET");
+    target.set_initializer_hex(&mut ctx, "78563412");
+    target.get_operation().insert_at_back(module_block, &ctx);
+
+    let modern = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect("modern relocated initializer export succeeds");
+    assert!(
+        modern.contains(
+            "@reference = addrspace(1) global { i64 } { i64 ptrtoint (ptr addrspacecast (ptr addrspace(1) @target to ptr) to i64) }, align 8"
+        ),
+        "{modern}"
+    );
+
+    let legacy = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    )
+    .expect("legacy relocated initializer export succeeds");
+    assert!(
+        legacy.contains(
+            "@reference = addrspace(1) global { i64 } { i64 ptrtoint (i8* addrspacecast (i8 addrspace(1)* bitcast ([4 x i8] addrspace(1)* @target to i8 addrspace(1)*) to i8*) to i64) }, align 8"
+        ),
+        "{legacy}"
+    );
+}
+
+#[test]
+fn initialized_global_exports_multiple_relocations_and_addends() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "multiple_static_relocations".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+
+    let target_a_ty = ArrayType::get(&ctx, i8_ty.into(), 16);
+    let target_a = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "target_a".try_into().unwrap(),
+        target_a_ty.into(),
+        8,
+    );
+    target_a.set_address_space(&mut ctx, 1);
+    target_a.set_source_global_key(&mut ctx, "TARGET_A");
+    target_a.set_initializer_hex(&mut ctx, "000102030405060708090a0b0c0d0e0f");
+    target_a.get_operation().insert_at_back(module_block, &ctx);
+
+    let target_b_ty = ArrayType::get(&ctx, i8_ty.into(), 8);
+    let target_b = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "target_b".try_into().unwrap(),
+        target_b_ty.into(),
+        8,
+    );
+    target_b.set_address_space(&mut ctx, 4);
+    target_b.set_source_global_key(&mut ctx, "TARGET_B");
+    target_b.set_initializer_hex(&mut ctx, "1011121314151617");
+    target_b.get_operation().insert_at_back(module_block, &ctx);
+
+    let table_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into(), i64_ty.into()]);
+    let table = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "reference_table".try_into().unwrap(),
+        table_ty.into(),
+        8,
+    );
+    table.set_address_space(&mut ctx, 1);
+    table.set_source_global_key(&mut ctx, "REFERENCE_TABLE");
+    table.set_initializer_hex(&mut ctx, "00000000000000000000000000000000");
+    let encoded = encode_global_initializer_relocations(&[
+        GlobalInitializerRelocation {
+            source_offset: 0,
+            width_bytes: 8,
+            target_address_space: 1,
+            target_addend: 4,
+            target_key: "TARGET_A".to_string(),
+        },
+        GlobalInitializerRelocation {
+            source_offset: 8,
+            width_bytes: 8,
+            target_address_space: 4,
+            target_addend: 0,
+            target_key: "TARGET_B".to_string(),
+        },
+    ]);
+    table.set_initializer_relocations(&mut ctx, &encoded);
+    table.get_operation().insert_at_back(module_block, &ctx);
+
+    for dialect in [NvvmIrDialect::Modern, NvvmIrDialect::LegacyLlvm7] {
+        let ir =
+            export_module_to_string_with_config(&ctx, &module, &NvvmExportConfig::new(dialect))
+                .expect("relocated initializer export succeeds");
+        assert!(
+            ir.contains("@reference_table = addrspace(1) global { i64, i64 }"),
+            "{ir}"
+        );
+        assert!(ir.contains("getelementptr (i8"), "{ir}");
+        assert!(ir.contains("@target_a"), "{ir}");
+        assert!(ir.contains("@target_b"), "{ir}");
+        assert!(!ir.contains("inttoptr"), "{ir}");
+    }
+}
+
+#[test]
+fn initialized_global_relocation_rejects_unknown_target_key() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "unknown_relocation_target".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let reference_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into()]);
+    let reference = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "reference".try_into().unwrap(),
+        reference_ty.into(),
+        8,
+    );
+    reference.set_address_space(&mut ctx, 1);
+    reference.set_source_global_key(&mut ctx, "REFERENCE");
+    reference.set_initializer_hex(&mut ctx, "0000000000000000");
+    let encoded = encode_global_initializer_relocations(&[GlobalInitializerRelocation {
+        source_offset: 0,
+        width_bytes: 8,
+        target_address_space: 1,
+        target_addend: 0,
+        target_key: "MISSING".to_string(),
+    }]);
+    reference.set_initializer_relocations(&mut ctx, &encoded);
+    reference.get_operation().insert_at_back(module_block, &ctx);
+
+    let error = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect_err("unknown relocation target must fail");
+    assert!(
+        error.contains("unknown rustc global key `MISSING`"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -3133,5 +3597,102 @@ fn small_type_extern_module_parses_with_llvm_as() {
     assert!(
         output.status.success(),
         "{llvm_as} rejected the emitted module:\n{stderr}\n--- module ---\n{ir}"
+    );
+}
+
+/// Builds a `void` function taking pointer parameters in the given address
+/// spaces, with an empty body, optionally carrying the `gpu_kernel` marker
+/// the exporter uses to distinguish an entry from a device function.
+fn pointer_param_function(
+    ctx: &mut Context,
+    module_block: Ptr<BasicBlock>,
+    name: &str,
+    address_spaces: &[u32],
+    is_kernel: bool,
+) {
+    let params: Vec<_> = address_spaces
+        .iter()
+        .map(|space| PointerType::get(ctx, *space).into())
+        .collect();
+    let void_ty = VoidType::get(ctx);
+    let func_ty = FuncType::get(ctx, void_ty.into(), params, false);
+    let func = FuncOp::new(ctx, name.try_into().unwrap(), func_ty);
+    if is_kernel {
+        let kernel_key: Identifier = "gpu_kernel".try_into().unwrap();
+        func.get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(kernel_key, StringAttr::new("true".to_string()));
+    }
+    let entry = func.get_or_create_entry_block(ctx);
+    ReturnOp::new(ctx, None)
+        .get_operation()
+        .insert_at_back(entry, ctx);
+    func.get_operation().insert_at_back(module_block, ctx);
+}
+
+/// A kernel receives its parameters in `.param` space from the host, which
+/// holds no shared-memory address to pass. The exporter must refuse the
+/// signature instead of emitting `.ptr .shared`, which ptxas accepts but the
+/// driver rejects at module load, taking every kernel in the module down.
+#[test]
+fn kernel_rejects_a_shared_memory_pointer_parameter() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "kernel_shared_param".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    pointer_param_function(&mut ctx, module_block, "shared_param", &[0, 3], true);
+
+    let error = export_module_to_string(&ctx, &module)
+        .expect_err("export must refuse a kernel parameter in shared memory");
+    assert!(
+        error.contains(
+            "kernel `@shared_param` parameter 1 is a pointer into shared memory (address space 3)"
+        ),
+        "{error}"
+    );
+}
+
+/// Local memory is per-thread, so the host has no address in it to pass
+/// either; the exporter refuses it on the same grounds as shared.
+#[test]
+fn kernel_rejects_a_local_memory_pointer_parameter() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "kernel_local_param".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    pointer_param_function(&mut ctx, module_block, "local_param", &[5], true);
+
+    let error = export_module_to_string(&ctx, &module)
+        .expect_err("export must refuse a kernel parameter in local memory");
+    assert!(
+        error.contains(
+            "kernel `@local_param` parameter 0 is a pointer into local memory (address space 5)"
+        ),
+        "{error}"
+    );
+}
+
+/// The refusal is scoped to what the host cannot supply. Generic, global,
+/// and constant pointer parameters are host-addressable and stay accepted on
+/// kernels, and a device (non-kernel) function may carry any state space on
+/// its parameters, shared included.
+#[test]
+fn kernel_keeps_host_addressable_pointer_parameters_and_device_functions_keep_shared() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "kernel_allowed_params".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    pointer_param_function(&mut ctx, module_block, "allowed_param", &[0, 1, 4], true);
+    pointer_param_function(&mut ctx, module_block, "device_shared", &[3], false);
+
+    let ir = export_module_to_string(&ctx, &module)
+        .expect("generic/global/constant kernel parameters and device shared must export");
+    assert!(
+        ir.contains(
+            "define ptx_kernel void @allowed_param(ptr %v0, ptr addrspace(1) %v1, ptr addrspace(4) %v2)"
+        ),
+        "{ir}"
+    );
+    assert!(
+        ir.contains("define void @device_shared(ptr addrspace(3) %v0)"),
+        "{ir}"
     );
 }

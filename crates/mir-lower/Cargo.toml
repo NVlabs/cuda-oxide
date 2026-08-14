@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "dialect-mir to LLVM dialect lowering pass"
+readme = "README.md"
 
 [dependencies]
 rustc-hash = { workspace = true }
@@ -15,6 +16,7 @@ pliron-derive = { workspace = true }
 thiserror = { workspace = true }
 dialect-mir = { workspace = true }
 dialect-nvvm = { workspace = true }
+mir-transforms = { workspace = true }
 anyhow = { workspace = true }
 reserved-oxide-symbols = { workspace = true }
 

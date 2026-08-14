@@ -1,0 +1,16 @@
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+  --> tests/compile_fail/runtime_tile_no_per_call_row_width.rs:31:19
+   |
+31 |     let _tile = c.tile_2d32_rt(coord, chosen);
+   |                   ^^^^^^^^^^^^        ------ unexpected argument #2 of type `Uniform<{integer}>`
+   |
+note: method defined here
+  --> src/view.rs
+   |
+   |     pub fn tile_2d32_rt<'kernel>(
+   |            ^^^^^^^^^^^^
+help: remove the extra argument
+   |
+31 -     let _tile = c.tile_2d32_rt(coord, chosen);
+31 +     let _tile = c.tile_2d32_rt(coord);
+   |

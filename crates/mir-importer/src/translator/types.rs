@@ -33,6 +33,7 @@
 //! | `SharedArray<T,N>`| Empty tuple (ZST marker)              |
 //! | `Barrier`         | `u64` (mbarrier state)                |
 //! | `TmaDescriptor`   | `[u64; 16]` (128-byte opaque blob)    |
+//! | `iket::RangeToken`| `!iket.range_token`                   |
 
 use crate::error::{TranslationErr, TranslationResult};
 use pliron::context::Context;
@@ -74,7 +75,9 @@ pub fn get_usize_type(
 /// rustc suffix-encodes closure substitutions as
 /// `[parent_args..., closure_kind, closure_sig, tupled_upvars]`, so the upvars
 /// tuple is the last generic arg, not a fixed index.
-fn closure_upvar_tys(substs: &rustc_public::ty::GenericArgs) -> Option<Vec<rustc_public::ty::Ty>> {
+pub(super) fn closure_upvar_tys(
+    substs: &rustc_public::ty::GenericArgs,
+) -> Option<Vec<rustc_public::ty::Ty>> {
     let rustc_public::ty::GenericArgKind::Type(upvar_tuple_ty) = substs.0.last()? else {
         return None;
     };
@@ -186,13 +189,6 @@ pub fn get_isize_type(
     pliron::builtin::types::IntegerType::get(ctx, 64, pliron::builtin::types::Signedness::Signed)
 }
 
-/// Returns the 32-bit floating point type.
-pub fn get_f32_type(
-    ctx: &mut Context,
-) -> pliron::r#type::TypedHandle<pliron::builtin::types::FP32Type> {
-    pliron::builtin::types::FP32Type::get(ctx)
-}
-
 /// Checks if a `dialect-mir` type is zero-sized (ZST).
 ///
 /// ZSTs are types that occupy no memory at runtime but carry semantic meaning
@@ -241,6 +237,11 @@ pub fn is_rust_type_zst(rust_ty: &rustc_public::ty::Ty) -> bool {
         }
         // ADT - check if it has no fields (for structs)
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, _substs)) => {
+            if adt_def.trimmed_name() == "RangeToken"
+                && adt_def.krate().name.as_str() == "cuda_device"
+            {
+                return false;
+            }
             if matches!(adt_def.kind(), rustc_public::ty::AdtKind::Union) {
                 // A union can have declared fields and still own no bytes when
                 // every field is zero-sized. Source-level field count cannot
@@ -669,7 +670,7 @@ pub fn translate_type(
             if trimmed_name == "DisjointSlice" {
                 // Extract the element type from the generic parameter
                 // DisjointSlice<'a, T> has T as the second parameter (first is lifetime)
-                let generic_args = substs.0;
+                let generic_args = &substs.0;
 
                 // Find the first type argument (skip lifetimes)
                 let elem_ty = generic_args
@@ -685,11 +686,42 @@ pub fn translate_type(
                     })?;
 
                 let elem = translate_type(ctx, elem_ty)?;
-                Ok(MirDisjointSliceType::get(ctx, elem).into())
+
+                // Fields after `{ ptr, len }` carry whatever runtime layout the
+                // index space needs, read from rustc's own view of the struct
+                // rather than from the index space's name. A space fixed in its
+                // type has `()` there, which is zero-sized and contributes no
+                // field, so the slice keeps its two-word kernel ABI.
+                let mut space_tys = Vec::new();
+                if let Some(variant) = adt_def.variants().first() {
+                    for field in variant.fields() {
+                        if field.name != "space" {
+                            continue;
+                        }
+                        let field_ty = field.ty_with_args(&substs);
+                        let is_zst = field_ty
+                            .layout()
+                            .map(|layout| layout.shape().size.bytes() == 0)
+                            .map_err(|e| {
+                                input_error_noloc!(TranslationErr::unsupported(format!(
+                                    "Failed to query DisjointSlice index-space layout: {:?}",
+                                    e
+                                )))
+                            })?;
+                        if !is_zst {
+                            space_tys.push(translate_type(ctx, &field_ty)?);
+                        }
+                    }
+                }
+
+                Ok(MirDisjointSliceType::get_with_space(ctx, elem, space_tys).into())
             } else if trimmed_name == "ThreadIndex" {
                 // ThreadIndex is a newtype around usize - translate to usize
                 // The type safety is enforced at the Rust level, not the IR level
                 Ok(get_usize_type(ctx).into())
+            } else if trimmed_name == "RangeToken" && adt_def.krate().name.as_str() == "cuda_device"
+            {
+                Ok(dialect_iket::types::IketRangeTokenType::get(ctx).into())
             } else if trimmed_name == "SharedArray" {
                 // SharedArray<T, N> is a zero-sized marker type.
                 // The actual shared memory is allocated when we see the static declaration.

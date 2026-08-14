@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Rust MIR to Pliron IR translation and compilation pipeline"
+readme = "README.md"
 
 [dependencies]
 rustc-hash = { workspace = true }
@@ -13,6 +14,7 @@ pliron = { workspace = true }
 pliron-derive = { workspace = true }
 llvm-export = { workspace = true }
 dialect-mir = { workspace = true }
+dialect-iket = { workspace = true }
 dialect-nvvm = { workspace = true }
 mir-lower = { workspace = true }
 oxide-artifacts = { workspace = true }

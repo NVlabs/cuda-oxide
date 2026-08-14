@@ -24,7 +24,7 @@ use cuda_device::barrier::{
     Barrier, fence_proxy_async_shared_cta, mbarrier_arrive_expect_tx, mbarrier_init,
     mbarrier_inval, mbarrier_try_wait, mbarrier_try_wait_parity,
 };
-use cuda_device::shared::SharedArray;
+use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
     cvt_f32x2_bf16x2, stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_commit_shared_cluster,
@@ -135,8 +135,8 @@ mod kernels {
 
             // PHASE 4: Build SMEM descriptors and execute MMA
             if is_thread0 {
-                let smem_a_addr = &raw const SMEM_A as u64;
-                let smem_b_addr = &raw const SMEM_B as u64;
+                let smem_a_addr = cvta_generic_to_shared_offset(&raw const SMEM_A as *const u8);
+                let smem_b_addr = cvta_generic_to_shared_offset(&raw const SMEM_B as *const u8);
 
                 const SBO_BYTES: u32 = 128; // 64 elements × 2 bytes
                 const LBO_BYTES: u32 = 2048; // 16 tiles × 64 elements × 2 bytes
@@ -249,13 +249,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return verify_ptx_only();
     }
 
-    let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tcgen05_matmul.ptx");
-    println!("\nLoading PTX from: {}", ptx_path.display());
-    let ptx_file = ptx_path.to_str().ok_or("PTX path is not valid UTF-8")?;
-    let module = match ctx.load_module_from_file(ptx_file) {
+    let module = match kernels::load(&ctx) {
         Ok(m) => m,
         Err(e) => {
-            if e.0 == cuda_sys::cudaError_enum_CUDA_ERROR_INVALID_PTX {
+            // `load` wraps the driver's own status, so reach through its
+            // `Driver` variant for the code the arms below key on. Anything
+            // else (a missing or unsupported payload) is not "right PTX, wrong
+            // GPU" and falls through to the error return.
+            let driver_status = match &e {
+                cuda_host::EmbeddedModuleError::Driver(driver) => Some(driver.0),
+                _ => None,
+            };
+            if driver_status == Some(cuda_sys::cudaError_enum_CUDA_ERROR_INVALID_PTX) {
                 println!(
                     "\n⚠️  tcgen05 (5th gen tensor cores) requires sm_100 (datacenter Blackwell only)."
                 );
@@ -273,7 +278,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     };
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
     println!("✓ PTX loaded successfully\n");
 
     run_tiled_kernel_test(&stream, &module)?;

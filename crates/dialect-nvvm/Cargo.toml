@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "NVVM dialect for Pliron IR framework (NVIDIA GPU intrinsics)"
+readme = "README.md"
 
 [dependencies]
 dialect-mir = { workspace = true }

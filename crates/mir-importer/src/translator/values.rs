@@ -610,10 +610,10 @@ fn classify_call(func: &mir::Operand) -> WriteClass {
 
     // --- explicit narrow to generic -----------------------------------------
     //
-    // `SharedArray::as_ptr` / `as_mut_ptr` deliberately `cvta.shared` the
+    // Public SharedArray pointer conversions deliberately `cvta.shared` the
     // base pointer into the generic address space, so the callee sees
-    // `addrspace(0)`.
-    if path.contains("SharedArray") && (path.contains("as_ptr") || path.contains("as_mut_ptr")) {
+    // `addrspace(0)`. Keep recognition shared with intrinsic dispatch.
+    if super::shared_array_pointer_method(&path).is_some() {
         return WriteClass::Classified(address_space::GENERIC);
     }
 

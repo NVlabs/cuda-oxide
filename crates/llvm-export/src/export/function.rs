@@ -33,7 +33,7 @@ use pliron::{
 use crate::{
     attributes::FPHalfAttr,
     ops::{self, FuncOp, GlobalOpExt},
-    types::{FuncType, PointerType},
+    types::{ArrayType, FuncType, PointerType, StructType},
 };
 
 use super::{
@@ -44,6 +44,18 @@ use super::{
         ModuleExportState, PredecessorMap,
     },
 };
+
+/// Flatten a descriptive string so it cannot escape a single `;` comment line.
+///
+/// An LLVM comment runs to end of line, so an embedded newline would turn the
+/// remainder of the text into IR the parser has to accept. Control characters
+/// become spaces; nothing else is altered, which keeps ordinary Rust paths
+/// (`::`, generics, `<impl …>`) readable verbatim.
+fn sanitize_comment(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
 
 impl<'a> ModuleExportState<'a> {
     /// Export a global variable (typically shared memory for GPU kernels).
@@ -65,6 +77,23 @@ impl<'a> ModuleExportState<'a> {
             return Err(format!(
                 "NVVM global `@{name}` uses unsupported address space {address_space}; expected generic (0), global (1), shared (3), or constant (4)"
             ));
+        }
+
+        // Lowering names every static shared allocation `__shared_mem_N`, so
+        // the emitted symbol carries no hint of which Rust `static` it came
+        // from. Anyone attributing a kernel's shared-memory footprint back to
+        // source has only the exported IR to work from, so record the Rust
+        // path as a comment on the line above the definition. It is a comment
+        // rather than a symbol rename because the generated names are matched
+        // literally elsewhere, and because a source path is not a legal LLVM
+        // identifier in general.
+        if let Some(source_name) = global.shared_source_name(self.ctx) {
+            writeln!(
+                output,
+                "; shared source: {}",
+                sanitize_comment(&source_name)
+            )
+            .unwrap();
         }
 
         // Check for external linkage (dynamic shared memory)
@@ -109,9 +138,36 @@ impl<'a> ModuleExportState<'a> {
             self.public_globals.push(name.to_string());
             // Defined static storage in the global's address space. The LLVM
             // definition retains external linkage for host-side symbol lookup.
-            write!(output, "@{name} = addrspace({address_space}) global ").unwrap();
+            //
+            // `constant` rather than `global` when the storage is marked
+            // never-written (see `GLOBAL_IMMUTABLE_KEY`). That keyword is what
+            // lets `opt` treat a read of this storage as invariant: it both
+            // enables `isOnlyCopiedFromConstantMemory` to delete a copy of the
+            // data into a stack slot, and makes `llc` select `ld.global.nc`
+            // (the read-only data cache) for the load. External linkage is
+            // retained either way; `constant` constrains writes, not visibility.
+            let storage_keyword = if global.is_immutable(self.ctx) {
+                "constant"
+            } else {
+                "global"
+            };
+            write!(
+                output,
+                "@{name} = addrspace({address_space}) {storage_keyword} "
+            )
+            .unwrap();
             self.export_type(ty, output)?;
-            if let Some(hex) = global.initializer_hex(self.ctx) {
+            if let Some(encoded) = global.initializer_relocations(self.ctx) {
+                let hex = global.initializer_hex(self.ctx).ok_or_else(|| {
+                    format!(
+                        "global `@{name}` carries pointer relocations without initializer bytes"
+                    )
+                })?;
+                let bytes = decode_hex_initializer(&hex)?;
+                write!(output, " ").unwrap();
+                self.export_relocated_initializer(ty, &bytes, &encoded, output)?;
+                writeln!(output, ", align {alignment}").unwrap();
+            } else if let Some(hex) = global.initializer_hex(self.ctx) {
                 let bytes = decode_hex_initializer(&hex)?;
                 write!(output, " ").unwrap();
                 self.export_byte_initializer(ty, &bytes, output)?;
@@ -173,6 +229,278 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "\\{byte:02X}").unwrap();
         }
         write!(output, "\"").unwrap();
+        Ok(())
+    }
+
+    /// Render a byte-exact initializer whose pointer-width slots are LLVM
+    /// relocation expressions rather than literal bytes.
+    fn export_relocated_initializer(
+        &self,
+        ty: pliron::r#type::TypeHandle,
+        bytes: &[u8],
+        encoded: &str,
+        output: &mut String,
+    ) -> Result<(), String> {
+        let mut relocations = ops::decode_global_initializer_relocations(encoded)?;
+        if relocations.is_empty() {
+            return Err(
+                "global initializer relocation metadata contains no relocations".to_string(),
+            );
+        }
+        relocations.sort_by_key(|relocation| relocation.source_offset);
+
+        let ty_ref = ty.deref(self.ctx);
+        let storage = ty_ref.downcast_ref::<StructType>().ok_or_else(|| {
+            format!(
+                "relocated global initializer requires segmented struct storage, found `{}`",
+                ty_ref.disp(self.ctx)
+            )
+        })?;
+        let fields: Vec<_> = storage.fields().collect();
+        let mut field_index = 0usize;
+        let mut cursor = 0u64;
+        let mut first = true;
+
+        write!(output, "{{ ").unwrap();
+        for (index, relocation) in relocations.iter().enumerate() {
+            if relocation.width_bytes != 8 {
+                return Err(format!(
+                    "global initializer relocation {index} uses unsupported {}-byte pointer storage; CUDA global/constant pointers require 8 bytes",
+                    relocation.width_bytes
+                ));
+            }
+            if relocation.source_offset < cursor {
+                return Err(format!(
+                    "global initializer relocation {index} overlaps the previous relocation"
+                ));
+            }
+            let end = relocation
+                .source_offset
+                .checked_add(u64::from(relocation.width_bytes))
+                .ok_or_else(|| format!("global initializer relocation {index} offset overflows"))?;
+            if end > bytes.len() as u64 {
+                return Err(format!(
+                    "global initializer relocation {index} occupies bytes {}..{} but the initializer has {} bytes",
+                    relocation.source_offset,
+                    end,
+                    bytes.len()
+                ));
+            }
+
+            if relocation.source_offset > cursor {
+                let span = &bytes[cursor as usize..relocation.source_offset as usize];
+                let field_ty = *fields.get(field_index).ok_or_else(|| {
+                    "segmented global storage is missing a literal-byte field".to_string()
+                })?;
+                self.validate_initializer_byte_field(field_ty, span.len() as u64)?;
+                if !first {
+                    write!(output, ", ").unwrap();
+                }
+                self.export_type(field_ty, output)?;
+                write!(output, " ").unwrap();
+                self.export_byte_initializer(field_ty, span, output)?;
+                first = false;
+                field_index += 1;
+            }
+
+            let field_ty = *fields.get(field_index).ok_or_else(|| {
+                "segmented global storage is missing a relocation field".to_string()
+            })?;
+            self.validate_initializer_pointer_field(field_ty, relocation.width_bytes)?;
+            if !first {
+                write!(output, ", ").unwrap();
+            }
+            self.export_type(field_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_global_relocation_constant(relocation, output)?;
+            first = false;
+            field_index += 1;
+            cursor = end;
+        }
+
+        if cursor < bytes.len() as u64 {
+            let span = &bytes[cursor as usize..];
+            let field_ty = *fields.get(field_index).ok_or_else(|| {
+                "segmented global storage is missing its trailing literal-byte field".to_string()
+            })?;
+            self.validate_initializer_byte_field(field_ty, span.len() as u64)?;
+            if !first {
+                write!(output, ", ").unwrap();
+            }
+            self.export_type(field_ty, output)?;
+            write!(output, " ").unwrap();
+            self.export_byte_initializer(field_ty, span, output)?;
+            field_index += 1;
+        }
+
+        if field_index != fields.len() {
+            return Err(format!(
+                "segmented global storage has {} fields, but relocation metadata consumed {field_index}",
+                fields.len()
+            ));
+        }
+        write!(output, " }}").unwrap();
+        Ok(())
+    }
+
+    fn validate_initializer_byte_field(
+        &self,
+        ty: pliron::r#type::TypeHandle,
+        expected_len: u64,
+    ) -> Result<(), String> {
+        let ty_ref = ty.deref(self.ctx);
+        let array = ty_ref.downcast_ref::<ArrayType>().ok_or_else(|| {
+            format!(
+                "literal initializer span requires `[N x i8]`, found `{}`",
+                ty_ref.disp(self.ctx)
+            )
+        })?;
+        let elem = array.elem_type();
+        let elem_ref = elem.deref(self.ctx);
+        let is_i8 = elem_ref
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == 8);
+        if !is_i8 || array.size() != expected_len {
+            return Err(format!(
+                "literal initializer span has {expected_len} bytes but storage field is `{}`",
+                ty_ref.disp(self.ctx)
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_initializer_pointer_field(
+        &self,
+        ty: pliron::r#type::TypeHandle,
+        width_bytes: u32,
+    ) -> Result<(), String> {
+        let ty_ref = ty.deref(self.ctx);
+        let width = ty_ref
+            .downcast_ref::<IntegerType>()
+            .map(IntegerType::width)
+            .ok_or_else(|| {
+                format!(
+                    "relocation slot requires an integer field, found `{}`",
+                    ty_ref.disp(self.ctx)
+                )
+            })?;
+        if width != width_bytes * 8 {
+            return Err(format!(
+                "relocation slot is i{width}, expected i{}",
+                width_bytes * 8
+            ));
+        }
+        Ok(())
+    }
+
+    fn export_global_relocation_constant(
+        &self,
+        relocation: &ops::GlobalInitializerRelocation,
+        output: &mut String,
+    ) -> Result<(), String> {
+        let target = self
+            .global_sources
+            .get(&relocation.target_key)
+            .ok_or_else(|| {
+                format!(
+                    "global initializer relocation references unknown rustc global key `{}`",
+                    relocation.target_key
+                )
+            })?;
+        if target.address_space != relocation.target_address_space {
+            return Err(format!(
+                "global initializer relocation target `{}` claims address space {}, but `@{}` is in address space {}",
+                relocation.target_key,
+                relocation.target_address_space,
+                target.symbol,
+                target.address_space
+            ));
+        }
+        if !matches!(target.address_space, 1 | 4) {
+            return Err(format!(
+                "global initializer relocation target `@{}` uses unsupported address space {}",
+                target.symbol, target.address_space
+            ));
+        }
+        if let Some(size) = target.initializer_size
+            && relocation.target_addend > size
+        {
+            return Err(format!(
+                "global initializer relocation target `@{}` has byte addend {}, but the allocation is only {size} bytes",
+                target.symbol, relocation.target_addend
+            ));
+        }
+        if relocation.width_bytes != 8 {
+            return Err(format!(
+                "global initializer relocation uses unsupported {}-byte destination",
+                relocation.width_bytes
+            ));
+        }
+
+        write!(output, "ptrtoint (").unwrap();
+        self.export_global_relocation_pointer(target, relocation.target_addend, output)?;
+        write!(output, " to i64)").unwrap();
+        Ok(())
+    }
+
+    fn export_global_relocation_pointer(
+        &self,
+        target: &super::state::GlobalSourceInfo,
+        byte_addend: u64,
+        output: &mut String,
+    ) -> Result<(), String> {
+        if self.legacy_typed_pointers() {
+            write!(output, "i8* addrspacecast (").unwrap();
+            if byte_addend == 0 {
+                self.export_legacy_global_byte_pointer(target, output)?;
+            } else {
+                write!(
+                    output,
+                    "i8 addrspace({})* getelementptr (i8, ",
+                    target.address_space
+                )
+                .unwrap();
+                self.export_legacy_global_byte_pointer(target, output)?;
+                write!(output, ", i64 {byte_addend})").unwrap();
+            }
+            write!(output, " to i8*)").unwrap();
+        } else {
+            write!(output, "ptr addrspacecast (").unwrap();
+            if byte_addend == 0 {
+                write!(
+                    output,
+                    "ptr addrspace({}) @{}",
+                    target.address_space, target.symbol
+                )
+                .unwrap();
+            } else {
+                write!(
+                    output,
+                    "ptr addrspace({}) getelementptr (i8, ptr addrspace({}) @{}, i64 {byte_addend})",
+                    target.address_space,
+                    target.address_space,
+                    target.symbol
+                )
+                .unwrap();
+            }
+            write!(output, " to ptr)").unwrap();
+        }
+        Ok(())
+    }
+
+    fn export_legacy_global_byte_pointer(
+        &self,
+        target: &super::state::GlobalSourceInfo,
+        output: &mut String,
+    ) -> Result<(), String> {
+        write!(output, "i8 addrspace({})* bitcast (", target.address_space).unwrap();
+        self.export_type(target.value_type, output)?;
+        write!(
+            output,
+            " addrspace({})* @{} to i8 addrspace({})*)",
+            target.address_space, target.symbol, target.address_space
+        )
+        .unwrap();
         Ok(())
     }
 
@@ -282,6 +610,47 @@ impl<'a> ModuleExportState<'a> {
         // preservation in standalone device-function compilation.
         if !is_declaration && !is_kernel && has_device_prefix(&func_name) {
             self.device_functions.push(fixed_func_name.clone());
+        }
+
+        // A kernel receives its parameters in `.param` space, filled by the
+        // host at launch. Shared and local memory are allocated per block and
+        // per thread by the device, so the host has no address in either to
+        // pass. Carrying one of those state spaces into the entry signature
+        // produces a module that ptxas assembles and the driver then refuses,
+        // which takes every other kernel in the module down with it.
+        //
+        // Global and constant are left alone: the host allocates there, so a
+        // pointer parameter in those spaces is something it can supply, and
+        // the codegen tests rely on it. A device function may carry any state
+        // space on its parameters, which is why this is checked for kernels
+        // alone.
+        //
+        // The refusal is deliberately scoped to address spaces 3 (shared) and
+        // 5 (local). addrspace(4) constant parameters stay allowed by design:
+        // the host owns constant-bank allocation, so it does have an address
+        // to pass. addrspace(7) (shared::cluster) is not user-reachable as a
+        // parameter type today; if a frontend type ever surfaces it at a
+        // kernel boundary, it needs a new arm here for the same reason as
+        // plain shared.
+        if is_kernel {
+            for (index, arg_ty) in func_ty.arg_types().iter().enumerate() {
+                let arg_ref = arg_ty.deref(self.ctx);
+                let Some(pointer) = arg_ref.downcast_ref::<PointerType>() else {
+                    continue;
+                };
+                let space = match pointer.address_space() {
+                    3 => "shared",
+                    5 => "local",
+                    _ => continue,
+                };
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` parameter {index} is a pointer into {space} \
+                     memory (address space {}); {space} memory is allocated by the device at \
+                     launch, so the host has no address to pass, and the driver refuses a \
+                     module whose entry declares one",
+                    pointer.address_space()
+                ));
+            }
         }
 
         let ret_ty = func_ty.result_type();
@@ -452,9 +821,12 @@ impl<'a> ModuleExportState<'a> {
                     let op_obj = Operation::get_op_dyn(op, self.ctx);
                     let op_dyn = op_obj.as_ref();
 
-                    // Skip ops that don't produce named results (UndefOp is handled specially)
-                    if op_dyn.downcast_ref::<ops::UndefOp>().is_some() {
-                        // UndefOp result will be named "undef"
+                    // PHIs can reference an undef defined in a block that is
+                    // printed later. Register its literal spelling during the
+                    // pre-pass just like constants.
+                    if let Some(undef_op) = op_dyn.downcast_ref::<ops::UndefOp>() {
+                        let result = undef_op.get_operation().deref(self.ctx).get_result(0);
+                        value_names.insert(result, "undef".to_string());
                         continue;
                     }
 

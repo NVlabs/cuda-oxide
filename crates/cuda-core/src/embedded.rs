@@ -230,12 +230,10 @@ mod tests {
         // Mirror production: the backend always defines a link-anchor
         // symbol in the artifact object. The linked-executable round trip
         // must keep working with that symbol present.
-        let object = build_host_object_for_target(
-            &blob,
-            "x86_64-unknown-linux-gnu",
-            Some("cuda_oxide_artifact_anchor_246e25db_linked_0_0_0"),
-        )
-        .unwrap();
+        let anchor = reserved_oxide_symbols::artifact_anchor_symbol("linked", "0.0.0");
+        let object =
+            build_host_object_for_target(&blob, "x86_64-unknown-linux-gnu", Some(anchor.as_str()))
+                .unwrap();
         std::fs::write(&source_path, "fn main() {}\n").unwrap();
         std::fs::write(&object_path, object).unwrap();
 

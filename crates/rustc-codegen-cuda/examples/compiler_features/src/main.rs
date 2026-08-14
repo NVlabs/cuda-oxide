@@ -13,10 +13,12 @@
 //! - Shared memory address casting
 //! - 64-bit arithmetic
 //! - Parallel for loop patterns
+//! - Full-debug closure environments
 //!
 //! Run: cargo oxide run compiler_features
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_device::shared::cvta_generic_to_shared_offset;
 use cuda_device::{DisjointSlice, SharedArray, kernel, thread};
 use cuda_host::cuda_module;
 
@@ -54,6 +56,24 @@ mod kernels {
             let maybe: Option<u32> = if val > 0 { Some(val) } else { None };
             let result = maybe.unwrap_or_default();
             *out_elem = result;
+        }
+    }
+
+    /// Full-debug fixture for closure environment DWARF.
+    ///
+    /// The `move` closure forces two scalar captures into the environment so
+    /// cuda-gdb can verify the generated composite type and inspect both
+    /// `capture_0` and `capture_1`.
+    #[kernel]
+    pub fn test_closure_debug(seed: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let captured_u32 = seed + 10;
+            let captured_u64 = 0x1_0000_0020u64;
+            let closure = move |x: u32| x + captured_u32 + captured_u64 as u32;
+            *out_elem = seed; // CUDA_OXIDE_DEBUG_CLOSURE_BREAKPOINT
+            let closure_result = closure(5u32);
+            *out_elem = closure_result;
         }
     }
 
@@ -202,7 +222,7 @@ mod kernels {
         }
     }
 
-    /// Test Via *const u8 (current approach - has cvta round-trip)
+    /// Test Via *const u8 (must agree with the direct cast)
     #[kernel]
     pub unsafe fn test_smem_addr_via_ptr_u8(mut out: DisjointSlice<u64>) {
         static mut SMEM: SharedArray<u8, 256, 128> = SharedArray::UNINIT;
@@ -211,6 +231,18 @@ mod kernels {
         if let Some(out_elem) = out.get_mut(idx) {
             let addr = &raw const SMEM as *const u8 as u64;
             *out_elem = addr;
+        }
+    }
+
+    /// Test the explicit raw `.shared` offset path for hardware descriptors
+    #[kernel]
+    pub unsafe fn test_smem_addr_shared_offset(mut out: DisjointSlice<u64>) {
+        static mut SMEM: SharedArray<u8, 256, 128> = SharedArray::UNINIT;
+
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let offset = unsafe { cvta_generic_to_shared_offset(&raw const SMEM as *const u8) };
+            *out_elem = offset;
         }
     }
 
@@ -458,9 +490,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
-    let module = ctx.load_module_from_file("compiler_features.ptx")?;
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx)?;
     const N: usize = 1;
     let cfg = LaunchConfig::for_num_elems(N as u32);
 
@@ -550,6 +580,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             assert_eq!(result[0], expected, "test_option({}) failed", val);
             println!("  ✓ val={}: {} (expected {})", val, result[0], expected);
         }
+    }
+
+    // Test closure lowering and keep a deterministic full-debug fixture live.
+    println!("Testing: test_closure_debug");
+    {
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        // capture_0 = seed + 10 = 17, capture_1 low 32 bits = 32, x = 5.
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_closure_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
+        let result = out_dev.to_host_vec(&stream)?;
+        assert_eq!(result[0], 54, "test_closure_debug failed");
+        println!("  ✓ Result: {} (expected 54)", result[0]);
     }
 
     // Test for loop sum
@@ -865,16 +907,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n-----------------------------------------");
     println!("SHARED MEMORY ADDRESS CASTING TESTS");
     println!("-----------------------------------------");
-    println!("Comparing: &raw const SMEM as u64  vs  &raw const SMEM as *const u8 as u64");
-    println!();
 
     let mut smem_direct_ok = true;
 
-    // Test 1: DIRECT cast - &raw const SMEM as u64.
-    // This is a real pass/fail test: the direct cast must keep the address
-    // in the shared address space (small value, no cvta round-trip).
-    println!("Testing: test_smem_addr_direct_u64 (&raw const SMEM as u64)");
-    {
+    // Rust-observed pointer addresses are CUDA generic addresses (the nvcc
+    // model): `ptr as u64` must yield the same nonzero generic address
+    // whether or not an intermediate `*const u8` cast is involved. The raw
+    // `.shared` window offset is available only through the explicit
+    // `cvta_generic_to_shared_offset` intrinsic, which hardware SMEM descriptors
+    // consume.
+    println!("Testing: generic-address contract for shared statics");
+    let direct = {
         let mut out_dev = DeviceBuffer::<u64>::zeroed(&stream, 1)?;
         unsafe {
             module.test_smem_addr_direct_u64(
@@ -883,24 +926,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut out_dev,
             )
         }?;
-        let result = out_dev.to_host_vec(&stream)?;
-        println!("  DIRECT addr: 0x{:016x}", result[0]);
-        if result[0] < 0x100000 {
-            println!("  ✓ SMALL value = likely shared address (what we want!)");
-        } else {
-            println!("  ✗ FAILED: LARGE value = generic address (cvta happened)");
-            smem_direct_ok = false;
-        }
-    }
-
-    // Test 2: Via *const u8 (informational, documents known limitation).
-    // The intermediate `*const u8` cast currently triggers a cvta round-trip;
-    // we print the observed address but don't fail on it. Whenever this lights
-    // up as "SMALL value" we know the upstream codegen quirk is gone and we
-    // can promote it to a real assertion.
-    println!("\nInfo: test_smem_addr_via_ptr_u8 (&raw const SMEM as *const u8 as u64)");
-    println!("  (known: today's lowering inserts a cvta round-trip here)");
-    {
+        out_dev.to_host_vec(&stream)?[0]
+    };
+    let via_ptr = {
         let mut out_dev = DeviceBuffer::<u64>::zeroed(&stream, 1)?;
         unsafe {
             module.test_smem_addr_via_ptr_u8(
@@ -909,17 +937,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut out_dev,
             )
         }?;
-        let result = out_dev.to_host_vec(&stream)?;
-        println!("  VIA PTR addr: 0x{:016x}", result[0]);
-        if result[0] < 0x100000 {
-            println!("  (small value — cvta round-trip elided)");
-        } else {
-            println!("  (large value — cvta round-trip present, as documented)");
-        }
-    }
+        out_dev.to_host_vec(&stream)?[0]
+    };
+    let shared_offset = {
+        let mut out_dev = DeviceBuffer::<u64>::zeroed(&stream, 1)?;
+        unsafe {
+            module.test_smem_addr_shared_offset(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(1),
+                &mut out_dev,
+            )
+        }?;
+        out_dev.to_host_vec(&stream)?[0]
+    };
 
-    println!("\n-----------------------------------------");
-    println!("Check PTX for 'cvta' in each test function.");
+    println!("  DIRECT addr:   0x{direct:016x}");
+    println!("  VIA PTR addr:  0x{via_ptr:016x}");
+    println!("  SHARED offset: 0x{shared_offset:016x}");
+    if direct == 0 {
+        println!("  ✗ FAILED: generic address of a valid shared static is null");
+        smem_direct_ok = false;
+    }
+    if direct != via_ptr {
+        println!("  ✗ FAILED: the two Rust-level casts disagree on the address");
+        smem_direct_ok = false;
+    }
+    if shared_offset >= 0x100000 {
+        println!("  ✗ FAILED: cvta_generic_to_shared_offset must yield the raw .shared offset");
+        smem_direct_ok = false;
+    }
+    if shared_offset % 128 != 0 {
+        println!("  ✗ FAILED: shared offset ignores the array's 128-byte alignment");
+        smem_direct_ok = false;
+    }
+    if smem_direct_ok {
+        println!("  ✓ generic addresses agree and are non-null; raw offset via intrinsic");
+    }
 
     if !smem_direct_ok {
         println!("\n=== FAILED: at least one test did not pass ===");

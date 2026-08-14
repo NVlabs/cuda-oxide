@@ -13,7 +13,7 @@ fn cannot_stash_a_tile_beyond_its_parent<'kernel>(
     mut c: DisjointSlice<'_, f32, RuntimeRowMajorTiles<1, 1>>,
 ) {
     let coord = __internal::coord_2d_u32(launch_context);
-    let tile = unsafe { c.tile_2d32_rt(coord, 64) };
+    let tile = c.tile_2d32_rt(coord);
     unsafe {
         SAVED = tile;
     }

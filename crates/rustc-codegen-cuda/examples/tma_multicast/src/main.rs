@@ -13,8 +13,9 @@
 //! the shared memory of ALL CTAs in a thread block cluster.
 //!
 //! Requirements:
-//! - Blackwell datacenter GPU (sm_100a): B100, B200, GB200
-//! - NOT supported on consumer Blackwell (sm_120) or Hopper (sm_90)
+//! - Blackwell (sm_100a or later): datacenter B100/B200/GB200, and reported to
+//!   load and run on consumer sm_120 as well
+//! - Not supported on Hopper (sm_90) or earlier
 //!
 //! Build and run with:
 //!   cargo oxide run tma_multicast
@@ -152,7 +153,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("GPU Compute Capability: sm_{}{}", major, minor);
 
     if major < 10 {
-        println!("\n⚠️  TMA multicast requires sm_100a (Blackwell datacenter).");
+        // Same clean-skip contract as the load-failure arm below: the marker
+        // has to be on whichever path actually runs, and on a pre-Blackwell
+        // GPU it is this one.
+        println!("\nskipping: TMA multicast requires sm_100a (Blackwell datacenter)");
         println!(
             "   Your GPU is sm_{}{}. Use: cargo oxide run tma_copy",
             major, minor
@@ -160,28 +164,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tma_multicast.ptx");
-    println!("Loading PTX from: {}", ptx_path.display());
-    let ptx_file = ptx_path.to_str().ok_or("PTX path is not valid UTF-8")?;
-
-    match ctx.load_module_from_file(ptx_file) {
+    match kernels::load(&ctx) {
         Ok(module) => {
-            let module =
-                kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-            println!("✓ PTX loaded successfully\n");
+            println!("✓ embedded module loaded successfully\n");
             run_tma_multicast_test(&stream, &module)?;
         }
         Err(e) => {
             // TMA multicast needs sm_100a (Blackwell datacenter). On every
-            // other GPU the cubin won't JIT and `load_module_from_file`
-            // returns DriverError(218). Treat that as a clean skip so the
-            // smoketest's failure-marker scan doesn't flag this as a
-            // regression — the PTX itself was generated, which is all this
-            // example can verify off-hopper datacenter.
+            // other GPU the cubin won't JIT and the driver returns 218, which
+            // `load` surfaces through its `Driver` variant. Treat that as a
+            // clean skip so the smoketest's failure-marker scan doesn't flag
+            // this as a regression — the PTX itself was generated, which is
+            // all this example can verify off-hopper datacenter.
             println!("\nskipping: TMA multicast requires sm_100a");
             println!("  driver reported: {}", e);
-            println!("  TMA multicast requires sm_100a (Blackwell datacenter: B100/B200/GB200).");
-            println!("  Consumer Blackwell (sm_120) does NOT support multicast.");
+            println!("  TMA multicast requires sm_100a or later (B100/B200/GB200, and sm_120).");
             println!("  For basic TMA tests, use: cargo oxide run tma_copy");
         }
     }

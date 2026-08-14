@@ -3,6 +3,32 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+//! Procedural macros for CUDA kernel development: `#[kernel]`, `#[device]`,
+//! `#[cuda_module]`, `gpu_printf!`, `ptx_asm!`, and friends.
+//!
+//! # The `host` feature in mixed build graphs
+//!
+//! The default-on `host` cargo feature makes `#[kernel]` and `#[cuda_module]`
+//! emit the generated host surface (the `LoadedModule` loader and launchers,
+//! the `CudaKernel` marker impls), all of which names `::cuda_host` /
+//! `::cuda_core`. A crate that only compiles kernels takes this crate with
+//! `default-features = false` and drops the host dependency stack.
+//!
+//! Proc-macro features unify globally per build graph. If any crate in the
+//! graph enables `cuda-macros/host`, every crate expanding these macros gets
+//! the host-emitting expansion, including a device-only kernel crate; its
+//! expansion then names `cuda_host`, which it cannot resolve (E0433). A
+//! device-only kernel crate consumed by a host application must therefore
+//! forward the feature itself:
+//!
+//! ```toml
+//! [features]
+//! host = ["dep:cuda-host", "cuda-macros/host"]
+//! ```
+//!
+//! so the same switch that turns host emission on also adds the `cuda-host`
+//! dependency that resolves it.
+
 #![feature(proc_macro_def_site, proc_macro_tracked_env)]
 
 mod device_copy;
@@ -781,6 +807,11 @@ struct CudaModuleParam {
     mutable_slice: bool,
     disjoint_slice_ty: Option<Type>,
     disjoint_slice_elem: Option<TokenStream2>,
+    /// Declared type and carried scalar of a `Uniform<T>` parameter, used to
+    /// bound the generated impl by the sealed proof trait so a local type also
+    /// named `Uniform` cannot borrow the scalar host ABI.
+    uniform_ty: Option<Type>,
+    uniform_scalar: Option<TokenStream2>,
     /// Integer classification of a scalar parameter's declared type, used to
     /// decide which scalars may appear in `requires` relations. Always
     /// `Other` for non-scalar parameters.
@@ -789,8 +820,17 @@ struct CudaModuleParam {
 
 enum CudaModuleParamMarshal {
     Scalar,
-    ReadOnlyDeviceBuffer { elem_ty: TokenStream2 },
-    WritableDeviceBuffer { elem_ty: TokenStream2 },
+    ReadOnlyDeviceBuffer {
+        elem_ty: TokenStream2,
+    },
+    WritableDeviceBuffer {
+        elem_ty: TokenStream2,
+    },
+    /// A writable buffer whose index space carries a runtime row width, so
+    /// the host supplies the width and the packet gains a third slot.
+    RowWidthDeviceBuffer {
+        elem_ty: TokenStream2,
+    },
 }
 
 /// Integer classification of a kernel scalar parameter as declared in source.
@@ -809,6 +849,15 @@ enum ScalarIntClass {
 }
 
 fn scalar_int_class(ty: &Type) -> ScalarIntClass {
+    // A `Uniform<T>` parameter is marshalled as `T` and is evaluated as `T` on
+    // the host, so a relation over it has the same widening behaviour as one
+    // over the bare scalar.
+    if let Some(scalar) = cuda_module_uniform_scalar(ty)
+        && let Ok(scalar) = syn::parse2::<Type>(scalar)
+    {
+        return scalar_int_class(&scalar);
+    }
+
     let Type::Path(type_path) = ty else {
         return ScalarIntClass::Other;
     };
@@ -825,7 +874,20 @@ fn scalar_int_class(ty: &Type) -> ScalarIntClass {
     }
 }
 
+/// Expands `#[cuda_module]`, emitting the host surface when the `host`
+/// feature is on.
 fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
+    expand_cuda_module_inner(module, cfg!(feature = "host"))
+}
+
+/// `expand_cuda_module` with the host-surface decision passed in.
+///
+/// The decision is a parameter rather than a `cfg!` read inside the body so
+/// that tests can exercise both settings from one build. They otherwise
+/// could not: this crate dev-depends on `cuda-host`, which turns the `host`
+/// feature back on under feature unification even for
+/// `cargo test --no-default-features`.
+fn expand_cuda_module_inner(module: ItemMod, emit_host: bool) -> syn::Result<TokenStream2> {
     let module_attrs = &module.attrs;
     let vis = &module.vis;
     let ident = &module.ident;
@@ -837,7 +899,7 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
     };
 
     let constants = collect_cuda_module_constants(items, ident)?;
-    let transformed = transform_cuda_module_items(items, &mut Vec::new(), &[], false)?;
+    let transformed = transform_cuda_module_items(items, &mut Vec::new(), &[], false, emit_host)?;
     if transformed.kernels.is_empty() {
         return Err(syn::Error::new_spanned(
             &module.ident,
@@ -1109,11 +1171,12 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
         TokenStream2::new()
     };
 
-    Ok(quote! {
-        #(#module_attrs)*
-        #vis mod #ident {
-            #(#module_items)*
-            #(#ptx_merge_required_markers)*
+    // Everything below names `::cuda_host` or `::cuda_core`. The kernels
+    // themselves, and the PTX-merge markers the codegen collector consumes, do
+    // not -- so a crate that only compiles kernels can take cuda-macros with
+    // `default-features = false` and stop depending on the host stack.
+    let host_items = if emit_host {
+        quote! {
             #(#launch_contract_impls)*
 
             #[derive(Clone, Debug)]
@@ -1149,6 +1212,17 @@ fn expand_cuda_module(module: ItemMod) -> syn::Result<TokenStream2> {
                 #async_launch_methods
             }
         }
+    } else {
+        TokenStream2::new()
+    };
+
+    Ok(quote! {
+        #(#module_attrs)*
+        #vis mod #ident {
+            #(#module_items)*
+            #(#ptx_merge_required_markers)*
+            #host_items
+        }
     })
 }
 
@@ -1171,6 +1245,7 @@ fn transform_cuda_module_items(
     module_path: &mut Vec<Ident>,
     ancestor_cfg_attrs: &[syn::Attribute],
     generate_nested_support: bool,
+    emit_host: bool,
 ) -> syn::Result<CudaModuleLevel> {
     let mut transformed_items = Vec::with_capacity(items.len());
     let mut direct_kernels = Vec::new();
@@ -1202,6 +1277,7 @@ fn transform_cuda_module_items(
                     module_path,
                     &nested_cfg_attrs,
                     true,
+                    emit_host,
                 )?;
                 module_path.pop();
 
@@ -1225,7 +1301,8 @@ fn transform_cuda_module_items(
     if generate_nested_support && !kernels.is_empty() {
         reject_reserved_loaded_module(items)?;
         reject_reserved_loaded_module_methods(&kernels[..direct_kernel_count], true)?;
-        let support = generate_nested_cuda_module_support(&kernels[..direct_kernel_count]);
+        let support =
+            generate_nested_cuda_module_support(&kernels[..direct_kernel_count], emit_host);
         let mut support_items = syn::parse2::<syn::File>(support)?.items;
         transformed_items.append(&mut support_items);
     }
@@ -1346,6 +1423,13 @@ fn cuda_module_kernel(
     if let Some(contract) = launch_contract.as_ref() {
         add_cuda_module_disjoint_contract_bounds(&mut generics, &params, contract.domain);
     }
+    // A `Uniform` parameter carries its proof with or without a launch
+    // contract, so this bound is not conditional on one.
+    add_cuda_module_uniform_bounds(&mut generics, &params);
+    // The launch packet's shape (two or three words per slice) must match the
+    // resolved device type with or without a launch contract, so this bound
+    // is unconditional too.
+    add_cuda_module_disjoint_abi_bounds(&mut generics, &params);
     let is_generic = has_codegen_generics(&item_fn.sig.generics);
     let cfg_attrs = cuda_module_cfg_attrs(&item_fn.attrs)?;
     let mut effective_cfg_attrs = ancestor_cfg_attrs.to_vec();
@@ -1367,7 +1451,10 @@ fn cuda_module_kernel(
     }))
 }
 
-fn generate_nested_cuda_module_support(kernels: &[CudaModuleKernel]) -> TokenStream2 {
+fn generate_nested_cuda_module_support(
+    kernels: &[CudaModuleKernel],
+    emit_host: bool,
+) -> TokenStream2 {
     let launch_contract_impls = kernels
         .iter()
         .filter_map(generate_cuda_module_launch_contract_impl);
@@ -1405,6 +1492,11 @@ fn generate_nested_cuda_module_support(kernels: &[CudaModuleKernel]) -> TokenStr
     } else {
         TokenStream2::new()
     };
+
+    // Host-only, exactly as in `expand_cuda_module_inner`; see the note there.
+    if !emit_host {
+        return TokenStream2::new();
+    }
 
     quote! {
         #(#launch_contract_impls)*
@@ -2090,7 +2182,8 @@ fn requires_grammar_help(params: &[CudaModuleParam]) -> String {
                 }
             }
             CudaModuleParamMarshal::ReadOnlyDeviceBuffer { .. }
-            | CudaModuleParamMarshal::WritableDeviceBuffer { .. } => {
+            | CudaModuleParamMarshal::WritableDeviceBuffer { .. }
+            | CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
                 names.push(format!("`{name}.len()`"));
             }
         }
@@ -2198,7 +2291,8 @@ fn validate_requires_operand(expr: &Expr, params: &[CudaModuleParam]) -> syn::Re
             };
             match param.marshal {
                 CudaModuleParamMarshal::ReadOnlyDeviceBuffer { .. }
-                | CudaModuleParamMarshal::WritableDeviceBuffer { .. } => {
+                | CudaModuleParamMarshal::WritableDeviceBuffer { .. }
+                | CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
                     Err(syn::Error::new_spanned(
                         path,
                         format!(
@@ -2271,7 +2365,8 @@ fn validate_requires_operand(expr: &Expr, params: &[CudaModuleParam]) -> syn::Re
             };
             match param.marshal {
                 CudaModuleParamMarshal::ReadOnlyDeviceBuffer { .. }
-                | CudaModuleParamMarshal::WritableDeviceBuffer { .. } => Ok(()),
+                | CudaModuleParamMarshal::WritableDeviceBuffer { .. }
+                | CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => Ok(()),
                 CudaModuleParamMarshal::Scalar => Err(syn::Error::new_spanned(
                     call,
                     format!(
@@ -2553,6 +2648,10 @@ fn cuda_module_param_from_typed(pat_type: &syn::PatType) -> syn::Result<CudaModu
     let disjoint_slice_ty = disjoint_slice_elem
         .as_ref()
         .map(|_| pat_type.ty.as_ref().clone());
+    let uniform_scalar = cuda_module_uniform_scalar(&pat_type.ty);
+    let uniform_ty = uniform_scalar
+        .as_ref()
+        .map(|_| pat_type.ty.as_ref().clone());
     Ok(CudaModuleParam {
         name,
         sync_host_ty,
@@ -2561,6 +2660,8 @@ fn cuda_module_param_from_typed(pat_type: &syn::PatType) -> syn::Result<CudaModu
         mutable_slice,
         disjoint_slice_ty,
         disjoint_slice_elem,
+        uniform_ty,
+        uniform_scalar,
         scalar_int: scalar_int_class(&pat_type.ty),
     })
 }
@@ -2594,12 +2695,32 @@ fn cuda_module_host_type(
     }
 
     if let Some(elem_ty) = cuda_module_disjoint_slice_elem(ty) {
+        if cuda_module_disjoint_slice_has_row_width(ty) {
+            return Ok((
+                quote! { ::cuda_host::RowWidth<'_, #elem_ty> },
+                quote! { ::cuda_host::RowWidth<#async_lifetime, #elem_ty> },
+                CudaModuleParamMarshal::RowWidthDeviceBuffer {
+                    elem_ty: quote! { #elem_ty },
+                },
+            ));
+        }
         return Ok((
             quote! { &mut ::cuda_core::DeviceBuffer<#elem_ty> },
             quote! { &#async_lifetime mut impl ::cuda_host::KernelSliceArgMut<Elem = #elem_ty> },
             CudaModuleParamMarshal::WritableDeviceBuffer {
                 elem_ty: quote! { #elem_ty },
             },
+        ));
+    }
+
+    // A `Uniform<T>` parameter is marshalled exactly like `T`. The host takes
+    // the bare scalar because the host is what makes the value uniform: one
+    // marshalled value reaches every thread of the launch.
+    if let Some(scalar) = cuda_module_uniform_scalar(ty) {
+        return Ok((
+            quote! { #scalar },
+            quote! { #scalar },
+            CudaModuleParamMarshal::Scalar,
         ));
     }
 
@@ -2626,6 +2747,65 @@ fn cuda_module_slice_elem(ty: &Type) -> Option<(TokenStream2, bool)> {
     };
     let elem = &slice.elem;
     Some((quote! { #elem }, type_ref.mutability.is_some()))
+}
+
+/// Scalar carried by a `Uniform<T>` kernel parameter, if the type is spelled
+/// that way.
+///
+/// The host method takes the bare `T`: the host is the source of the
+/// uniformity proof, since it marshals one value into the launch packet for
+/// the whole grid. `Uniform<T>` is `#[repr(transparent)]`, so the launch packet
+/// is byte-identical either way.
+fn cuda_module_uniform_scalar(ty: &Type) -> Option<TokenStream2> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    if segment.ident != "Uniform" {
+        return None;
+    }
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let scalar = args.args.iter().find_map(|arg| match arg {
+        GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    })?;
+    Some(quote! { #scalar })
+}
+
+/// True when a `DisjointSlice`'s index space carries a runtime row width.
+///
+/// Matched on the spelling of the index-space argument, exactly as the element
+/// type is. The spelling only selects the host ABI; `SpaceLayout` is what
+/// decides whether the device type really carries the width, and a mismatch
+/// between the two is a type error at the generated call rather than a silent
+/// packet-shape difference.
+fn cuda_module_disjoint_slice_has_row_width(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    let Some(segment) = type_path.path.segments.last() else {
+        return false;
+    };
+    if segment.ident != "DisjointSlice" {
+        return false;
+    }
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return false;
+    };
+    let mut space = args.args.iter().filter_map(|arg| match arg {
+        GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    space.nth(1).is_some_and(|space| {
+        let Type::Path(space_path) = space else {
+            return false;
+        };
+        space_path.path.segments.last().is_some_and(|segment| {
+            segment.ident == "RuntimeRowMajorTiles" || segment.ident == "Runtime2DIndex"
+        })
+    })
 }
 
 fn cuda_module_disjoint_slice_elem(ty: &Type) -> Option<TokenStream2> {
@@ -2672,6 +2852,54 @@ fn add_cuda_module_disjoint_contract_bounds(
         generics.make_where_clause().predicates.push(parse_quote! {
             for<#bound_lifetime> #device_ty:
                 ::cuda_device::__LaunchContractDisjointSlice<#element_ty, #domain>
+        });
+    }
+}
+
+/// Requires every `DisjointSlice` parameter's resolved type to carry exactly
+/// the launch-packet shape the macro chose for it.
+///
+/// The macro picks the two-word `(ptr, len)` or three-word `(ptr, len, width)`
+/// host marshalling from the index space's spelling, which type aliases can
+/// defeat: `type Rt = RuntimeRowMajorTiles<1, 1>;` spells a flat slice over a
+/// runtime-width space, and the launch would then push two kernel parameters
+/// for a three-parameter kernel, making the driver read past the argument
+/// array. The sealed `__LaunchContractDisjointSliceAbi` trait is the semantic
+/// authority: only the genuine `DisjointSlice` whose index space really has
+/// (`true`) or really lacks (`false`) a runtime row width satisfies the bound, so
+/// a spelling/semantics mismatch is a compile error instead of a malformed
+/// launch packet.
+fn add_cuda_module_disjoint_abi_bounds(generics: &mut syn::Generics, params: &[CudaModuleParam]) {
+    for param in params {
+        let (Some(device_ty), Some(element_ty)) =
+            (&param.disjoint_slice_ty, &param.disjoint_slice_elem)
+        else {
+            continue;
+        };
+        let has_row_width = matches!(
+            param.marshal,
+            CudaModuleParamMarshal::RowWidthDeviceBuffer { .. }
+        );
+        let (device_ty, bound_lifetime) = cuda_module_disjoint_bound_type(device_ty);
+        generics.make_where_clause().predicates.push(parse_quote! {
+            for<#bound_lifetime> #device_ty:
+                ::cuda_device::__LaunchContractDisjointSliceAbi<#element_ty, #has_row_width>
+        });
+    }
+}
+
+/// Requires every `Uniform<T>` parameter to be cuda-device's own type.
+///
+/// The host ABI for these parameters is chosen from the spelling `Uniform<T>`,
+/// so without this bound a local type of the same name would be marshalled as
+/// a bare `T` while presenting whatever layout it liked.
+fn add_cuda_module_uniform_bounds(generics: &mut syn::Generics, params: &[CudaModuleParam]) {
+    for param in params {
+        let (Some(device_ty), Some(scalar_ty)) = (&param.uniform_ty, &param.uniform_scalar) else {
+            continue;
+        };
+        generics.make_where_clause().predicates.push(parse_quote! {
+            #device_ty: ::cuda_device::__LaunchContractUniform<#scalar_ty>
         });
     }
 }
@@ -3256,6 +3484,12 @@ fn generate_cuda_module_legacy_owned_async_launch_method(
                 let resource_ty = cuda_module_owned_resource_type(index);
                 quote! { mut #name: #resource_ty }
             }
+            // The owned resource carries the buffer; `RowWidthOwned` adds the
+            // row width the kernel will index it by.
+            CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
+                let resource_ty = cuda_module_owned_resource_type(index);
+                quote! { mut #name: ::cuda_host::RowWidthOwned<#resource_ty> }
+            }
         }
     });
     let arg_marshalling = kernel
@@ -3278,7 +3512,7 @@ fn generate_cuda_module_legacy_owned_async_launch_method(
         }
     });
     let resources_ty = cuda_module_owned_resources_ty(&resources);
-    let resource_names = resources.iter().map(|(_, name, _, _)| name);
+    let resource_names = resources.iter().map(|(_, name, _, _, _)| name);
     let resources_expr = if resources.is_empty() {
         quote! { () }
     } else {
@@ -3347,6 +3581,12 @@ fn generate_cuda_module_prepared_owned_async_launch_method(
                     let resource_ty = cuda_module_owned_resource_type(index);
                     quote! { mut #name: #resource_ty }
                 }
+                // The owned resource carries the buffer; `RowWidthOwned` adds
+                // the row width the kernel will index it by.
+                CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
+                    let resource_ty = cuda_module_owned_resource_type(index);
+                    quote! { mut #name: ::cuda_host::RowWidthOwned<#resource_ty> }
+                }
             }
         })
         .collect();
@@ -3378,8 +3618,8 @@ fn generate_cuda_module_prepared_owned_async_launch_method(
         quote! { ::cuda_host::set_async_kernel_cooperative(&mut #launch, true); }
     });
     let resources_ty = cuda_module_owned_resources_ty(&resources);
-    let prepared_resource_names = resources.iter().map(|(_, name, _, _)| name);
-    let unchecked_resource_names = resources.iter().map(|(_, name, _, _)| name);
+    let prepared_resource_names = resources.iter().map(|(_, name, _, _, _)| name);
+    let unchecked_resource_names = resources.iter().map(|(_, name, _, _, _)| name);
     let prepared_resources_expr = if resources.is_empty() {
         quote! { () }
     } else {
@@ -3498,10 +3738,10 @@ fn cuda_module_launch_generics(kernel: &CudaModuleKernel) -> syn::Generics {
 
 fn cuda_module_owned_async_launch_generics(
     kernel: &CudaModuleKernel,
-    resources: &[(usize, Ident, TokenStream2, bool)],
+    resources: &[(usize, Ident, TokenStream2, bool, bool)],
 ) -> syn::Generics {
     let mut generics = kernel.generics.clone();
-    for (index, _, elem_ty, writable) in resources {
+    for (index, _, elem_ty, writable, _) in resources {
         let resource_ty = cuda_module_owned_resource_type(*index);
         generics.params.push(syn::parse_quote! { #resource_ty });
         let predicate: syn::WherePredicate = if *writable {
@@ -3548,7 +3788,7 @@ fn cuda_module_async_launch_generics(kernel: &CudaModuleKernel) -> syn::Generics
 
 fn cuda_module_owned_resource_params(
     kernel: &CudaModuleKernel,
-) -> Vec<(usize, Ident, TokenStream2, bool)> {
+) -> Vec<(usize, Ident, TokenStream2, bool, bool)> {
     kernel
         .params
         .iter()
@@ -3556,10 +3796,15 @@ fn cuda_module_owned_resource_params(
         .filter_map(|(index, param)| match &param.marshal {
             CudaModuleParamMarshal::Scalar => None,
             CudaModuleParamMarshal::ReadOnlyDeviceBuffer { elem_ty } => {
-                Some((index, param.name.clone(), elem_ty.clone(), false))
+                Some((index, param.name.clone(), elem_ty.clone(), false, false))
             }
             CudaModuleParamMarshal::WritableDeviceBuffer { elem_ty } => {
-                Some((index, param.name.clone(), elem_ty.clone(), true))
+                Some((index, param.name.clone(), elem_ty.clone(), true, false))
+            }
+            // A row-width slice still owns a buffer resource; the width
+            // rides beside it in `RowWidthOwned`.
+            CudaModuleParamMarshal::RowWidthDeviceBuffer { elem_ty } => {
+                Some((index, param.name.clone(), elem_ty.clone(), true, true))
             }
         })
         .collect()
@@ -3570,14 +3815,19 @@ fn cuda_module_owned_resource_type(index: usize) -> Ident {
 }
 
 fn cuda_module_owned_resources_ty(
-    resources: &[(usize, Ident, TokenStream2, bool)],
+    resources: &[(usize, Ident, TokenStream2, bool, bool)],
 ) -> TokenStream2 {
     if resources.is_empty() {
         quote! { () }
     } else {
-        let resource_tys = resources
-            .iter()
-            .map(|(index, _, _, _)| cuda_module_owned_resource_type(*index));
+        let resource_tys = resources.iter().map(|(index, _, _, _, has_row_width)| {
+            let resource_ty = cuda_module_owned_resource_type(*index);
+            if *has_row_width {
+                quote! { ::cuda_host::RowWidthOwned<#resource_ty> }
+            } else {
+                quote! { #resource_ty }
+            }
+        });
         quote! { (#(#resource_tys),*) }
     }
 }
@@ -3619,6 +3869,21 @@ fn cuda_module_arg_marshalling(index: usize, param: &CudaModuleParam) -> TokenSt
                 );
             }
         }
+        CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
+            let ptr_name = internal_ident(&format!("__cuda_oxide_arg_{index}_ptr"));
+            let len_name = internal_ident(&format!("__cuda_oxide_arg_{index}_len"));
+            let width_name = internal_ident(&format!("__cuda_oxide_arg_{index}_row_width"));
+            quote! {
+                let (mut #ptr_name, mut #len_name, mut #width_name) =
+                    ::cuda_host::row_width_device_buffer_arg(#name);
+                ::cuda_host::push_kernel_row_width_device_slice(
+                    &mut #args,
+                    &mut #ptr_name,
+                    &mut #len_name,
+                    &mut #width_name,
+                );
+            }
+        }
     }
 }
 
@@ -3641,6 +3906,11 @@ fn cuda_module_owned_async_arg_marshalling(param: &CudaModuleParam) -> TokenStre
                 ::cuda_host::push_async_writable_device_slice(&mut #launch, &mut #name);
             }
         }
+        CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
+            quote! {
+                ::cuda_host::push_async_owned_row_width_device_slice(&mut #launch, &mut #name);
+            }
+        }
     }
 }
 
@@ -3661,6 +3931,11 @@ fn cuda_module_async_arg_marshalling(param: &CudaModuleParam) -> TokenStream2 {
         CudaModuleParamMarshal::WritableDeviceBuffer { .. } => {
             quote! {
                 ::cuda_host::push_async_writable_device_slice(&mut #launch, #name);
+            }
+        }
+        CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => {
+            quote! {
+                ::cuda_host::push_async_row_width_device_slice(&mut #launch, #name);
             }
         }
     }
@@ -4446,6 +4721,11 @@ const SCOPED_INTRINSICS: &[ScopedIntrinsic] = &[
         preserve_turbofish: false,
         forward_args: true,
     },
+    ScopedIntrinsic {
+        name: "warp_index",
+        preserve_turbofish: false,
+        forward_args: false,
+    },
 ];
 
 /// Method names whose zero-arg call sites get the kernel scope spliced in
@@ -5187,7 +5467,12 @@ fn generate_simple_kernel(mut input: ItemFn, explicit_scope: Option<Ident>) -> T
 
     // Generate the CudaKernel trait implementation (host-side only)
     // This provides the PTX name for cuda_launch! to look up
-    let cuda_kernel_impl = generate_cuda_kernel_impl(&fn_name, &ptx_entry_name, &original_fn);
+    let cuda_kernel_impl = generate_cuda_kernel_impl(
+        &fn_name,
+        &ptx_entry_name,
+        &original_fn,
+        cfg!(feature = "host"),
+    );
 
     let expanded = quote! {
         #[unsafe(no_mangle)]
@@ -5230,6 +5515,10 @@ fn generate_simple_kernel(mut input: ItemFn, explicit_scope: Option<Ident>) -> T
 /// borrow alive across `stream.synchronize()` remains the caller's
 /// responsibility, exactly as it was under the previous `type_name`
 /// scheme.
+///
+/// Deliberately NOT gated by the `host` feature: generic kernels remain
+/// host-coupled by design for now, because the TypeId naming machinery
+/// lives in `cuda_host`.
 fn generate_generic_cuda_kernel_impl(
     fn_name: &Ident,
     vis: &syn::Visibility,
@@ -5301,7 +5590,19 @@ fn generate_generic_cuda_kernel_impl(
 ///
 /// This generates a marker struct that implements `CudaKernel`, allowing
 /// `cuda_launch!` to look up the PTX entry point name at compile time.
-fn generate_cuda_kernel_impl(fn_name: &Ident, ptx_name: &str, _func: &ItemFn) -> TokenStream2 {
+///
+/// Emitted only under the `host` feature: the impl names `cuda_host`, and a
+/// crate that only compiles kernels never looks a PTX entry name up.
+fn generate_cuda_kernel_impl(
+    fn_name: &Ident,
+    ptx_name: &str,
+    _func: &ItemFn,
+    emit_host: bool,
+) -> TokenStream2 {
+    if !emit_host {
+        return TokenStream2::new();
+    }
+
     // Create a marker struct for this kernel
     // We use a struct because Rust doesn't allow trait impls on function pointers easily
     let marker_name = format_ident!("__{}_CudaKernel", fn_name);
@@ -5796,6 +6097,8 @@ fn requires_params_from_inputs(
             mutable_slice: false,
             disjoint_slice_ty: None,
             disjoint_slice_elem: None,
+            uniform_ty: None,
+            uniform_scalar: None,
             scalar_int: scalar_int_class(ty),
         });
         params.push(param);
@@ -7676,6 +7979,108 @@ mod tests {
             .replace(' ', "")
     }
 
+    /// Expands a `#[cuda_module]` body with the host surface suppressed.
+    fn expand_device_only_to_compact_string(module: ItemMod) -> String {
+        expand_cuda_module_inner(module, false)
+            .expect("cuda_module expansion failed")
+            .to_string()
+            .replace(' ', "")
+    }
+
+    fn one_kernel_module() -> ItemMod {
+        parse_quote! {
+            mod kernels {
+                #[kernel]
+                fn scale(out: *mut f32) {}
+            }
+        }
+    }
+
+    /// With the host surface off, nothing in the expansion may name the
+    /// `cuda-host` -> `cuda-core` -> `cuda-bindings` -> `cuda.h` stack. That is
+    /// the whole point of the feature: a crate that only compiles kernels
+    /// should not have to build it.
+    #[test]
+    fn device_only_cuda_module_names_no_host_crate() {
+        let expanded = expand_device_only_to_compact_string(one_kernel_module());
+        assert!(
+            !expanded.contains("cuda_host"),
+            "device-only expansion must not name cuda_host: {expanded}"
+        );
+        assert!(
+            !expanded.contains("cuda_core"),
+            "device-only expansion must not name cuda_core: {expanded}"
+        );
+        assert!(
+            !expanded.contains("LoadedModule"),
+            "device-only expansion must not emit the loader type: {expanded}"
+        );
+    }
+
+    /// Gating must remove only the host surface. The kernel itself still has
+    /// to reach the codegen collector.
+    #[test]
+    fn device_only_cuda_module_still_emits_the_kernel() {
+        let expanded = expand_device_only_to_compact_string(one_kernel_module());
+        assert!(
+            expanded.contains("#[kernel]fnscale"),
+            "the kernel must survive gating: {expanded}"
+        );
+    }
+
+    /// The default build is unchanged: this is the additive half of the
+    /// contract, and existing consumers depend on it.
+    #[test]
+    fn host_cuda_module_still_emits_the_loader() {
+        let expanded = expand_to_compact_string(one_kernel_module());
+        assert!(
+            expanded.contains("::cuda_host::") && expanded.contains("LoadedModule"),
+            "host expansion must keep the loader: {expanded}"
+        );
+    }
+
+    /// A nested inline module gets its own `LoadedModule`, so it needs the
+    /// same gate as the outer one.
+    #[test]
+    fn device_only_nested_module_emits_no_loader() {
+        let module: ItemMod = parse_quote! {
+            mod outer {
+                mod inner {
+                    #[kernel]
+                    fn scale(out: *mut f32) {}
+                }
+            }
+        };
+        let expanded = expand_device_only_to_compact_string(module);
+        assert!(
+            !expanded.contains("LoadedModule") && !expanded.contains("cuda_host"),
+            "nested device-only expansion must emit no loader: {expanded}"
+        );
+    }
+
+    /// A bare `#[kernel]` outside any `#[cuda_module]` carries its own
+    /// `CudaKernel` impl, the other reference a kernel-only crate cannot
+    /// resolve.
+    #[test]
+    fn bare_kernel_marker_impl_is_host_only() {
+        let func: ItemFn = parse_quote! {
+            fn scale(out: *mut f32) {}
+        };
+        let name = format_ident!("scale");
+
+        let device_only = generate_cuda_kernel_impl(&name, "scale", &func, false).to_string();
+        assert!(
+            device_only.is_empty(),
+            "device-only build must emit no marker impl: {device_only}"
+        );
+
+        let host = generate_cuda_kernel_impl(&name, "scale", &func, true).to_string();
+        assert!(
+            host.contains("CudaKernel"),
+            "host build must keep the marker impl: {host}"
+        );
+    }
+
     #[test]
     fn generated_kernel_siblings_preserve_qualified_paths_and_generics() {
         let kernel: syn::Path = parse_quote! { kernels::map::<_, 4> };
@@ -8126,7 +8531,8 @@ mod tests {
             }
         };
         let items = &module.content.expect("inline module").1;
-        let transformed = transform_cuda_module_items(items, &mut Vec::new(), &[], false).unwrap();
+        let transformed =
+            transform_cuda_module_items(items, &mut Vec::new(), &[], false, true).unwrap();
         let kernel = transformed
             .kernels
             .iter()
@@ -9233,6 +9639,47 @@ mod tests {
     }
 
     #[test]
+    fn disjoint_slice_packet_shape_is_bound_to_the_resolved_type() {
+        // The spelling `Rt` hides a runtime row width, so the macro selects
+        // the two-word host ABI. The generated launch methods must carry the
+        // semantic `HAS_ROW_WIDTH = false` bound for Rust to reject at the call
+        // site once `Rt` resolves to a runtime-width index space.
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                type Rt = RuntimeRowMajorTiles<1, 1>;
+
+                #[kernel]
+                pub fn alias_hides_row_width(mut out: DisjointSlice<f32, Rt>) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        assert!(
+            expanded.contains(
+                "for<'__cuda_oxide_disjoint>DisjointSlice<'__cuda_oxide_disjoint,f32,Rt>:\
+                 ::cuda_device::__LaunchContractDisjointSliceAbi<f32,false>"
+            ),
+            "flat spelling must bind HAS_ROW_WIDTH = false: {expanded}"
+        );
+
+        // The direct spelling selects the three-word ABI and must bind
+        // `HAS_ROW_WIDTH = true`.
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn really_has_row_width(mut out: DisjointSlice<f32, Runtime2DIndex>) {}
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+        assert!(
+            expanded.contains(
+                "for<'__cuda_oxide_disjoint>DisjointSlice<'__cuda_oxide_disjoint,f32,\
+                 Runtime2DIndex>:::cuda_device::__LaunchContractDisjointSliceAbi<f32,true>"
+            ),
+            "runtime-width spelling must bind HAS_ROW_WIDTH = true: {expanded}"
+        );
+    }
+
+    #[test]
     fn aliased_disjoint_index_space_is_checked_by_rust_type_resolution() {
         let module: ItemMod = parse_quote! {
             mod kernels {
@@ -9715,6 +10162,35 @@ mod tests {
 
         expand_cuda_module(module).expect(
             "minimum blocks affects device occupancy metadata, not the host launch contract",
+        );
+    }
+
+    /// The two hygiene regressions for the injected launch-context scope spell
+    /// `KERNEL_SCOPE_LOCAL`-derived names as *identifiers*, so no compiler
+    /// check ties them back to the constant. Rename the constant and both
+    /// fixtures quietly stop colliding with the generated bindings: they keep
+    /// passing while testing nothing, because there is no longer anything to
+    /// collide with. Pin the coupling so a rename fails here and names the
+    /// fixtures that have to move with it.
+    #[test]
+    fn hygiene_fixtures_still_collide_with_the_generated_scope_names() {
+        let storage = format!("{KERNEL_SCOPE_LOCAL}_storage");
+
+        let launch_context = include_str!("../tests/pass/kernel_launch_context_api.rs");
+        assert!(
+            launch_context.contains(&storage),
+            "tests/pass/kernel_launch_context_api.rs must bind `{storage}` so \
+             `generated_storage_name_is_hygienic` exercises the mixed-site \
+             hygiene of the generated storage binding"
+        );
+
+        let const_generic =
+            include_str!("../../rustc-codegen-cuda/examples/const_generic/src/main.rs");
+        assert!(
+            const_generic.contains(KERNEL_SCOPE_LOCAL),
+            "examples/const_generic must declare a const generic named \
+             `{KERNEL_SCOPE_LOCAL}` so `call_site_ident_avoiding_item` is \
+             forced down its rename path"
         );
     }
 }

@@ -19,37 +19,37 @@ use crate::model::{
     DebugControlAdapter, DebugControlAdmission, DebugControlOperation, DotProductAdapter,
     DotProductOperation, DotProductSignedness, EvidenceArtifactKind, EvidenceFile, EvidenceFileV6,
     EvidenceMatrix, EvidenceMatrixTemplate, EvidenceRecord, EvidenceRecordDefaults, EvidenceStage,
-    EvidenceStageKind, ExtendedMinMax, ExtendedMinMaxAdapter, ExtendedMinMaxAdmission,
-    ExtendedMinMaxFormat, ExtendedMinMaxNan, ExtendedMinMaxOperation, ExtendedMinMaxSubnormal,
-    ImportedAddressSpace, ImportedFile, ImportedIntrinsic, IntrinsicBackend, IntrinsicSource,
-    LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
-    LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding,
-    MatchOperandEncoding, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierExtended,
-    MbarrierExtendedAdapter, MbarrierExtendedAdmission, MbarrierExtendedOperation,
-    MbarrierExtendedSourceContract, MbarrierStateSpace, MovmatrixAdapter, MovmatrixParticipation,
-    OverlayBackendLowering, OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter,
-    PackedAluFormat, PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter,
-    PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation,
-    PackedAtomicOrdering, PackedAtomicPointerContract, PackedAtomicReturnContract,
-    PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
-    PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
-    PackedConversionFp8Admission, PackedConversionFp8Direction, PackedConversionFp8F16x2Admission,
-    PackedConversionFp8Format, PackedConversionRounding, PackedConversionSaturation,
-    PackedConversionSourceFormat, PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission,
-    PrmtMode, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation, RegisterMma,
-    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaAmpereFloatAdmission,
-    RegisterMmaAmpereFloatVariant, RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource,
-    RegisterMmaElement, RegisterMmaF8F6F4Admission, RegisterMmaFp8Admission,
-    RegisterMmaIntegerAdmission, RegisterMmaKind, RegisterMmaLayout, RegisterMmaOperation,
-    RegisterMmaOverflow, RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation,
-    ScalarArithmetic, ScalarArithmeticAdmission, ScalarArithmeticFormat, ScalarArithmeticOperation,
-    ScalarArithmeticRounding, ScalarArithmeticSaturation, ScalarArithmeticSubnormal,
-    ScalarConversion, ScalarConversionAdapter, ScalarConversionAdmission,
-    ScalarConversionDestinationFormat, ScalarConversionResultRepresentation,
-    ScalarConversionRounding, ScalarConversionSaturation, ScalarConversionSourceFormat, ScalarMath,
-    ScalarMathAdmission, ScalarMathFormat, ScalarMathOperation, ScalarMathPrecision,
-    ScalarMathSubnormal, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
-    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    EvidenceStageKind, ExecutionControlOperation, ExtendedMinMax, ExtendedMinMaxAdapter,
+    ExtendedMinMaxAdmission, ExtendedMinMaxFormat, ExtendedMinMaxNan, ExtendedMinMaxOperation,
+    ExtendedMinMaxSubnormal, ImportedAddressSpace, ImportedFile, ImportedIntrinsic,
+    IntrinsicBackend, IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement,
+    LdmatrixLayout, LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation,
+    LdmatrixShape, LdmatrixStateSpace, MaskEncoding, MatchOperandEncoding, MbarrierBasicAdapter,
+    MbarrierBasicOperation, MbarrierExtended, MbarrierExtendedAdapter, MbarrierExtendedAdmission,
+    MbarrierExtendedOperation, MbarrierExtendedSourceContract, MbarrierStateSpace,
+    MovmatrixAdapter, MovmatrixParticipation, OverlayBackendLowering, OverlayFile,
+    OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat, PackedAluOperation,
+    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
+    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
+    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
+    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
+    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionFp8Admission,
+    PackedConversionFp8Direction, PackedConversionFp8F16x2Admission, PackedConversionFp8Format,
+    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
+    PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
+    ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
+    RegisterMmaAmpereFloatAdmission, RegisterMmaAmpereFloatVariant, RegisterMmaBinaryAdmission,
+    RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaF8F6F4Admission,
+    RegisterMmaFp8Admission, RegisterMmaIntegerAdmission, RegisterMmaKind, RegisterMmaLayout,
+    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation, RegisterMmaShape,
+    RuntimeValidation, ScalarArithmetic, ScalarArithmeticAdmission, ScalarArithmeticFormat,
+    ScalarArithmeticOperation, ScalarArithmeticRounding, ScalarArithmeticSaturation,
+    ScalarArithmeticSubnormal, ScalarConversion, ScalarConversionAdapter,
+    ScalarConversionAdmission, ScalarConversionDestinationFormat,
+    ScalarConversionResultRepresentation, ScalarConversionRounding, ScalarConversionSaturation,
+    ScalarConversionSourceFormat, ScalarMath, ScalarMathAdmission, ScalarMathFormat,
+    ScalarMathOperation, ScalarMathPrecision, ScalarMathSubnormal, SparseMma, SparseMmaAccumulator,
+    SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
     SparseMmaF8F6F4F16Admission, SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter,
     SparseMmaMetadata, SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector,
     SparseMmaShape, SpecialRegister, SpecialRegisterAdmission, SpecialRegisterKind,
@@ -62,6 +62,7 @@ use crate::model::{
     Tcgen05MmaFixedSelectors, Tcgen05MmaForm, Tcgen05MmaKind, Tcgen05MmaSelectorLayout,
     Tcgen05Operation, Tcgen05SourceContract, Tcgen05St, Tcgen05StAdmissionVariant,
     ThreadfenceAdmission, ThreadfenceScope, Tma, TmaAdapter, TmaAdmission, TmaOperation,
+    TmaReduction, TmaReductionAdmissionVariant, TmaReductionLoadMode, TmaReductionOperation,
     VoteAdapter, VoteMode, VoteParticipation, WarpBarrierAdapter, WarpBarrierMaskEncoding,
     WarpBarrierMemoryOrdering, WarpBarrierParticipation, WarpMatchAdapter, WarpMatchMode,
     WarpMatchParticipation, WarpMatchValueWidth, WarpShuffleAdapter, WarpShuffleMode,
@@ -78,9 +79,10 @@ use std::path::{Component, Path, PathBuf};
 
 const OVERLAY_SCHEMA: u32 = 44;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 59;
+const OVERLAY_SHARD_SCHEMA: u32 = 62;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
+const REGISTER_MMA_MXF8F6F4_SHARD_SCHEMA: u32 = 60;
 const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
 const REGISTER_MMA_AMPERE_FLOAT_SHARD_SCHEMA: u32 = 49;
 const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
@@ -96,13 +98,14 @@ const THREADFENCE_SHARD_SCHEMA: u32 = 34;
 const STMATRIX_SHARD_SCHEMA: u32 = 35;
 const CLUSTER_MEMORY_SHARD_SCHEMA: u32 = 39;
 const CLC_SHARD_SCHEMA: u32 = 40;
-const TMA_SHARD_SCHEMA: u32 = 41;
+const TMA_SHARD_SCHEMA: u32 = 61;
+const TMA_REDUCTION_SHARD_SCHEMA: u32 = 62;
 const MBARRIER_EXTENDED_SHARD_SCHEMA: u32 = 40;
 const WGMMA_CONTROL_SHARD_SCHEMA: u32 = 38;
 const TCGEN05_SHARD_SCHEMA: u32 = 42;
 const SCALAR_CONVERSION_SHARD_SCHEMA: u32 = 43;
 const SCALAR_ARITHMETIC_SHARD_SCHEMA: u32 = 45;
-const EXTENDED_MINMAX_SHARD_SCHEMA: u32 = 51;
+const EXTENDED_MINMAX_SHARD_SCHEMA: u32 = 60;
 const TCGEN05_CP_SHARD_SCHEMA: u32 = 52;
 const TCGEN05_LD_SHARD_SCHEMA: u32 = 53;
 const TCGEN05_ST_SHARD_SCHEMA: u32 = 54;
@@ -110,10 +113,13 @@ const TCGEN05_OFFSET_LDST_SHARD_SCHEMA: u32 = 55;
 const TCGEN05_CONTROL_SHARD_SCHEMA: u32 = 56;
 const TCGEN05_MMA_SHARD_SCHEMA: u32 = 57;
 const SCALAR_MATH_SHARD_SCHEMA: u32 = 58;
-pub(crate) const CATALOG_SCHEMA: u32 = 44;
+pub(crate) const CATALOG_SCHEMA: u32 = 46;
 const BLACKWELL_LDMATRIX_LLVM_TARGETS: &str =
     "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f";
 const BLACKWELL_LDMATRIX_LIBNVVM_TARGETS: &str = BLACKWELL_LDMATRIX_LLVM_TARGETS;
+const TMA_BLACKWELL_TARGETS: &str = "sm_100a|sm_101a|sm_103a|sm_110a";
+const TENSOR_MAP_REPLACE_TARGETS: &str =
+    "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f|sm_90a";
 const TCGEN05_LLVM_TARGETS: &str = "sm_100a|sm_101a|sm_103a|sm_110a";
 const TCGEN05_LIBNVVM_TARGETS: &str = "sm_100a|sm_103a|sm_110a";
 const TCGEN05_MMA_FORMS: [Tcgen05MmaForm; 14] = [
@@ -148,7 +154,7 @@ const TCGEN05_MMA_KINDS: [Tcgen05MmaKind; 4] = [
 const TCGEN05_MMA_DIALECT_OP_TYPE: &str = "Tcgen05MmaOp";
 const TCGEN05_MMA_DIALECT_OP_NAME: &str = "nvvm.tcgen05_mma";
 const REGISTER_MMA_F8F6F4_TARGETS: &str = "sm_120a|sm_120f|sm_121a|sm_121f";
-const SPARSE_MMA_F8F6F4_F16_TARGETS: &str = "sm_120a|sm_120f|sm_121a|sm_121f";
+const SPARSE_MMA_F8F6F4_TARGETS: &str = "sm_120a|sm_120f|sm_121a|sm_121f";
 
 struct ResolutionBase {
     overlay: OverlayFile,
@@ -170,12 +176,14 @@ fn primary_evidence_profile<'a>(
     policy: &'a OverlayIntrinsic,
     default_profile: &'a str,
 ) -> Result<&'a str> {
-    if policy
-        .tcgen05
-        .as_ref()
-        .and_then(|tcgen05| tcgen05.mma.as_ref())
-        .is_none()
-    {
+    let needs_family_profile = policy.tma.is_some()
+        || ExecutionControlOperation::from_catalog_id(&policy.id).is_some()
+        || policy
+            .tcgen05
+            .as_ref()
+            .and_then(|tcgen05| tcgen05.mma.as_ref())
+            .is_some();
+    if !needs_family_profile {
         return Ok(default_profile);
     }
     policy
@@ -183,7 +191,7 @@ fn primary_evidence_profile<'a>(
         .iter()
         .find(|lowering| lowering.backend == IntrinsicBackend::LlvmNvptx)
         .map(|lowering| lowering.evidence_profile.as_str())
-        .with_context(|| format!("{} has no LLVM tcgen05 MMA evidence route", policy.id))
+        .with_context(|| format!("{} has no LLVM family evidence route", policy.id))
 }
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
@@ -341,47 +349,45 @@ pub(crate) fn test_catalog_with_clc(repo_root: &Path) -> Result<CatalogFile> {
 #[cfg(test)]
 pub(crate) fn test_catalog_with_tma(repo_root: &Path) -> Result<CatalogFile> {
     let mut catalog = resolve(repo_root)?;
-    if catalog
+    let active_count = catalog
         .intrinsics
         .iter()
         .filter(|record| record.tma.is_some())
-        .count()
-        == 15
-    {
+        .count();
+    let expected_count = TMA_OPERATIONS.len() + tma_reduction_matrix().len();
+    if active_count == expected_count {
         return Ok(catalog);
     }
+    ensure!(
+        active_count == 0 || active_count == TMA_OPERATIONS.len(),
+        "active TMA catalog has {active_count} records; expected 0, {} base records, or {expected_count} total records",
+        TMA_OPERATIONS.len()
+    );
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
-    let operations = [
-        TmaOperation::G2sTile1d,
-        TmaOperation::G2sTile2d,
-        TmaOperation::G2sTile2dMulticast,
-        TmaOperation::G2sTile2dMulticastCg2,
-        TmaOperation::G2sTile3d,
-        TmaOperation::G2sTile4d,
-        TmaOperation::G2sTile5d,
-        TmaOperation::S2gTile1d,
-        TmaOperation::S2gTile2d,
-        TmaOperation::S2gTile3d,
-        TmaOperation::S2gTile4d,
-        TmaOperation::S2gTile5d,
-        TmaOperation::CommitGroup,
-        TmaOperation::WaitGroup,
-        TmaOperation::WaitGroupRead,
-    ];
     let admission = TmaAdmission {
         llvm_evidence_profile: "llvm-tma-test".into(),
         libnvvm_evidence_profile: "libnvvm-tma-test".into(),
+        reduce_llvm_evidence_profile: Some("llvm-tma-reduce-test".into()),
+        reduce_libnvvm_evidence_profile: Some("libnvvm-tma-reduce-test".into()),
         runtime_validation: RuntimeValidation::Unexecuted,
-        variants: operations
+        variants: TMA_OPERATIONS
             .into_iter()
             .map(|operation| crate::model::TmaAdmissionVariant {
                 abi_id: tma_recipe(operation).abi_id.into(),
                 operation,
             })
             .collect(),
+        reduce_variants: tma_reduction_admission_variants(),
     };
     for policy in expand_tma_admission(&admission)? {
+        if catalog
+            .intrinsics
+            .iter()
+            .any(|record| record.id.as_str() == policy.id.as_str())
+        {
+            continue;
+        }
         let source = resolve_policy_source(&policy)?;
         let declaration = resolve_imported_declaration(&policy, &source, &imported_by_record)?;
         validate_policy(&policy, &source, declaration, catalog.intrinsic_abi)?;
@@ -641,6 +647,7 @@ fn load_resolution_base(repo_root: &Path) -> Result<ResolutionBase> {
     overlay
         .intrinsics
         .sort_by(|left, right| left.id.cmp(&right.id));
+    validate_execution_control_family_completeness(&overlay.intrinsics)?;
     validate_unique_overlay(&overlay.intrinsics, overlay.intrinsic_abi)?;
     validate_abi_ledger(&overlay, &ledger)?;
     Ok(ResolutionBase {
@@ -927,6 +934,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
         let binary_mma_admission = shard.register_mma_b1.take();
         let f8f6f4_f32_mma_admission = shard.register_mma_f8f6f4_f32.take();
         let f8f6f4_f16_mma_admission = shard.register_mma_f8f6f4_f16.take();
+        let mxf8f6f4_f32_mma_admission = shard.register_mma_mxf8f6f4_f32.take();
         let fp8_mma_admission = shard.register_mma_fp8.take();
         let ampere_float_mma_admission = shard.register_mma_ampere_float.take();
         let sparse_mma_admission = shard.sparse_mma_integer.take();
@@ -956,6 +964,7 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             + usize::from(binary_mma_admission.is_some())
             + usize::from(f8f6f4_f32_mma_admission.is_some())
             + usize::from(f8f6f4_f16_mma_admission.is_some())
+            + usize::from(mxf8f6f4_f32_mma_admission.is_some())
             + usize::from(fp8_mma_admission.is_some())
             + usize::from(ampere_float_mma_admission.is_some())
             + usize::from(sparse_mma_admission.is_some())
@@ -1000,6 +1009,13 @@ fn read_overlay(repo_root: &Path, manifest_path: &Path) -> Result<(OverlayFile, 
             );
             shard.intrinsics =
                 expand_register_mma_f8f6f4_admission(&admission, RegisterMmaAccumulator::F16)?;
+        }
+        if let Some(admission) = mxf8f6f4_f32_mma_admission {
+            ensure!(
+                shard.family == "register_mma" && shard.intrinsics.is_empty(),
+                "compact dense mxf8f6f4 MMA admission must be the only content of a register_mma shard"
+            );
+            shard.intrinsics = expand_register_mma_mxf8f6f4_admission(&admission)?;
         }
         if let Some(admission) = fp8_mma_admission {
             ensure!(
@@ -1235,6 +1251,12 @@ fn validate_overlay_shard_schema_with_max(
         REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA
     );
     ensure!(
+        shard.register_mma_mxf8f6f4_f32.is_none()
+            || shard.schema >= REGISTER_MMA_MXF8F6F4_SHARD_SCHEMA,
+        "compact dense mxf8f6f4 MMA admission requires overlay shard schema {}",
+        REGISTER_MMA_MXF8F6F4_SHARD_SCHEMA
+    );
+    ensure!(
         shard.register_mma_fp8.is_none() || shard.schema >= REGISTER_MMA_FP8_SHARD_SCHEMA,
         "compact standard FP8 MMA admission requires overlay shard schema {}",
         REGISTER_MMA_FP8_SHARD_SCHEMA
@@ -1325,6 +1347,15 @@ fn validate_overlay_shard_schema_with_max(
         shard.tma.is_none() || shard.schema >= TMA_SHARD_SCHEMA,
         "compact TMA admission requires overlay shard schema {}",
         TMA_SHARD_SCHEMA
+    );
+    ensure!(
+        shard
+            .tma
+            .as_ref()
+            .is_none_or(|admission| admission.reduce_variants.is_empty())
+            || shard.schema >= TMA_REDUCTION_SHARD_SCHEMA,
+        "compact TMA reduction admission requires overlay shard schema {}",
+        TMA_REDUCTION_SHARD_SCHEMA
     );
     ensure!(
         shard.mbarrier_extended.is_none() || shard.schema >= MBARRIER_EXTENDED_SHARD_SCHEMA,
@@ -1473,6 +1504,35 @@ fn shares_tma_2d_g2s_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
         })
 }
 
+fn shares_tma_prefetch_tile_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
+    let Some(tma) = record.tma.as_ref() else {
+        return false;
+    };
+    let expected_symbol = match tma.operation {
+        TmaOperation::PrefetchTile1d | TmaOperation::PrefetchTile1dCacheHint => {
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.1d"
+        }
+        TmaOperation::PrefetchTile2d | TmaOperation::PrefetchTile2dCacheHint => {
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.2d"
+        }
+        TmaOperation::PrefetchTile3d | TmaOperation::PrefetchTile3dCacheHint => {
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.3d"
+        }
+        TmaOperation::PrefetchTile4d | TmaOperation::PrefetchTile4dCacheHint => {
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.4d"
+        }
+        TmaOperation::PrefetchTile5d | TmaOperation::PrefetchTile5dCacheHint => {
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.5d"
+        }
+        TmaOperation::PrefetchTileGather4TwoDimensional
+        | TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint => {
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.gather4.2d"
+        }
+        _ => return false,
+    };
+    symbol == expected_symbol
+}
+
 fn shares_tcgen05_mma_ws_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
     symbol == "llvm.nvvm.tcgen05.mma.ws.tensor"
         && record.tcgen05.as_ref().is_some_and(|tcgen05| {
@@ -1586,6 +1646,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
         if let Some(symbol) = &record.llvm_symbol {
             let is_resolved = record.resolved_llvm_symbol.is_some();
             let shares_reviewed_symbol = shares_tma_2d_g2s_symbol(record, symbol)
+                || shares_tma_prefetch_tile_symbol(record, symbol)
                 || shares_tcgen05_mma_ws_symbol(record, symbol)
                 || shares_tcgen05_ld_symbol(record, symbol)
                 || shares_tcgen05_st_symbol(record, symbol);
@@ -2046,6 +2107,12 @@ fn validate_policy(
             policy,
             declaration.context("tma requires imported LLVM declaration")?,
         )?,
+        "counted_barrier" | "grid_dependency" | "register_control" => {
+            validate_execution_control_policy(
+                policy,
+                declaration.context("execution-control requires imported LLVM declaration")?,
+            )?
+        }
         "tcgen05" => validate_tcgen05_policy(
             policy,
             declaration.context("tcgen05 requires imported LLVM declaration")?,
@@ -2255,6 +2322,25 @@ fn validate_policy(
                     )
                 }))
             || policy.family == "stmatrix"
+            || (policy.family == "tma"
+                && policy.tma.as_ref().is_some_and(|tma| {
+                    matches!(
+                        tma.operation,
+                        TmaOperation::Reduce
+                            | TmaOperation::PrefetchTensorMap
+                            | TmaOperation::ReplaceBoxDim
+                            | TmaOperation::ReplaceElementStride
+                            | TmaOperation::ReplaceElementType
+                            | TmaOperation::ReplaceFillMode
+                            | TmaOperation::ReplaceGlobalAddress
+                            | TmaOperation::ReplaceGlobalDim
+                            | TmaOperation::ReplaceGlobalStride
+                            | TmaOperation::ReplaceInterleaveLayout
+                            | TmaOperation::ReplaceRank
+                            | TmaOperation::ReplaceSwizzleAtomicity
+                            | TmaOperation::ReplaceSwizzleMode
+                    )
+                }))
             || (policy.family == "tcgen05"
                 && policy.tcgen05.as_ref().is_some_and(|tcgen05| {
                     tcgen05.source_contract
@@ -2287,7 +2373,30 @@ fn validate_policy(
             "vote" | "warp_barrier" | "elect" => 2,
             "warp_match" => 4,
             "warp_shuffle" => 8,
+            "counted_barrier" => 4,
             "packed_conversion" | "prmt" | "stmatrix" => 0,
+            "tma"
+                if policy.tma.as_ref().is_some_and(|tma| {
+                    matches!(
+                        tma.operation,
+                        TmaOperation::Reduce
+                            | TmaOperation::PrefetchTensorMap
+                            | TmaOperation::ReplaceBoxDim
+                            | TmaOperation::ReplaceElementStride
+                            | TmaOperation::ReplaceElementType
+                            | TmaOperation::ReplaceFillMode
+                            | TmaOperation::ReplaceGlobalAddress
+                            | TmaOperation::ReplaceGlobalDim
+                            | TmaOperation::ReplaceGlobalStride
+                            | TmaOperation::ReplaceInterleaveLayout
+                            | TmaOperation::ReplaceRank
+                            | TmaOperation::ReplaceSwizzleAtomicity
+                            | TmaOperation::ReplaceSwizzleMode
+                    )
+                }) =>
+            {
+                0
+            }
             "tcgen05"
                 if policy
                     .tcgen05
@@ -2410,6 +2519,21 @@ fn selection_matches_policy(
 
     if policy.family == "tma" {
         return selection_matches_tma_policy(policy, selection);
+    }
+    if matches!(
+        policy.family.as_str(),
+        "counted_barrier" | "grid_dependency" | "register_control"
+    ) {
+        let Some(operation) = ExecutionControlOperation::from_catalog_id(&policy.id) else {
+            return false;
+        };
+        let recipe = execution_control_recipe(operation);
+        return recipe
+            .selection_records
+            .contains(&selection.source_record.as_str())
+            && selection.asm == recipe.selection_asm
+            && selection.predicates == recipe.selection_predicates
+            && selection.constraints.is_empty();
     }
     if policy.family == "tcgen05" {
         let Some(tcgen05) = &policy.tcgen05 else {
@@ -2624,6 +2748,24 @@ fn selection_matches_tma_policy(
         return false;
     };
     let operation = tma.operation;
+    if matches!(
+        operation,
+        TmaOperation::Reduce
+            | TmaOperation::PrefetchTensorMap
+            | TmaOperation::ReplaceBoxDim
+            | TmaOperation::ReplaceElementStride
+            | TmaOperation::ReplaceElementType
+            | TmaOperation::ReplaceFillMode
+            | TmaOperation::ReplaceGlobalAddress
+            | TmaOperation::ReplaceGlobalDim
+            | TmaOperation::ReplaceGlobalStride
+            | TmaOperation::ReplaceInterleaveLayout
+            | TmaOperation::ReplaceRank
+            | TmaOperation::ReplaceSwizzleAtomicity
+            | TmaOperation::ReplaceSwizzleMode
+    ) {
+        return false;
+    }
     let (source_record, asm) = match operation {
         TmaOperation::G2sTile1d => (
             "TMA_G2S_TILE_CG0_1D",
@@ -2679,6 +2821,99 @@ fn selection_matches_tma_policy(
             "CP_ASYNC_BULK_WAIT_GROUP_READ",
             "cp.async.bulk.wait_group.read \t$n;",
         ),
+        TmaOperation::PrefetchTile1d => (
+            "TMA_TENSOR_PF_TILE_1D",
+            "cp.async.bulk.prefetch.tensor.1d.L2.global.tile [$tmap, {{$d0}}];",
+        ),
+        TmaOperation::PrefetchTile2d => (
+            "TMA_TENSOR_PF_TILE_2D",
+            "cp.async.bulk.prefetch.tensor.2d.L2.global.tile [$tmap, {{$d0, $d1}}];",
+        ),
+        TmaOperation::PrefetchTile3d => (
+            "TMA_TENSOR_PF_TILE_3D",
+            "cp.async.bulk.prefetch.tensor.3d.L2.global.tile [$tmap, {{$d0, $d1, $d2}}];",
+        ),
+        TmaOperation::PrefetchTile4d => (
+            "TMA_TENSOR_PF_TILE_4D",
+            "cp.async.bulk.prefetch.tensor.4d.L2.global.tile [$tmap, {{$d0, $d1, $d2, $d3}}];",
+        ),
+        TmaOperation::PrefetchTile5d => (
+            "TMA_TENSOR_PF_TILE_5D",
+            "cp.async.bulk.prefetch.tensor.5d.L2.global.tile [$tmap, {{$d0, $d1, $d2, $d3, $d4}}];",
+        ),
+        TmaOperation::PrefetchTileGather4TwoDimensional => (
+            "TMA_TENSOR_PF_TILE_GATHER4_2D",
+            "cp.async.bulk.prefetch.tensor.2d.L2.global.tile::gather4 [$tmap, {{$d0, $d1, $d2, $d3, $d4}}];",
+        ),
+        TmaOperation::PrefetchTile1dCacheHint => (
+            "TMA_TENSOR_PF_TILE_1D_CH",
+            "cp.async.bulk.prefetch.tensor.1d.L2.global.tile.L2::cache_hint [$tmap, {{$d0}}], $ch;",
+        ),
+        TmaOperation::PrefetchTile2dCacheHint => (
+            "TMA_TENSOR_PF_TILE_2D_CH",
+            "cp.async.bulk.prefetch.tensor.2d.L2.global.tile.L2::cache_hint [$tmap, {{$d0, $d1}}], $ch;",
+        ),
+        TmaOperation::PrefetchTile3dCacheHint => (
+            "TMA_TENSOR_PF_TILE_3D_CH",
+            "cp.async.bulk.prefetch.tensor.3d.L2.global.tile.L2::cache_hint [$tmap, {{$d0, $d1, $d2}}], $ch;",
+        ),
+        TmaOperation::PrefetchTile4dCacheHint => (
+            "TMA_TENSOR_PF_TILE_4D_CH",
+            "cp.async.bulk.prefetch.tensor.4d.L2.global.tile.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3}}], $ch;",
+        ),
+        TmaOperation::PrefetchTile5dCacheHint => (
+            "TMA_TENSOR_PF_TILE_5D_CH",
+            "cp.async.bulk.prefetch.tensor.5d.L2.global.tile.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], $ch;",
+        ),
+        TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint => (
+            "TMA_TENSOR_PF_TILE_GATHER4_2D_CH",
+            "cp.async.bulk.prefetch.tensor.2d.L2.global.tile::gather4.L2::cache_hint [$tmap, {{$d0, $d1, $d2, $d3, $d4}}], $ch;",
+        ),
+        TmaOperation::FenceProxyTensorMapAcquireCluster => (
+            "INT_FENCE_PROXY_TENSORMAP_GENERIC_ACQUIRE_CLUSTER",
+            "fence.proxy.tensormap::generic.acquire.cluster [$addr], 128;",
+        ),
+        TmaOperation::FenceProxyTensorMapAcquireCta => (
+            "INT_FENCE_PROXY_TENSORMAP_GENERIC_ACQUIRE_CTA",
+            "fence.proxy.tensormap::generic.acquire.cta [$addr], 128;",
+        ),
+        TmaOperation::FenceProxyTensorMapAcquireGpu => (
+            "INT_FENCE_PROXY_TENSORMAP_GENERIC_ACQUIRE_GPU",
+            "fence.proxy.tensormap::generic.acquire.gpu [$addr], 128;",
+        ),
+        TmaOperation::FenceProxyTensorMapAcquireSystem => (
+            "INT_FENCE_PROXY_TENSORMAP_GENERIC_ACQUIRE_SYS",
+            "fence.proxy.tensormap::generic.acquire.sys [$addr], 128;",
+        ),
+        TmaOperation::FenceProxyTensorMapReleaseCluster => (
+            "INT_FENCE_PROXY_TENSORMAP_GENERIC_RELEASE_CLUSTER",
+            "fence.proxy.tensormap::generic.release.cluster;",
+        ),
+        TmaOperation::FenceProxyTensorMapReleaseCta => (
+            "INT_FENCE_PROXY_TENSORMAP_GENERIC_RELEASE_CTA",
+            "fence.proxy.tensormap::generic.release.cta;",
+        ),
+        TmaOperation::FenceProxyTensorMapReleaseGpu => (
+            "INT_FENCE_PROXY_TENSORMAP_GENERIC_RELEASE_GPU",
+            "fence.proxy.tensormap::generic.release.gpu;",
+        ),
+        TmaOperation::FenceProxyTensorMapReleaseSystem => (
+            "INT_FENCE_PROXY_TENSORMAP_GENERIC_RELEASE_SYS",
+            "fence.proxy.tensormap::generic.release.sys;",
+        ),
+        TmaOperation::Reduce
+        | TmaOperation::PrefetchTensorMap
+        | TmaOperation::ReplaceBoxDim
+        | TmaOperation::ReplaceElementStride
+        | TmaOperation::ReplaceElementType
+        | TmaOperation::ReplaceFillMode
+        | TmaOperation::ReplaceGlobalAddress
+        | TmaOperation::ReplaceGlobalDim
+        | TmaOperation::ReplaceGlobalStride
+        | TmaOperation::ReplaceInterleaveLayout
+        | TmaOperation::ReplaceRank
+        | TmaOperation::ReplaceSwizzleAtomicity
+        | TmaOperation::ReplaceSwizzleMode => unreachable!("selectionless TMA operation"),
     };
 
     let mut immediate_bindings = Vec::new();
@@ -2719,6 +2954,15 @@ fn selection_matches_tma_policy(
         immediate_bindings.push(crate::model::ImportedImmediateBinding {
             argument_index: operation.dimensions().unwrap() + 3,
             value: 0,
+        });
+    } else if let Some(coordinate_count) = operation.prefetch_coordinate_count() {
+        immediate_bindings.push(crate::model::ImportedImmediateBinding {
+            argument_index: coordinate_count + 2,
+            value: if operation.uses_prefetch_cache_hint() {
+                -1
+            } else {
+                0
+            },
         });
     }
 
@@ -3533,6 +3777,974 @@ fn validate_clc_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
     Ok(())
 }
 
+const EXECUTION_CONTROL_OPERATIONS: [ExecutionControlOperation; 8] = [
+    ExecutionControlOperation::BarrierCtaSync,
+    ExecutionControlOperation::BarrierCtaSyncAligned,
+    ExecutionControlOperation::BarrierCtaArrive,
+    ExecutionControlOperation::BarrierCtaArriveAligned,
+    ExecutionControlOperation::GridDependencyLaunchDependents,
+    ExecutionControlOperation::GridDependencyWait,
+    ExecutionControlOperation::SetMaxNRegInc,
+    ExecutionControlOperation::SetMaxNRegDec,
+];
+
+fn validate_execution_control_family_completeness(intrinsics: &[OverlayIntrinsic]) -> Result<()> {
+    let has_execution_control_family = intrinsics.iter().any(|policy| {
+        matches!(
+            policy.family.as_str(),
+            "counted_barrier" | "grid_dependency" | "register_control"
+        )
+    });
+    if !has_execution_control_family {
+        return Ok(());
+    }
+    let actual = intrinsics
+        .iter()
+        .filter_map(|policy| ExecutionControlOperation::from_catalog_id(&policy.id))
+        .collect::<BTreeSet<_>>();
+    let expected = EXECUTION_CONTROL_OPERATIONS
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        actual == expected,
+        "execution-control overlay must admit all four counted barriers, both grid-dependency controls, and both setmaxnreg operations"
+    );
+    for family in ["counted_barrier", "grid_dependency", "register_control"] {
+        ensure!(
+            intrinsics
+                .iter()
+                .filter(|policy| policy.family == family)
+                .all(|policy| {
+                    ExecutionControlOperation::from_catalog_id(&policy.id)
+                        .is_some_and(|operation| operation.family() == family)
+                }),
+            "{family} overlay contains an operation outside its closed instruction family"
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct ExecutionControlRecipe {
+    abi_id: &'static str,
+    id: &'static str,
+    operation_key: &'static str,
+    source_record: &'static str,
+    llvm_symbol: &'static str,
+    rust_module: &'static str,
+    rust_arguments: &'static [&'static str],
+    compatibility_path: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    dialect_operands: &'static [&'static str],
+    llvm_arguments: &'static [&'static str],
+    imported_classes: &'static [&'static str],
+    imported_properties: &'static [&'static str],
+    memory: &'static str,
+    convergent: bool,
+    execution_scope: &'static str,
+    minimum_ptx: &'static str,
+    minimum_sm: Option<&'static str>,
+    targets: &'static str,
+    ptx_isa_section: &'static str,
+    ptx_isa_url: &'static str,
+    mnemonic: &'static str,
+    modifiers: &'static [&'static str],
+    operands: &'static [OperandPattern],
+    selection_records: &'static [&'static str],
+    selection_asm: &'static str,
+    selection_predicates: &'static [&'static str],
+    summary: &'static str,
+}
+
+fn execution_control_recipe(operation: ExecutionControlOperation) -> ExecutionControlRecipe {
+    use ExecutionControlOperation::*;
+
+    const EMPTY: &[&str] = &[];
+    const I32: &[&str] = &["i32"];
+    const I32_I32: &[&str] = &["i32", "i32"];
+    const U32: &[&str] = &["u32"];
+    const U32_U32: &[&str] = &["u32", "u32"];
+    const BASE_CLASSES: &[&str] = &["SDPatternOperator", "Intrinsic"];
+    const DEFAULT_CLASSES: &[&str] = &["SDPatternOperator", "Intrinsic", "DefaultAttrsIntrinsic"];
+    const BARRIER_PROPERTIES: &[&str] = &["IntrConvergent", "IntrNoCallback"];
+    const GRID_PROPERTIES: &[&str] = &["IntrHasSideEffects", "IntrNoMem"];
+    const SETMAX_PROPERTIES: &[&str] = &[
+        "ImmArg<arg0>",
+        "IntrConvergent",
+        "IntrHasSideEffects",
+        "IntrNoMem",
+        "Range<arg0,24,257>",
+    ];
+    const TWO_REGISTER_OR_IMMEDIATE: &[OperandPattern] = &[
+        OperandPattern::RegisterOrImmediate,
+        OperandPattern::RegisterOrImmediate,
+    ];
+    const ONE_IMMEDIATE: &[OperandPattern] = &[OperandPattern::Immediate];
+    const NO_OPERANDS: &[OperandPattern] = &[];
+    const BARRIER_SYNC_SELECTIONS: &[&str] = &[
+        "BARRIER_CTA_SYNC_ii",
+        "BARRIER_CTA_SYNC_ir",
+        "BARRIER_CTA_SYNC_ri",
+        "BARRIER_CTA_SYNC_rr",
+    ];
+    const BAR_SYNC_SELECTIONS: &[&str] = &[
+        "BARRIER_CTA_SYNC_ALIGNED_ii",
+        "BARRIER_CTA_SYNC_ALIGNED_ir",
+        "BARRIER_CTA_SYNC_ALIGNED_ri",
+        "BARRIER_CTA_SYNC_ALIGNED_rr",
+    ];
+    const BARRIER_ARRIVE_SELECTIONS: &[&str] = &[
+        "BARRIER_CTA_ARRIVE_ii",
+        "BARRIER_CTA_ARRIVE_ir",
+        "BARRIER_CTA_ARRIVE_ri",
+        "BARRIER_CTA_ARRIVE_rr",
+    ];
+    const BAR_ARRIVE_SELECTIONS: &[&str] = &[
+        "BARRIER_CTA_ARRIVE_ALIGNED_ii",
+        "BARRIER_CTA_ARRIVE_ALIGNED_ir",
+        "BARRIER_CTA_ARRIVE_ALIGNED_ri",
+        "BARRIER_CTA_ARRIVE_ALIGNED_rr",
+    ];
+    const PTX_60: &[&str] = &["Subtarget->getPTXVersion() >= 60"];
+    const GRID_PREDICATES: &[&str] = &[
+        "Subtarget->getSmVersion() >= 90",
+        "Subtarget->getPTXVersion() >= 78",
+    ];
+    const SETMAX_PREDICATES: &[&str] = &["Subtarget->hasSetMaxNRegSupport()"];
+    const SYNC_MODIFIERS: &[&str] = &["sync"];
+    const ARRIVE_MODIFIERS: &[&str] = &["arrive"];
+    const LAUNCH_DEPENDENTS_MODIFIERS: &[&str] = &["launch_dependents"];
+    const WAIT_MODIFIERS: &[&str] = &["wait"];
+    const SETMAX_INC_MODIFIERS: &[&str] = &["inc", "sync", "aligned", "u32"];
+    const SETMAX_DEC_MODIFIERS: &[&str] = &["dec", "sync", "aligned", "u32"];
+    const GRID_LAUNCH_SELECTIONS: &[&str] = &["GRIDDEPCONTROL_LAUNCH_DEPENDENTS"];
+    const GRID_WAIT_SELECTIONS: &[&str] = &["GRIDDEPCONTROL_WAIT"];
+    const SETMAX_INC_SELECTIONS: &[&str] = &["anonymous_22212"];
+    const SETMAX_DEC_SELECTIONS: &[&str] = &["anonymous_22214"];
+    const BAR_SECTION: &str =
+        "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier";
+    const BAR_URL: &str = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier";
+    const GRID_SECTION: &str =
+        "9.7.15.1 Parallel Synchronization and Communication Instructions: griddepcontrol";
+    const GRID_URL: &str = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-griddepcontrol";
+    const SETMAX_SECTION: &str = "9.7.16.5 Miscellaneous Instructions: setmaxnreg";
+    const SETMAX_URL: &str = "https://docs.nvidia.com/cuda/parallel-thread-execution/#miscellaneous-instructions-setmaxnreg";
+
+    let (
+        abi_id,
+        id,
+        operation_key,
+        source_record,
+        llvm_symbol,
+        rust_module,
+        rust_arguments,
+        compatibility_path,
+        dialect_op_type,
+        dialect_op_name,
+        dialect_operands,
+        llvm_arguments,
+        imported_classes,
+        imported_properties,
+        memory,
+        convergent,
+        execution_scope,
+        minimum_ptx,
+        minimum_sm,
+        targets,
+        ptx_isa_section,
+        ptx_isa_url,
+        mnemonic,
+        modifiers,
+        operands,
+        selection_records,
+        selection_asm,
+        selection_predicates,
+        summary,
+    ) = match operation {
+        BarrierCtaSync => (
+            "i0883",
+            "barrier_cta_sync",
+            "synchronization.cta.barrier.count",
+            "int_nvvm_barrier_cta_sync_count",
+            "llvm.nvvm.barrier.cta.sync.count",
+            "barrier",
+            U32_U32,
+            "cuda_device::barrier::barrier_cta_sync",
+            "BarrierCtaSyncCountOp",
+            "nvvm.barrier_cta_sync_count",
+            I32_I32,
+            I32_I32,
+            BASE_CLASSES,
+            BARRIER_PROPERTIES,
+            "read_write",
+            true,
+            "cta",
+            "6.0",
+            Some("sm_30"),
+            "all",
+            BAR_SECTION,
+            BAR_URL,
+            "barrier",
+            SYNC_MODIFIERS,
+            TWO_REGISTER_OR_IMMEDIATE,
+            BARRIER_SYNC_SELECTIONS,
+            "barrier.sync \t$i, $j;",
+            PTX_60,
+            "Synchronizes the requested number of CTA threads at a numbered barrier.",
+        ),
+        BarrierCtaSyncAligned => (
+            "i0884",
+            "barrier_cta_sync_aligned",
+            "synchronization.cta.bar.aligned.count",
+            "int_nvvm_barrier_cta_sync_aligned_count",
+            "llvm.nvvm.barrier.cta.sync.aligned.count",
+            "barrier",
+            U32_U32,
+            "cuda_device::barrier::barrier_cta_sync_aligned",
+            "BarrierCtaSyncAlignedCountOp",
+            "nvvm.barrier_cta_sync_aligned_count",
+            I32_I32,
+            I32_I32,
+            BASE_CLASSES,
+            BARRIER_PROPERTIES,
+            "read_write",
+            true,
+            "cta",
+            "1.0",
+            None,
+            "all",
+            BAR_SECTION,
+            BAR_URL,
+            "bar",
+            SYNC_MODIFIERS,
+            TWO_REGISTER_OR_IMMEDIATE,
+            BAR_SYNC_SELECTIONS,
+            "bar.sync \t$i, $j;",
+            EMPTY,
+            "Synchronizes the requested number of CTA threads at an aligned numbered barrier.",
+        ),
+        BarrierCtaArrive => (
+            "i0885",
+            "barrier_cta_arrive",
+            "synchronization.cta.barrier.arrive.count",
+            "int_nvvm_barrier_cta_arrive_count",
+            "llvm.nvvm.barrier.cta.arrive.count",
+            "barrier",
+            U32_U32,
+            "cuda_device::barrier::barrier_cta_arrive",
+            "BarrierCtaArriveCountOp",
+            "nvvm.barrier_cta_arrive_count",
+            I32_I32,
+            I32_I32,
+            BASE_CLASSES,
+            BARRIER_PROPERTIES,
+            "read_write",
+            true,
+            "cta",
+            "6.0",
+            Some("sm_30"),
+            "all",
+            BAR_SECTION,
+            BAR_URL,
+            "barrier",
+            ARRIVE_MODIFIERS,
+            TWO_REGISTER_OR_IMMEDIATE,
+            BARRIER_ARRIVE_SELECTIONS,
+            "barrier.arrive \t$i, $j;",
+            PTX_60,
+            "Signals arrival of the requested number of CTA threads at a numbered barrier without waiting.",
+        ),
+        BarrierCtaArriveAligned => (
+            "i0886",
+            "barrier_cta_arrive_aligned",
+            "synchronization.cta.bar.arrive.aligned.count",
+            "int_nvvm_barrier_cta_arrive_aligned_count",
+            "llvm.nvvm.barrier.cta.arrive.aligned.count",
+            "barrier",
+            U32_U32,
+            "cuda_device::barrier::barrier_cta_arrive_aligned",
+            "BarrierCtaArriveAlignedCountOp",
+            "nvvm.barrier_cta_arrive_aligned_count",
+            I32_I32,
+            I32_I32,
+            BASE_CLASSES,
+            BARRIER_PROPERTIES,
+            "read_write",
+            true,
+            "cta",
+            "1.0",
+            None,
+            "all",
+            BAR_SECTION,
+            BAR_URL,
+            "bar",
+            ARRIVE_MODIFIERS,
+            TWO_REGISTER_OR_IMMEDIATE,
+            BAR_ARRIVE_SELECTIONS,
+            "bar.arrive \t$i, $j;",
+            EMPTY,
+            "Signals arrival of the requested number of CTA threads at an aligned numbered barrier without waiting.",
+        ),
+        GridDependencyLaunchDependents => (
+            "i0913",
+            "grid_dependency_launch_dependents",
+            "synchronization.grid.dependency.launch_dependents",
+            "int_nvvm_griddepcontrol_launch_dependents",
+            "llvm.nvvm.griddepcontrol.launch.dependents",
+            "grid",
+            EMPTY,
+            "cuda_device::grid::dependency::trigger_dependents",
+            "GridDependencyLaunchDependentsOp",
+            "nvvm.grid_dependency_launch_dependents",
+            EMPTY,
+            EMPTY,
+            BASE_CLASSES,
+            GRID_PROPERTIES,
+            "none",
+            false,
+            "grid",
+            "7.8",
+            Some("sm_90"),
+            "all",
+            GRID_SECTION,
+            GRID_URL,
+            "griddepcontrol",
+            LAUNCH_DEPENDENTS_MODIFIERS,
+            NO_OPERANDS,
+            GRID_LAUNCH_SELECTIONS,
+            "griddepcontrol.launch_dependents;",
+            GRID_PREDICATES,
+            "Makes dependent grids eligible to launch before the current grid completes.",
+        ),
+        GridDependencyWait => (
+            "i0914",
+            "grid_dependency_wait",
+            "synchronization.grid.dependency.wait",
+            "int_nvvm_griddepcontrol_wait",
+            "llvm.nvvm.griddepcontrol.wait",
+            "grid",
+            EMPTY,
+            "cuda_device::grid::dependency::wait",
+            "GridDependencyWaitOp",
+            "nvvm.grid_dependency_wait",
+            EMPTY,
+            EMPTY,
+            BASE_CLASSES,
+            GRID_PROPERTIES,
+            "none",
+            false,
+            "grid",
+            "7.8",
+            Some("sm_90"),
+            "all",
+            GRID_SECTION,
+            GRID_URL,
+            "griddepcontrol",
+            WAIT_MODIFIERS,
+            NO_OPERANDS,
+            GRID_WAIT_SELECTIONS,
+            "griddepcontrol.wait;",
+            GRID_PREDICATES,
+            "Waits until all prerequisite grids have completed.",
+        ),
+        SetMaxNRegInc => (
+            "i0915",
+            "setmaxnreg_inc",
+            "register_control.warpgroup.setmaxnreg.increment",
+            "int_nvvm_setmaxnreg_inc_sync_aligned_u32",
+            "llvm.nvvm.setmaxnreg.inc.sync.aligned.u32",
+            "thread",
+            U32,
+            "cuda_device::thread::__setmaxnreg_inc",
+            "SetMaxNRegIncOp",
+            "nvvm.setmaxnreg_inc",
+            EMPTY,
+            I32,
+            DEFAULT_CLASSES,
+            SETMAX_PROPERTIES,
+            "none",
+            true,
+            "warpgroup",
+            "8.0",
+            None,
+            TENSOR_MAP_REPLACE_TARGETS,
+            SETMAX_SECTION,
+            SETMAX_URL,
+            "setmaxnreg",
+            SETMAX_INC_MODIFIERS,
+            ONE_IMMEDIATE,
+            SETMAX_INC_SELECTIONS,
+            "setmaxnreg.inc.sync.aligned.u32 \t$reg_count;",
+            SETMAX_PREDICATES,
+            "Increases the executing warpgroup's maximum register allocation to the immediate count.",
+        ),
+        SetMaxNRegDec => (
+            "i0916",
+            "setmaxnreg_dec",
+            "register_control.warpgroup.setmaxnreg.decrement",
+            "int_nvvm_setmaxnreg_dec_sync_aligned_u32",
+            "llvm.nvvm.setmaxnreg.dec.sync.aligned.u32",
+            "thread",
+            U32,
+            "cuda_device::thread::__setmaxnreg_dec",
+            "SetMaxNRegDecOp",
+            "nvvm.setmaxnreg_dec",
+            EMPTY,
+            I32,
+            DEFAULT_CLASSES,
+            SETMAX_PROPERTIES,
+            "none",
+            true,
+            "warpgroup",
+            "8.0",
+            None,
+            TENSOR_MAP_REPLACE_TARGETS,
+            SETMAX_SECTION,
+            SETMAX_URL,
+            "setmaxnreg",
+            SETMAX_DEC_MODIFIERS,
+            ONE_IMMEDIATE,
+            SETMAX_DEC_SELECTIONS,
+            "setmaxnreg.dec.sync.aligned.u32 \t$reg_count;",
+            SETMAX_PREDICATES,
+            "Decreases the executing warpgroup's maximum register allocation to the immediate count.",
+        ),
+    };
+
+    ExecutionControlRecipe {
+        abi_id,
+        id,
+        operation_key,
+        source_record,
+        llvm_symbol,
+        rust_module,
+        rust_arguments,
+        compatibility_path,
+        dialect_op_type,
+        dialect_op_name,
+        dialect_operands,
+        llvm_arguments,
+        imported_classes,
+        imported_properties,
+        memory,
+        convergent,
+        execution_scope,
+        minimum_ptx,
+        minimum_sm,
+        targets,
+        ptx_isa_section,
+        ptx_isa_url,
+        mnemonic,
+        modifiers,
+        operands,
+        selection_records,
+        selection_asm,
+        selection_predicates,
+        summary,
+    }
+}
+
+fn execution_control_backend_floor(
+    operation: ExecutionControlOperation,
+    backend: IntrinsicBackend,
+) -> (&'static str, Option<&'static str>) {
+    use ExecutionControlOperation::*;
+
+    match (operation, backend) {
+        (BarrierCtaSync | BarrierCtaArrive, IntrinsicBackend::LlvmNvptx) => ("6.0", Some("sm_30")),
+        (BarrierCtaSync | BarrierCtaArrive, IntrinsicBackend::LibNvvm) => ("6.0", Some("sm_75")),
+        (BarrierCtaSyncAligned | BarrierCtaArriveAligned, IntrinsicBackend::LlvmNvptx) => {
+            ("3.2", Some("sm_20"))
+        }
+        (BarrierCtaSyncAligned | BarrierCtaArriveAligned, IntrinsicBackend::LibNvvm) => {
+            ("1.0", Some("sm_75"))
+        }
+        _ => {
+            let recipe = execution_control_recipe(operation);
+            (recipe.minimum_ptx, recipe.minimum_sm)
+        }
+    }
+}
+
+fn validate_execution_control_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let operation = ExecutionControlOperation::from_catalog_id(&policy.id)
+        .with_context(|| format!("{} is not a closed execution-control operation", policy.id))?;
+    let recipe = execution_control_recipe(operation);
+    ensure!(
+        policy.family == operation.family()
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key
+            && policy.summary == recipe.summary
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record)
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
+            && policy.resolved_llvm_symbol.is_none()
+            && declaration.source_record == recipe.source_record
+            && declaration.llvm_name == recipe.llvm_symbol,
+        "{} execution-control identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == recipe.rust_module
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path
+                == format!("cuda_intrinsics::{}::{}", recipe.rust_module, recipe.id)
+            && policy.compatibility_rust_paths == [recipe.compatibility_path],
+        "{} execution-control Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results.is_empty()
+            && declaration.arguments == recipe.llvm_arguments
+            && declaration.results.is_empty()
+            && policy.lowering == "generated_execution_control",
+        "{} execution-control carrier or LLVM adapter changed",
+        policy.id
+    );
+    ensure!(
+        declaration.classes == recipe.imported_classes
+            && declaration.properties == recipe.imported_properties,
+        "{} imported execution-control declaration changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == recipe.memory
+            && policy.convergent == recipe.convergent
+            && policy.execution_scope == recipe.execution_scope,
+        "{} execution-control semantics changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == recipe.minimum_sm
+            && policy.targets == recipe.targets
+            && policy.ptx_result == "()"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.ptx_isa_section
+            && policy.ptx_isa_url == recipe.ptx_isa_url
+            && policy.expected_ptx.mnemonic == recipe.mnemonic
+            && policy.expected_ptx.modifiers == recipe.modifiers
+            && policy.expected_ptx.operands == recipe.operands,
+        "{} execution-control target or PTX contract changed",
+        policy.id
+    );
+    let valid_route = |backend, mechanism| {
+        let (minimum_ptx, minimum_sm) = execution_control_backend_floor(operation, backend);
+        policy.backend_lowerings.iter().any(|route| {
+            route.backend == backend
+                && route.mechanism == mechanism
+                && route.minimum_ptx.as_deref() == Some(minimum_ptx)
+                && route.minimum_sm.as_deref() == minimum_sm
+                && !route.evidence_profile.trim().is_empty()
+        })
+    };
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && valid_route(
+                IntrinsicBackend::LlvmNvptx,
+                BackendLoweringMechanism::TypedNvvm,
+            )
+            && valid_route(
+                IntrinsicBackend::LibNvvm,
+                BackendLoweringMechanism::InlinePtx,
+            ),
+        "{} execution-control backend route changed",
+        policy.id
+    );
+    let expected_selections = recipe
+        .selection_records
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let actual_selections = declaration
+        .selections
+        .iter()
+        .map(|selection| selection.source_record.as_str())
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        declaration.selections.len() == recipe.selection_records.len()
+            && actual_selections == expected_selections
+            && declaration.selections.iter().all(|selection| {
+                selection.asm == recipe.selection_asm
+                    && selection.predicates == recipe.selection_predicates
+                    && selection.constraints.is_empty()
+            }),
+        "{} imported execution-control selection family changed",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "execution-control")?;
+    Ok(())
+}
+
+const TMA_OPERATIONS: [TmaOperation; 47] = [
+    TmaOperation::G2sTile1d,
+    TmaOperation::G2sTile2d,
+    TmaOperation::G2sTile2dMulticast,
+    TmaOperation::G2sTile2dMulticastCg2,
+    TmaOperation::G2sTile3d,
+    TmaOperation::G2sTile4d,
+    TmaOperation::G2sTile5d,
+    TmaOperation::S2gTile1d,
+    TmaOperation::S2gTile2d,
+    TmaOperation::S2gTile3d,
+    TmaOperation::S2gTile4d,
+    TmaOperation::S2gTile5d,
+    TmaOperation::CommitGroup,
+    TmaOperation::WaitGroup,
+    TmaOperation::WaitGroupRead,
+    TmaOperation::PrefetchTensorMap,
+    TmaOperation::PrefetchTile1d,
+    TmaOperation::PrefetchTile2d,
+    TmaOperation::PrefetchTile3d,
+    TmaOperation::PrefetchTile4d,
+    TmaOperation::PrefetchTile5d,
+    TmaOperation::PrefetchTileGather4TwoDimensional,
+    TmaOperation::ReplaceBoxDim,
+    TmaOperation::ReplaceElementStride,
+    TmaOperation::ReplaceElementType,
+    TmaOperation::ReplaceFillMode,
+    TmaOperation::ReplaceGlobalAddress,
+    TmaOperation::ReplaceGlobalDim,
+    TmaOperation::ReplaceGlobalStride,
+    TmaOperation::ReplaceInterleaveLayout,
+    TmaOperation::ReplaceRank,
+    TmaOperation::ReplaceSwizzleAtomicity,
+    TmaOperation::ReplaceSwizzleMode,
+    TmaOperation::FenceProxyTensorMapAcquireCluster,
+    TmaOperation::FenceProxyTensorMapAcquireCta,
+    TmaOperation::FenceProxyTensorMapAcquireGpu,
+    TmaOperation::FenceProxyTensorMapAcquireSystem,
+    TmaOperation::FenceProxyTensorMapReleaseCluster,
+    TmaOperation::FenceProxyTensorMapReleaseCta,
+    TmaOperation::FenceProxyTensorMapReleaseGpu,
+    TmaOperation::FenceProxyTensorMapReleaseSystem,
+    TmaOperation::PrefetchTile1dCacheHint,
+    TmaOperation::PrefetchTile2dCacheHint,
+    TmaOperation::PrefetchTile3dCacheHint,
+    TmaOperation::PrefetchTile4dCacheHint,
+    TmaOperation::PrefetchTile5dCacheHint,
+    TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint,
+];
+
+const TMA_REDUCTION_FIRST_ABI_ID: u32 = 923;
+const TMA_REDUCTION_OPERATIONS: [TmaReductionOperation; 8] = [
+    TmaReductionOperation::Add,
+    TmaReductionOperation::And,
+    TmaReductionOperation::Dec,
+    TmaReductionOperation::Inc,
+    TmaReductionOperation::Max,
+    TmaReductionOperation::Min,
+    TmaReductionOperation::Or,
+    TmaReductionOperation::Xor,
+];
+
+fn tma_reduction_matrix() -> Vec<TmaReduction> {
+    let mut reductions = Vec::with_capacity(64);
+    for operation in TMA_REDUCTION_OPERATIONS {
+        for dimensions in 1..=5 {
+            reductions.push(TmaReduction {
+                operation,
+                load_mode: TmaReductionLoadMode::Tile,
+                dimensions,
+            });
+        }
+        for dimensions in 3..=5 {
+            reductions.push(TmaReduction {
+                operation,
+                load_mode: TmaReductionLoadMode::Im2col,
+                dimensions,
+            });
+        }
+    }
+    reductions
+}
+
+fn tma_reduction_expected_abi_id(reduction: TmaReduction) -> String {
+    let index = tma_reduction_matrix()
+        .into_iter()
+        .position(|candidate| candidate == reduction)
+        .expect("TMA reduction must belong to the closed matrix");
+    format!("i{:04}", TMA_REDUCTION_FIRST_ABI_ID + index as u32)
+}
+
+#[cfg(test)]
+fn tma_reduction_admission_variants() -> Vec<TmaReductionAdmissionVariant> {
+    tma_reduction_matrix()
+        .into_iter()
+        .map(|reduction| TmaReductionAdmissionVariant {
+            abi_id: tma_reduction_expected_abi_id(reduction),
+            operation: reduction.operation,
+            load_mode: reduction.load_mode,
+            dimensions: reduction.dimensions,
+        })
+        .collect()
+}
+
+fn tma_reduction_operation_name(operation: TmaReductionOperation) -> (&'static str, &'static str) {
+    match operation {
+        TmaReductionOperation::Add => ("add", "Add"),
+        TmaReductionOperation::And => ("and", "And"),
+        TmaReductionOperation::Dec => ("dec", "Dec"),
+        TmaReductionOperation::Inc => ("inc", "Inc"),
+        TmaReductionOperation::Max => ("max", "Max"),
+        TmaReductionOperation::Min => ("min", "Min"),
+        TmaReductionOperation::Or => ("or", "Or"),
+        TmaReductionOperation::Xor => ("xor", "Xor"),
+    }
+}
+
+fn tma_reduction_load_mode_name(
+    load_mode: TmaReductionLoadMode,
+) -> (&'static str, &'static str, &'static str) {
+    match load_mode {
+        TmaReductionLoadMode::Tile => ("tile", "Tile", "tile"),
+        TmaReductionLoadMode::Im2col => ("im2col", "Im2col", "im2col_no_offs"),
+    }
+}
+
+struct TmaReductionRecipe {
+    id: String,
+    operation_key: String,
+    source_record: String,
+    llvm_symbol: String,
+    rust_arguments: Vec<&'static str>,
+    dialect_op_type: String,
+    dialect_op_name: String,
+    dialect_operands: Vec<&'static str>,
+    llvm_arguments: Vec<&'static str>,
+    modifiers: Vec<String>,
+    operands: Vec<OperandPattern>,
+    summary: String,
+}
+
+fn tma_reduction_recipe(reduction: TmaReduction) -> Result<TmaReductionRecipe> {
+    ensure!(
+        (1..=5).contains(&reduction.dimensions),
+        "TMA reduction dimensionality must be in 1..=5"
+    );
+    ensure!(
+        reduction.load_mode != TmaReductionLoadMode::Im2col || reduction.dimensions >= 3,
+        "TMA reduction im2col mode requires at least three dimensions"
+    );
+
+    let (operation, operation_camel) = tma_reduction_operation_name(reduction.operation);
+    let (load_mode, load_mode_camel, ptx_load_mode) =
+        tma_reduction_load_mode_name(reduction.load_mode);
+    let dimensions = reduction.dimensions as usize;
+    let id = format!(
+        "cp_async_bulk_tensor_reduce_{operation}_{load_mode}_{}d",
+        reduction.dimensions
+    );
+    let mut rust_arguments = vec!["*const u8", "*const u8"];
+    rust_arguments.extend(std::iter::repeat_n("i32", dimensions));
+    let mut dialect_operands = vec!["ptr", "ptr"];
+    dialect_operands.extend(std::iter::repeat_n("i32", dimensions));
+    let mut llvm_arguments = vec!["shared_ptr", "ptr"];
+    llvm_arguments.extend(std::iter::repeat_n("i32", dimensions));
+    llvm_arguments.extend(["i64", "i1"]);
+
+    Ok(TmaReductionRecipe {
+        operation_key: format!(
+            "memory.reduce.async.bulk.tensor.{operation}.{load_mode}.{}d",
+            reduction.dimensions
+        ),
+        source_record: format!(
+            "int_nvvm_cp_async_bulk_tensor_reduce_{operation}_{load_mode}_{}d",
+            reduction.dimensions
+        ),
+        llvm_symbol: format!(
+            "llvm.nvvm.cp.async.bulk.tensor.reduce.{operation}.{load_mode}.{}d",
+            reduction.dimensions
+        ),
+        dialect_op_type: format!(
+            "CpAsyncBulkTensorReduce{operation_camel}{load_mode_camel}{}dOp",
+            reduction.dimensions
+        ),
+        dialect_op_name: format!(
+            "nvvm.cp_async_bulk_tensor_reduce_{operation}_{load_mode}_{}d",
+            reduction.dimensions
+        ),
+        rust_arguments,
+        dialect_operands,
+        llvm_arguments,
+        modifiers: vec![
+            "reduce".into(),
+            "async".into(),
+            "bulk".into(),
+            "tensor".into(),
+            format!("{}d", reduction.dimensions),
+            "global".into(),
+            "shared::cta".into(),
+            operation.into(),
+            ptx_load_mode.into(),
+            "bulk_group".into(),
+        ],
+        operands: vec![OperandPattern::Address, OperandPattern::Address],
+        summary: format!(
+            "Starts a TMA tensor {operation} reduction from shared to global memory in {load_mode} mode."
+        ),
+        id,
+    })
+}
+
+fn expand_tma_reduction_variant(
+    admission: &TmaAdmission,
+    variant: &TmaReductionAdmissionVariant,
+) -> Result<OverlayIntrinsic> {
+    let reduction = TmaReduction {
+        operation: variant.operation,
+        load_mode: variant.load_mode,
+        dimensions: variant.dimensions,
+    };
+    let recipe = tma_reduction_recipe(reduction)?;
+    let expected_abi_id = tma_reduction_expected_abi_id(reduction);
+    ensure!(
+        variant.abi_id == expected_abi_id,
+        "{} must keep reserved ABI ID {}",
+        recipe.id,
+        expected_abi_id
+    );
+
+    Ok(OverlayIntrinsic {
+        id: recipe.id.clone(),
+        abi_id: variant.abi_id.clone(),
+        operation_key: recipe.operation_key.clone(),
+        family: "tma".into(),
+        source: None,
+        source_record: Some(recipe.source_record.clone()),
+        rust_module: "tma".into(),
+        rust_name: recipe.id.clone(),
+        rust_arguments: recipe
+            .rust_arguments
+            .iter()
+            .map(|value| (*value).into())
+            .collect(),
+        rust_result: "()".into(),
+        safe: false,
+        must_use: false,
+        safe_allowlist_reason: None,
+        public_rust_path: format!("cuda_intrinsics::tma::{}", recipe.id),
+        compatibility_rust_paths: vec![format!("cuda_device::tma::{}", recipe.id)],
+        dialect_op_type: recipe.dialect_op_type.clone(),
+        dialect_op_name: recipe.dialect_op_name.clone(),
+        dialect_operands: recipe
+            .dialect_operands
+            .iter()
+            .map(|value| (*value).into())
+            .collect(),
+        dialect_results: vec![],
+        llvm_symbol: Some(recipe.llvm_symbol.clone()),
+        resolved_llvm_symbol: None,
+        llvm_arguments: recipe
+            .llvm_arguments
+            .iter()
+            .map(|value| (*value).into())
+            .collect(),
+        llvm_results: vec![],
+        pure: false,
+        memory: "read_write".into(),
+        convergent: true,
+        execution_scope: "thread".into(),
+        minimum_ptx: "8.0".into(),
+        minimum_sm: Some("sm_90".into()),
+        ptx_result: "()".into(),
+        targets: "all".into(),
+        ptx_isa_version: "9.3".into(),
+        ptx_isa_section:
+        "9.7.9.26.5.3 Data Movement and Conversion Instructions: cp.reduce.async.bulk.tensor"
+            .into(),
+        ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-reduce-async-bulk-tensor".into(),
+        lowering: "generated_tma".into(),
+        backend_lowerings: vec![
+            OverlayBackendLowering {
+                backend: IntrinsicBackend::LlvmNvptx,
+                mechanism: BackendLoweringMechanism::TypedNvvm,
+                evidence_profile: admission
+                    .reduce_llvm_evidence_profile
+                    .as_ref()
+                    .expect("validated TMA reduction LLVM evidence profile")
+                    .clone(),
+                targets: None,
+                minimum_ptx: Some("8.0".into()),
+                minimum_sm: Some("sm_90".into()),
+            },
+            OverlayBackendLowering {
+                backend: IntrinsicBackend::LibNvvm,
+                mechanism: BackendLoweringMechanism::InlinePtx,
+                evidence_profile: admission
+                    .reduce_libnvvm_evidence_profile
+                    .as_ref()
+                    .expect("validated TMA reduction libNVVM evidence profile")
+                    .clone(),
+                targets: None,
+                minimum_ptx: Some("8.0".into()),
+                minimum_sm: Some("sm_90".into()),
+            },
+        ],
+        packed_atomic: None,
+        redux: None,
+        vote: None,
+        active_mask: None,
+        warp_match: None,
+        warp_barrier: None,
+        warp_shuffle: None,
+        dot_product: None,
+        packed_alu: None,
+        packed_conversion: None,
+        scalar_conversion: None,
+        scalar_arithmetic: None,
+        scalar_math: None,
+        extended_minmax: None,
+        cp_async_copy: None,
+        cp_async_control: None,
+        cp_async_mbarrier: None,
+        mbarrier_basic: None,
+        movmatrix: None,
+        mbarrier_extended: None,
+        register_mma: None,
+        sparse_mma: None,
+        prmt: None,
+        cluster_barrier: None,
+        wgmma_control: None,
+        special_register: None,
+        debug_control: None,
+        cluster_memory: None,
+        clc: None,
+        tma: Some(Tma {
+            operation: TmaOperation::Reduce,
+            reduction: Some(reduction),
+            adapter: TmaAdapter::ReductionPointersCoordinatesInjectDefaults,
+            runtime_validation: admission.runtime_validation,
+        }),
+        tcgen05: None,
+        ldmatrix_variant: None,
+        ldmatrix_safety: None,
+        ldmatrix_adapter: None,
+        selected_address_space: None,
+        expected_ptx: InstructionPattern {
+            mnemonic: "cp".into(),
+            modifiers: recipe.modifiers,
+            operands: recipe.operands,
+        },
+        summary: recipe.summary,
+    })
+}
+
 struct TmaRecipe {
     operation: TmaOperation,
     abi_id: &'static str,
@@ -3540,6 +4752,9 @@ struct TmaRecipe {
     operation_key: &'static str,
     source_record: &'static str,
     llvm_symbol: &'static str,
+    resolved_llvm_symbol: Option<String>,
+    selected_address_space: Option<ImportedAddressSpace>,
+    llvm_mechanism: BackendLoweringMechanism,
     rust_arguments: Vec<&'static str>,
     dialect_op_type: &'static str,
     dialect_op_name: &'static str,
@@ -3552,6 +4767,10 @@ struct TmaRecipe {
     minimum_ptx: &'static str,
     minimum_sm: Option<&'static str>,
     targets: &'static str,
+    memory: &'static str,
+    ptx_isa_section: &'static str,
+    ptx_isa_url: &'static str,
+    mnemonic: &'static str,
     modifiers: Vec<String>,
     operands: Vec<OperandPattern>,
     summary: &'static str,
@@ -3560,6 +4779,7 @@ struct TmaRecipe {
 fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
     let (abi_id, id, operation_key, source_record, llvm_symbol, op_type, op_name) = match operation
     {
+        TmaOperation::Reduce => unreachable!("TMA reductions use tma_reduction_recipe"),
         TmaOperation::G2sTile1d => (
             "i0328",
             "cp_async_bulk_tensor_1d_g2s",
@@ -3695,6 +4915,294 @@ fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
             "CpAsyncBulkWaitGroupReadOp",
             "nvvm.cp_async_bulk_wait_group_read",
         ),
+        TmaOperation::PrefetchTensorMap => (
+            "i0887",
+            "prefetch_tma_descriptor",
+            "memory.prefetch.tensor_map",
+            "int_nvvm_prefetch_tensormap",
+            "llvm.nvvm.prefetch.tensormap",
+            "PrefetchTensorMapOp",
+            "nvvm.prefetch_tensormap",
+        ),
+        TmaOperation::PrefetchTile1d => (
+            "i0888",
+            "cp_async_bulk_prefetch_tensor_1d_l2",
+            "memory.prefetch.async.bulk.tensor.global.tile.1d.l2",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_1d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.1d",
+            "CpAsyncBulkPrefetchTensor1dL2Op",
+            "nvvm.cp_async_bulk_prefetch_tensor_1d_l2",
+        ),
+        TmaOperation::PrefetchTile2d => (
+            "i0889",
+            "cp_async_bulk_prefetch_tensor_2d_l2",
+            "memory.prefetch.async.bulk.tensor.global.tile.2d.l2",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_2d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.2d",
+            "CpAsyncBulkPrefetchTensor2dL2Op",
+            "nvvm.cp_async_bulk_prefetch_tensor_2d_l2",
+        ),
+        TmaOperation::PrefetchTile3d => (
+            "i0890",
+            "cp_async_bulk_prefetch_tensor_3d_l2",
+            "memory.prefetch.async.bulk.tensor.global.tile.3d.l2",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_3d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.3d",
+            "CpAsyncBulkPrefetchTensor3dL2Op",
+            "nvvm.cp_async_bulk_prefetch_tensor_3d_l2",
+        ),
+        TmaOperation::PrefetchTile4d => (
+            "i0891",
+            "cp_async_bulk_prefetch_tensor_4d_l2",
+            "memory.prefetch.async.bulk.tensor.global.tile.4d.l2",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_4d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.4d",
+            "CpAsyncBulkPrefetchTensor4dL2Op",
+            "nvvm.cp_async_bulk_prefetch_tensor_4d_l2",
+        ),
+        TmaOperation::PrefetchTile5d => (
+            "i0892",
+            "cp_async_bulk_prefetch_tensor_5d_l2",
+            "memory.prefetch.async.bulk.tensor.global.tile.5d.l2",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_5d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.5d",
+            "CpAsyncBulkPrefetchTensor5dL2Op",
+            "nvvm.cp_async_bulk_prefetch_tensor_5d_l2",
+        ),
+        TmaOperation::PrefetchTileGather4TwoDimensional => (
+            "i0893",
+            "cp_async_bulk_prefetch_tensor_gather4_2d_l2",
+            "memory.prefetch.async.bulk.tensor.global.tile.gather4.2d.l2",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_gather4_2d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.gather4.2d",
+            "CpAsyncBulkPrefetchTensorGather4TwoDimensionalL2Op",
+            "nvvm.cp_async_bulk_prefetch_tensor_gather4_2d_l2",
+        ),
+        TmaOperation::PrefetchTile1dCacheHint => (
+            "i0917",
+            "cp_async_bulk_prefetch_tensor_1d_l2_cache_hint",
+            "memory.prefetch.async.bulk.tensor.global.tile.1d.l2.cache_hint",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_1d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.1d",
+            "CpAsyncBulkPrefetchTensor1dL2CacheHintOp",
+            "nvvm.cp_async_bulk_prefetch_tensor_1d_l2_cache_hint",
+        ),
+        TmaOperation::PrefetchTile2dCacheHint => (
+            "i0918",
+            "cp_async_bulk_prefetch_tensor_2d_l2_cache_hint",
+            "memory.prefetch.async.bulk.tensor.global.tile.2d.l2.cache_hint",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_2d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.2d",
+            "CpAsyncBulkPrefetchTensor2dL2CacheHintOp",
+            "nvvm.cp_async_bulk_prefetch_tensor_2d_l2_cache_hint",
+        ),
+        TmaOperation::PrefetchTile3dCacheHint => (
+            "i0919",
+            "cp_async_bulk_prefetch_tensor_3d_l2_cache_hint",
+            "memory.prefetch.async.bulk.tensor.global.tile.3d.l2.cache_hint",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_3d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.3d",
+            "CpAsyncBulkPrefetchTensor3dL2CacheHintOp",
+            "nvvm.cp_async_bulk_prefetch_tensor_3d_l2_cache_hint",
+        ),
+        TmaOperation::PrefetchTile4dCacheHint => (
+            "i0920",
+            "cp_async_bulk_prefetch_tensor_4d_l2_cache_hint",
+            "memory.prefetch.async.bulk.tensor.global.tile.4d.l2.cache_hint",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_4d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.4d",
+            "CpAsyncBulkPrefetchTensor4dL2CacheHintOp",
+            "nvvm.cp_async_bulk_prefetch_tensor_4d_l2_cache_hint",
+        ),
+        TmaOperation::PrefetchTile5dCacheHint => (
+            "i0921",
+            "cp_async_bulk_prefetch_tensor_5d_l2_cache_hint",
+            "memory.prefetch.async.bulk.tensor.global.tile.5d.l2.cache_hint",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_5d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.5d",
+            "CpAsyncBulkPrefetchTensor5dL2CacheHintOp",
+            "nvvm.cp_async_bulk_prefetch_tensor_5d_l2_cache_hint",
+        ),
+        TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint => (
+            "i0922",
+            "cp_async_bulk_prefetch_tensor_gather4_2d_l2_cache_hint",
+            "memory.prefetch.async.bulk.tensor.global.tile.gather4.2d.l2.cache_hint",
+            "int_nvvm_cp_async_bulk_tensor_prefetch_tile_gather4_2d",
+            "llvm.nvvm.cp.async.bulk.tensor.prefetch.tile.gather4.2d",
+            "CpAsyncBulkPrefetchTensorGather4TwoDimensionalL2CacheHintOp",
+            "nvvm.cp_async_bulk_prefetch_tensor_gather4_2d_l2_cache_hint",
+        ),
+        TmaOperation::ReplaceBoxDim => (
+            "i0894",
+            "tensormap_replace_box_dim",
+            "memory.tensor_map.replace.box_dim",
+            "int_nvvm_tensormap_replace_box_dim",
+            "llvm.nvvm.tensormap.replace.box.dim",
+            "ReplaceTensorMapBoxDimOp",
+            "nvvm.tensormap_replace_box_dim",
+        ),
+        TmaOperation::ReplaceElementStride => (
+            "i0895",
+            "tensormap_replace_element_stride",
+            "memory.tensor_map.replace.element_stride",
+            "int_nvvm_tensormap_replace_element_stride",
+            "llvm.nvvm.tensormap.replace.element.stride",
+            "ReplaceTensorMapElementStrideOp",
+            "nvvm.tensormap_replace_element_stride",
+        ),
+        TmaOperation::ReplaceElementType => (
+            "i0896",
+            "tensormap_replace_element_type",
+            "memory.tensor_map.replace.element_type",
+            "int_nvvm_tensormap_replace_elemtype",
+            "llvm.nvvm.tensormap.replace.elemtype",
+            "ReplaceTensorMapElementTypeOp",
+            "nvvm.tensormap_replace_element_type",
+        ),
+        TmaOperation::ReplaceFillMode => (
+            "i0897",
+            "tensormap_replace_fill_mode",
+            "memory.tensor_map.replace.fill_mode",
+            "int_nvvm_tensormap_replace_fill_mode",
+            "llvm.nvvm.tensormap.replace.fill.mode",
+            "ReplaceTensorMapFillModeOp",
+            "nvvm.tensormap_replace_fill_mode",
+        ),
+        TmaOperation::ReplaceGlobalAddress => (
+            "i0898",
+            "tensormap_replace_global_address",
+            "memory.tensor_map.replace.global_address",
+            "int_nvvm_tensormap_replace_global_address",
+            "llvm.nvvm.tensormap.replace.global.address",
+            "ReplaceTensorMapGlobalAddressOp",
+            "nvvm.tensormap_replace_global_address",
+        ),
+        TmaOperation::ReplaceGlobalDim => (
+            "i0899",
+            "tensormap_replace_global_dim",
+            "memory.tensor_map.replace.global_dim",
+            "int_nvvm_tensormap_replace_global_dim",
+            "llvm.nvvm.tensormap.replace.global.dim",
+            "ReplaceTensorMapGlobalDimOp",
+            "nvvm.tensormap_replace_global_dim",
+        ),
+        TmaOperation::ReplaceGlobalStride => (
+            "i0900",
+            "tensormap_replace_global_stride",
+            "memory.tensor_map.replace.global_stride",
+            "int_nvvm_tensormap_replace_global_stride",
+            "llvm.nvvm.tensormap.replace.global.stride",
+            "ReplaceTensorMapGlobalStrideOp",
+            "nvvm.tensormap_replace_global_stride",
+        ),
+        TmaOperation::ReplaceInterleaveLayout => (
+            "i0901",
+            "tensormap_replace_interleave_layout",
+            "memory.tensor_map.replace.interleave_layout",
+            "int_nvvm_tensormap_replace_interleave_layout",
+            "llvm.nvvm.tensormap.replace.interleave.layout",
+            "ReplaceTensorMapInterleaveLayoutOp",
+            "nvvm.tensormap_replace_interleave_layout",
+        ),
+        TmaOperation::ReplaceRank => (
+            "i0902",
+            "tensormap_replace_rank",
+            "memory.tensor_map.replace.rank",
+            "int_nvvm_tensormap_replace_rank",
+            "llvm.nvvm.tensormap.replace.rank",
+            "ReplaceTensorMapRankOp",
+            "nvvm.tensormap_replace_rank",
+        ),
+        TmaOperation::ReplaceSwizzleAtomicity => (
+            "i0903",
+            "tensormap_replace_swizzle_atomicity",
+            "memory.tensor_map.replace.swizzle_atomicity",
+            "int_nvvm_tensormap_replace_swizzle_atomicity",
+            "llvm.nvvm.tensormap.replace.swizzle.atomicity",
+            "ReplaceTensorMapSwizzleAtomicityOp",
+            "nvvm.tensormap_replace_swizzle_atomicity",
+        ),
+        TmaOperation::ReplaceSwizzleMode => (
+            "i0904",
+            "tensormap_replace_swizzle_mode",
+            "memory.tensor_map.replace.swizzle_mode",
+            "int_nvvm_tensormap_replace_swizzle_mode",
+            "llvm.nvvm.tensormap.replace.swizzle.mode",
+            "ReplaceTensorMapSwizzleModeOp",
+            "nvvm.tensormap_replace_swizzle_mode",
+        ),
+        TmaOperation::FenceProxyTensorMapAcquireCluster => (
+            "i0905",
+            "fence_proxy_tensormap_generic_acquire_cluster",
+            "memory.fence.proxy.tensor_map.generic.acquire.cluster",
+            "int_nvvm_fence_proxy_tensormap_generic_acquire_cluster",
+            "llvm.nvvm.fence.proxy.tensormap_generic.acquire.cluster",
+            "FenceProxyTensorMapGenericAcquireClusterOp",
+            "nvvm.fence_proxy_tensormap_generic_acquire_cluster",
+        ),
+        TmaOperation::FenceProxyTensorMapAcquireCta => (
+            "i0906",
+            "fence_proxy_tensormap_generic_acquire_cta",
+            "memory.fence.proxy.tensor_map.generic.acquire.cta",
+            "int_nvvm_fence_proxy_tensormap_generic_acquire_cta",
+            "llvm.nvvm.fence.proxy.tensormap_generic.acquire.cta",
+            "FenceProxyTensorMapGenericAcquireCtaOp",
+            "nvvm.fence_proxy_tensormap_generic_acquire_cta",
+        ),
+        TmaOperation::FenceProxyTensorMapAcquireGpu => (
+            "i0907",
+            "fence_proxy_tensormap_generic_acquire_gpu",
+            "memory.fence.proxy.tensor_map.generic.acquire.gpu",
+            "int_nvvm_fence_proxy_tensormap_generic_acquire_gpu",
+            "llvm.nvvm.fence.proxy.tensormap_generic.acquire.gpu",
+            "FenceProxyTensorMapGenericAcquireGpuOp",
+            "nvvm.fence_proxy_tensormap_generic_acquire_gpu",
+        ),
+        TmaOperation::FenceProxyTensorMapAcquireSystem => (
+            "i0908",
+            "fence_proxy_tensormap_generic_acquire_system",
+            "memory.fence.proxy.tensor_map.generic.acquire.system",
+            "int_nvvm_fence_proxy_tensormap_generic_acquire_sys",
+            "llvm.nvvm.fence.proxy.tensormap_generic.acquire.sys",
+            "FenceProxyTensorMapGenericAcquireSystemOp",
+            "nvvm.fence_proxy_tensormap_generic_acquire_system",
+        ),
+        TmaOperation::FenceProxyTensorMapReleaseCluster => (
+            "i0909",
+            "fence_proxy_tensormap_generic_release_cluster",
+            "memory.fence.proxy.tensor_map.generic.release.cluster",
+            "int_nvvm_fence_proxy_tensormap_generic_release_cluster",
+            "llvm.nvvm.fence.proxy.tensormap_generic.release.cluster",
+            "FenceProxyTensorMapGenericReleaseClusterOp",
+            "nvvm.fence_proxy_tensormap_generic_release_cluster",
+        ),
+        TmaOperation::FenceProxyTensorMapReleaseCta => (
+            "i0910",
+            "fence_proxy_tensormap_generic_release_cta",
+            "memory.fence.proxy.tensor_map.generic.release.cta",
+            "int_nvvm_fence_proxy_tensormap_generic_release_cta",
+            "llvm.nvvm.fence.proxy.tensormap_generic.release.cta",
+            "FenceProxyTensorMapGenericReleaseCtaOp",
+            "nvvm.fence_proxy_tensormap_generic_release_cta",
+        ),
+        TmaOperation::FenceProxyTensorMapReleaseGpu => (
+            "i0911",
+            "fence_proxy_tensormap_generic_release_gpu",
+            "memory.fence.proxy.tensor_map.generic.release.gpu",
+            "int_nvvm_fence_proxy_tensormap_generic_release_gpu",
+            "llvm.nvvm.fence.proxy.tensormap_generic.release.gpu",
+            "FenceProxyTensorMapGenericReleaseGpuOp",
+            "nvvm.fence_proxy_tensormap_generic_release_gpu",
+        ),
+        TmaOperation::FenceProxyTensorMapReleaseSystem => (
+            "i0912",
+            "fence_proxy_tensormap_generic_release_system",
+            "memory.fence.proxy.tensor_map.generic.release.system",
+            "int_nvvm_fence_proxy_tensormap_generic_release_sys",
+            "llvm.nvvm.fence.proxy.tensormap_generic.release.sys",
+            "FenceProxyTensorMapGenericReleaseSystemOp",
+            "nvvm.fence_proxy_tensormap_generic_release_system",
+        ),
     };
 
     let dimensions = operation.dimensions();
@@ -3721,6 +5229,21 @@ fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
         TmaOperation::G2sTile2dMulticast | TmaOperation::G2sTile2dMulticastCg2
     );
     let cg2 = operation == TmaOperation::G2sTile2dMulticastCg2;
+    let prefetch_coordinates = operation.prefetch_coordinate_count();
+    let is_release_fence = matches!(
+        operation,
+        TmaOperation::FenceProxyTensorMapReleaseCluster
+            | TmaOperation::FenceProxyTensorMapReleaseCta
+            | TmaOperation::FenceProxyTensorMapReleaseGpu
+            | TmaOperation::FenceProxyTensorMapReleaseSystem
+    );
+    let is_acquire_fence = matches!(
+        operation,
+        TmaOperation::FenceProxyTensorMapAcquireCluster
+            | TmaOperation::FenceProxyTensorMapAcquireCta
+            | TmaOperation::FenceProxyTensorMapAcquireGpu
+            | TmaOperation::FenceProxyTensorMapAcquireSystem
+    );
 
     let mut rust_arguments = Vec::new();
     let mut dialect_operands = Vec::new();
@@ -3768,15 +5291,137 @@ fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
             true,
             "Starts a TMA tile copy from shared to global memory.",
         )
-    } else if operation == TmaOperation::CommitGroup {
+    } else if operation == TmaOperation::CommitGroup || is_release_fence {
         (
             TmaAdapter::NoOperands,
             true,
-            Some(
-                "committing this thread's pending bulk-copy group has no Rust memory-safety precondition.",
-            ),
+            Some(if operation == TmaOperation::CommitGroup {
+                "committing this thread's pending bulk-copy group has no Rust memory-safety precondition."
+            } else {
+                "publishing prior tensor-map writes has no Rust memory-safety precondition."
+            }),
             false,
-            "Commits this thread's pending asynchronous bulk copies as one group.",
+            if operation == TmaOperation::CommitGroup {
+                "Commits this thread's pending asynchronous bulk copies as one group."
+            } else {
+                "Publishes prior generic-proxy tensor-map writes to the selected tensor-map proxy scope."
+            },
+        )
+    } else if operation == TmaOperation::PrefetchTensorMap {
+        rust_arguments.push("*const u8");
+        dialect_operands.push("ptr");
+        llvm_arguments.push("anyptr");
+        (
+            TmaAdapter::DescriptorPointer,
+            false,
+            None,
+            false,
+            "Prefetches a live tensor-map descriptor into the tensor-map cache.",
+        )
+    } else if let Some(coordinate_count) = prefetch_coordinates {
+        rust_arguments.push("*const u8");
+        rust_arguments.extend(std::iter::repeat_n("i32", coordinate_count));
+        dialect_operands.push("ptr");
+        dialect_operands.extend(std::iter::repeat_n("i32", coordinate_count));
+        if operation.uses_prefetch_cache_hint() {
+            rust_arguments.push("u64");
+            dialect_operands.push("i64");
+        }
+        llvm_arguments.push("ptr");
+        llvm_arguments.extend(std::iter::repeat_n("i32", coordinate_count));
+        llvm_arguments.extend(["i64", "i1"]);
+        (
+            if operation.uses_prefetch_cache_hint() {
+                TmaAdapter::DescriptorCoordinatesCacheHintInjectFlag
+            } else {
+                TmaAdapter::DescriptorCoordinatesInjectDefaults
+            },
+            false,
+            None,
+            true,
+            if operation.uses_prefetch_cache_hint() {
+                "Prefetches one tensor tile through a tensor map into L2 using an explicit cache hint."
+            } else {
+                "Prefetches one tensor tile through a tensor map into L2."
+            },
+        )
+    } else if operation == TmaOperation::ReplaceGlobalAddress {
+        rust_arguments.extend(["*mut u8", "*const u8"]);
+        dialect_operands.extend(["ptr", "ptr"]);
+        llvm_arguments.extend(["anyptr", "i64"]);
+        (
+            TmaAdapter::DescriptorAndAddressPointers,
+            false,
+            None,
+            false,
+            "Replaces the global base address stored in a writable tensor-map descriptor.",
+        )
+    } else if matches!(
+        operation,
+        TmaOperation::ReplaceBoxDim
+            | TmaOperation::ReplaceElementStride
+            | TmaOperation::ReplaceGlobalDim
+    ) {
+        rust_arguments.extend(["*mut u8", "u32", "u32"]);
+        dialect_operands.extend(["ptr", "i32", "i32"]);
+        llvm_arguments.extend(["anyptr", "i32", "i32"]);
+        (
+            TmaAdapter::DescriptorOrdinalAndU32,
+            false,
+            None,
+            false,
+            "Replaces one indexed 32-bit field in a writable tensor-map descriptor.",
+        )
+    } else if operation == TmaOperation::ReplaceGlobalStride {
+        rust_arguments.extend(["*mut u8", "u32", "u64"]);
+        dialect_operands.extend(["ptr", "i32", "i64"]);
+        llvm_arguments.extend(["anyptr", "i32", "i64"]);
+        (
+            TmaAdapter::DescriptorOrdinalAndU64,
+            false,
+            None,
+            false,
+            "Replaces one indexed 64-bit stride in a writable tensor-map descriptor.",
+        )
+    } else if matches!(
+        operation,
+        TmaOperation::ReplaceElementType
+            | TmaOperation::ReplaceFillMode
+            | TmaOperation::ReplaceInterleaveLayout
+            | TmaOperation::ReplaceSwizzleAtomicity
+            | TmaOperation::ReplaceSwizzleMode
+    ) {
+        rust_arguments.extend(["*mut u8", "u32"]);
+        dialect_operands.extend(["ptr", "i32"]);
+        llvm_arguments.extend(["anyptr", "i32"]);
+        (
+            TmaAdapter::DescriptorAndImmediateU32,
+            false,
+            None,
+            false,
+            "Replaces one immediate-valued field in a writable tensor-map descriptor.",
+        )
+    } else if operation == TmaOperation::ReplaceRank {
+        rust_arguments.extend(["*mut u8", "u32"]);
+        dialect_operands.extend(["ptr", "i32"]);
+        llvm_arguments.extend(["anyptr", "i32"]);
+        (
+            TmaAdapter::DescriptorAndRuntimeU32,
+            false,
+            None,
+            false,
+            "Replaces the rank stored in a writable tensor-map descriptor.",
+        )
+    } else if is_acquire_fence {
+        rust_arguments.push("*const u8");
+        dialect_operands.push("ptr");
+        llvm_arguments.extend(["ptr", "i32"]);
+        (
+            TmaAdapter::DescriptorPointerInjectBytes,
+            false,
+            None,
+            false,
+            "Acquires a published tensor-map descriptor into the selected tensor-map proxy scope.",
         )
     } else {
         rust_arguments.push("u32");
@@ -3797,16 +5442,43 @@ fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
         )
     };
 
-    let mut modifiers = vec!["async".into(), "bulk".into()];
-    let operands = if is_g2s {
-        modifiers.extend([
+    let is_replace = matches!(
+        operation,
+        TmaOperation::ReplaceBoxDim
+            | TmaOperation::ReplaceElementStride
+            | TmaOperation::ReplaceElementType
+            | TmaOperation::ReplaceFillMode
+            | TmaOperation::ReplaceGlobalAddress
+            | TmaOperation::ReplaceGlobalDim
+            | TmaOperation::ReplaceGlobalStride
+            | TmaOperation::ReplaceInterleaveLayout
+            | TmaOperation::ReplaceRank
+            | TmaOperation::ReplaceSwizzleAtomicity
+            | TmaOperation::ReplaceSwizzleMode
+    );
+    let is_fence = is_acquire_fence || is_release_fence;
+    let descriptor_control = operation == TmaOperation::PrefetchTensorMap
+        || prefetch_coordinates.is_some()
+        || is_replace
+        || is_fence;
+    let blackwell_tma = cg2
+        || matches!(
+            operation,
+            TmaOperation::PrefetchTileGather4TwoDimensional
+                | TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint
+        );
+
+    let (mnemonic, modifiers, operands) = if is_g2s {
+        let mut modifiers = vec![
+            "async".into(),
+            "bulk".into(),
             "tensor".into(),
             format!("{}d", dimensions.unwrap()),
             "shared::cluster".into(),
             "global".into(),
             "tile".into(),
             "mbarrier::complete_tx::bytes".into(),
-        ]);
+        ];
         if multicast {
             modifiers.push("multicast::cluster".into());
         }
@@ -3821,27 +5493,225 @@ fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
         if multicast {
             operands.push(OperandPattern::Register);
         }
-        operands
+        ("cp", modifiers, operands)
     } else if is_s2g {
-        modifiers.extend([
-            "tensor".into(),
-            format!("{}d", dimensions.unwrap()),
-            "global".into(),
-            "shared::cta".into(),
-            "tile".into(),
-            "bulk_group".into(),
-        ]);
-        vec![OperandPattern::Address, OperandPattern::Address]
+        (
+            "cp",
+            vec![
+                "async".into(),
+                "bulk".into(),
+                "tensor".into(),
+                format!("{}d", dimensions.unwrap()),
+                "global".into(),
+                "shared::cta".into(),
+                "tile".into(),
+                "bulk_group".into(),
+            ],
+            vec![OperandPattern::Address, OperandPattern::Address],
+        )
     } else if operation == TmaOperation::CommitGroup {
-        modifiers.push("commit_group".into());
-        vec![]
-    } else {
-        modifiers.push("wait_group".into());
+        (
+            "cp",
+            vec!["async".into(), "bulk".into(), "commit_group".into()],
+            vec![],
+        )
+    } else if matches!(
+        operation,
+        TmaOperation::WaitGroup | TmaOperation::WaitGroupRead
+    ) {
+        let mut modifiers = vec!["async".into(), "bulk".into(), "wait_group".into()];
         if operation == TmaOperation::WaitGroupRead {
             modifiers.push("read".into());
         }
-        vec![OperandPattern::Immediate]
+        ("cp", modifiers, vec![OperandPattern::Immediate])
+    } else if operation == TmaOperation::PrefetchTensorMap {
+        (
+            "prefetch",
+            vec!["tensormap".into()],
+            vec![OperandPattern::Address],
+        )
+    } else if prefetch_coordinates.is_some() {
+        let (dimensionality, tile) = if matches!(
+            operation,
+            TmaOperation::PrefetchTileGather4TwoDimensional
+                | TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint
+        ) {
+            ("2d", "tile::gather4")
+        } else {
+            (
+                match prefetch_coordinates.unwrap() {
+                    1 => "1d",
+                    2 => "2d",
+                    3 => "3d",
+                    4 => "4d",
+                    5 => "5d",
+                    _ => unreachable!("closed TMA prefetch dimensionality"),
+                },
+                "tile",
+            )
+        };
+        let mut modifiers = vec![
+            "async".into(),
+            "bulk".into(),
+            "prefetch".into(),
+            "tensor".into(),
+            dimensionality.into(),
+            "L2".into(),
+            "global".into(),
+            tile.into(),
+        ];
+        let mut operands = vec![OperandPattern::Address];
+        if operation.uses_prefetch_cache_hint() {
+            modifiers.push("L2::cache_hint".into());
+            operands.push(OperandPattern::Register);
+        }
+        ("cp", modifiers, operands)
+    } else if is_replace {
+        let (field, width, operands) = match operation {
+            TmaOperation::ReplaceGlobalAddress => (
+                "global_address",
+                "b64",
+                vec![OperandPattern::Address, OperandPattern::Register],
+            ),
+            TmaOperation::ReplaceRank => (
+                "rank",
+                "b32",
+                vec![OperandPattern::Address, OperandPattern::Register],
+            ),
+            TmaOperation::ReplaceBoxDim => (
+                "box_dim",
+                "b32",
+                vec![
+                    OperandPattern::Address,
+                    OperandPattern::Immediate,
+                    OperandPattern::Register,
+                ],
+            ),
+            TmaOperation::ReplaceElementStride => (
+                "element_stride",
+                "b32",
+                vec![
+                    OperandPattern::Address,
+                    OperandPattern::Immediate,
+                    OperandPattern::Register,
+                ],
+            ),
+            TmaOperation::ReplaceGlobalDim => (
+                "global_dim",
+                "b32",
+                vec![
+                    OperandPattern::Address,
+                    OperandPattern::Immediate,
+                    OperandPattern::Register,
+                ],
+            ),
+            TmaOperation::ReplaceGlobalStride => (
+                "global_stride",
+                "b64",
+                vec![
+                    OperandPattern::Address,
+                    OperandPattern::Immediate,
+                    OperandPattern::Register,
+                ],
+            ),
+            TmaOperation::ReplaceElementType => (
+                "elemtype",
+                "b32",
+                vec![OperandPattern::Address, OperandPattern::Immediate],
+            ),
+            TmaOperation::ReplaceFillMode => (
+                "fill_mode",
+                "b32",
+                vec![OperandPattern::Address, OperandPattern::Immediate],
+            ),
+            TmaOperation::ReplaceInterleaveLayout => (
+                "interleave_layout",
+                "b32",
+                vec![OperandPattern::Address, OperandPattern::Immediate],
+            ),
+            TmaOperation::ReplaceSwizzleAtomicity => (
+                "swizzle_atomicity",
+                "b32",
+                vec![OperandPattern::Address, OperandPattern::Immediate],
+            ),
+            TmaOperation::ReplaceSwizzleMode => (
+                "swizzle_mode",
+                "b32",
+                vec![OperandPattern::Address, OperandPattern::Immediate],
+            ),
+            _ => unreachable!("TMA tensor-map replace operation was matched"),
+        };
+        (
+            "tensormap",
+            vec![
+                "replace".into(),
+                "tile".into(),
+                field.into(),
+                "global".into(),
+                "b1024".into(),
+                width.into(),
+            ],
+            operands,
+        )
+    } else if is_fence {
+        let (semantics, scope) = match operation {
+            TmaOperation::FenceProxyTensorMapAcquireCluster => ("acquire", "cluster"),
+            TmaOperation::FenceProxyTensorMapAcquireCta => ("acquire", "cta"),
+            TmaOperation::FenceProxyTensorMapAcquireGpu => ("acquire", "gpu"),
+            TmaOperation::FenceProxyTensorMapAcquireSystem => ("acquire", "sys"),
+            TmaOperation::FenceProxyTensorMapReleaseCluster => ("release", "cluster"),
+            TmaOperation::FenceProxyTensorMapReleaseCta => ("release", "cta"),
+            TmaOperation::FenceProxyTensorMapReleaseGpu => ("release", "gpu"),
+            TmaOperation::FenceProxyTensorMapReleaseSystem => ("release", "sys"),
+            _ => unreachable!("TMA tensor-map fence operation was matched"),
+        };
+        (
+            "fence",
+            vec![
+                "proxy".into(),
+                "tensormap::generic".into(),
+                semantics.into(),
+                scope.into(),
+            ],
+            if is_acquire_fence {
+                vec![
+                    OperandPattern::Address,
+                    OperandPattern::Exact {
+                        value: "128".into(),
+                    },
+                ]
+            } else {
+                vec![]
+            },
+        )
+    } else {
+        unreachable!("TMA operation category was matched")
     };
+
+    let minimum_ptx = if blackwell_tma || operation == TmaOperation::ReplaceSwizzleAtomicity {
+        "8.6"
+    } else if is_replace || is_fence {
+        "8.3"
+    } else {
+        "8.0"
+    };
+    let (minimum_sm, targets) = if blackwell_tma {
+        (None, TMA_BLACKWELL_TARGETS)
+    } else if operation == TmaOperation::ReplaceSwizzleAtomicity {
+        (None, BLACKWELL_LDMATRIX_LLVM_TARGETS)
+    } else if is_replace {
+        (None, TENSOR_MAP_REPLACE_TARGETS)
+    } else {
+        (Some("sm_90"), "all")
+    };
+    let memory = if operation == TmaOperation::PrefetchTensorMap || prefetch_coordinates.is_some() {
+        "read"
+    } else if is_replace {
+        "write"
+    } else {
+        "read_write"
+    };
+    let polymorphic_descriptor = operation == TmaOperation::PrefetchTensorMap;
 
     TmaRecipe {
         operation,
@@ -3850,6 +5720,13 @@ fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
         operation_key,
         source_record,
         llvm_symbol,
+        resolved_llvm_symbol: polymorphic_descriptor.then(|| format!("{llvm_symbol}.p0")),
+        selected_address_space: polymorphic_descriptor.then_some(ImportedAddressSpace::Generic),
+        llvm_mechanism: if is_replace {
+            BackendLoweringMechanism::InlinePtx
+        } else {
+            BackendLoweringMechanism::TypedNvvm
+        },
         rust_arguments,
         dialect_op_type: op_type,
         dialect_op_name: op_name,
@@ -3859,13 +5736,21 @@ fn tma_recipe(operation: TmaOperation) -> TmaRecipe {
         safe,
         safe_reason,
         convergent,
-        minimum_ptx: if cg2 { "8.6" } else { "8.0" },
-        minimum_sm: if cg2 { None } else { Some("sm_90") },
-        targets: if cg2 {
-            "sm_100a|sm_101a|sm_103a|sm_110a"
+        minimum_ptx,
+        minimum_sm,
+        targets,
+        memory,
+        ptx_isa_section: if descriptor_control {
+            "Tensor-map descriptor and asynchronous bulk tensor operations"
         } else {
-            "all"
+            "9.7.9.26.5 Asynchronous bulk tensor copy"
         },
+        ptx_isa_url: if descriptor_control {
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-map"
+        } else {
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor"
+        },
+        mnemonic,
         modifiers,
         operands,
         summary,
@@ -3882,33 +5767,17 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
             && !admission.libnvvm_evidence_profile.trim().is_empty(),
         "compact TMA admission requires both backend evidence profiles"
     );
-    let expected = [
-        TmaOperation::G2sTile1d,
-        TmaOperation::G2sTile2d,
-        TmaOperation::G2sTile2dMulticast,
-        TmaOperation::G2sTile2dMulticastCg2,
-        TmaOperation::G2sTile3d,
-        TmaOperation::G2sTile4d,
-        TmaOperation::G2sTile5d,
-        TmaOperation::S2gTile1d,
-        TmaOperation::S2gTile2d,
-        TmaOperation::S2gTile3d,
-        TmaOperation::S2gTile4d,
-        TmaOperation::S2gTile5d,
-        TmaOperation::CommitGroup,
-        TmaOperation::WaitGroup,
-        TmaOperation::WaitGroupRead,
-    ];
     ensure!(
         admission
             .variants
             .iter()
             .map(|variant| variant.operation)
-            .eq(expected),
-        "compact TMA admission must list all 15 operations in canonical order"
+            .eq(TMA_OPERATIONS),
+        "compact TMA admission must list all {} operations in canonical order",
+        TMA_OPERATIONS.len()
     );
 
-    admission
+    let mut records = admission
         .variants
         .iter()
         .map(|variant| {
@@ -3928,7 +5797,11 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 source_record: Some(recipe.source_record.into()),
                 rust_module: "tma".into(),
                 rust_name: recipe.id.into(),
-                rust_arguments: recipe.rust_arguments.iter().map(|value| (*value).into()).collect(),
+                rust_arguments: recipe
+                    .rust_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
                 rust_result: "()".into(),
                 safe: recipe.safe,
                 must_use: false,
@@ -3937,14 +5810,22 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 compatibility_rust_paths: vec![format!("cuda_device::tma::{}", recipe.id)],
                 dialect_op_type: recipe.dialect_op_type.into(),
                 dialect_op_name: recipe.dialect_op_name.into(),
-                dialect_operands: recipe.dialect_operands.iter().map(|value| (*value).into()).collect(),
+                dialect_operands: recipe
+                    .dialect_operands
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
                 dialect_results: vec![],
                 llvm_symbol: Some(recipe.llvm_symbol.into()),
-                resolved_llvm_symbol: None,
-                llvm_arguments: recipe.llvm_arguments.iter().map(|value| (*value).into()).collect(),
+                resolved_llvm_symbol: recipe.resolved_llvm_symbol.clone(),
+                llvm_arguments: recipe
+                    .llvm_arguments
+                    .iter()
+                    .map(|value| (*value).into())
+                    .collect(),
                 llvm_results: vec![],
                 pure: false,
-                memory: "read_write".into(),
+                memory: recipe.memory.into(),
                 convergent: recipe.convergent,
                 execution_scope: "thread".into(),
                 minimum_ptx: recipe.minimum_ptx.into(),
@@ -3952,13 +5833,13 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 ptx_result: "()".into(),
                 targets: recipe.targets.into(),
                 ptx_isa_version: "9.3".into(),
-                ptx_isa_section: "9.7.9.26.5 Asynchronous bulk tensor copy".into(),
-                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-async-bulk-tensor".into(),
+                ptx_isa_section: recipe.ptx_isa_section.into(),
+                ptx_isa_url: recipe.ptx_isa_url.into(),
                 lowering: "generated_tma".into(),
                 backend_lowerings: vec![
                     OverlayBackendLowering {
                         backend: IntrinsicBackend::LlvmNvptx,
-                        mechanism: BackendLoweringMechanism::TypedNvvm,
+                        mechanism: recipe.llvm_mechanism,
                         evidence_profile: admission.llvm_evidence_profile.clone(),
                         targets: None,
                         minimum_ptx: Some(recipe.minimum_ptx.into()),
@@ -4004,6 +5885,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 clc: None,
                 tma: Some(Tma {
                     operation: recipe.operation,
+                    reduction: None,
                     adapter: recipe.adapter,
                     runtime_validation: admission.runtime_validation,
                 }),
@@ -4011,16 +5893,46 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 ldmatrix_variant: None,
                 ldmatrix_safety: None,
                 ldmatrix_adapter: None,
-                selected_address_space: None,
+                selected_address_space: recipe.selected_address_space,
                 expected_ptx: InstructionPattern {
-                    mnemonic: "cp".into(),
+                    mnemonic: recipe.mnemonic.into(),
                     modifiers: recipe.modifiers,
                     operands: recipe.operands,
                 },
                 summary: recipe.summary.into(),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+
+    if !admission.reduce_variants.is_empty() {
+        ensure!(
+            admission.reduce_llvm_evidence_profile.is_some(),
+            "compact TMA reduction admission requires reduce_llvm_evidence_profile"
+        );
+        ensure!(
+            admission.reduce_libnvvm_evidence_profile.is_some(),
+            "compact TMA reduction admission requires reduce_libnvvm_evidence_profile"
+        );
+
+        let expected_reductions = tma_reduction_matrix();
+        ensure!(
+            admission.reduce_variants.len() == expected_reductions.len()
+                && admission
+                    .reduce_variants
+                    .iter()
+                    .zip(expected_reductions.iter())
+                    .all(|(variant, expected)| {
+                        variant.operation == expected.operation
+                            && variant.load_mode == expected.load_mode
+                            && variant.dimensions == expected.dimensions
+                    }),
+            "compact TMA reduction admission must list all 64 operations in canonical order"
+        );
+        for variant in &admission.reduce_variants {
+            records.push(expand_tma_reduction_variant(admission, variant)?);
+        }
+    }
+    Ok(records)
 }
 
 fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
@@ -4028,6 +5940,14 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
         .tma
         .as_ref()
         .with_context(|| format!("{} has no closed TMA contract", policy.id))?;
+    if tma.operation == TmaOperation::Reduce {
+        return validate_tma_reduction_policy(policy, declaration, tma);
+    }
+    ensure!(
+        tma.reduction.is_none(),
+        "{} non-reduction TMA operation carries a reduction contract",
+        policy.id
+    );
     let recipe = tma_recipe(tma.operation);
     ensure!(
         policy.id == recipe.id
@@ -4036,7 +5956,7 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
             && policy.source.is_none()
             && policy.source_record.as_deref() == Some(recipe.source_record)
             && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol)
-            && policy.resolved_llvm_symbol.is_none()
+            && policy.resolved_llvm_symbol == recipe.resolved_llvm_symbol
             && declaration.source_record == recipe.source_record
             && declaration.llvm_name == recipe.llvm_symbol,
         "{} TMA identity changed",
@@ -4064,13 +5984,14 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
             && policy.llvm_results.is_empty()
             && declaration.arguments == recipe.llvm_arguments
             && declaration.results.is_empty()
+            && policy.selected_address_space == recipe.selected_address_space
             && policy.lowering == "generated_tma",
         "{} TMA carrier or LLVM adapter changed",
         policy.id
     );
     ensure!(
         !policy.pure
-            && policy.memory == "read_write"
+            && policy.memory == recipe.memory
             && policy.convergent == recipe.convergent
             && policy.execution_scope == "thread"
             && tma.adapter == recipe.adapter
@@ -4083,8 +6004,10 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
             && policy.minimum_sm.as_deref() == recipe.minimum_sm
             && policy.targets == recipe.targets
             && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == recipe.ptx_isa_section
+            && policy.ptx_isa_url == recipe.ptx_isa_url
             && policy.ptx_result == "()"
-            && policy.expected_ptx.mnemonic == "cp"
+            && policy.expected_ptx.mnemonic == recipe.mnemonic
             && policy.expected_ptx.modifiers == recipe.modifiers
             && policy.expected_ptx.operands == recipe.operands,
         "{} TMA target or PTX contract changed",
@@ -4101,10 +6024,7 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
     };
     ensure!(
         policy.backend_lowerings.len() == 2
-            && valid_route(
-                IntrinsicBackend::LlvmNvptx,
-                BackendLoweringMechanism::TypedNvvm,
-            )
+            && valid_route(IntrinsicBackend::LlvmNvptx, recipe.llvm_mechanism,)
             && valid_route(
                 IntrinsicBackend::LibNvvm,
                 BackendLoweringMechanism::InlinePtx,
@@ -4116,6 +6036,117 @@ fn validate_tma_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
     ensure!(
         declaration.properties == expected_properties,
         "{} imported TMA declaration changed",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "TMA")?;
+    Ok(())
+}
+
+fn validate_tma_reduction_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+    tma: &Tma,
+) -> Result<()> {
+    ensure!(
+        tma.operation == TmaOperation::Reduce,
+        "{} is not a TMA reduction",
+        policy.id
+    );
+    let reduction = tma
+        .reduction
+        .with_context(|| format!("{} has no TMA reduction contract", policy.id))?;
+    let recipe = tma_reduction_recipe(reduction)?;
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == tma_reduction_expected_abi_id(reduction)
+            && policy.operation_key == recipe.operation_key
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(recipe.source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none()
+            && declaration.source_record == recipe.source_record
+            && declaration.llvm_name == recipe.llvm_symbol,
+        "{} TMA reduction identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "tma"
+            && policy.rust_name == recipe.id
+            && policy.rust_arguments == recipe.rust_arguments
+            && policy.rust_result == "()"
+            && !policy.safe
+            && !policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::tma::{}", recipe.id)
+            && policy.compatibility_rust_paths == [format!("cuda_device::tma::{}", recipe.id)],
+        "{} TMA reduction Rust API changed",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == recipe.dialect_operands
+            && policy.dialect_results.is_empty()
+            && policy.llvm_arguments == recipe.llvm_arguments
+            && policy.llvm_results.is_empty()
+            && declaration.arguments == recipe.llvm_arguments
+            && declaration.results.is_empty()
+            && declaration.selections.is_empty()
+            && policy.lowering == "generated_tma",
+        "{} TMA reduction carrier or LLVM adapter changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "thread"
+            && tma.adapter == TmaAdapter::ReductionPointersCoordinatesInjectDefaults
+            && tma.runtime_validation == RuntimeValidation::Unexecuted,
+        "{} TMA reduction semantics changed",
+        policy.id
+    );
+    ensure!(
+        policy.minimum_ptx == "8.0"
+            && policy.minimum_sm.as_deref() == Some("sm_90")
+            && policy.targets == "all"
+            && policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section
+                == "9.7.9.26.5.3 Data Movement and Conversion Instructions: cp.reduce.async.bulk.tensor"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cp-reduce-async-bulk-tensor"
+            && policy.ptx_result == "()"
+            && policy.expected_ptx.mnemonic == "cp"
+            && policy.expected_ptx.modifiers == recipe.modifiers
+            && policy.expected_ptx.operands == recipe.operands,
+        "{} TMA reduction target or PTX contract changed",
+        policy.id
+    );
+    let valid_route = |backend, mechanism| {
+        policy.backend_lowerings.iter().any(|route| {
+            route.backend == backend
+                && route.mechanism == mechanism
+                && route.minimum_ptx.as_deref() == Some("8.0")
+                && route.minimum_sm.as_deref() == Some("sm_90")
+                && !route.evidence_profile.trim().is_empty()
+        })
+    };
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && valid_route(
+                IntrinsicBackend::LlvmNvptx,
+                BackendLoweringMechanism::TypedNvvm,
+            )
+            && valid_route(
+                IntrinsicBackend::LibNvvm,
+                BackendLoweringMechanism::InlinePtx,
+            ),
+        "{} TMA reduction backend route changed",
+        policy.id
+    );
+    ensure!(
+        declaration.properties == tma_reduction_imported_properties(reduction.dimensions as usize),
+        "{} imported TMA reduction declaration changed",
         policy.id
     );
     ensure_no_other_family_contract(policy, "TMA")?;
@@ -7814,6 +9845,7 @@ fn validate_tcgen05_source_contract(
 }
 
 fn tma_imported_properties(operation: TmaOperation) -> Vec<String> {
+    assert_ne!(operation, TmaOperation::Reduce);
     let dimensions = operation.dimensions();
     if matches!(
         operation,
@@ -7854,10 +9886,113 @@ fn tma_imported_properties(operation: TmaOperation) -> Vec<String> {
         ];
     }
     if operation == TmaOperation::CommitGroup {
-        vec![]
-    } else {
-        vec!["ImmArg<arg0>".into()]
+        return vec![];
     }
+    if matches!(
+        operation,
+        TmaOperation::WaitGroup | TmaOperation::WaitGroupRead
+    ) {
+        return vec!["ImmArg<arg0>".into()];
+    }
+    if operation == TmaOperation::PrefetchTensorMap {
+        return vec![
+            "IntrArgMemOnly".into(),
+            "NoCapture<arg0>".into(),
+            "ReadOnly<arg0>".into(),
+        ];
+    }
+    if let Some(coordinate_count) = operation.prefetch_coordinate_count() {
+        return vec![
+            format!("ImmArg<arg{}>", coordinate_count + 2),
+            "IntrConvergent".into(),
+            "ReadOnly<arg0>".into(),
+        ];
+    }
+    if matches!(
+        operation,
+        TmaOperation::FenceProxyTensorMapAcquireCluster
+            | TmaOperation::FenceProxyTensorMapAcquireCta
+            | TmaOperation::FenceProxyTensorMapAcquireGpu
+            | TmaOperation::FenceProxyTensorMapAcquireSystem
+    ) {
+        return vec![
+            "ImmArg<arg1>".into(),
+            "IntrArgMemOnly".into(),
+            "IntrNoCallback".into(),
+            "Range<arg1,128,129>".into(),
+        ];
+    }
+    if matches!(
+        operation,
+        TmaOperation::FenceProxyTensorMapReleaseCluster
+            | TmaOperation::FenceProxyTensorMapReleaseCta
+            | TmaOperation::FenceProxyTensorMapReleaseGpu
+            | TmaOperation::FenceProxyTensorMapReleaseSystem
+    ) {
+        return vec!["IntrNoCallback".into()];
+    }
+
+    let mut properties = vec![
+        "IntrArgMemOnly".into(),
+        "IntrWriteMem".into(),
+        "NoCapture<arg0>".into(),
+    ];
+    match operation {
+        TmaOperation::ReplaceBoxDim
+        | TmaOperation::ReplaceElementStride
+        | TmaOperation::ReplaceGlobalDim
+        | TmaOperation::ReplaceGlobalStride => {
+            properties.push("ImmArg<arg1>".into());
+        }
+        TmaOperation::ReplaceElementType => {
+            properties.extend([
+                "ArgInfo<arg1>".into(),
+                "ImmArg<arg1>".into(),
+                "Range<arg1,0,16>".into(),
+            ]);
+        }
+        TmaOperation::ReplaceFillMode => {
+            properties.extend([
+                "ArgInfo<arg1>".into(),
+                "ImmArg<arg1>".into(),
+                "Range<arg1,0,2>".into(),
+            ]);
+        }
+        TmaOperation::ReplaceInterleaveLayout => {
+            properties.extend([
+                "ArgInfo<arg1>".into(),
+                "ImmArg<arg1>".into(),
+                "Range<arg1,0,3>".into(),
+            ]);
+        }
+        TmaOperation::ReplaceSwizzleAtomicity => {
+            properties.extend([
+                "ArgInfo<arg1>".into(),
+                "ImmArg<arg1>".into(),
+                "Range<arg1,0,4>".into(),
+            ]);
+        }
+        TmaOperation::ReplaceSwizzleMode => {
+            properties.extend([
+                "ArgInfo<arg1>".into(),
+                "ImmArg<arg1>".into(),
+                "Range<arg1,0,5>".into(),
+            ]);
+        }
+        TmaOperation::ReplaceGlobalAddress | TmaOperation::ReplaceRank => {}
+        _ => unreachable!("closed TMA operation property contract"),
+    }
+    properties.sort();
+    properties
+}
+
+fn tma_reduction_imported_properties(dimensions: usize) -> Vec<String> {
+    vec![
+        format!("ImmArg<arg{}>", dimensions + 3),
+        "IntrConvergent".into(),
+        "ReadOnly<arg0>".into(),
+        "ReadOnly<arg1>".into(),
+    ]
 }
 
 fn validate_sync_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsic) -> Result<()> {
@@ -9550,6 +11685,22 @@ fn validate_selected_target_predicates(
         );
         return Ok(());
     }
+    if policy.family == "register_control" {
+        let operation = ExecutionControlOperation::from_catalog_id(&policy.id)
+            .with_context(|| format!("{} has no closed register-control operation", policy.id))?;
+        ensure!(
+            matches!(
+                operation,
+                ExecutionControlOperation::SetMaxNRegInc | ExecutionControlOperation::SetMaxNRegDec
+            ) && selection.predicates == ["Subtarget->hasSetMaxNRegSupport()"]
+                && parse_ptx_version(&policy.minimum_ptx, &policy.id)?.encoded() == 80
+                && policy.minimum_sm.is_none()
+                && policy.targets == TENSOR_MAP_REPLACE_TARGETS,
+            "{} setmaxnreg selection must retain the helper predicate and reviewed PTX 8.0 target matrix",
+            policy.id
+        );
+        return Ok(());
+    }
 
     let mma_family = matches!(policy.family.as_str(), "register_mma" | "sparse_mma");
     let tcgen05_mma = policy
@@ -9624,7 +11775,12 @@ fn validate_selected_target_predicates(
             ensure!(
                 policy.family == "tma"
                     && policy.tma.as_ref().is_some_and(|tma| {
-                        tma.operation == TmaOperation::G2sTile2dMulticastCg2
+                        matches!(
+                            tma.operation,
+                            TmaOperation::G2sTile2dMulticastCg2
+                                | TmaOperation::PrefetchTileGather4TwoDimensional
+                                | TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint
+                        )
                     }),
                 "{} uses the Blackwell TMA target predicate outside the cta_group::2 operation",
                 policy.id
@@ -9785,25 +11941,28 @@ fn validate_selected_target_predicates(
         return Ok(());
     }
     if has_mma_block_scale_support {
-        let target_matches = match policy.family.as_str() {
-            "register_mma" => {
-                policy.targets == "sm_120a|sm_120f|sm_121a|sm_121f" && policy.minimum_sm.is_none()
-            }
-            "sparse_mma" => {
+        let (minimum_ptx_matches, target_matches) = match policy.family.as_str() {
+            "register_mma" => (
+                overlay_ptx == 87,
+                policy.targets == "sm_120a|sm_120f|sm_121a|sm_121f" && policy.minimum_sm.is_none(),
+            ),
+            "sparse_mma" => (
+                overlay_ptx == 87,
                 policy.minimum_sm.is_none()
                     && policy.sparse_mma.as_ref().is_some_and(|mma| {
                         policy.targets
                             == match mma.accumulator {
-                                SparseMmaAccumulator::F16 => SPARSE_MMA_F8F6F4_F16_TARGETS,
-                                SparseMmaAccumulator::F32 => "sm_120a",
+                                SparseMmaAccumulator::F16 | SparseMmaAccumulator::F32 => {
+                                    SPARSE_MMA_F8F6F4_TARGETS
+                                }
                                 SparseMmaAccumulator::S32 => return false,
                             }
-                    })
-            }
-            _ => false,
+                    }),
+            ),
+            _ => (false, false),
         };
         ensure!(
-            overlay_ptx == 87 && target_matches,
+            minimum_ptx_matches && target_matches,
             "{} MMA block-scale predicate requires its reviewed Blackwell target matrix",
             policy.id
         );
@@ -9904,11 +12063,14 @@ fn validate_selected_target_predicates(
             ),
         }
     } else if policy.family == "tma" {
-        if policy
-            .tma
-            .as_ref()
-            .is_some_and(|tma| tma.operation == TmaOperation::G2sTile2dMulticastCg2)
-        {
+        if policy.tma.as_ref().is_some_and(|tma| {
+            matches!(
+                tma.operation,
+                TmaOperation::G2sTile2dMulticastCg2
+                    | TmaOperation::PrefetchTileGather4TwoDimensional
+                    | TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint
+            )
+        }) {
             ensure!(
                 has_tma_blackwell_support
                     && selection.predicates.len() == 1
@@ -9967,6 +12129,7 @@ fn validate_selected_target_predicates(
             | "mbarrier_basic"
             | "cluster_barrier"
             | "scalar_conversion"
+            | "grid_dependency"
     ) {
         ensure!(
             imported_ptx.is_some() && imported_sm.is_some() && selection.predicates.len() == 2,
@@ -12429,13 +14592,20 @@ fn validate_ldmatrix_policy(
             && !policy.safe
             && policy.must_use != classic
             && policy.safe_allowlist_reason.is_none()
-            && if classic {
-                policy.compatibility_rust_paths
-                    == [format!(
+            && {
+                let expected_compatibility_paths = if classic {
+                    vec![format!(
                         "cuda_device::wmma::ldmatrix_{count_name}{trans_record}"
                     )]
-            } else {
-                policy.compatibility_rust_paths.is_empty()
+                } else if matches!(
+                    policy.id.as_str(),
+                    "ldmatrix_m8n16_x2_b8x16_b4x16_p64" | "ldmatrix_m8n16_x4_b8x16_b4x16_p64"
+                ) {
+                    vec![format!("cuda_device::wmma::{expected_name}")]
+                } else {
+                    vec![]
+                };
+                policy.compatibility_rust_paths == expected_compatibility_paths
             }
             && policy.lowering == "generated_ldmatrix"
             && policy.ldmatrix_adapter == Some(expected_adapter)
@@ -12729,17 +14899,24 @@ struct PackedAluRecipe {
     source: PackedAluRecipeSource,
 }
 
-fn packed_alu_recipe(format: PackedAluFormat, operation: PackedAluOperation) -> PackedAluRecipe {
+/// Returns the closed recipe for a packed-ALU (format, operation) pair.
+///
+/// `None` means the pair is outside the family: the operation exists for some
+/// other format but this one has no reviewed lowering for it.
+fn packed_alu_recipe(
+    format: PackedAluFormat,
+    operation: PackedAluOperation,
+) -> Option<PackedAluRecipe> {
     match format {
         PackedAluFormat::Bf16x2 => packed_bf16x2_alu_recipe(operation),
-        PackedAluFormat::F16x2 => packed_f16x2_alu_recipe(operation),
+        PackedAluFormat::F16x2 => Some(packed_f16x2_alu_recipe(operation)),
     }
 }
 
-fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
+fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> Option<PackedAluRecipe> {
     const PURE: &[&str] = &["IntrNoMem", "IntrSpeculatable"];
     const COMMUTATIVE_PURE: &[&str] = &["Commutative", "IntrNoMem", "IntrSpeculatable"];
-    match operation {
+    Some(match operation {
         PackedAluOperation::Fma => PackedAluRecipe {
             id: "fma_bf16x2",
             abi_id: "i0062",
@@ -12956,7 +15133,19 @@ fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
                 selection_asm: "abs.bf16x2 \t$dst, $src0;",
             },
         },
-    }
+        // The ftz and sat fma forms do not exist for bf16x2 in the PTX ISA at
+        // all: ptxas rejects hand-written `fma.rn.ftz.bf16x2` with
+        // "Illegal modifier '.ftz' for instruction 'fma'", and accepts
+        // `fma.rn.relu.bf16x2` beside it. LLVM declares the intrinsics anyway,
+        // so instruction selection is what fails first ("Cannot select:
+        // intrinsic %llvm.nvvm.fma.rn.ftz.bf16x2"), but the assembler is the
+        // authority here. Reject them rather than admit a recipe that has no
+        // instruction to lower to.
+        PackedAluOperation::FmaFtz
+        | PackedAluOperation::FmaSat
+        | PackedAluOperation::FmaFtzSat
+        | PackedAluOperation::FmaFtzRelu => return None,
+    })
 }
 
 fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
@@ -12990,6 +15179,87 @@ fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
                 selection_asm: "fma.rn.f16x2 \t$dst, $src0, $src1, $src2;",
             },
         },
+        PackedAluOperation::FmaFtz => PackedAluRecipe {
+            id: "fma_ftz_f16x2",
+            abi_id: "i0854",
+            operation_key: "packed.alu.f16x2.fma.ftz",
+            rust_name: "fma_ftz_f16x2",
+            dialect_op_type: "FmaFtzF16x2Op",
+            dialect_op_name: "nvvm.fma_ftz_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.ftz.f16x2",
+            modifiers: &["rn", "ftz", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_ftz_f16x2",
+                symbol: "llvm.nvvm.fma.rn.ftz.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_ftz_f16x2",
+                selection_asm: "fma.rn.ftz.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
+        PackedAluOperation::FmaSat => PackedAluRecipe {
+            id: "fma_sat_f16x2",
+            abi_id: "i0855",
+            operation_key: "packed.alu.f16x2.fma.sat",
+            rust_name: "fma_sat_f16x2",
+            dialect_op_type: "FmaSatF16x2Op",
+            dialect_op_name: "nvvm.fma_sat_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.sat.f16x2",
+            modifiers: &["rn", "sat", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_sat_f16x2",
+                symbol: "llvm.nvvm.fma.rn.sat.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_sat_f16x2",
+                selection_asm: "fma.rn.sat.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
+        PackedAluOperation::FmaFtzSat => PackedAluRecipe {
+            id: "fma_ftz_sat_f16x2",
+            abi_id: "i0856",
+            operation_key: "packed.alu.f16x2.fma.ftz.sat",
+            rust_name: "fma_ftz_sat_f16x2",
+            dialect_op_type: "FmaFtzSatF16x2Op",
+            dialect_op_name: "nvvm.fma_ftz_sat_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.ftz.sat.f16x2",
+            modifiers: &["rn", "ftz", "sat", "f16x2"],
+            native_minimum_sm: 53,
+            minimum_ptx: "4.2",
+            minimum_sm: "sm_70",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_ftz_sat_f16x2",
+                symbol: "llvm.nvvm.fma.rn.ftz.sat.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_ftz_sat_f16x2",
+                selection_asm: "fma.rn.ftz.sat.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
         PackedAluOperation::FmaRelu => PackedAluRecipe {
             id: "fma_relu_f16x2",
             abi_id: "i0073",
@@ -13015,6 +15285,33 @@ fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
                 properties: PURE,
                 selection: "INT_NVVM_FMA_rn_relu_f16x2",
                 selection_asm: "fma.rn.relu.f16x2 \t$dst, $src0, $src1, $src2;",
+            },
+        },
+        PackedAluOperation::FmaFtzRelu => PackedAluRecipe {
+            id: "fma_ftz_relu_f16x2",
+            abi_id: "i0857",
+            operation_key: "packed.alu.f16x2.fma.ftz.relu",
+            rust_name: "fma_ftz_relu_f16x2",
+            dialect_op_type: "FmaFtzReluF16x2Op",
+            dialect_op_name: "nvvm.fma_ftz_relu_f16x2",
+            arity: 3,
+            must_use: true,
+            ptx_mnemonic: "fma.rn.ftz.relu.f16x2",
+            modifiers: &["rn", "ftz", "relu", "f16x2"],
+            native_minimum_sm: 80,
+            minimum_ptx: "7.0",
+            minimum_sm: "sm_80",
+            ptx_isa_section: "9.7.4.4 Half Precision Floating Point Instructions: fma",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-fma",
+            source: PackedAluRecipeSource::Imported {
+                record: "int_nvvm_fma_rn_ftz_relu_f16x2",
+                symbol: "llvm.nvvm.fma.rn.ftz.relu.f16x2",
+                resolved_symbol: None,
+                arguments: &["v2f16", "v2f16", "v2f16"],
+                results: &["v2f16"],
+                properties: PURE,
+                selection: "INT_NVVM_FMA_rn_ftz_relu_f16x2",
+                selection_asm: "fma.rn.ftz.relu.f16x2 \t$dst, $src0, $src1, $src2;",
             },
         },
         PackedAluOperation::Add => PackedAluRecipe {
@@ -13173,12 +15470,16 @@ fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
     }
 }
 
+/// Per-backend PTX and SM floors, which can sit above the recipe's own floor.
+///
+/// Takes the caller's already-resolved recipe rather than looking it up again,
+/// so this cannot be reached with a pair the family rejects.
 fn packed_alu_backend_floor(
+    recipe: &PackedAluRecipe,
     format: PackedAluFormat,
     operation: PackedAluOperation,
     backend: IntrinsicBackend,
 ) -> (&'static str, &'static str) {
-    let recipe = packed_alu_recipe(format, operation);
     match (format, operation, backend) {
         (
             PackedAluFormat::F16x2,
@@ -13194,6 +15495,19 @@ fn packed_alu_backend_floor(
             | PackedAluOperation::Add
             | PackedAluOperation::Sub
             | PackedAluOperation::Mul,
+            IntrinsicBackend::LibNvvm,
+        ) => ("4.2", "sm_75"),
+        // The ftz and sat fma forms share the plain fma floors: PTX 4.2 natively,
+        // but the pinned LLVM backend needs 6.0 and CUDA 13.3 ptxas no longer
+        // targets sm_70, so libNVVM is checked at sm_75.
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::FmaFtz | PackedAluOperation::FmaSat | PackedAluOperation::FmaFtzSat,
+            IntrinsicBackend::LlvmNvptx,
+        ) => ("6.0", "sm_70"),
+        (
+            PackedAluFormat::F16x2,
+            PackedAluOperation::FmaFtz | PackedAluOperation::FmaSat | PackedAluOperation::FmaFtzSat,
             IntrinsicBackend::LibNvvm,
         ) => ("4.2", "sm_75"),
         (PackedAluFormat::F16x2, PackedAluOperation::Neg, IntrinsicBackend::LlvmNvptx) => {
@@ -13226,7 +15540,8 @@ fn validate_packed_alu_policy(
         "{} requests an unsupported packed-ALU adapter",
         policy.id
     );
-    let recipe = packed_alu_recipe(packed.format, packed.operation);
+    let recipe = packed_alu_recipe(packed.format, packed.operation)
+        .with_context(|| format!("{} is outside the closed packed-ALU recipe", policy.id))?;
     let rust_module = match packed.format {
         PackedAluFormat::Bf16x2 => "bf16x2",
         PackedAluFormat::F16x2 => "f16x2",
@@ -13357,10 +15672,18 @@ fn validate_packed_alu_policy(
             );
         }
     }
-    let llvm_floor =
-        packed_alu_backend_floor(packed.format, packed.operation, IntrinsicBackend::LlvmNvptx);
-    let libnvvm_floor =
-        packed_alu_backend_floor(packed.format, packed.operation, IntrinsicBackend::LibNvvm);
+    let llvm_floor = packed_alu_backend_floor(
+        &recipe,
+        packed.format,
+        packed.operation,
+        IntrinsicBackend::LlvmNvptx,
+    );
+    let libnvvm_floor = packed_alu_backend_floor(
+        &recipe,
+        packed.format,
+        packed.operation,
+        IntrinsicBackend::LibNvvm,
+    );
     ensure_exact_inline_ptx_backends(
         policy,
         [
@@ -17158,7 +19481,7 @@ struct ExtendedMinMaxRecipe {
 }
 
 fn canonical_extended_minmax_variants() -> Vec<ExtendedMinMaxVariant> {
-    use ExtendedMinMaxFormat::{Bf16x2, F16x2, F32};
+    use ExtendedMinMaxFormat::{Bf16, Bf16x2, F16, F16x2, F32};
     use ExtendedMinMaxNan::{Nan, Number};
     use ExtendedMinMaxOperation::{Max, Min};
     use ExtendedMinMaxSubnormal::{Ftz, Preserve};
@@ -17181,15 +19504,81 @@ fn canonical_extended_minmax_variants() -> Vec<ExtendedMinMaxVariant> {
             (F16x2, operation, Preserve, Number, true),
         ]
     };
+    // The scalar 16-bit forms. LLVM declares every `f16` modifier combination
+    // and the four `bf16` combinations that do not request `ftz`; the four
+    // `bf16` `ftz` declarations exist but have no NVPTX selection pattern and
+    // fail instruction selection, so they are deliberately absent here.
+    //
+    // These variants were admitted after the first block, so they continue the
+    // ABI id space at a second base - see `extended_minmax_abi_id`.
+    let scalar_halves = |operation| {
+        [
+            (F16, operation, Preserve, Number, false),
+            (F16, operation, Ftz, Number, false),
+            (F16, operation, Preserve, Nan, false),
+            (F16, operation, Ftz, Nan, false),
+            (F16, operation, Preserve, Number, true),
+            (F16, operation, Ftz, Number, true),
+            (F16, operation, Preserve, Nan, true),
+            (F16, operation, Ftz, Nan, true),
+            (Bf16, operation, Preserve, Number, false),
+            (Bf16, operation, Preserve, Nan, false),
+            (Bf16, operation, Preserve, Number, true),
+            (Bf16, operation, Preserve, Nan, true),
+        ]
+    };
     one_operation(Min)
         .into_iter()
         .chain(one_operation(Max))
+        .chain(scalar_halves(Min))
+        .chain(scalar_halves(Max))
         .collect()
+}
+
+/// Maps a canonical variant index to its reserved ABI id.
+///
+/// The family was admitted as one contiguous block at
+/// `EXTENDED_MINMAX_FIRST_ABI_BASE`. Later additions cannot continue that block
+/// because the ids immediately after it were already reserved by other
+/// families, so they open a second block instead. The ledger is append-only,
+/// which makes the discontinuity permanent.
+fn extended_minmax_abi_id(index: usize) -> String {
+    const EXTENDED_MINMAX_FIRST_ABI_BASE: usize = 550;
+    const EXTENDED_MINMAX_FIRST_ABI_COUNT: usize = 28;
+    const EXTENDED_MINMAX_SECOND_ABI_BASE: usize = 830;
+
+    if index < EXTENDED_MINMAX_FIRST_ABI_COUNT {
+        format!("i{:04}", EXTENDED_MINMAX_FIRST_ABI_BASE + index)
+    } else {
+        format!(
+            "i{:04}",
+            EXTENDED_MINMAX_SECOND_ABI_BASE + index - EXTENDED_MINMAX_FIRST_ABI_COUNT
+        )
+    }
+}
+
+/// Joins an operation name, its modifiers, and its format into one identifier.
+///
+/// `min.f16` and `min.bf16` carry no modifier at all, so the separators have to
+/// come from joining the parts that are present rather than from a format
+/// string with fixed separators.
+fn extended_minmax_joined_name(
+    leading: &str,
+    trailing: &str,
+    modifiers: &[&str],
+    separator: &str,
+) -> String {
+    let mut parts = vec![leading];
+    parts.extend(modifiers.iter().copied());
+    parts.push(trailing);
+    parts.join(separator)
 }
 
 fn extended_minmax_format_name(format: ExtendedMinMaxFormat) -> &'static str {
     match format {
         ExtendedMinMaxFormat::F32 => "f32",
+        ExtendedMinMaxFormat::F16 => "f16",
+        ExtendedMinMaxFormat::Bf16 => "bf16",
         ExtendedMinMaxFormat::F16x2 => "f16x2",
         ExtendedMinMaxFormat::Bf16x2 => "bf16x2",
     }
@@ -17228,11 +19617,16 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
         source_modifiers.extend(["xorsign", "abs"]);
         ptx_modifiers.extend(["xorsign".to_owned(), "abs".to_owned()]);
     }
-    let source_modifier = source_modifiers.join("_");
-    let llvm_modifier = source_modifiers.join(".");
-    let id = format!("{operation_name}_{source_modifier}_{format_name}");
-    let source_record = format!("int_nvvm_f{operation_name}_{source_modifier}_{source_type}");
-    let llvm_symbol = format!("llvm.nvvm.f{operation_name}.{llvm_modifier}.{source_type}");
+    let id = extended_minmax_joined_name(operation_name, format_name, &source_modifiers, "_");
+    let intrinsic_name = format!("f{operation_name}");
+    let source_record = format!(
+        "int_nvvm_{}",
+        extended_minmax_joined_name(&intrinsic_name, source_type, &source_modifiers, "_")
+    );
+    let llvm_symbol = format!(
+        "llvm.nvvm.{}",
+        extended_minmax_joined_name(&intrinsic_name, source_type, &source_modifiers, ".")
+    );
     let selection_record = if format == ExtendedMinMaxFormat::F32 {
         format!(
             "INT_NVVM_{}",
@@ -17242,15 +19636,17 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
         )
     } else {
         let prefix = match operation {
-            ExtendedMinMaxOperation::Min => "INT_NVVM_FMIN",
-            ExtendedMinMaxOperation::Max => "INT_NVVM_FMAN",
+            ExtendedMinMaxOperation::Min => "FMIN",
+            ExtendedMinMaxOperation::Max => "FMAN",
         };
         let selection_modifiers = source_modifiers
             .iter()
             .map(|modifier| if *modifier == "nan" { "NaN" } else { modifier })
-            .collect::<Vec<_>>()
-            .join("_");
-        format!("{prefix}_{selection_modifiers}_{format_name}")
+            .collect::<Vec<_>>();
+        format!(
+            "INT_NVVM_{}",
+            extended_minmax_joined_name(prefix, format_name, &selection_modifiers, "_")
+        )
     };
     let ptx_format = if format == ExtendedMinMaxFormat::F32 {
         "f32"
@@ -17288,6 +19684,28 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
             "f32",
             "f32",
             ExtendedMinMaxAdapter::DirectF32,
+            vec![
+                "ClangBuiltin",
+                "NVVMBuiltin",
+                "SDPatternOperator",
+                "Intrinsic",
+                "DefaultAttrsIntrinsic",
+            ],
+        ),
+        ExtendedMinMaxFormat::F16 => (
+            "f16",
+            "f16",
+            "u16",
+            "i16",
+            ExtendedMinMaxAdapter::DirectHalfU16,
+            vec!["SDPatternOperator", "Intrinsic", "DefaultAttrsIntrinsic"],
+        ),
+        ExtendedMinMaxFormat::Bf16 => (
+            "bf16",
+            "bf16",
+            "u16",
+            "i16",
+            ExtendedMinMaxAdapter::DirectHalfU16,
             vec![
                 "ClangBuiltin",
                 "NVVMBuiltin",
@@ -17339,7 +19757,7 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
     };
     Some(ExtendedMinMaxRecipe {
         id,
-        abi_id: format!("i{:04}", 550 + index),
+        abi_id: extended_minmax_abi_id(index),
         operation_key: format!(
             "floating.minmax.{format_name}.{operation_name}.{}.{}.{}",
             match subnormal {
@@ -17565,10 +19983,14 @@ fn validate_extended_minmax_policy(
         "{} extended-minmax runtime may be executed only with GPU evidence",
         policy.id
     );
-    let expected_adapter = if minmax.format == ExtendedMinMaxFormat::F32 {
-        ExtendedMinMaxAdapter::DirectF32
-    } else {
-        ExtendedMinMaxAdapter::DirectPackedU32
+    let expected_adapter = match minmax.format {
+        ExtendedMinMaxFormat::F32 => ExtendedMinMaxAdapter::DirectF32,
+        ExtendedMinMaxFormat::F16 | ExtendedMinMaxFormat::Bf16 => {
+            ExtendedMinMaxAdapter::DirectHalfU16
+        }
+        ExtendedMinMaxFormat::F16x2 | ExtendedMinMaxFormat::Bf16x2 => {
+            ExtendedMinMaxAdapter::DirectPackedU32
+        }
     };
     ensure!(
         minmax.adapter == expected_adapter,
@@ -19012,7 +21434,7 @@ fn is_dense_f8f6f4_register_mma_policy(policy: &OverlayIntrinsic) -> bool {
 
 fn is_sparse_f8f6f4_f16_policy(policy: &OverlayIntrinsic) -> bool {
     policy.family == "sparse_mma"
-        && policy.targets == SPARSE_MMA_F8F6F4_F16_TARGETS
+        && policy.targets == SPARSE_MMA_F8F6F4_TARGETS
         && policy.sparse_mma.as_ref().is_some_and(|mma| {
             mma.shape == SparseMmaShape::M16n8k64
                 && mma.accumulator == SparseMmaAccumulator::F16
@@ -19299,6 +21721,225 @@ fn expand_register_mma_f8f6f4_admission(
                 summary: format!(
                     "Multiplies warp-distributed {a} A and {b} B fragments and adds an {} accumulator.",
                     contract.summary_accumulator
+                ),
+            });
+        }
+    }
+    Ok(records)
+}
+
+const REGISTER_MMA_MXF8F6F4_FIRST_ABI_NUMBER: usize = 858;
+const REGISTER_MMA_MXF8F6F4_FIRST_ABI_ID: &str = "i0858";
+
+fn register_mma_mxf8f6f4_abi_id(a_index: usize, b_index: usize) -> String {
+    format!(
+        "i{:04}",
+        REGISTER_MMA_MXF8F6F4_FIRST_ABI_NUMBER
+            + a_index * REGISTER_MMA_F8F6F4_ELEMENTS.len()
+            + b_index
+    )
+}
+
+fn expand_register_mma_mxf8f6f4_admission(
+    admission: &RegisterMmaF8F6F4Admission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "dense mxf8f6f4 MMA runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "dense mxf8f6f4 MMA admission requires both backend evidence profiles"
+    );
+    ensure!(
+        admission.first_abi_id == REGISTER_MMA_MXF8F6F4_FIRST_ABI_ID,
+        "dense mxf8f6f4 F32 MMA admission must begin at ABI {}",
+        REGISTER_MMA_MXF8F6F4_FIRST_ABI_ID
+    );
+    ensure!(
+        admission.a_elements == REGISTER_MMA_F8F6F4_ELEMENTS
+            && admission.b_elements == REGISTER_MMA_F8F6F4_ELEMENTS
+            && admission.product_count == 25,
+        "dense mxf8f6f4 MMA admission must contain the canonical 5 by 5 element matrix"
+    );
+    let expected_targets = ["sm_120a", "sm_120f", "sm_121a", "sm_121f"];
+    ensure!(
+        admission
+            .targets
+            .iter()
+            .map(String::as_str)
+            .eq(expected_targets),
+        "dense mxf8f6f4 MMA admission must retain the reviewed Blackwell target set"
+    );
+
+    let rust_arguments = [
+        "[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16",
+    ];
+    let dialect_operands = [
+        "f32", "f32", "f32", "f32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i16", "i16",
+        "i32", "i16", "i16",
+    ];
+    let llvm_arguments = [
+        "i32", "i32", "i32", "i32", "i32", "i32", "f32", "f32", "f32", "f32", "i32", "i16", "i16",
+        "i32", "i16", "i16",
+    ];
+    let dialect_results = ["f32", "f32", "f32", "f32"];
+
+    let mut records = Vec::with_capacity(admission.product_count);
+    for (a_index, &a_element) in admission.a_elements.iter().enumerate() {
+        for (b_index, &b_element) in admission.b_elements.iter().enumerate() {
+            let a = register_mma_f8f6f4_element_name(a_element)
+                .expect("validated dense mxf8f6f4 A element");
+            let b = register_mma_f8f6f4_element_name(b_element)
+                .expect("validated dense mxf8f6f4 B element");
+            let id = format!("mma_m16n8k32_mxf8f6f4_f32_{a}_{b}");
+            let source_record =
+                format!("int_nvvm_mma_block_scale_m16n8k32_row_col_mxf8f6f4_f32_{a}_{b}_f32_ue8m0");
+            let llvm_symbol = format!(
+                "llvm.nvvm.mma.block.scale.m16n8k32.row.col.mxf8f6f4.f32.{a}.{b}.f32.ue8m0"
+            );
+            let mma = RegisterMma {
+                shape: RegisterMmaShape::M16n8k32,
+                operation: RegisterMmaOperation::Multiply,
+                kind: Some(RegisterMmaKind::Mxf8f6f4),
+                accumulator: RegisterMmaAccumulator::F32,
+                a_element,
+                b_element,
+                a_layout: RegisterMmaLayout::Row,
+                b_layout: RegisterMmaLayout::Col,
+                overflow: RegisterMmaOverflow::NotApplicable,
+                participation:
+                    RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
+                adapter: RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32,
+                compatibility_source: RegisterMmaCompatibilitySource::GeneratedStub,
+                runtime_validation: admission.runtime_validation,
+            };
+
+            records.push(OverlayIntrinsic {
+                id: id.clone(),
+                abi_id: register_mma_mxf8f6f4_abi_id(a_index, b_index),
+                operation_key: format!(
+                    "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.{a}.{b}.f32.ue8m0"
+                ),
+                family: "register_mma".into(),
+                source: None,
+                source_record: Some(source_record),
+                rust_module: "matrix".into(),
+                rust_name: id.clone(),
+                rust_arguments: rust_arguments.map(Into::into).into(),
+                rust_result: "[f32; 4]".into(),
+                safe: false,
+                must_use: true,
+                safe_allowlist_reason: None,
+                public_rust_path: format!("cuda_intrinsics::matrix::{id}"),
+                compatibility_rust_paths: vec![format!("cuda_device::wmma::{id}")],
+                dialect_op_type: "RegisterMmaOp".into(),
+                dialect_op_name: "nvvm.register_mma".into(),
+                dialect_operands: dialect_operands.map(Into::into).into(),
+                dialect_results: dialect_results.map(Into::into).into(),
+                llvm_symbol: Some(llvm_symbol),
+                resolved_llvm_symbol: None,
+                llvm_arguments: llvm_arguments.map(Into::into).into(),
+                llvm_results: dialect_results.map(Into::into).into(),
+                pure: false,
+                memory: "none".into(),
+                convergent: true,
+                execution_scope: "warp".into(),
+                minimum_ptx: "8.7".into(),
+                minimum_sm: None,
+                ptx_result: "[f32; 4]".into(),
+                targets: REGISTER_MMA_F8F6F4_TARGETS.into(),
+                ptx_isa_version: "9.3".into(),
+                ptx_isa_section:
+                    "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma".into(),
+                ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma".into(),
+                lowering: "generated_register_mma".into(),
+                backend_lowerings: vec![
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LlvmNvptx,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.llvm_evidence_profile.clone(),
+                        targets: None,
+                        minimum_ptx: None,
+                        minimum_sm: None,
+                    },
+                    OverlayBackendLowering {
+                        backend: IntrinsicBackend::LibNvvm,
+                        mechanism: BackendLoweringMechanism::InlinePtx,
+                        evidence_profile: admission.libnvvm_evidence_profile.clone(),
+                        targets: None,
+                        minimum_ptx: None,
+                        minimum_sm: None,
+                    },
+                ],
+                packed_atomic: None,
+                redux: None,
+                vote: None,
+                active_mask: None,
+                warp_match: None,
+                warp_barrier: None,
+                warp_shuffle: None,
+                dot_product: None,
+                packed_alu: None,
+                packed_conversion: None,
+                scalar_conversion: None,
+                scalar_arithmetic: None,
+                scalar_math: None,
+                extended_minmax: None,
+                cp_async_copy: None,
+                cp_async_control: None,
+                cp_async_mbarrier: None,
+                mbarrier_basic: None,
+                movmatrix: None,
+                mbarrier_extended: None,
+                register_mma: Some(mma),
+                sparse_mma: None,
+                prmt: None,
+                cluster_barrier: None,
+                wgmma_control: None,
+                special_register: None,
+                debug_control: None,
+                cluster_memory: None,
+                clc: None,
+                tma: None,
+                tcgen05: None,
+                ldmatrix_variant: None,
+                ldmatrix_safety: None,
+                ldmatrix_adapter: None,
+                selected_address_space: None,
+                expected_ptx: InstructionPattern {
+                    mnemonic: "mma".into(),
+                    modifiers: [
+                        "sync",
+                        "aligned",
+                        "m16n8k32",
+                        "row",
+                        "col",
+                        "kind::mxf8f6f4",
+                        "block_scale",
+                        "f32",
+                        a,
+                        b,
+                        "f32",
+                        "ue8m0",
+                    ]
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                    operands: vec![
+                        OperandPattern::RegisterList { length: 4 },
+                        OperandPattern::RegisterList { length: 4 },
+                        OperandPattern::RegisterList { length: 2 },
+                        OperandPattern::RegisterList { length: 4 },
+                        OperandPattern::Register,
+                        OperandPattern::RegisterList { length: 2 },
+                        OperandPattern::Register,
+                        OperandPattern::RegisterList { length: 2 },
+                    ],
+                },
+                summary: format!(
+                    "Multiplies block-scaled warp-distributed {a} A and {b} B fragments and adds an F32 accumulator."
                 ),
             });
         }
@@ -20381,8 +23022,7 @@ fn sparse_mma_minimum_ptx(mma: &SparseMma) -> &'static str {
 
 fn sparse_mma_hardware(mma: &SparseMma) -> (&'static str, Option<&'static str>) {
     match mma.accumulator {
-        SparseMmaAccumulator::F16 => (SPARSE_MMA_F8F6F4_F16_TARGETS, None),
-        SparseMmaAccumulator::F32 => ("sm_120a", None),
+        SparseMmaAccumulator::F16 | SparseMmaAccumulator::F32 => (SPARSE_MMA_F8F6F4_TARGETS, None),
         SparseMmaAccumulator::S32 => ("all", Some("sm_80")),
     }
 }
@@ -20896,6 +23536,9 @@ fn validate_register_mma_policy(
         Some(RegisterMmaKind::F8f6f4) => {
             return validate_register_mma_f8f6f4_policy(policy, declaration, mma);
         }
+        Some(RegisterMmaKind::Mxf8f6f4) => {
+            return validate_register_mma_mxf8f6f4_policy(policy, declaration, mma);
+        }
         None if register_mma_f8f6f4_element_name(mma.a_element).is_some()
             || register_mma_f8f6f4_element_name(mma.b_element).is_some() =>
         {
@@ -21313,7 +23956,7 @@ fn validate_register_mma_f8f6f4_policy(
             && policy.llvm_results == contract.llvm_results
             && policy.ptx_result == contract.rust_result
             && mma.shape == RegisterMmaShape::M16n8k32
-            && mma.kind != Some(RegisterMmaKind::Standard)
+            && matches!(mma.kind, None | Some(RegisterMmaKind::F8f6f4))
             && mma.operation == RegisterMmaOperation::Multiply
             && mma.accumulator == contract.accumulator
             && mma.a_layout == RegisterMmaLayout::Row
@@ -21417,6 +24060,191 @@ fn validate_register_mma_f8f6f4_policy(
         policy.id
     );
     ensure_no_other_family_contract(policy, "dense f8f6f4 register MMA")?;
+    Ok(())
+}
+
+fn validate_register_mma_mxf8f6f4_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+    mma: &RegisterMma,
+) -> Result<()> {
+    let a = register_mma_f8f6f4_element_name(mma.a_element)
+        .with_context(|| format!("{} has a non-mxf8f6f4 A format", policy.id))?;
+    let b = register_mma_f8f6f4_element_name(mma.b_element)
+        .with_context(|| format!("{} has a non-mxf8f6f4 B format", policy.id))?;
+    let a_index = REGISTER_MMA_F8F6F4_ELEMENTS
+        .iter()
+        .position(|element| *element == mma.a_element)
+        .expect("validated A format");
+    let b_index = REGISTER_MMA_F8F6F4_ELEMENTS
+        .iter()
+        .position(|element| *element == mma.b_element)
+        .expect("validated B format");
+    let expected_id = format!("mma_m16n8k32_mxf8f6f4_f32_{a}_{b}");
+    let expected_source =
+        format!("int_nvvm_mma_block_scale_m16n8k32_row_col_mxf8f6f4_f32_{a}_{b}_f32_ue8m0");
+    let expected_symbol =
+        format!("llvm.nvvm.mma.block.scale.m16n8k32.row.col.mxf8f6f4.f32.{a}.{b}.f32.ue8m0");
+    let rust_arguments = [
+        "[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16",
+    ];
+    let dialect_operands = [
+        "f32", "f32", "f32", "f32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i16", "i16",
+        "i32", "i16", "i16",
+    ];
+    let llvm_arguments = [
+        "i32", "i32", "i32", "i32", "i32", "i32", "f32", "f32", "f32", "f32", "i32", "i16", "i16",
+        "i32", "i16", "i16",
+    ];
+    let results = ["f32", "f32", "f32", "f32"];
+    ensure!(
+        policy.id == expected_id
+            && policy.abi_id == register_mma_mxf8f6f4_abi_id(a_index, b_index)
+            && policy.operation_key
+                == format!(
+                    "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.{a}.{b}.f32.ue8m0"
+                )
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(expected_source.as_str())
+            && policy.llvm_symbol.as_deref() == Some(expected_symbol.as_str())
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} dense mxf8f6f4 MMA identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "matrix"
+            && policy.rust_name == expected_id
+            && policy.rust_arguments == rust_arguments
+            && policy.rust_result == "[f32; 4]"
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::matrix::{expected_id}")
+            && policy.compatibility_rust_paths == [format!("cuda_device::wmma::{expected_id}")],
+        "{} must preserve the unsafe must-use dense mxf8f6f4 API",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "RegisterMmaOp"
+            && policy.dialect_op_name == "nvvm.register_mma"
+            && policy.dialect_operands == dialect_operands
+            && policy.dialect_results == results
+            && policy.llvm_arguments == llvm_arguments
+            && policy.llvm_results == results
+            && policy.ptx_result == "[f32; 4]"
+            && mma.shape == RegisterMmaShape::M16n8k32
+            && mma.kind == Some(RegisterMmaKind::Mxf8f6f4)
+            && mma.operation == RegisterMmaOperation::Multiply
+            && mma.accumulator == RegisterMmaAccumulator::F32
+            && mma.a_layout == RegisterMmaLayout::Row
+            && mma.b_layout == RegisterMmaLayout::Col
+            && mma.overflow == RegisterMmaOverflow::NotApplicable
+            && mma.participation
+                == RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes
+            && mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
+            && mma.compatibility_source == RegisterMmaCompatibilitySource::GeneratedStub
+            && mma.runtime_validation == RuntimeValidation::Unexecuted
+            && policy.lowering == "generated_register_mma",
+        "{} dense mxf8f6f4 carrier or lowering changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "none"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "8.7"
+            && policy.minimum_sm.is_none()
+            && policy.targets == REGISTER_MMA_F8F6F4_TARGETS,
+        "{} dense mxf8f6f4 effects or exact target set changed",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma",
+        "{} dense mxf8f6f4 PTX provenance changed",
+        policy.id
+    );
+    let [selection] = declaration.selections.as_slice() else {
+        bail!(
+            "{} must retain exactly one imported dense mxf8f6f4 instruction selection",
+            policy.id
+        );
+    };
+    ensure!(
+        declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_MMA_BLOCK_SCALE"]
+            && declaration.properties == ["IntrNoCallback", "IntrNoMem"]
+            && selection_matches_policy(policy, selection)
+            && selection.predicates == ["Subtarget->hasMMABlockScale()"]
+            && selection.constraints.is_empty(),
+        "{} imported dense mxf8f6f4 declaration or selection changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx
+            == InstructionPattern {
+                mnemonic: "mma".into(),
+                modifiers: [
+                    "sync",
+                    "aligned",
+                    "m16n8k32",
+                    "row",
+                    "col",
+                    "kind::mxf8f6f4",
+                    "block_scale",
+                    "f32",
+                    a,
+                    b,
+                    "f32",
+                    "ue8m0",
+                ]
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+                operands: vec![
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::RegisterList { length: 2 },
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::Register,
+                    OperandPattern::RegisterList { length: 2 },
+                    OperandPattern::Register,
+                    OperandPattern::RegisterList { length: 2 },
+                ],
+            },
+        "{} expected dense mxf8f6f4 PTX changed",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            && policy.backend_lowerings.iter().all(|lowering| {
+                lowering.targets.is_none()
+                    && lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.is_none()
+                    && !lowering.evidence_profile.trim().is_empty()
+            }),
+        "{} must inherit the exact reviewed target set on both inline-PTX routes",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "dense mxf8f6f4 register MMA")?;
     Ok(())
 }
 
@@ -24152,8 +26980,8 @@ fn validate_movmatrix_policy(policy: &OverlayIntrinsic, source: &IntrinsicSource
             && policy.dialect_op_name == "nvvm.movmatrix_trans_b16"
             && policy.dialect_operands == ["i32"]
             && policy.dialect_results == ["i32"]
-            && policy.pure
-            && policy.memory == "none"
+            && !policy.pure
+            && policy.memory == "inaccessible_read_write"
             && policy.convergent
             && policy.execution_scope == "warp"
             && policy.minimum_ptx == "7.8"
@@ -24204,7 +27032,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && policy.ldmatrix_variant.is_none()
             && policy.ldmatrix_safety.is_none()
             && policy.ldmatrix_adapter.is_none()
-            && policy.selected_address_space.is_none()
+            && (policy.family == "tma" || policy.selected_address_space.is_none())
             && (policy.family == "packed_alu") == policy.packed_alu.is_some()
             && (policy.family == "packed_conversion") == policy.packed_conversion.is_some()
             && (policy.family == "scalar_conversion") == policy.scalar_conversion.is_some()
@@ -26350,7 +29178,14 @@ fn materialize_record(
     } else {
         None
     };
-    let preserves_empty_dialect_signature = policy.family == "sync" && policy.id == "sync_threads";
+    let preserves_empty_dialect_signature = (policy.family == "sync"
+        && policy.id == "sync_threads")
+        || matches!(
+            ExecutionControlOperation::from_catalog_id(&policy.id),
+            Some(
+                ExecutionControlOperation::SetMaxNRegInc | ExecutionControlOperation::SetMaxNRegDec
+            )
+        );
     let dialect_operands =
         if policy.dialect_operands.is_empty() && !preserves_empty_dialect_signature {
             policy.llvm_arguments.clone()
@@ -26632,8 +29467,8 @@ mod tests {
         record.resolved_llvm_symbol = None;
         record.llvm_arguments.clear();
         record.llvm_results.clear();
-        record.pure = true;
-        record.memory = "none".into();
+        record.pure = false;
+        record.memory = "inaccessible_read_write".into();
         record.convergent = true;
         record.execution_scope = "warp".into();
         record.minimum_ptx = "7.8".into();
@@ -26995,7 +29830,7 @@ mod tests {
         format: PackedAluFormat,
         operation: PackedAluOperation,
     ) -> OverlayIntrinsic {
-        let recipe = packed_alu_recipe(format, operation);
+        let recipe = packed_alu_recipe(format, operation).expect("test recipe pair");
         let rust_module = match format {
             PackedAluFormat::Bf16x2 => "bf16x2",
             PackedAluFormat::F16x2 => "f16x2",
@@ -27060,7 +29895,7 @@ mod tests {
             .into_iter()
             .map(|backend| {
                 let (minimum_ptx, minimum_sm) =
-                    packed_alu_backend_floor(format, operation, backend);
+                    packed_alu_backend_floor(&recipe, format, operation, backend);
                 crate::model::OverlayBackendLowering {
                     backend,
                     mechanism: BackendLoweringMechanism::InlinePtx,
@@ -27090,7 +29925,7 @@ mod tests {
         format: PackedAluFormat,
         operation: PackedAluOperation,
     ) -> Option<ImportedIntrinsic> {
-        let recipe = packed_alu_recipe(format, operation);
+        let recipe = packed_alu_recipe(format, operation).expect("test recipe pair");
         let PackedAluRecipeSource::Imported {
             record,
             symbol,
@@ -28022,8 +30857,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 59);
-        assert_eq!(overlay.intrinsics.len(), 829);
+        assert_eq!(overlay.shards.len(), 63);
+        assert_eq!(overlay.intrinsics.len(), 986);
         assert_eq!(
             overlay
                 .intrinsics
@@ -28070,7 +30905,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "packed_alu")
                 .count(),
-            18
+            22
         );
         assert_eq!(
             overlay
@@ -28110,7 +30945,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "register_mma")
                 .count(),
-            129
+            154
         );
         assert_eq!(
             overlay
@@ -28442,34 +31277,20 @@ mod tests {
     }
 
     fn test_tma_admission() -> TmaAdmission {
-        let operations = [
-            TmaOperation::G2sTile1d,
-            TmaOperation::G2sTile2d,
-            TmaOperation::G2sTile2dMulticast,
-            TmaOperation::G2sTile2dMulticastCg2,
-            TmaOperation::G2sTile3d,
-            TmaOperation::G2sTile4d,
-            TmaOperation::G2sTile5d,
-            TmaOperation::S2gTile1d,
-            TmaOperation::S2gTile2d,
-            TmaOperation::S2gTile3d,
-            TmaOperation::S2gTile4d,
-            TmaOperation::S2gTile5d,
-            TmaOperation::CommitGroup,
-            TmaOperation::WaitGroup,
-            TmaOperation::WaitGroupRead,
-        ];
         TmaAdmission {
             llvm_evidence_profile: "llvm-tma-test".into(),
             libnvvm_evidence_profile: "libnvvm-tma-test".into(),
+            reduce_llvm_evidence_profile: Some("llvm-tma-reduce-test".into()),
+            reduce_libnvvm_evidence_profile: Some("libnvvm-tma-reduce-test".into()),
             runtime_validation: RuntimeValidation::Unexecuted,
-            variants: operations
+            variants: TMA_OPERATIONS
                 .into_iter()
                 .map(|operation| crate::model::TmaAdmissionVariant {
                     abi_id: tma_recipe(operation).abi_id.into(),
                     operation,
                 })
                 .collect(),
+            reduce_variants: tma_reduction_admission_variants(),
         }
     }
 
@@ -28822,6 +31643,7 @@ mod tests {
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -28944,6 +31766,7 @@ mod tests {
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -28987,6 +31810,7 @@ mod tests {
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -29031,6 +31855,7 @@ mod tests {
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -29275,6 +32100,7 @@ record_count = 14
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -29745,7 +32571,7 @@ scope = "system"
         );
         assert_eq!(first.minimum_ptx, "8.7");
         assert_eq!(first.minimum_sm, None);
-        assert_eq!(first.targets, SPARSE_MMA_F8F6F4_F16_TARGETS);
+        assert_eq!(first.targets, SPARSE_MMA_F8F6F4_TARGETS);
         assert!(first.convergent && !first.pure);
         assert!(first.backend_lowerings.iter().all(|route| {
             route.mechanism == BackendLoweringMechanism::InlinePtx
@@ -30843,6 +33669,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -30886,11 +33713,16 @@ scope = "system"
     #[test]
     fn compact_tma_admission_matches_llvm_and_fails_closed() {
         let records = expand_tma_admission(&test_tma_admission()).unwrap();
-        assert_eq!(records.len(), 15);
-        assert!(records.iter().all(|record| {
+        assert_eq!(
+            records.len(),
+            TMA_OPERATIONS.len() + tma_reduction_matrix().len()
+        );
+        assert!(records.iter().take(TMA_OPERATIONS.len()).all(|record| {
+            let operation = record.tma.as_ref().unwrap().operation;
+            let recipe = tma_recipe(operation);
             record.backend_lowerings.iter().any(|route| {
                 route.backend == IntrinsicBackend::LlvmNvptx
-                    && route.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && route.mechanism == recipe.llvm_mechanism
             }) && record.backend_lowerings.iter().any(|route| {
                 route.backend == IntrinsicBackend::LibNvvm
                     && route.mechanism == BackendLoweringMechanism::InlinePtx
@@ -30899,6 +33731,23 @@ scope = "system"
         assert_eq!(
             records
                 .iter()
+                .filter(|record| {
+                    record
+                        .tma
+                        .as_ref()
+                        .unwrap()
+                        .operation
+                        .prefetch_coordinate_count()
+                        .is_some()
+                })
+                .count(),
+            12,
+            "the tile-prefetch subfamily must contain every plain/cache-hint pair"
+        );
+        assert_eq!(
+            records
+                .iter()
+                .take(TMA_OPERATIONS.len())
                 .map(|record| (record.abi_id.as_str(), record.id.as_str()))
                 .collect::<Vec<_>>(),
             [
@@ -30917,8 +33766,65 @@ scope = "system"
                 ("i0340", "cp_async_bulk_commit_group"),
                 ("i0341", "cp_async_bulk_wait_group"),
                 ("i0342", "cp_async_bulk_wait_group_read"),
+                ("i0887", "prefetch_tma_descriptor"),
+                ("i0888", "cp_async_bulk_prefetch_tensor_1d_l2"),
+                ("i0889", "cp_async_bulk_prefetch_tensor_2d_l2"),
+                ("i0890", "cp_async_bulk_prefetch_tensor_3d_l2"),
+                ("i0891", "cp_async_bulk_prefetch_tensor_4d_l2"),
+                ("i0892", "cp_async_bulk_prefetch_tensor_5d_l2"),
+                ("i0893", "cp_async_bulk_prefetch_tensor_gather4_2d_l2"),
+                ("i0894", "tensormap_replace_box_dim"),
+                ("i0895", "tensormap_replace_element_stride"),
+                ("i0896", "tensormap_replace_element_type"),
+                ("i0897", "tensormap_replace_fill_mode"),
+                ("i0898", "tensormap_replace_global_address"),
+                ("i0899", "tensormap_replace_global_dim"),
+                ("i0900", "tensormap_replace_global_stride"),
+                ("i0901", "tensormap_replace_interleave_layout"),
+                ("i0902", "tensormap_replace_rank"),
+                ("i0903", "tensormap_replace_swizzle_atomicity"),
+                ("i0904", "tensormap_replace_swizzle_mode"),
+                ("i0905", "fence_proxy_tensormap_generic_acquire_cluster"),
+                ("i0906", "fence_proxy_tensormap_generic_acquire_cta"),
+                ("i0907", "fence_proxy_tensormap_generic_acquire_gpu"),
+                ("i0908", "fence_proxy_tensormap_generic_acquire_system"),
+                ("i0909", "fence_proxy_tensormap_generic_release_cluster"),
+                ("i0910", "fence_proxy_tensormap_generic_release_cta"),
+                ("i0911", "fence_proxy_tensormap_generic_release_gpu"),
+                ("i0912", "fence_proxy_tensormap_generic_release_system"),
+                ("i0917", "cp_async_bulk_prefetch_tensor_1d_l2_cache_hint"),
+                ("i0918", "cp_async_bulk_prefetch_tensor_2d_l2_cache_hint"),
+                ("i0919", "cp_async_bulk_prefetch_tensor_3d_l2_cache_hint"),
+                ("i0920", "cp_async_bulk_prefetch_tensor_4d_l2_cache_hint"),
+                ("i0921", "cp_async_bulk_prefetch_tensor_5d_l2_cache_hint"),
+                (
+                    "i0922",
+                    "cp_async_bulk_prefetch_tensor_gather4_2d_l2_cache_hint"
+                ),
             ]
         );
+
+        let reductions = &records[TMA_OPERATIONS.len()..];
+        assert_eq!(reductions.len(), 64);
+        assert_eq!(
+            (reductions[0].abi_id.as_str(), reductions[0].id.as_str()),
+            ("i0923", "cp_async_bulk_tensor_reduce_add_tile_1d")
+        );
+        assert_eq!(
+            (reductions[7].abi_id.as_str(), reductions[7].id.as_str()),
+            ("i0930", "cp_async_bulk_tensor_reduce_add_im2col_5d")
+        );
+        assert_eq!(
+            (reductions[63].abi_id.as_str(), reductions[63].id.as_str()),
+            ("i0986", "cp_async_bulk_tensor_reduce_xor_im2col_5d")
+        );
+        assert!(reductions.iter().all(|record| {
+            record.tma.as_ref().is_some_and(|tma| {
+                tma.operation == TmaOperation::Reduce
+                    && tma.reduction.is_some()
+                    && tma.adapter == TmaAdapter::ReductionPointersCoordinatesInjectDefaults
+            })
+        }));
 
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let imported: ImportedFile =
@@ -30957,6 +33863,18 @@ scope = "system"
         wrong_abi.variants[0].abi_id = "i9999".into();
         assert!(expand_tma_admission(&wrong_abi).is_err());
 
+        let mut missing_reduction = test_tma_admission();
+        missing_reduction.reduce_variants.pop();
+        assert!(expand_tma_admission(&missing_reduction).is_err());
+
+        let mut reordered_reduction = test_tma_admission();
+        reordered_reduction.reduce_variants.swap(0, 1);
+        assert!(expand_tma_admission(&reordered_reduction).is_err());
+
+        let mut wrong_reduction_abi = test_tma_admission();
+        wrong_reduction_abi.reduce_variants[0].abi_id = "i9999".into();
+        assert!(expand_tma_admission(&wrong_reduction_abi).is_err());
+
         let mut executed = test_tma_admission();
         executed.runtime_validation = RuntimeValidation::Executed;
         assert!(expand_tma_admission(&executed).is_err());
@@ -30969,52 +33887,81 @@ scope = "system"
 
     #[test]
     fn tma_compact_schema_is_reserved_for_aggregation() {
-        let shard = |schema| OverlayShardFile {
-            schema,
-            family: "tma".into(),
-            intrinsics: vec![],
-            register_mma_int4: None,
-            register_mma_int8: None,
-            register_mma_b1: None,
-            register_mma_f8f6f4_f32: None,
-            register_mma_f8f6f4_f16: None,
-            register_mma_fp8: None,
-            register_mma_ampere_float: None,
-            sparse_mma_integer: None,
-            sparse_mma_f8f6f4_f32: None,
-            sparse_mma_f8f6f4_f16: None,
-            prmt: None,
-            packed_conversion_fp8: None,
-            packed_conversion_fp8_f16x2: None,
-            scalar_conversion: None,
-            scalar_arithmetic: None,
-            scalar_math: None,
-            extended_minmax: None,
-            cluster_sreg: None,
-            cluster_barrier: None,
-            mbarrier_extended: None,
-            special_registers: None,
-            debug_control: None,
-            threadfence: None,
-            cluster_memory: None,
-            stmatrix: None,
-            clc: None,
-            wgmma_controls: None,
-            tma: Some(test_tma_admission()),
-            tcgen05: None,
+        let shard = |schema: u32, include_reductions: bool| {
+            let mut admission = test_tma_admission();
+            if !include_reductions {
+                admission.reduce_variants.clear();
+            }
+            OverlayShardFile {
+                schema,
+                family: "tma".into(),
+                intrinsics: vec![],
+                register_mma_int4: None,
+                register_mma_int8: None,
+                register_mma_b1: None,
+                register_mma_f8f6f4_f32: None,
+                register_mma_f8f6f4_f16: None,
+                register_mma_mxf8f6f4_f32: None,
+                register_mma_fp8: None,
+                register_mma_ampere_float: None,
+                sparse_mma_integer: None,
+                sparse_mma_f8f6f4_f32: None,
+                sparse_mma_f8f6f4_f16: None,
+                prmt: None,
+                packed_conversion_fp8: None,
+                packed_conversion_fp8_f16x2: None,
+                scalar_conversion: None,
+                scalar_arithmetic: None,
+                scalar_math: None,
+                extended_minmax: None,
+                cluster_sreg: None,
+                cluster_barrier: None,
+                mbarrier_extended: None,
+                special_registers: None,
+                debug_control: None,
+                threadfence: None,
+                cluster_memory: None,
+                stmatrix: None,
+                clc: None,
+                wgmma_controls: None,
+                tma: Some(admission),
+                tcgen05: None,
+            }
         };
         let path = Path::new("intrinsics/overlay/tma.toml");
-        validate_overlay_shard_schema_with_max(&shard(TMA_SHARD_SCHEMA), path, TMA_SHARD_SCHEMA)
-            .unwrap();
+
+        validate_overlay_shard_schema_with_max(
+            &shard(TMA_SHARD_SCHEMA, false),
+            path,
+            TMA_REDUCTION_SHARD_SCHEMA,
+        )
+        .unwrap();
         assert!(
             validate_overlay_shard_schema_with_max(
-                &shard(TMA_SHARD_SCHEMA - 1),
+                &shard(TMA_SHARD_SCHEMA - 1, false),
                 path,
-                TMA_SHARD_SCHEMA,
+                TMA_REDUCTION_SHARD_SCHEMA,
             )
             .unwrap_err()
             .to_string()
-            .contains("requires overlay shard schema 41")
+            .contains("compact TMA admission requires overlay shard schema 61")
+        );
+
+        validate_overlay_shard_schema_with_max(
+            &shard(TMA_REDUCTION_SHARD_SCHEMA, true),
+            path,
+            TMA_REDUCTION_SHARD_SCHEMA,
+        )
+        .unwrap();
+        assert!(
+            validate_overlay_shard_schema_with_max(
+                &shard(TMA_REDUCTION_SHARD_SCHEMA - 1, true),
+                path,
+                TMA_REDUCTION_SHARD_SCHEMA,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("compact TMA reduction admission requires overlay shard schema 62")
         );
     }
 
@@ -32129,6 +35076,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -32329,6 +35277,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -32376,6 +35325,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -32820,6 +35770,7 @@ scope = "system"
             register_mma_b1: None,
             register_mma_f8f6f4_f32: None,
             register_mma_f8f6f4_f16: None,
+            register_mma_mxf8f6f4_f32: None,
             register_mma_fp8: None,
             register_mma_ampere_float: None,
             sparse_mma_integer: None,
@@ -32933,14 +35884,14 @@ scope = "system"
             .iter()
             .filter(|record| record.family == "register_mma")
             .collect();
-        assert_eq!(records.len(), 129);
+        assert_eq!(records.len(), 154);
 
         let dense_f8f6f4_records = records
             .iter()
             .copied()
             .filter(|record| {
                 record.register_mma.as_ref().is_some_and(|mma| {
-                    mma.kind != Some(RegisterMmaKind::Standard)
+                    matches!(mma.kind, None | Some(RegisterMmaKind::F8f6f4))
                         && register_mma_f8f6f4_element_name(mma.a_element).is_some()
                         && register_mma_f8f6f4_element_name(mma.b_element).is_some()
                 })
@@ -32979,6 +35930,40 @@ scope = "system"
             record.minimum_ptx == "8.7"
                 && record.minimum_sm.is_none()
                 && record.targets == REGISTER_MMA_F8F6F4_TARGETS
+        }));
+
+        let mxf8f6f4_records = records
+            .iter()
+            .copied()
+            .filter(|record| {
+                record
+                    .register_mma
+                    .as_ref()
+                    .is_some_and(|mma| mma.kind == Some(RegisterMmaKind::Mxf8f6f4))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(mxf8f6f4_records.len(), 25);
+        assert_eq!(mxf8f6f4_records[0].abi_id, "i0858");
+        assert_eq!(mxf8f6f4_records[24].abi_id, "i0882");
+        assert!(mxf8f6f4_records.iter().all(|record| {
+            let mma = record.register_mma.as_ref().unwrap();
+            mma.shape == RegisterMmaShape::M16n8k32
+                && mma.accumulator == RegisterMmaAccumulator::F32
+                && mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
+                && record.rust_arguments
+                    == [
+                        "[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16",
+                        "u16",
+                    ]
+                && record.rust_result == "[f32; 4]"
+                && record.minimum_ptx == "8.7"
+                && record.minimum_sm.is_none()
+                && record.targets == REGISTER_MMA_F8F6F4_TARGETS
+                && record
+                    .expected_ptx
+                    .modifiers
+                    .iter()
+                    .any(|modifier| modifier == "kind::mxf8f6f4")
         }));
 
         let integer_records: Vec<_> = records
@@ -33601,7 +36586,9 @@ scope = "system"
             assert_eq!(record.llvm_results, ["f32", "f32", "f32", "f32"]);
             assert_eq!(record.minimum_ptx, "8.7");
             assert_eq!(record.minimum_sm, None);
-            assert_eq!(record.targets, "sm_120a");
+            // Same contract as the F16 accumulator: both float forms are gated
+            // on `hasMMABlockScale()`, so neither is narrower than the other.
+            assert_eq!(record.targets, SPARSE_MMA_F8F6F4_TARGETS);
             assert_eq!(record.backend_lowerings.len(), 2);
             assert!(record.backend_lowerings.iter().all(|lowering| {
                 lowering.mechanism == BackendLoweringMechanism::InlinePtx
@@ -33659,7 +36646,7 @@ scope = "system"
             assert_eq!(record.llvm_results, ["v2f16", "v2f16"]);
             assert_eq!(record.minimum_ptx, "8.7");
             assert_eq!(record.minimum_sm, None);
-            assert_eq!(record.targets, SPARSE_MMA_F8F6F4_F16_TARGETS);
+            assert_eq!(record.targets, SPARSE_MMA_F8F6F4_TARGETS);
             assert!(record.convergent && !record.pure);
             assert!(record.backend_lowerings.iter().all(|lowering| {
                 lowering.mechanism == BackendLoweringMechanism::InlinePtx
@@ -34440,6 +37427,17 @@ scope = "system"
         let mut wrong_participation = valid.clone();
         wrong_participation.convergent = false;
         reject(&wrong_participation, "closed movmatrix recipe");
+
+        // A warp collective is not a function of its own operand, so the
+        // pure/no-memory pair every other collective avoids must stay rejected
+        // here too.
+        let mut wrong_purity = valid.clone();
+        wrong_purity.pure = true;
+        reject(&wrong_purity, "closed movmatrix recipe");
+
+        let mut wrong_memory = valid.clone();
+        wrong_memory.memory = "none".into();
+        reject(&wrong_memory, "closed movmatrix recipe");
 
         let mut wrong_floor = valid.clone();
         wrong_floor.backend_lowerings[0].minimum_ptx = Some("8.0".into());
@@ -37402,7 +40400,7 @@ scope = "system"
             .iter()
             .filter(|record| record.family == "packed_alu")
             .collect();
-        assert_eq!(packed.len(), 18);
+        assert_eq!(packed.len(), 22);
         for policy in packed {
             let source = resolve_policy_source(policy).unwrap();
             let declaration = policy
@@ -37876,25 +40874,31 @@ scope = "system"
                 .collect(),
         };
         let records = expand_extended_minmax_admission(&admission).unwrap();
-        assert_eq!(records.len(), 28);
+        assert_eq!(records.len(), 52);
         assert_eq!(records.first().unwrap().id, "min_ftz_f16x2");
         assert_eq!(records.first().unwrap().abi_id, "i0550");
-        assert_eq!(records.last().unwrap().id, "max_xorsign_abs_f16x2");
-        assert_eq!(records.last().unwrap().abi_id, "i0577");
+        // The first reserved block ends here; the scalar 16-bit forms admitted
+        // afterwards continue at a second base rather than at i0578.
+        assert_eq!(records[27].id, "max_xorsign_abs_f16x2");
+        assert_eq!(records[27].abi_id, "i0577");
+        assert_eq!(records[28].id, "min_f16");
+        assert_eq!(records[28].abi_id, "i0830");
+        assert_eq!(records.last().unwrap().id, "max_nan_xorsign_abs_bf16");
+        assert_eq!(records.last().unwrap().abi_id, "i0853");
         validate_unique_overlay(&records, 1).unwrap();
         assert_eq!(
             records
                 .iter()
                 .filter(|record| record.minimum_sm.as_deref() == Some("sm_80"))
                 .count(),
-            8
+            20
         );
         assert_eq!(
             records
                 .iter()
                 .filter(|record| record.minimum_sm.as_deref() == Some("sm_86"))
                 .count(),
-            20
+            32
         );
         assert!(records.iter().all(|record| {
             record.backend_lowerings.len() == 2

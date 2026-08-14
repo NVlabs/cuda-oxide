@@ -19,6 +19,15 @@ static STATIC_NAN: f32 = f32::from_bits(0x7fc0_1234);
 
 const STATIC_WEIGHT_PAIR: &[f32; 2] = &STATIC_WEIGHTS[2];
 
+/// These targets are intentionally reached only through other static
+/// initializers. Their materialization therefore exercises transitive device
+/// global discovery rather than a direct reference from a kernel body.
+static RELOCATION_TARGET_A: u32 = 0x1234_5678;
+static RELOCATION_TARGET_B: u32 = 0xcafe_babe;
+static RELOCATION_REFERENCE: &u32 = &RELOCATION_TARGET_A;
+static RELOCATION_REFERENCES: [&u32; 2] = [&RELOCATION_TARGET_A, &RELOCATION_TARGET_B];
+static INTERIOR_RELOCATION_REFERENCE: &f32 = &STATIC_WEIGHTS[2][1];
+
 /// One-past-the-end interior pointer: const eval permits forming a pointer
 /// whose addend equals the allocation size (32 bytes here). It is legal to
 /// form and compare, only dereferencing it would be UB, so the translator
@@ -126,6 +135,19 @@ mod kernels {
         }
     }
 
+    /// Read through pointer relocations stored inside device-global
+    /// initializers. The table covers a direct target, repeated/shared targets,
+    /// a second target, and an interior pointer with a non-zero byte addend.
+    #[kernel]
+    pub unsafe fn static_initializer_relocations(out: *mut u32) {
+        unsafe {
+            *out.add(0) = *RELOCATION_REFERENCE;
+            *out.add(1) = *RELOCATION_REFERENCES[0];
+            *out.add(2) = *RELOCATION_REFERENCES[1];
+            *out.add(3) = (*INTERIOR_RELOCATION_REFERENCE).to_bits();
+        }
+    }
+
     /// A one-past-the-end constant pointer is formed and compared, never
     /// dereferenced. The distance from the static's base must equal the
     /// allocation size (32 bytes).
@@ -146,11 +168,7 @@ fn main() {
     let stream = ctx.default_stream();
     let out_dev = DeviceBuffer::<u64>::zeroed(&stream, 1).expect("Failed to allocate output");
 
-    let module = ctx
-        .load_module_from_file("device_global.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     for launch_idx in 1..=2 {
         unsafe {
             module.device_global(
@@ -250,6 +268,32 @@ fn main() {
         std::process::exit(1);
     }
 
+    let relocation_out_dev =
+        DeviceBuffer::<u32>::zeroed(&stream, 4).expect("Failed to allocate relocation output");
+
+    unsafe {
+        module.static_initializer_relocations(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            relocation_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Static initializer relocation kernel launch failed");
+
+    let relocation_result = relocation_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy relocation output");
+    let relocation_expected = [0x1234_5678, 0x1234_5678, 0xcafe_babe, 8.0f32.to_bits()];
+
+    println!("Static initializer relocations: result = {relocation_result:?}");
+
+    if relocation_result.as_slice() != relocation_expected.as_slice() {
+        eprintln!(
+            "FAILED: expected static initializer relocations {relocation_expected:?}, got {relocation_result:?}"
+        );
+        std::process::exit(1);
+    }
+
     let one_past_end_dev =
         DeviceBuffer::<u32>::zeroed(&stream, 1).expect("Failed to allocate one-past-end output");
 
@@ -274,6 +318,6 @@ fn main() {
     }
 
     println!(
-        "\nSUCCESS: device globals preserved storage, initializer bytes, pointer addends, and subobject addresses."
+        "\nSUCCESS: device globals preserved storage, initializer bytes, pointer relocations, pointer addends, and subobject addresses."
     );
 }

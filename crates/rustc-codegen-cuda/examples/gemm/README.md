@@ -31,8 +31,8 @@ pub fn sgemm_naive(
     let row = thread::index_2d_row();    // blockIdx.y * blockDim.y + threadIdx.y
     let col = thread::index_2d_col();    // blockIdx.x * blockDim.x + threadIdx.x
 
-    // SAFETY: every thread sees the same `n_sz` (kernel argument).
-    if let Some(c_idx) = unsafe { thread::index_2d_runtime(n_sz) } {
+    // The row width comes from `c`, bound on the host to this same `n`.
+    if let Some(c_idx) = thread::index_2d_runtime(&c) {
         // col < n_sz guaranteed by `Some` -- no manual check needed
         if row < m as usize {
             let mut sum = 0.0f32;

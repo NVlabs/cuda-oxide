@@ -7,9 +7,17 @@
 //!
 //! [`DeviceBuffer<T>`] is analogous to `Vec<T>` on the host: it owns a
 //! contiguous allocation of `len` elements on the device and frees it on
-//! drop. Unlike cudarc's `CudaSlice`, the buffer carries no stream reference
-//! and no hidden event tracking -- the stream is an explicit parameter on
-//! every transfer operation, making data-flow and synchronization transparent.
+//! drop. The stream is an explicit parameter on every transfer operation,
+//! making data-flow and synchronization transparent. Buffers allocated with
+//! [`DeviceBuffer::uninitialized_async`] retain their allocation stream for
+//! deallocation.
+//!
+//! Ordinary drop synchronizes the context before freeing an asynchronous
+//! allocation, because safe operations may have submitted work using the
+//! buffer on any stream in that context. The unsafe
+//! [`DeviceBuffer::drop_async`] avoids that host-side synchronization by
+//! freeing on a chosen stream; its caller takes over the obligation to
+//! order every other stream that uses the buffer before that stream.
 //!
 //! # Quick start
 //!
@@ -114,9 +122,12 @@ unsafe impl DeviceCopy for half::f16 {}
 /// Owning handle to a contiguous device allocation of `T` elements.
 ///
 /// Holds a raw device pointer, element count, and a reference-counted
-/// context that keeps the CUDA context alive. Dropping the buffer calls
-/// `cuMemFree` (synchronous); for async-sensitive workloads, use
-/// `cuda_async::DeviceBox` which frees via a deallocator stream.
+/// context that keeps the CUDA context alive. Synchronous allocations are
+/// freed with `cuMemFree`. Dropping a stream-ordered allocation synchronizes
+/// its context before enqueueing `cuMemFreeAsync` on its retained allocation
+/// stream. Use the unsafe [`DeviceBuffer::drop_async`] when the caller can
+/// provide explicit stream ordering and must avoid that context-wide
+/// synchronization.
 ///
 /// Device buffers may only transfer plain device-copyable values. Owning host
 /// types such as [`String`] are rejected because copying their bytes to and
@@ -133,14 +144,10 @@ pub struct DeviceBuffer<T> {
     len: usize,
     num_bytes: usize,
     ctx: Arc<CudaContext>,
-    /// When the allocation came from the stream-ordered pool
-    /// (`cuMemAllocAsync`), this holds an `Arc` to the owning stream so the
-    /// implicit `Drop` can free it with `cuMemFreeAsync` on that same stream
-    /// (stream-ordered, race-free). `None` for synchronous (`cuMemAlloc`)
-    /// allocations, which `Drop` frees with the synchronous `cuMemFree`.
-    /// Freeing an async-pool pointer with the synchronous `cuMemFree` while
-    /// stream work is still pending is a use-after-free (compute-sanitizer:
-    /// "free-before-alloc").
+    /// Retains the allocation stream for a stream-ordered (`cuMemAllocAsync`)
+    /// allocation. Ordinary `Drop` first synchronizes the context so work
+    /// submitted on any stream has completed, then frees on this stream.
+    /// `None` identifies a synchronous (`cuMemAlloc`) allocation.
     dealloc_stream: Option<Arc<CudaStream>>,
     _marker: PhantomData<T>,
 }
@@ -156,14 +163,14 @@ impl<T> Drop for DeviceBuffer<T> {
     fn drop(&mut self) {
         if self.ptr != 0 {
             self.ctx.record_err(self.ctx.bind_to_thread());
-            // Free with the allocator that matches how the memory was
-            // allocated. Stream-ordered (`cuMemAllocAsync`) memory must be
-            // released stream-ordered with `cuMemFreeAsync` on its owning
-            // stream; using the synchronous `cuMemFree` here races with
-            // pending stream work (use-after-free). Synchronous allocations
-            // free synchronously as before.
+            // Safe buffer operations can enqueue work on any stream in this
+            // context. Synchronize all of them before implicitly freeing a
+            // stream-ordered allocation.
             let result = match &self.dealloc_stream {
-                Some(stream) => unsafe { crate::memory::free_async(self.ptr, stream.cu_stream()) },
+                Some(stream) => match self.ctx.synchronize() {
+                    Ok(()) => unsafe { crate::memory::free_async(self.ptr, stream.cu_stream()) },
+                    Err(error) => Err(error),
+                },
                 None => unsafe { crate::memory::free_sync(self.ptr) },
             };
             self.ctx.record_err(result);
@@ -712,9 +719,9 @@ impl<T: DeviceCopy> DeviceBuffer<T> {
     /// the returned buffer are undefined until the caller writes them.
     ///
     /// The buffer co-owns `stream` (via the `Arc`) so its implicit `Drop` can
-    /// release the stream-ordered allocation with `cuMemFreeAsync` on the same
-    /// stream. Call [`Self::drop_async`] to free explicitly on a chosen stream
-    /// instead.
+    /// release the stream-ordered allocation after synchronizing the context.
+    /// Call the unsafe [`Self::drop_async`] to free explicitly on a chosen
+    /// stream without a context-wide synchronization.
     ///
     /// # Safety
     ///
@@ -826,13 +833,46 @@ impl<T: DeviceCopy> DeviceBuffer<T> {
 
     /// Consumes the buffer and frees it asynchronously on `stream`.
     ///
-    /// Use this for buffers whose lifetime must be ordered relative to in-flight
-    /// stream work.
-    pub fn drop_async(self, stream: &CudaStream) -> Result<(), DriverError> {
-        let (ptr, _len, _ctx) = self.into_raw_parts();
-        if ptr == 0 {
+    /// For a stream-ordered allocation, this method makes `stream` wait for
+    /// work already submitted on the allocation stream before enqueueing the
+    /// free.
+    ///
+    /// Returns [`CUDA_ERROR_INVALID_CONTEXT`](cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_CONTEXT)
+    /// if `stream` belongs to a different context. Validation and allocation
+    /// stream ordering happen before the buffer is disarmed, so an error in
+    /// either step leaves ordinary [`Drop`] responsible for cleanup. Once
+    /// disarmed immediately before `cuMemFreeAsync`, an enqueue error leaks
+    /// the allocation instead of attempting an unordered fallback free.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that every stream other than the allocation
+    /// stream that has pending work touching this buffer is ordered before
+    /// `stream` (for example via [`CudaStream::join`]). Only the allocation
+    /// stream is joined automatically; an unordered third stream still
+    /// racing the free is a driver-level use-after-free. This is the same
+    /// deferred-use contract as [`Self::copy_from_host_async_unchecked`]:
+    /// ordinary [`Drop`] is the safe alternative and synchronizes the whole
+    /// context first.
+    pub unsafe fn drop_async(mut self, stream: &CudaStream) -> Result<(), DriverError> {
+        if self.ctx.as_ref() != stream.context().as_ref() {
+            return Err(DriverError(
+                cuda_bindings::cudaError_enum_CUDA_ERROR_INVALID_CONTEXT,
+            ));
+        }
+        if self.ptr == 0 {
             return Ok(());
         }
+
+        self.ctx.bind_to_thread()?;
+        if let Some(allocation_stream) = &self.dealloc_stream
+            && allocation_stream.as_ref() != stream
+        {
+            stream.join(allocation_stream)?;
+        }
+
+        let ptr = self.ptr;
+        self.ptr = 0;
         unsafe { crate::memory::free_async(ptr, stream.cu_stream()) }
     }
 

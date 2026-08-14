@@ -32,6 +32,7 @@
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum, error::ErrorKind};
 use std::path::PathBuf;
 
+mod artifact_identity;
 mod backend;
 mod commands;
 
@@ -80,6 +81,9 @@ enum Commands {
         /// Comma-separated list of features to enable
         #[arg(long)]
         features: Option<String>,
+        /// Comma-separated list of features to enable only for metadata-declared device crates
+        #[arg(long)]
+        device_features: Option<String>,
         /// Pick a specific binary in a multi-bin package (forwarded as
         /// `cargo run --bin <name>`). Defaults to the package's
         /// `default-run`.
@@ -92,6 +96,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -126,6 +140,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -150,6 +174,9 @@ enum Commands {
         /// Comma-separated list of features to enable
         #[arg(long)]
         features: Option<String>,
+        /// Comma-separated list of features to enable only for metadata-declared device crates
+        #[arg(long)]
+        device_features: Option<String>,
         /// Show verbose compilation output
         #[arg(short, long)]
         verbose: bool,
@@ -157,6 +184,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -196,6 +233,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -231,6 +278,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -251,6 +308,16 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -303,6 +370,16 @@ enum Commands {
         /// Settable also via CUDA_OXIDE_NO_FMA=1.
         #[arg(long)]
         no_fmad: bool,
+        /// Emit device line-number information for profilers and Compute
+        /// Sanitizer, leaving optimization intact (nvcc `-lineinfo`).
+        /// Also settable via CUDA_OXIDE_DEBUG=line.
+        #[arg(long)]
+        lineinfo: bool,
+        /// Emit full device debug information; libNVVM finalization runs
+        /// unoptimized (nvcc `-G`). Supersedes --lineinfo.
+        /// Also settable via CUDA_OXIDE_DEBUG=full.
+        #[arg(long)]
+        device_debug: bool,
         /// Elide slice/array bounds checks in every device kernel.
         /// Settable also via CUDA_OXIDE_UNCHECKED_INDEXING=1.
         #[arg(long)]
@@ -367,6 +444,9 @@ fn has_passthrough_separator(args: &[String]) -> bool {
     args.iter().skip(2).any(|arg| arg == "--")
 }
 
+/// Defined as "the mode has a nameable trigger" so the decision and the
+/// diagnostic in [`build_passthrough_trigger`] cannot disagree: a new signal
+/// that switches the mode on has to name itself to compile.
 fn use_build_passthrough(
     explicit_separator: bool,
     cargo_target_dir_is_set: bool,
@@ -374,11 +454,46 @@ fn use_build_passthrough(
     has_device_cfgs: bool,
     has_cargo_args: bool,
 ) -> bool {
-    explicit_separator
-        || cargo_target_dir_is_set
-        || owner_filter_is_set
-        || has_device_cfgs
-        || has_cargo_args
+    build_passthrough_trigger(
+        explicit_separator,
+        cargo_target_dir_is_set,
+        owner_filter_is_set,
+        has_device_cfgs,
+        has_cargo_args,
+    )
+    .is_some()
+}
+
+/// What put `cargo oxide build` into passthrough mode, phrased for a diagnostic.
+///
+/// [`use_build_passthrough`] turns on for five reasons and only two of them are
+/// the `--` separator, so a message that blames `--` is wrong for the other
+/// three: `--cargo-target-dir`, `--device-codegen-crate`, and `--device-cfg` are
+/// ordinary flags that switch modes as a side effect. Naming the wrong cause
+/// sends the reader looking for a separator they never typed.
+///
+/// The order is the reporting order, not a precedence: a separator explains the
+/// mode best when one is present, so it is named first, and the flags follow in
+/// the order [`use_build_passthrough`] tests them. Returns `None` when the
+/// build is not in passthrough mode at all.
+fn build_passthrough_trigger(
+    explicit_separator: bool,
+    cargo_target_dir_is_set: bool,
+    owner_filter_is_set: bool,
+    has_device_cfgs: bool,
+    has_cargo_args: bool,
+) -> Option<&'static str> {
+    if explicit_separator || has_cargo_args {
+        Some("passthrough args after `--`")
+    } else if cargo_target_dir_is_set {
+        Some("`--cargo-target-dir`")
+    } else if owner_filter_is_set {
+        Some("`--device-codegen-crate`")
+    } else if has_device_cfgs {
+        Some("`--device-cfg`")
+    } else {
+        None
+    }
 }
 
 fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
@@ -482,10 +597,13 @@ fn main() {
             emit_nvvm_ir,
             arch,
             features,
+            device_features,
             bin,
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             app_args,
         } => {
             let ctx = commands::resolve_context();
@@ -504,9 +622,11 @@ fn main() {
                 emit_nvvm_ir,
                 arch.as_deref(),
                 features.as_deref(),
+                device_features.as_deref(),
                 bin.as_deref(),
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
                 materialize_cubin,
                 &app_args,
             );
@@ -520,6 +640,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             sanitizer_args,
         } => {
             let ctx = commands::resolve_context();
@@ -539,6 +661,7 @@ fn main() {
                 bin.as_deref(),
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
                 materialize_cubin,
             );
         }
@@ -547,9 +670,12 @@ fn main() {
             emit_nvvm_ir,
             arch,
             features,
+            device_features,
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             cargo_target_dir,
             device_codegen_crate,
             device_cfgs,
@@ -579,14 +705,24 @@ fn main() {
                     emit_nvvm_ir,
                     arch.as_deref(),
                     features.as_deref(),
+                    device_features.as_deref(),
                     no_fmad,
                     unchecked_indexing,
+                    commands::DeviceDebug::from_flags(lineinfo, device_debug),
                     materialize_cubin,
                 );
             } else {
                 if example.is_some() {
+                    let trigger = build_passthrough_trigger(
+                        explicit_passthrough,
+                        cargo_target_dir.is_some(),
+                        device_codegen_crate.is_some(),
+                        !device_cfgs.is_empty(),
+                        !cargo_args.is_empty(),
+                    )
+                    .unwrap_or("passthrough args after `--`");
                     eprintln!(
-                        "Error: `cargo oxide build` accepts either an example name or passthrough args after `--`, not both"
+                        "Error: `cargo oxide build` accepts either an example name or {trigger}, not both"
                     );
                     std::process::exit(2);
                 }
@@ -611,6 +747,7 @@ fn main() {
                         no_fmad,
                         unchecked_indexing,
                         materialize_cubin,
+                        device_debug: commands::DeviceDebug::from_flags(lineinfo, device_debug),
                     },
                     &cargo_args,
                 );
@@ -624,6 +761,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             cargo_args,
         } => {
             let ctx = commands::resolve_context();
@@ -648,6 +787,7 @@ fn main() {
                     no_fmad,
                     unchecked_indexing,
                     materialize_cubin,
+                    device_debug: commands::DeviceDebug::from_flags(lineinfo, device_debug),
                 },
                 &cargo_args,
             );
@@ -660,6 +800,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "emit-ltoir");
@@ -672,6 +814,7 @@ fn main() {
                 verbose,
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
             );
         }
         Commands::Pipeline {
@@ -680,6 +823,8 @@ fn main() {
             arch,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "pipeline");
@@ -697,6 +842,7 @@ fn main() {
                 arch.as_deref(),
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
                 materialize_cubin,
             );
         }
@@ -707,6 +853,8 @@ fn main() {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
         } => {
             let ctx = commands::resolve_context();
             let example = resolve_example_name(example, &ctx, "inspect");
@@ -718,6 +866,7 @@ fn main() {
                 verbose,
                 no_fmad,
                 unchecked_indexing,
+                commands::DeviceDebug::from_flags(lineinfo, device_debug),
             );
         }
         Commands::Debug {
@@ -903,6 +1052,41 @@ mod tests {
     }
 
     #[test]
+    fn interop_commands_accept_device_only_features() {
+        let build = Cli::try_parse_from([
+            "cargo-oxide",
+            "build",
+            "interop-app",
+            "--device-features",
+            "tensor-cores,diagnostics",
+        ])
+        .expect("build should accept device-only features");
+        let Commands::Build {
+            device_features, ..
+        } = build.command
+        else {
+            panic!("expected build command");
+        };
+        assert_eq!(device_features.as_deref(), Some("tensor-cores,diagnostics"));
+
+        let run = Cli::try_parse_from([
+            "cargo-oxide",
+            "run",
+            "interop-app",
+            "--device-features",
+            "tensor-cores",
+        ])
+        .expect("run should accept device-only features");
+        let Commands::Run {
+            device_features, ..
+        } = run.command
+        else {
+            panic!("expected run command");
+        };
+        assert_eq!(device_features.as_deref(), Some("tensor-cores"));
+    }
+
+    #[test]
     fn materialize_cubin_is_a_global_codegen_option() {
         let after_subcommand = Cli::try_parse_from([
             "cargo-oxide",
@@ -980,6 +1164,8 @@ mod tests {
             cargo_args,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             ..
         } = test_cli.command
         else {
@@ -988,6 +1174,8 @@ mod tests {
         assert!(cargo_args.is_empty());
         assert!(!no_fmad);
         assert!(!unchecked_indexing);
+        assert!(!lineinfo, "--lineinfo must default off");
+        assert!(!device_debug, "--device-debug must default off");
 
         let build_args = strings(&["cargo-oxide", "build", "--"]);
         assert!(has_passthrough_separator(&build_args));
@@ -1013,6 +1201,8 @@ mod tests {
         let Commands::Test {
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
             cargo_args,
             ..
         } = cli.command
@@ -1021,6 +1211,8 @@ mod tests {
         };
         assert!(no_fmad);
         assert!(unchecked_indexing);
+        assert!(!lineinfo, "--lineinfo must default off");
+        assert!(!device_debug, "--device-debug must default off");
         assert_eq!(cargo_args, strings(&["-p", "gpu-app"]));
     }
 
@@ -1156,6 +1348,46 @@ mod tests {
         assert!(use_build_passthrough(false, false, false, false, true));
     }
 
+    /// Every signal that switches the mode has to name itself, because three of
+    /// the five are flags rather than the `--` separator the message used to
+    /// blame. Pinned one signal at a time, in the same order as the test above.
+    #[test]
+    fn each_passthrough_signal_names_itself_in_the_diagnostic() {
+        assert_eq!(
+            build_passthrough_trigger(false, false, false, false, false),
+            None,
+            "not passthrough at all, so there is nothing to report"
+        );
+        assert_eq!(
+            build_passthrough_trigger(true, false, false, false, false),
+            Some("passthrough args after `--`")
+        );
+        assert_eq!(
+            build_passthrough_trigger(false, true, false, false, false),
+            Some("`--cargo-target-dir`")
+        );
+        assert_eq!(
+            build_passthrough_trigger(false, false, true, false, false),
+            Some("`--device-codegen-crate`")
+        );
+        assert_eq!(
+            build_passthrough_trigger(false, false, false, true, false),
+            Some("`--device-cfg`")
+        );
+        assert_eq!(
+            build_passthrough_trigger(false, false, false, false, true),
+            Some("passthrough args after `--`"),
+            "bare cargo args arrive through the separator, so they read the same"
+        );
+        // A separator alongside a flag: the separator explains the mode best.
+        assert_eq!(
+            build_passthrough_trigger(true, true, true, true, true),
+            Some("passthrough args after `--`")
+        );
+        // No mode-vs-name agreement check: use_build_passthrough is defined as
+        // build_passthrough_trigger(...).is_some(), so they cannot disagree.
+    }
+
     #[test]
     fn list_parser_defaults_to_human_output() {
         let cli = Cli::try_parse_from(["cargo-oxide", "list"]).expect("list command should parse");
@@ -1214,6 +1446,8 @@ mod tests {
             verbose,
             no_fmad,
             unchecked_indexing,
+            lineinfo,
+            device_debug,
         } = cli.command
         else {
             panic!("expected inspect command");
@@ -1225,5 +1459,51 @@ mod tests {
         assert!(verbose);
         assert!(no_fmad);
         assert!(unchecked_indexing);
+        assert!(!lineinfo, "--lineinfo must default off");
+        assert!(!device_debug, "--device-debug must default off");
+    }
+
+    #[test]
+    fn parser_accepts_device_debug_flags() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "build", "vecadd", "--lineinfo"])
+            .expect("--lineinfo should parse");
+        let Commands::Build {
+            lineinfo,
+            device_debug,
+            ..
+        } = cli.command
+        else {
+            panic!("expected build command");
+        };
+        assert!(lineinfo);
+        assert!(!device_debug);
+
+        // #552 gave `test` the codegen flags, so the debug policy belongs there too.
+        let cli = Cli::try_parse_from(["cargo-oxide", "test", "--device-debug"])
+            .expect("--device-debug should parse on test");
+        let Commands::Test {
+            lineinfo,
+            device_debug,
+            ..
+        } = cli.command
+        else {
+            panic!("expected test command");
+        };
+        assert!(!lineinfo);
+        assert!(device_debug);
+    }
+
+    #[test]
+    fn device_debug_flags_resolve_in_nvcc_order() {
+        use commands::DeviceDebug;
+        // Absent flags stay Off so an ambient CUDA_OXIDE_DEBUG survives.
+        assert_eq!(DeviceDebug::from_flags(false, false), DeviceDebug::Off);
+        assert_eq!(
+            DeviceDebug::from_flags(true, false),
+            DeviceDebug::LineTables
+        );
+        assert_eq!(DeviceDebug::from_flags(false, true), DeviceDebug::Full);
+        // Full debug already carries line tables, so it wins over --lineinfo.
+        assert_eq!(DeviceDebug::from_flags(true, true), DeviceDebug::Full);
     }
 }

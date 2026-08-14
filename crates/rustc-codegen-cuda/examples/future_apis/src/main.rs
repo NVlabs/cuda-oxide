@@ -243,11 +243,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Future APIs Test (Unified) ===\n");
 
     let ctx = CudaContext::new(0)?;
+
+    // sm_90, not sm_80. `ManagedBarrier::init_by` emits `fence.proxy.async`
+    // for every barrier kind (the TmaBarrier typestate parameter is inert
+    // PhantomData and detects nothing), and per the PTX ISA that fence needs
+    // sm_90 or newer: ptxas rejects it below that with "Modifier '.async'
+    // requires .target sm_90 or higher". The backend's feature scan classifies
+    // the fence as Tma; with a device hint the target resolves to the device
+    // (a Hopper box builds and runs this example at sm_90), while a hint-less
+    // cross-compile defaults the module to sm_100 and a pre-Hopper device then
+    // fails to load it with DriverError(218). Skip below sm_90 so the example
+    // exercises real hardware everywhere it can actually run.
+    let (major, minor) = ctx.compute_capability()?;
+    if major < 9 {
+        println!(
+            "skipping: fence.proxy.async (emitted by ManagedBarrier::init_by) requires sm_90+ (device is sm_{major}{minor})"
+        );
+        return Ok(());
+    }
+
     let stream = ctx.default_stream();
 
-    let module = ctx.load_module_from_file("future_apis.ptx")?;
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx)?;
     // ====================================================================
     // Test 1: CuSimd<f32, 4>
     // ====================================================================

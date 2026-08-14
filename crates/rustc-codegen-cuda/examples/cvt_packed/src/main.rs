@@ -118,11 +118,7 @@ fn main() {
         return;
     }
 
-    let module = ctx
-        .load_module_from_file("cvt_packed.ptx")
-        .expect("Failed to load PTX module");
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx).expect("Failed to load embedded CUDA module");
     // This value rounds up under round-to-nearest but truncates down under
     // round-toward-zero in both f16 and bf16.
     let lo = 1.0065_f32;

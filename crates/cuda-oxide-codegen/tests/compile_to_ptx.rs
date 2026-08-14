@@ -98,6 +98,190 @@ cp "$input" "$out"
         }
     }
 
+    fn post_opt_dynamic_stack() -> Self {
+        let guard = FAKE_TOOLS_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = unique_test_dir("post_opt_dynamic_stack");
+        let llc = write_tool(
+            &root,
+            "llc",
+            r#"#!/bin/sh
+if [ "${1:-}" = "--version" ]; then
+  echo "LLVM version 21.0.0"
+  exit 0
+fi
+out=""
+input=""
+target="sm_80"
+ptx73=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -mcpu=*) target="${1#-mcpu=}" ;;
+    -mattr=+ptx73) ptx73=1 ;;
+    -o) shift; out="$1" ;;
+    -*) ;;
+    *) input="$1" ;;
+  esac
+  shift
+done
+grep -F -q 'call ptr addrspace(3) @llvm.stacksave.p3()' "$input" || {
+  echo "fake opt output did not reach llc" >&2
+  exit 11
+}
+grep -F -q 'call void @llvm.stackrestore.p3(ptr addrspace(3) %post_opt_saved_stack)' "$input" || {
+  echo "fake opt output did not contain the reachable stack restore" >&2
+  exit 14
+}
+[ "$ptx73" -eq 1 ] || {
+  echo "final llc input did not request +ptx73" >&2
+  exit 12
+}
+printf '.version 7.3\n.target %s\n.address_size 64\n.visible .entry fake() { ret; }\n' "$target" > "$out"
+"#,
+        );
+        let opt = Some(write_tool(
+            &root,
+            "opt",
+            r#"#!/bin/sh
+if [ "${1:-}" = "--version" ]; then
+  echo "LLVM version 21.0.0"
+  exit 0
+fi
+input=""
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) shift; out="$1" ;;
+    -*) ;;
+    *) input="$1" ;;
+  esac
+  shift
+done
+if grep -F -q '@llvm.stacksave' "$input"; then
+  echo "source unexpectedly required a dynamic stack" >&2
+  exit 13
+fi
+awk '
+  /^define .*@empty\(/ {
+    in_empty = 1
+  }
+  in_empty && /^[[:space:]]*ret void/ {
+    print "  %post_opt_saved_stack = call ptr addrspace(3) @llvm.stacksave.p3()"
+    print "  call void @llvm.stackrestore.p3(ptr addrspace(3) %post_opt_saved_stack)"
+    introduced = 1
+  }
+  {
+    print
+  }
+  in_empty && /^}/ {
+    in_empty = 0
+  }
+  END {
+    if (!introduced) {
+      exit 1
+    }
+  }
+' "$input" > "$out" || {
+  echo "fake opt could not add calls to the exported kernel" >&2
+  exit 15
+}
+printf '\ndeclare ptr addrspace(3) @llvm.stacksave.p3()\ndeclare void @llvm.stackrestore.p3(ptr addrspace(3))\n' >> "$out"
+"#,
+        ));
+        Self {
+            _guard: guard,
+            root,
+            llc,
+            opt,
+        }
+    }
+
+    fn post_opt_local_memory() -> Self {
+        let guard = FAKE_TOOLS_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = unique_test_dir("post_opt_local_memory");
+        let llc = write_tool(
+            &root,
+            "llc",
+            r#"#!/bin/sh
+if [ "${1:-}" = "--version" ]; then
+  echo "LLVM version 21.0.0"
+  exit 0
+fi
+out=""
+input=""
+target="sm_80"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -mcpu=*) target="${1#-mcpu=}" ;;
+    -o) shift; out="$1" ;;
+    -*) ;;
+    *) input="$1" ;;
+  esac
+  shift
+done
+grep -F -q '%__cuda_oxide_local_x330931360973637261746368095b7533323b20345d_ = alloca [4 x i32]' "$input" || {
+  echo "tagged post-opt alloca did not reach llc" >&2
+  exit 21
+}
+printf '.version 8.0\n.target %s\n.address_size 64\n.visible .entry fake() { ret; }\n' "$target" > "$out"
+"#,
+        );
+        let opt = Some(write_tool(
+            &root,
+            "opt",
+            r#"#!/bin/sh
+if [ "${1:-}" = "--version" ]; then
+  echo "LLVM version 21.0.0"
+  exit 0
+fi
+input=""
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) shift; out="$1" ;;
+    -*) ;;
+    *) input="$1" ;;
+  esac
+  shift
+done
+awk '
+  /^define .*@empty\(/ {
+    in_empty = 1
+  }
+  in_empty && /^[[:space:]]*ret void/ {
+    print "  %local_diag_index = add i64 0, 1"
+    print "  %__cuda_oxide_local_x330931360973637261746368095b7533323b20345d_ = alloca [4 x i32], align 4"
+    print "  %local_diag_element = getelementptr [4 x i32], ptr %__cuda_oxide_local_x330931360973637261746368095b7533323b20345d_, i64 0, i64 %local_diag_index"
+    introduced = 1
+  }
+  {
+    print
+  }
+  in_empty && /^}/ {
+    in_empty = 0
+  }
+  END {
+    if (!introduced) {
+      exit 1
+    }
+  }
+' "$input" > "$out" || {
+  echo "fake opt could not add tagged local-memory alloca" >&2
+  exit 22
+}
+"#,
+        ));
+        Self {
+            _guard: guard,
+            root,
+            llc,
+            opt,
+        }
+    }
+
     fn failing_llc() -> Self {
         let guard = FAKE_TOOLS_LOCK
             .lock()
@@ -596,6 +780,74 @@ fn requested_optimization_requires_opt() {
         CompileError::OptimizationUnavailable { .. }
     ));
     assert_eq!(error.stage(), CompilationStage::Optimization);
+}
+
+#[test]
+fn requirements_introduced_by_opt_reach_llc() {
+    let tools = FakeTools::post_opt_dynamic_stack();
+    let compiler = tools.compiler();
+    let mut module = CodegenModule::new("post_opt_dynamic_stack").unwrap();
+    add_empty_function(&mut module, true);
+
+    let compilation = compiler
+        .compile(
+            &mut module,
+            &CompileOptions::new(Target::parse("sm_80").unwrap()),
+        )
+        .unwrap();
+
+    assert_eq!(compilation.target(), &Target::parse("sm_80").unwrap());
+    assert!(compilation.ptx().starts_with(b".version 7.3\n"));
+}
+
+#[test]
+fn verbose_post_opt_local_memory_is_reported() {
+    let tools = FakeTools::post_opt_local_memory();
+    let compiler = tools.compiler();
+    let mut module = CodegenModule::new("post_opt_local_memory").unwrap();
+    add_empty_function(&mut module, true);
+
+    let compilation = compiler
+        .compile(
+            &mut module,
+            &CompileOptions::new(Target::parse("sm_80").unwrap()).with_verbose(true),
+        )
+        .unwrap();
+
+    let diagnostic = compilation
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.message.contains("local `scratch`"))
+        .expect("verbose optimized build should report the surviving Rust local");
+    assert!(diagnostic.message.contains("`[u32; 4]`, 16 bytes"));
+    assert!(
+        diagnostic
+            .message
+            .contains("indexed by a non-constant value")
+    );
+}
+
+#[test]
+fn quiet_post_opt_local_memory_is_not_reported() {
+    let tools = FakeTools::post_opt_local_memory();
+    let compiler = tools.compiler();
+    let mut module = CodegenModule::new("quiet_post_opt_local_memory").unwrap();
+    add_empty_function(&mut module, true);
+
+    let compilation = compiler
+        .compile(
+            &mut module,
+            &CompileOptions::new(Target::parse("sm_80").unwrap()),
+        )
+        .unwrap();
+
+    assert!(
+        compilation
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| !diagnostic.message.contains("local `scratch`")),
+        "local-memory promotion diagnostics are opt-in through verbose mode"
+    );
 }
 
 #[test]

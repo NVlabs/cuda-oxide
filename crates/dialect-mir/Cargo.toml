@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "MIR dialect for Pliron IR framework (Rust MIR representation)"
+readme = "README.md"
 
 [dependencies]
 pliron = { workspace = true }

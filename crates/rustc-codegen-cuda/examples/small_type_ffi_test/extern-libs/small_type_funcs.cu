@@ -1,4 +1,9 @@
 /*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
  * Small scalar ABI device functions for cuda-oxide FFI testing
  *
  * These functions are compiled to LTOIR and linked with cuda-oxide kernels

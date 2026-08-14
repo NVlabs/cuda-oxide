@@ -31,7 +31,7 @@ use cuda_device::clc::{
     clc_query_get_first_ctaid_x, clc_query_is_canceled, clc_try_cancel_multicast,
 };
 use cuda_device::cluster;
-use cuda_device::shared::SharedArray;
+use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
     cvt_f32x2_bf16x2, stmatrix_m8n8_x2, tcgen05_alloc_cg2, tcgen05_commit_multicast_cg2,
@@ -602,12 +602,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return verify_ptx_only();
     }
 
-    let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gemm_sol_final.ptx");
-    println!("Loading PTX: {}", ptx_path.display());
-    let ptx_str = ptx_path.to_str().ok_or("PTX path must be valid UTF-8")?;
-    let module = ctx.load_module_from_file(ptx_str)?;
-    let module = kernels::from_module(module).expect("failed to initialize typed CUDA module");
-    println!("PTX loaded\n");
+    println!("Loading embedded CUDA module");
+    let module = kernels::load(&ctx)?;
+    println!("Module loaded\n");
 
     if do_validate {
         println!("── Full-output correctness tests ────────────────────\n");
@@ -1033,13 +1030,17 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
     Ok(tflops)
 }
 
+/// Fallback for GPUs that cannot execute tcgen05: verify the loose PTX build
+/// artifact beside this crate against the tcgen05 contract. The main path
+/// loads the module embedded in the binary instead; only this fallback reads
+/// the loose file.
 fn verify_ptx_only() -> Result<(), Box<dyn std::error::Error>> {
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gemm_sol_final.ptx");
     let ptx = std::fs::read_to_string(&ptx_path)?;
     verify_tcgen05_ptx_contract(&ptx)
         .map_err(|error| format!("PTX verification failed: {error}"))?;
 
-    println!("\nPTX Verification:");
+    println!("\nPTX verification (loose build artifact):");
     println!("   PTX file generated at: {}", ptx_path.display());
     println!("\n   To inspect generated PTX:");
     println!("   cat {}", ptx_path.display());

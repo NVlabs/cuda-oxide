@@ -3,8 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Compile coverage for generated high-target intrinsics.
+//! Coverage for generated high-target intrinsics.
+//!
+//! The packed-FP8 and TF32 conversions are launched and their results checked
+//! against the two formats, so the example reports what the device computed
+//! rather than that it compiled. Both are bit-exact, which leaves no tolerance
+//! to choose. The sparse MMA and TMA kernels stay compile-only: they need
+//! operands and descriptors an example cannot supply.
+//!
+//! Compile-only in CI, since it pins `sm_120a` and no runner has that device.
+//! Run it on one and the conversions are verified:
+//!
+//!   cargo oxide run generated_intrinsics_blackwell
 
+use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{
     DisjointSlice,
     barrier::Barrier,
@@ -28,6 +40,8 @@ mod kernels {
     use super::*;
 
     /// Keeps every generated packed-FP8 conversion in device code.
+    ///
+    /// Launched, and its four results checked against the two formats.
     #[kernel]
     pub fn compile_fp8_conversions(mut output: DisjointSlice<u16>, low: f32, high: f32) {
         let values = [
@@ -47,7 +61,7 @@ mod kernels {
 
     /// Keeps every generated TF32 conversion in device code.
     ///
-    /// This kernel is compile-only and is never launched by the example.
+    /// Launched, and its ten results checked against the format.
     #[kernel]
     pub fn compile_tf32_conversions(mut output: DisjointSlice<u32>, value: f32) {
         let values = [
@@ -422,9 +436,15 @@ mod kernels {
     pub unsafe fn compile_tma_compatibility(
         shared: *mut u8,
         tensor_map: *const TmaDescriptor,
-        barrier: *mut Barrier,
         cta_mask: u16,
     ) {
+        // The barrier is declared here rather than taken as a parameter. It
+        // lives in shared memory, which is allocated per block at launch, so
+        // the host has no address it could pass. Taking one as a parameter put
+        // `.ptr .shared` on the entry and left the whole module unloadable.
+        static mut BAR: Barrier = Barrier::UNINIT;
+        let barrier = &raw mut BAR;
+
         // This kernel is never launched with these placeholder addresses.
         unsafe {
             tma::cp_async_bulk_tensor_1d_g2s(shared, tensor_map, 0, barrier);
@@ -446,6 +466,130 @@ mod kernels {
     }
 }
 
+/// One packed-FP8 case: the two inputs and what each of the four conversions
+/// must return. Derivations are in the table below.
+struct Fp8Case {
+    lo: f32,
+    hi: f32,
+    e4m3: u16,
+    relu_e4m3: u16,
+    e5m2: u16,
+    relu_e5m2: u16,
+}
+
+/// e4m3 is s.eeee.mmm with exponent bias 7, e5m2 is s.eeeee.mm with bias 15,
+/// and the first argument occupies the low byte.
+///
+/// | value | e4m3 | e5m2 | why |
+/// |---|---|---|---|
+/// | 1.0 | 0x38 | 0x3C | exponent 0, zero mantissa |
+/// | 2.0 | 0x40 | 0x40 | exponent 1 |
+/// | -1.0 | 0xB8 | 0xBC | sign bit over 1.0 |
+/// | 448.0 | 0x7E | 0x5F | 1.75 x 2^8, the largest finite e4m3 |
+/// | 1e30 | 0x7E | 0x7B | saturates to the largest finite value |
+/// | 0.0 | 0x00 | 0x00 | zero |
+const FP8_CASES: [Fp8Case; 3] = [
+    Fp8Case {
+        lo: 1.0,
+        hi: 2.0,
+        e4m3: 0x4038,
+        relu_e4m3: 0x4038,
+        e5m2: 0x403c,
+        relu_e5m2: 0x403c,
+    },
+    // relu replaces the negative low lane with zero and leaves the high lane.
+    Fp8Case {
+        lo: -1.0,
+        hi: 448.0,
+        e4m3: 0x7eb8,
+        relu_e4m3: 0x7e00,
+        e5m2: 0x5fbc,
+        relu_e5m2: 0x5f00,
+    },
+    Fp8Case {
+        lo: 1.0e30,
+        hi: 0.0,
+        e4m3: 0x007e,
+        relu_e4m3: 0x007e,
+        e5m2: 0x007b,
+        relu_e5m2: 0x007b,
+    },
+];
+
+/// TF32 keeps the f32 exponent and truncates the mantissa to 10 bits, so each
+/// value here is already representable and every rounding mode agrees. The
+/// four relu forms sit at indices 3, 5, 7 and 9 of the kernel's output.
+const TF32_CASES: [(f32, u32, u32); 3] = [
+    (1.0, 0x3f80_0000, 0x3f80_0000),
+    // 1 + 2^-10, the smallest step a 10-bit mantissa still holds exactly,
+    // written as the pattern the conversion has to return unchanged.
+    (f32::from_bits(0x3f80_2000), 0x3f80_2000, 0x3f80_2000),
+    (-3.5, 0xc060_0000, 0x0000_0000),
+];
+
+const RELU_TF32_INDICES: [usize; 4] = [3, 5, 7, 9];
+
 fn main() {
-    println!("PASS: generated Blackwell sparse MMA compile coverage");
+    let ctx = CudaContext::new(0).expect("failed to create CUDA context");
+    let stream = ctx.default_stream();
+    let module = kernels::load(&ctx).expect("failed to load device module");
+    let cfg = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+    let mut failures = 0usize;
+
+    println!("=== generated Blackwell conversions, checked on device ===\n");
+
+    for case in &FP8_CASES {
+        let mut out = DeviceBuffer::<u16>::zeroed(&stream, 4).expect("alloc fp8 output");
+        // SAFETY: the three arguments match the kernel's slice and two scalars,
+        // and `out` holds the four results one thread writes.
+        unsafe { module.compile_fp8_conversions(&stream, cfg, &mut out, case.lo, case.hi) }
+            .expect("fp8 launch failed");
+        let got = out.to_host_vec(&stream).expect("fp8 readback failed");
+        let want = [case.e4m3, case.relu_e4m3, case.e5m2, case.relu_e5m2];
+        let names = ["e4m3x2", "relu_e4m3x2", "e5m2x2", "relu_e5m2x2"];
+        for ((got, want), name) in got.iter().zip(want).zip(names) {
+            let mark = if *got == want { "ok" } else { "MISMATCH" };
+            if *got != want {
+                failures += 1;
+            }
+            println!(
+                "  {name:<12} ({:>10}, {:>10}) = 0x{got:04x}  want 0x{want:04x}  {mark}",
+                case.lo, case.hi
+            );
+        }
+    }
+
+    for (value, want_plain, want_relu) in TF32_CASES {
+        let mut out = DeviceBuffer::<u32>::zeroed(&stream, 10).expect("alloc tf32 output");
+        // SAFETY: the two arguments match the kernel's slice and scalar, and
+        // `out` holds the ten results one thread writes.
+        unsafe { module.compile_tf32_conversions(&stream, cfg, &mut out, value) }
+            .expect("tf32 launch failed");
+        let got = out.to_host_vec(&stream).expect("tf32 readback failed");
+        for (index, got) in got.iter().enumerate() {
+            let want = if RELU_TF32_INDICES.contains(&index) {
+                want_relu
+            } else {
+                want_plain
+            };
+            let mark = if *got == want { "ok" } else { "MISMATCH" };
+            if *got != want {
+                failures += 1;
+            }
+            println!(
+                "  tf32[{index}]      ({value:>10})              = 0x{got:08x}  want 0x{want:08x}  {mark}"
+            );
+        }
+    }
+
+    if failures == 0 {
+        println!("\nPASS: every conversion matched, and the sparse MMA and TMA kernels compiled");
+    } else {
+        println!("\nFAIL: {failures} conversions disagreed with the format");
+        std::process::exit(1);
+    }
 }

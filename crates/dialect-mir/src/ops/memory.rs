@@ -9,13 +9,14 @@
 
 use pliron::{
     builtin::{
-        attributes::IntegerAttr,
+        attributes::{BoolAttr, IntegerAttr},
         op_interfaces::{NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface},
         types::IntegerType,
     },
     common_traits::Verify,
     context::{Context, Ptr},
     derive::op_interface_impl,
+    identifier::Identifier,
     irbuild::{inserter::Inserter, rewriter::Rewriter},
     location::Located,
     op::Op,
@@ -56,7 +57,8 @@ fn bool_integer_attr(ctx: &mut Context, value: bool) -> IntegerAttr {
 ///
 /// Reserves a stack slot for a single value of the result's pointee type and
 /// yields a pointer to it. The alloca's pointee type is carried as the result
-/// pointer's pointee, so no attributes are needed.
+/// pointer's pointee. Compiler-only provenance may be attached for diagnostics;
+/// it is not part of the operation's semantics.
 ///
 /// This op is the foundation of the alloca + load/store translator model: every
 /// Rust MIR local is backed by an `mir.alloca` emitted in the function's entry
@@ -732,10 +734,38 @@ impl Verify for MirRefOp {
 )]
 pub struct MirPtrOffsetOp;
 
+const PTR_OFFSET_INBOUNDS_KEY: &str = "mir_ptr_offset_inbounds";
+
 impl MirPtrOffsetOp {
     /// Create a new MirPtrOffsetOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
         MirPtrOffsetOp { op }
+    }
+
+    /// Set whether this offset carries Rust's in-bounds pointer-arithmetic
+    /// promise. Wrapping offsets must set this to false.
+    pub fn set_inbounds(&self, ctx: &mut Context, inbounds: bool) {
+        let key = Identifier::try_new(PTR_OFFSET_INBOUNDS_KEY.to_string())
+            .expect("valid ptr-offset attribute key");
+        self.get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(key, BoolAttr::new(inbounds));
+    }
+
+    /// Return whether this offset may lower to LLVM `getelementptr inbounds`.
+    ///
+    /// Pointer offsets without an explicit attribute carry Rust's ordinary
+    /// in-bounds contract, so absence defaults to true.
+    pub fn is_inbounds(&self, ctx: &Context) -> bool {
+        let key = Identifier::try_new(PTR_OFFSET_INBOUNDS_KEY.to_string())
+            .expect("valid ptr-offset attribute key");
+        self.get_operation()
+            .deref(ctx)
+            .attributes
+            .get::<BoolAttr>(&key)
+            .map(|attr| bool::from(attr.clone()))
+            .unwrap_or(true)
     }
 }
 
@@ -799,8 +829,17 @@ impl Verify for MirPtrOffsetOp {
 /// | `elem_type`     | TypeAttr    | Element type of the array          |
 /// | `size`          | IntegerAttr | Number of elements                 |
 /// | `alloc_key`     | StringAttr  | Unique key for deduplication       |
+/// | `source_name`   | StringAttr  | Optional Rust path of the originating `static` |
 /// | `mir_alignment` | IntegerAttr | Optional alignment (natural if not set) |
 /// ```
+///
+/// `source_name` is diagnostic only. Lowering mints an anonymous
+/// `__shared_mem_N` symbol for every shared allocation, which leaves a
+/// consumer inspecting the generated PTX unable to tell which Rust
+/// `SharedArray` or `Barrier` static accounts for which block of shared
+/// memory. Carrying the Rust path alongside the deduplication key lets
+/// lowering stamp it onto the emitted LLVM global without perturbing the
+/// symbol name itself. Nothing in code generation reads it.
 ///
 /// # Results
 ///
@@ -822,6 +861,7 @@ impl Verify for MirPtrOffsetOp {
         elem_type: pliron::builtin::attributes::TypeAttr,
         size: IntegerAttr,
         alloc_key: pliron::builtin::attributes::StringAttr,
+        source_name: pliron::builtin::attributes::StringAttr,
         mir_alignment: IntegerAttr
     )
 )]
@@ -906,7 +946,15 @@ impl Verify for MirSharedAllocOp {
 /// | `global_type`   | TypeAttr    | Type stored in the global        |
 /// | `global_key`    | StringAttr  | Stable key for deduplication     |
 /// | `global_alignment` | IntegerAttr | Optional alignment            |
+/// | `global_immutable` | UnitAttr | Storage is never written         |
 /// ```
+///
+/// `global_immutable` is set only for storage this compiler materialises from an
+/// evaluated Rust constant, never for a user `static` / `static mut`. It travels
+/// to the LLVM global so the exporter can write `constant` instead of `global`.
+/// It describes the *storage*, not a pointer: a shared reference to a mutable
+/// static is an immutable pointer to mutable storage, and #413 records that
+/// `MirPtrType::is_mutable` must not be read as a promise about the pointee.
 ///
 /// # Results
 ///
@@ -922,7 +970,8 @@ impl Verify for MirSharedAllocOp {
     attributes = (
         global_type: pliron::builtin::attributes::TypeAttr,
         global_key: pliron::builtin::attributes::StringAttr,
-        global_alignment: IntegerAttr
+        global_alignment: IntegerAttr,
+        global_immutable: pliron::builtin::attributes::UnitAttr
     )
 )]
 pub struct MirGlobalAllocOp;
@@ -951,6 +1000,19 @@ impl MirGlobalAllocOp {
             ),
         );
         self.set_attr_global_alignment(ctx, align_attr);
+    }
+
+    /// Declare that nothing ever writes this global's storage.
+    ///
+    /// Only the compiler's own promoted constants may claim this; see the op's
+    /// attribute table.
+    pub fn mark_immutable(&self, ctx: &mut Context) {
+        self.set_attr_global_immutable(ctx, pliron::builtin::attributes::UnitAttr);
+    }
+
+    /// Whether this global was declared never-written.
+    pub fn is_immutable(&self, ctx: &Context) -> bool {
+        self.get_attr_global_immutable(ctx).is_some()
     }
 }
 

@@ -25,7 +25,7 @@
           "mechanism": "inline_ptx",
           "outcome": "succeeded",
           "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
-          "tool_path": "/home/nihalp/.rustup/toolchains/nightly-2026-04-03-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/llc",
+          "tool_path": "llc",
           "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
           "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
         },

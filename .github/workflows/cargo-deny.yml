@@ -4,6 +4,21 @@ name: cargo-deny
 # Runs as a job of the top-level CI workflow (.github/workflows/ci.yml) on
 # push/pull_request, plus a standalone weekly security scan via schedule.
 # Concurrency for the CI path is governed by CI's own group.
+#
+# Four parts of the same concern. `check` enforces the license *policy* over
+# the whole resolved graph from deny.toml -- once for the root workspace and
+# once for crates/rustc-codegen-cuda, which has its own `[workspace]` and so is
+# a separate resolution the root run cannot reach. `license-manifest` enforces that
+# the human-readable inventory in dependency-licenses.csv still lists what the
+# workspace declares, which nothing checked before: CONTRIBUTING asks
+# contributors to update that file by hand, and it had fallen behind by eight
+# direct third-party dependencies and thirteen workspace members.
+# `example-policy` extends the first over the example workspaces, which the
+# root `cargo deny check` cannot reach because each example sets its own
+# `[workspace]` -- 131 crates that no policy governed (#663).
+# `source-headers` covers the licensing of our own files rather than the
+# dependency graph: every NVIDIA-authored source file must carry the standard
+# SPDX header.
 on:
   schedule:
     - cron: "0 6 * * 1"
@@ -23,5 +38,64 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
+      # `--locked` so a stale committed lock fails the run instead of being
+      # re-resolved on the way past. Without it this step rewrites the very
+      # Cargo.lock it is judging -- verified: deleting a package block from the
+      # lock still exits 0 here and leaves the file rewritten, while --locked
+      # stops with "cannot update the lock file". The other two runs below and
+      # in scripts/ already pass it.
       - name: Run cargo-deny
-        run: cargo deny check
+        run: cargo deny --locked check
+
+      # crates/rustc-codegen-cuda carries its own `[workspace]` for the
+      # rustc-private dylibs, so the run above stops at that boundary and never
+      # sees the 82 third-party crates it resolves. Same policy, second
+      # workspace -- the pass asked for in the #662 review. No --config:
+      # cargo-deny walks up from the manifest directory and finds the
+      # repository-root deny.toml, as the example-policy script relies on too.
+      - name: Run cargo-deny over the codegen backend workspace
+        run: cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
+
+  license-manifest:
+    name: dependency-licenses.csv covers every declared crate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Only reads manifests: `cargo metadata` resolves the graph without
+      # running build scripts, so this needs no CUDA toolkit and no LLVM.
+      - name: Verify the license inventory covers the workspace
+        run: bash scripts/check-dependency-licenses.sh
+
+  example-policy:
+    name: deny.toml governs the example workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      # Resolves each example workspace's own graph, so it needs the network but
+      # no CUDA toolkit and no LLVM. One run per distinct dependency set rather
+      # than per workspace: 26 runs instead of 187, covering the same crates.
+      - name: Run cargo-deny over the example workspaces
+        run: bash scripts/check-example-license-policy.sh
+
+  source-headers:
+    name: every source file carries the SPDX header
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Pure text check over tracked files: no toolchain, no network. The OSRB
+      # review fixed 32 missing headers in #812 and the next two scripts to
+      # land (#819, #835) drifted again; this makes the third time the last.
+      - name: Verify SPDX headers on NVIDIA-authored source files
+        run: bash scripts/check-spdx-headers.sh

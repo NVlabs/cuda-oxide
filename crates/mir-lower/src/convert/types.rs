@@ -99,8 +99,8 @@
 //! This matches the C ABI for GPU kernels.
 
 use dialect_mir::types::{
-    EnumCarrierKind, EnumLayoutKind, MirArrayType, MirDisjointSliceType, MirEnumType, MirSliceType,
-    MirStructType, MirTupleType, MirUnionType,
+    EnumCarrierKind, EnumLayoutKind, MirArrayType, MirDisjointSliceType, MirEnumType, MirFP16Type,
+    MirPtrType, MirSliceType, MirStructType, MirTupleType, MirUnionType,
 };
 use llvm_export::types as llvm_types;
 use llvm_export::types::PointerTypeExt;
@@ -110,6 +110,9 @@ use pliron::context::{Context, Ptr};
 use pliron::operation::Operation;
 use pliron::r#type::{TypeHandle, type_cast};
 
+use super::enum_payload_storage::{
+    MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES, enum_payload_storage_type,
+};
 use crate::type_conversion_interface::MirTypeConversion;
 
 // =============================================================================
@@ -308,7 +311,10 @@ pub fn convert_function_type(
         // Determine what kind of flattening this type needs
         // Extract all info first, then drop the borrow
         enum FlattenKind {
-            Slice,
+            /// `{ ptr, len }`, then one parameter per index-space layout field.
+            Slice {
+                space_tys: Vec<TypeHandle>,
+            },
             Struct {
                 field_types: Vec<TypeHandle>,
                 mem_to_decl: Vec<usize>,
@@ -318,8 +324,14 @@ pub fn convert_function_type(
 
         let flatten_kind = {
             let ty_ref = t.deref(ctx);
-            if ty_ref.is::<MirSliceType>() || ty_ref.is::<MirDisjointSliceType>() {
-                FlattenKind::Slice
+            if ty_ref.is::<MirSliceType>() {
+                FlattenKind::Slice {
+                    space_tys: Vec::new(),
+                }
+            } else if let Some(slice_ty) = ty_ref.downcast_ref::<MirDisjointSliceType>() {
+                FlattenKind::Slice {
+                    space_tys: slice_ty.space_tys.clone(),
+                }
             } else if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
                 if is_kernel_entry {
                     // Kernel-boundary ABI: keep the struct intact so the
@@ -338,11 +350,19 @@ pub fn convert_function_type(
         };
 
         match flatten_kind {
-            FlattenKind::Slice => {
+            FlattenKind::Slice { space_tys } => {
                 let ptr_ty = llvm_types::PointerType::get_generic(ctx);
                 let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
                 inputs.push(ptr_ty.into());
                 inputs.push(len_ty.into());
+                for space_ty in space_tys {
+                    let converted = convert_type(ctx, space_ty)?;
+                    // A zero-sized index-space field contributes no parameter,
+                    // as NVPTX has no empty `.param`.
+                    if !is_zero_sized_type(ctx, converted) {
+                        inputs.push(converted);
+                    }
+                }
             }
             FlattenKind::Struct {
                 field_types,
@@ -452,6 +472,18 @@ pub(crate) struct StructSlotMap {
     pub decl_to_llvm: Vec<Option<u32>>,
     /// Converted LLVM type of each declaration-order field (ZSTs included).
     pub field_llvm_types: Vec<TypeHandle>,
+    /// Natural (non-packed) LLVM byte offset of every slot of
+    /// `llvm_struct_ty`, padding slots included; `None` when some field type
+    /// cannot be sized ([`llvm_type_size_align`] declined).
+    pub natural_slot_offsets: Option<Vec<u64>>,
+    /// True when the natural LLVM struct layout cannot honor rustc's recorded
+    /// layout: some field's natural slot offset differs from rustc's byte
+    /// offset, or the natural struct size differs from rustc's total size.
+    /// `repr(packed)` is the canonical case. Address-path consumers fall back
+    /// to byte offsets from the aggregate pointer; value-path consumers
+    /// (construct, whole-value load/store) must fail closed, because an SSA
+    /// value of the natural struct type places fields at the wrong bytes.
+    pub layout_diverges: bool,
 }
 
 /// Lower a struct/tuple layout to its LLVM struct type and slot map.
@@ -559,10 +591,36 @@ pub(crate) fn build_struct_slot_map(
         llvm_fields.push(padding_ty);
     }
 
+    // The explicit `[N x i8]` gaps above can only ADD bytes; they cannot make
+    // LLVM place a slot earlier than its natural alignment allows. So when
+    // rustc's layout is tighter than natural (repr(packed)), the struct built
+    // here is a lie at the byte level, and every consumer needs to know.
+    // Unsizable field types leave no verdict: consumers that need the
+    // comparison (field_addr with a recorded rustc offset) fail closed at
+    // their own sites.
+    let walk = natural_layout_walk(ctx, &llvm_fields);
+    let natural_slot_offsets = walk.as_ref().map(|(offsets, _, _)| offsets.clone());
+    let mut layout_diverges = false;
+    if has_explicit_layout && let Some((offsets, end, align)) = &walk {
+        for (decl_idx, slot) in decl_to_llvm.iter().enumerate() {
+            if let Some(slot) = slot
+                && offsets[*slot as usize] != layout.field_offsets[decl_idx]
+            {
+                layout_diverges = true;
+            }
+        }
+        let natural_size = end.div_ceil(*align) * *align;
+        if natural_size != layout.total_size {
+            layout_diverges = true;
+        }
+    }
+
     Ok(StructSlotMap {
         llvm_struct_ty: llvm_types::StructType::get_unnamed(ctx, llvm_fields).into(),
         decl_to_llvm,
         field_llvm_types,
+        natural_slot_offsets,
+        layout_diverges,
     })
 }
 
@@ -570,6 +628,45 @@ pub(crate) fn build_struct_slot_map(
 fn make_padding_type(ctx: &mut Context, size: u64) -> TypeHandle {
     let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
     llvm_types::ArrayType::get(ctx, i8_ty.into(), size).into()
+}
+
+/// Storage for `size` bytes of enum filler at byte `offset`: bytes the payload
+/// occupies that no typed slot claims.
+///
+/// `[N x i8]` is byte-exact but costs one leaf *per byte* everywhere a payload
+/// value is built, merged, or taken apart. `Option<&[T]>` is the shape that
+/// shows it: the niche carrier claims the pointer, the length is left to an
+/// 8-byte filler, and building the value then decomposes that length into
+/// eight `i8` `insertvalue`s, every block merge carries eight `phi i8`, and
+/// reading it back is a chain of `prmt` byte permutes with the aggregate
+/// spilled to `.local` in between. Measured on sm_86, it costs the *pointer*
+/// too: it rides through the same byte soup, `InferAddressSpaces` can no
+/// longer follow it, and the access lands in the generic window (`ld.v2.b64`)
+/// instead of `ld.global.v2.b64`.
+///
+/// One integer of the same width is the same bytes in one leaf. It is only
+/// legal where it moves nothing:
+///
+/// - the width is 2, 4 or 8 bytes, so the integer is byte-faithful (a multiple
+///   of 8 bits, hence no padding of its own). 16 is deliberately excluded:
+///   `i128` is legal LLVM but lowers to register pairs on NVPTX, so widening
+///   that far trades one win for another cost and wants its own measurement;
+/// - `offset` is a multiple of the width, so LLVM inserts no gap ahead of the
+///   field and every later field keeps its byte offset;
+/// - the width does not exceed the enum's alignment, or the struct's natural
+///   alignment would rise above rustc's.
+///
+/// Anything else keeps the byte array. The filler is a *vehicle*, not a claim:
+/// nothing reads it field-wise, because a payload that has no typed slot
+/// round-trips through memory as a whole aggregate, and both ends of that
+/// round trip are byte-exact. `build_enum_slot_map`'s own size and alignment
+/// assertions — hard errors, not debug checks — backstop all three conditions.
+fn make_enum_filler_type(ctx: &mut Context, offset: u64, size: u64, abi_align: u64) -> TypeHandle {
+    if matches!(size, 2 | 4 | 8) && offset.is_multiple_of(size) && size <= abi_align.max(1) {
+        let width = u32::try_from(size * 8).expect("size is at most 8, so width is at most 64");
+        return IntegerType::get(ctx, width, Signedness::Signless).into();
+    }
+    make_padding_type(ctx, size)
 }
 
 /// Build byte-exact LLVM storage for a Rust union.
@@ -581,9 +678,10 @@ fn make_padding_type(ctx: &mut Context, size: u64) -> TypeHandle {
 /// alignment without consuming storage. Pointer-bearing fields are preferred
 /// so an ordinary union copy keeps LLVM pointer provenance.
 ///
-/// NVPTX gives scalar integers natural alignments up to 16 bytes. Reject a
-/// more strongly aligned union instead of silently emitting a by-value type
-/// with a weaker ABI alignment.
+/// NVPTX gives scalar integers natural alignments up to 16 bytes. Stronger
+/// Rust alignment is carried explicitly on memory operations because LLVM
+/// aggregate types cannot encode over-alignment; the storage type still keeps
+/// the union's exact size and therefore its array stride.
 pub(crate) fn build_union_storage_type(
     ctx: &mut Context,
     union_ty: &MirUnionType,
@@ -593,13 +691,6 @@ pub(crate) fn build_union_storage_type(
     if align == 0 || !align.is_power_of_two() {
         return Err(anyhow::anyhow!(
             "union `{}` has invalid ABI alignment {}",
-            union_ty.name(),
-            align
-        ));
-    }
-    if align > 16 {
-        return Err(anyhow::anyhow!(
-            "union `{}` requires {}-byte alignment; cuda-oxide currently supports union alignments up to 16 bytes",
             union_ty.name(),
             align
         ));
@@ -658,7 +749,8 @@ pub(crate) fn build_union_storage_type(
         fields.push((llvm_field_ty, field_size, field_align, contains_pointer));
     }
 
-    let anchor_int = IntegerType::get(ctx, (align * 8) as u32, Signedness::Signless);
+    let storage_align = align.min(16);
+    let anchor_int = IntegerType::get(ctx, (storage_align * 8) as u32, Signedness::Signless);
     let anchor: TypeHandle = llvm_types::ArrayType::get(ctx, anchor_int.into(), 0).into();
     let mut storage_fields = vec![anchor];
     if size > 0 {
@@ -695,9 +787,9 @@ pub(crate) fn build_union_storage_type(
             union_ty.name()
         )
     })?;
-    if llvm_size != size || llvm_align != align {
+    if llvm_size != size || llvm_align > align {
         return Err(anyhow::anyhow!(
-            "union `{}` storage lowered to size/alignment {}/{} but rustc requires {}/{}",
+            "union `{}` storage lowered to incompatible size/alignment {}/{} but rustc requires {}/{}",
             union_ty.name(),
             llvm_size,
             llvm_align,
@@ -739,6 +831,69 @@ struct LlvmPointerStorage {
     address_space: u32,
 }
 
+/// Why a pointer-storage walk refused a type or an overlap.
+///
+/// Distinguishing bounded array expansion from genuine provenance loss keeps
+/// the user-facing diagnostic specific: an oversized pointer array reports the
+/// same "rewrite requires N pointer conversions" contract as the payload
+/// storage gate instead of a misleading provenance error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PointerOverlapRejection {
+    /// Expanding the walked type's fixed arrays into per-leaf records would
+    /// exceed [`MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES`]; `required` is the
+    /// total number of array-expanded pointer leaves.
+    OverArrayLeafBound { required: u64 },
+    /// The type holds pointer storage this walk cannot represent, or the
+    /// overlap would pun a pointer against non-matching bytes.
+    ProvenanceLoss,
+}
+
+/// Total pointer leaves in `ty`, through arrays and structs, with checked
+/// arithmetic. Pointer vectors count zero; every walk that expands leaves
+/// fails closed on them separately.
+fn count_pointer_leaves(ctx: &Context, ty: TypeHandle) -> Option<u64> {
+    let ty_ref = ty.deref(ctx);
+    if ty_ref.is::<llvm_types::PointerType>() {
+        return Some(1);
+    }
+    if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+        return count_pointer_leaves(ctx, array.elem_type())?.checked_mul(array.size());
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+        let fields: Vec<_> = struct_ty.fields().collect();
+        let mut total = 0u64;
+        for field in fields {
+            total = total.checked_add(count_pointer_leaves(ctx, field)?)?;
+        }
+        return Some(total);
+    }
+    Some(0)
+}
+
+/// Pointer leaves that expanding `ty`'s fixed arrays contributes to a
+/// pointer-storage walk.
+///
+/// Leaves outside arrays are proportional to the source text and stay
+/// unbounded, exactly like struct nesting in `enum_payload_storage_type`.
+/// `[&T; N]` expands from three tokens into `N` records, so only
+/// array-expanded leaves count against
+/// [`MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES`].
+fn count_array_pointer_leaves(ctx: &Context, ty: TypeHandle) -> Option<u64> {
+    let ty_ref = ty.deref(ctx);
+    if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+        return count_pointer_leaves(ctx, array.elem_type())?.checked_mul(array.size());
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+        let fields: Vec<_> = struct_ty.fields().collect();
+        let mut total = 0u64;
+        for field in fields {
+            total = total.checked_add(count_array_pointer_leaves(ctx, field)?)?;
+        }
+        return Some(total);
+    }
+    Some(0)
+}
+
 /// Record every pointer-valued leaf in `ty` at its natural LLVM byte offset.
 ///
 /// This is deliberately a physical-layout walk rather than a simple
@@ -746,62 +901,93 @@ struct LlvmPointerStorage {
 /// aggregate payload, for example the pointer at byte 8 in
 /// `Option<(usize, &T)>`. In that case the aggregate and the carrier overlap,
 /// but they agree exactly about which bytes hold the pointer.
+///
+/// Expanding an arbitrary array into one record per pointer would let a valid
+/// but enormous type consume unbounded verifier memory, so the walk first
+/// counts the array-expanded leaves and refuses anything over
+/// [`MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES`] with the bound-specific
+/// rejection before allocating a single record.
 fn collect_llvm_pointer_storage(
     ctx: &Context,
     ty: TypeHandle,
     base_offset: u64,
     out: &mut Vec<LlvmPointerStorage>,
-) -> Option<()> {
-    let ty_ref = ty.deref(ctx);
-    if let Some(pointer) = ty_ref.downcast_ref::<llvm_types::PointerType>() {
-        let (size, _) = llvm_type_size_align(ctx, ty)?;
-        out.push(LlvmPointerStorage {
-            offset: base_offset,
-            size,
-            address_space: pointer.address_space(),
-        });
-        return Some(());
-    }
-    if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
-        // Expanding an arbitrary array into one record per pointer would let
-        // a valid but enormous type consume unbounded verifier memory. This
-        // repair needs only fixed structs; keep pointer arrays fail-closed.
-        return (!llvm_type_contains_pointer(ctx, array.elem_type())).then_some(());
-    }
-    if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
-        // Pointer vectors have the same unbounded-expansion problem as arrays
-        // and also carry vector-specific ABI alignment. Reject rather than
-        // approximating either property.
-        return (!llvm_type_contains_pointer(ctx, vector.elem_type())).then_some(());
-    }
-    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
-        let fields: Vec<_> = struct_ty.fields().collect();
-        let mut end = 0u64;
-        for field in fields {
-            let (field_size, field_align) = llvm_type_size_align(ctx, field)?;
-            let field_align = field_align.max(1);
-            let remainder = end % field_align;
-            let field_offset = if remainder == 0 {
-                end
-            } else {
-                end.checked_add(field_align - remainder)?
-            };
-            collect_llvm_pointer_storage(ctx, field, base_offset.checked_add(field_offset)?, out)?;
-            end = field_offset.checked_add(field_size)?;
+) -> std::result::Result<(), PointerOverlapRejection> {
+    fn collect(
+        ctx: &Context,
+        ty: TypeHandle,
+        base_offset: u64,
+        out: &mut Vec<LlvmPointerStorage>,
+    ) -> Option<()> {
+        let ty_ref = ty.deref(ctx);
+        if let Some(pointer) = ty_ref.downcast_ref::<llvm_types::PointerType>() {
+            let (size, _) = llvm_type_size_align(ctx, ty)?;
+            out.push(LlvmPointerStorage {
+                offset: base_offset,
+                size,
+                address_space: pointer.address_space(),
+            });
+            return Some(());
         }
-        return Some(());
+        if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+            let element_ty = array.elem_type();
+            if !llvm_type_contains_pointer(ctx, element_ty) {
+                return Some(());
+            }
+            let (element_size, _) = llvm_type_size_align(ctx, element_ty)?;
+            for index in 0..array.size() {
+                let element_offset = element_size.checked_mul(index)?;
+                collect(
+                    ctx,
+                    element_ty,
+                    base_offset.checked_add(element_offset)?,
+                    out,
+                )?;
+            }
+            return Some(());
+        }
+        if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
+            // Pointer vectors carry vector-specific ABI alignment and cast
+            // semantics. Keep them fail-closed rather than treating them like
+            // fixed arrays.
+            return (!llvm_type_contains_pointer(ctx, vector.elem_type())).then_some(());
+        }
+        if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+            let fields: Vec<_> = struct_ty.fields().collect();
+            let mut end = 0u64;
+            for field in fields {
+                let (field_size, field_align) = llvm_type_size_align(ctx, field)?;
+                let field_align = field_align.max(1);
+                let remainder = end % field_align;
+                let field_offset = if remainder == 0 {
+                    end
+                } else {
+                    end.checked_add(field_align - remainder)?
+                };
+                collect(ctx, field, base_offset.checked_add(field_offset)?, out)?;
+                end = field_offset.checked_add(field_size)?;
+            }
+            return Some(());
+        }
+
+        // All pointer-bearing LLVM types understood by this lowering are
+        // handled above. Unknown pointer containers must fail closed.
+        (!llvm_type_contains_pointer(ctx, ty)).then_some(())
     }
 
-    // All pointer-bearing LLVM types understood by this lowering are handled
-    // above. Unknown pointer containers must fail closed.
-    (!llvm_type_contains_pointer(ctx, ty)).then_some(())
+    let required =
+        count_array_pointer_leaves(ctx, ty).ok_or(PointerOverlapRejection::ProvenanceLoss)?;
+    if required > MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES {
+        return Err(PointerOverlapRejection::OverArrayLeafBound { required });
+    }
+    collect(ctx, ty, base_offset, out).ok_or(PointerOverlapRejection::ProvenanceLoss)
 }
 
 /// Analyze how a slotless incoming pointer-bearing field overlaps the enum's
 /// already-selected storage, and report how to back every one of its pointers
 /// with a real `ptr` slot.
 ///
-/// Returns `Some(extra)` when the field is representable without erasing any
+/// Returns `Ok(extra)` when the field is representable without erasing any
 /// pointer's provenance: every pointer leaf that coincides with an existing
 /// claim reuses that claim, and each remaining ("extra") pointer leaf lands on
 /// bytes no other claim covers, so it can be backed by its own fresh `ptr`
@@ -812,20 +998,29 @@ fn collect_llvm_pointer_storage(
 /// &mut [T])>` from `split_at_mut_checked`, whose second slice pointer needs a
 /// slot of its own beside the carrier).
 ///
-/// Returns `None` when the field cannot be represented without punning a
-/// pointer against non-pointer bits: an existing pointer slot the incoming
-/// field does not also carry at the same offset/size/address space, or an extra
-/// pointer leaf that would overlap an existing (necessarily non-pointer) claim.
-/// That genuine pointer/integer union stays fail-closed — there is no single
-/// LLVM slot type that is both provenance-carrying and integer-exact.
+/// Returns [`PointerOverlapRejection::ProvenanceLoss`] when the field cannot
+/// be represented without punning a pointer against non-pointer bits: an
+/// existing pointer slot the incoming field does not also carry at the same
+/// offset/size/address space, or an extra pointer leaf that would overlap an
+/// existing (necessarily non-pointer) claim. That genuine pointer/integer
+/// union stays fail-closed — there is no single LLVM slot type that is both
+/// provenance-carrying and integer-exact.
+///
+/// Returns [`PointerOverlapRejection::OverArrayLeafBound`] when a walked type
+/// holds more array-expanded pointer leaves than the bounded rewrite limit,
+/// so the caller can report the bound instead of a provenance error.
 fn analyze_pointer_overlap(
     ctx: &Context,
     incoming_offset: u64,
     incoming_size: u64,
     incoming_ty: TypeHandle,
     colliding_claims: &[&(u64, u64, TypeHandle)],
-) -> Option<Vec<LlvmPointerStorage>> {
-    let incoming_end = incoming_offset.checked_add(incoming_size)?;
+) -> std::result::Result<Vec<LlvmPointerStorage>, PointerOverlapRejection> {
+    use PointerOverlapRejection::ProvenanceLoss;
+
+    let incoming_end = incoming_offset
+        .checked_add(incoming_size)
+        .ok_or(ProvenanceLoss)?;
 
     let mut incoming = Vec::new();
     collect_llvm_pointer_storage(ctx, incoming_ty, incoming_offset, &mut incoming)?;
@@ -848,7 +1043,7 @@ fn analyze_pointer_overlap(
     // a pointer claim where the field has integer bits).
     for leaf in &existing {
         if !incoming.contains(leaf) {
-            return None;
+            return Err(ProvenanceLoss);
         }
     }
 
@@ -861,7 +1056,7 @@ fn analyze_pointer_overlap(
         if existing.contains(leaf) {
             continue;
         }
-        let leaf_end = leaf.offset.checked_add(leaf.size)?;
+        let leaf_end = leaf.offset.checked_add(leaf.size).ok_or(ProvenanceLoss)?;
         let overlaps_claim = colliding_claims.iter().any(|&&(o, s, _)| {
             let Some(claim_end) = o.checked_add(s) else {
                 return true;
@@ -869,12 +1064,12 @@ fn analyze_pointer_overlap(
             o < leaf_end && leaf.offset < claim_end
         });
         if overlaps_claim {
-            return None;
+            return Err(ProvenanceLoss);
         }
         extra.push(*leaf);
     }
 
-    Some(extra)
+    Ok(extra)
 }
 
 pub(crate) fn llvm_type_contains_pointer_in_address_space(
@@ -1068,16 +1263,22 @@ pub(crate) fn llvm_type_is_byte_faithful(ctx: &Context, ty: TypeHandle) -> bool 
 
 /// Size of a MIR-level type from rustc layout truth, when stored.
 ///
-/// `MirStructType`, `MirUnionType`, and `MirEnumType` carry `total_size` (interior and
-/// trailing padding included) straight from rustc's layout query; arrays
-/// of such aggregates multiply it out. Returns `None` when no stored size
-/// is available (e.g. niched/single-variant enums store 0) and the caller
-/// must fall back to the LLVM-level approximation.
+/// `MirStructType`, `MirTupleType`, `MirUnionType`, and `MirEnumType` carry
+/// `total_size` (interior and trailing padding included) straight from
+/// rustc's layout query; arrays of such aggregates multiply it out. Returns
+/// `None` when no stored size is available (e.g. niched/single-variant enums
+/// store 0) and the caller must fall back to the LLVM-level approximation.
 fn mir_stored_size(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
     let ty_ref = mir_ty.deref(ctx);
     if let Some(s) = ty_ref.downcast_ref::<MirStructType>() {
         if s.total_size() > 0 {
             return Some(s.total_size());
+        }
+        return None;
+    }
+    if let Some(t) = ty_ref.downcast_ref::<MirTupleType>() {
+        if t.total_size > 0 {
+            return Some(t.total_size);
         }
         return None;
     }
@@ -1090,10 +1291,61 @@ fn mir_stored_size(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
     if let Some(u) = ty_ref.downcast_ref::<MirUnionType>() {
         return Some(u.total_size());
     }
-    if let Some(a) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
+    if let Some(a) = ty_ref.downcast_ref::<MirArrayType>() {
         let elem_ty = a.element_ty;
         let size = a.size;
-        return mir_stored_size(ctx, elem_ty).map(|elem_size| elem_size * size);
+        // Checked: alignment claims consume this, and a wrapped product
+        // would masquerade as a small, trusted stride.
+        return mir_stored_size(ctx, elem_ty).and_then(|elem_size| elem_size.checked_mul(size));
+    }
+    None
+}
+
+/// Exact byte stride of a MIR array's element, when provable.
+///
+/// Element `i` of an array lives at byte `i * stride`, so any alignment
+/// claim about an element address is only as strong as the stride it
+/// multiplies, and a wrong stride is a miscompile. Scalars have exact
+/// sizes; MIR aggregates answer with rustc's stored size (interior and
+/// trailing padding included) via [`mir_stored_size`]; arrays of scalars
+/// multiply out. Everything else answers `None` so the caller declines
+/// instead of guessing. In particular [`get_type_size`] is not a
+/// substitute here: it falls back to 8 for the MIR aggregate types it
+/// does not model.
+pub(crate) fn mir_element_stride(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
+    if let Some(size) = mir_stored_size(ctx, mir_ty) {
+        return Some(size);
+    }
+    let ty_ref = mir_ty.deref(ctx);
+    if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+        return Some(u64::from(int_ty.width()).div_ceil(8));
+    }
+    // The importer's f16 is MirFP16Type; the HalfType arm covers IR that
+    // already carries the converted LLVM scalar.
+    if ty_ref.is::<MirFP16Type>() || ty_ref.is::<llvm_types::HalfType>() {
+        return Some(2);
+    }
+    if ty_ref.is::<FP32Type>() {
+        return Some(4);
+    }
+    if ty_ref.is::<FP64Type>() {
+        return Some(8);
+    }
+    if let Some(ptr_ty) = ty_ref.downcast_ref::<MirPtrType>() {
+        // Generic-space pointers are 64-bit under every data layout the
+        // exporter can choose; a shared-space pointer is 32-bit under the
+        // modern NVVM layout alone, so its stored stride is target-dependent.
+        // Claim the former, decline the latter.
+        return (ptr_ty.address_space == 0).then_some(8);
+    }
+    if let Some(array_ty) = ty_ref.downcast_ref::<MirArrayType>() {
+        // Arrays of sized aggregates already answered through
+        // `mir_stored_size` above; this recursion serves arrays of
+        // scalars and pointers, and deeper such arrays.
+        let element_ty = array_ty.element_type();
+        let count = array_ty.size();
+        drop(ty_ref);
+        return mir_element_stride(ctx, element_ty)?.checked_mul(count);
     }
     None
 }
@@ -1154,8 +1406,9 @@ pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64
     if ty_ref.is::<llvm_types::PointerType>() {
         // Lowering runs before the exporter chooses the minimal, legacy, or
         // modern NVPTX data layout. The first two use 64-bit pointers in all
-        // address spaces; modern NVVM alone uses p3:32. Enum storage rejects
-        // shared pointers below because no one target-agnostic size is sound.
+        // address spaces; modern NVVM alone uses p3:32. Callers that expose
+        // physical shared-pointer width must either genericize a direct
+        // pointer first or reject the target-dependent representation.
         return Some((8, 8));
     }
     if let Some(arr_ty) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
@@ -1202,6 +1455,29 @@ pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64
     None
 }
 
+/// The one walk defining natural (non-packed) LLVM struct placement: each
+/// field starts at the running offset rounded up to its own alignment.
+///
+/// Returns `(offsets, end, align)`: the byte offset of every field, the
+/// unrounded offset just past the last field, and the widest field alignment.
+/// [`natural_struct_layout`] and [`StructSlotMap::natural_slot_offsets`] are
+/// both views of this walk, so a size question and an offset question can
+/// never disagree.
+fn natural_layout_walk(ctx: &Context, fields: &[TypeHandle]) -> Option<(Vec<u64>, u64, u64)> {
+    let mut offsets = Vec::with_capacity(fields.len());
+    let mut end = 0u64;
+    let mut align = 1u64;
+    for field in fields {
+        let (field_size, field_align) = llvm_type_size_align(ctx, *field)?;
+        let field_align = field_align.max(1);
+        end = end.div_ceil(field_align) * field_align;
+        offsets.push(end);
+        end = end.checked_add(field_size)?;
+        align = align.max(field_align);
+    }
+    Some((offsets, end, align))
+}
+
 /// Natural (non-packed) LLVM struct layout over `fields`.
 ///
 /// Returns `(end, size, align)` where `end` is the unrounded offset just past
@@ -1212,15 +1488,7 @@ pub(crate) fn natural_struct_layout(
     ctx: &Context,
     fields: &[TypeHandle],
 ) -> Option<(u64, u64, u64)> {
-    let mut end = 0u64;
-    let mut align = 1u64;
-    for field in fields {
-        let (field_size, field_align) = llvm_type_size_align(ctx, *field)?;
-        let field_align = field_align.max(1);
-        end = end.div_ceil(field_align) * field_align;
-        end += field_size;
-        align = align.max(field_align);
-    }
+    let (_offsets, end, align) = natural_layout_walk(ctx, fields)?;
     let size = end.div_ceil(align) * align;
     Some((end, size, align))
 }
@@ -1458,18 +1726,15 @@ pub(crate) fn build_enum_slot_map(
             continue;
         }
         let llvm_ty = field_llvm_types[flat];
-        if llvm_type_contains_pointer_in_address_space(
-            ctx,
-            llvm_ty,
-            llvm_types::address_space::SHARED,
-        ) {
-            return Err(anyhow::anyhow!(
-                "enum slot map: `{}` field {} contains a shared-memory pointer whose size is target-mode dependent (64-bit PTX/legacy, 32-bit modern NVVM); refusing target-agnostic enum lowering",
-                name,
-                flat
-            ));
-        }
-        let (size, align) = llvm_type_size_align(ctx, llvm_ty).ok_or_else(|| {
+        // Enum payload storage uses one target-stable physical view. Shared
+        // pointer leaves become generic pointers recursively through LLVM
+        // structs (MIR structs/tuples) and bounded arrays, while bool leaves
+        // become canonical i8 bytes. Oversized shared-pointer arrays and
+        // pointer vectors fail closed here.
+        let storage_ty = enum_payload_storage_type(ctx, llvm_ty).map_err(|error| {
+            anyhow::anyhow!("enum slot map: `{}` field {}: {error}", name, flat)
+        })?;
+        let (size, align) = llvm_type_size_align(ctx, storage_ty).ok_or_else(|| {
             anyhow::anyhow!(
                 "enum slot map: `{}` field {} has unsupported LLVM size/alignment",
                 name,
@@ -1568,18 +1833,11 @@ pub(crate) fn build_enum_slot_map(
         // construction canonicalizes the value and writes it at its byte
         // offset; extraction re-loads the original type from the canonical
         // bytes, exactly like the scalar-bool path above.
-        let storage_ty = if llvm_type_contains_i1(ctx, llvm_ty) {
-            llvm_byte_faithful_twin(ctx, llvm_ty).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "enum slot map: `{}` field {} contains bool storage in a shape (e.g. an i1 vector) whose memory bytes cannot be canonicalized",
-                    name,
-                    flat
-                )
-            })?
-        } else {
-            llvm_ty
-        };
-        let field_gets_slot = storage_ty == llvm_ty;
+        // Bool-bearing aggregates remain slotless so their canonical byte view
+        // continues through the established spill path. Pointer-only nested
+        // aggregates may own a slot because construction/extraction now rebuild
+        // them recursively at the semantic/physical boundary.
+        let field_gets_slot = !llvm_type_contains_i1(ctx, llvm_ty);
 
         // Another variant already placed the same storage type at the same
         // position? Then both fields can simply use that claim: variants
@@ -1614,12 +1872,20 @@ pub(crate) fn build_enum_slot_map(
             // niche carrier backs the leaf that coincides with it; any further
             // pointer leaf (the extra slice pointer in `split_at_mut_checked`'s
             // `Option<(&mut [T], &mut [T])>`) gets its own fresh `ptr` slot.
-            // `None` means a pointer punned against non-pointer bits, which
-            // stays fail-closed.
+            // `ProvenanceLoss` means a pointer punned against non-pointer
+            // bits, which stays fail-closed; `OverArrayLeafBound` reports the
+            // same bounded rewrite contract as the payload storage gate.
             let extra_pointer_claims = if has_pointer_overlap {
                 match analyze_pointer_overlap(ctx, offset, size, storage_ty, &colliding_claims) {
-                    Some(extra) => extra,
-                    None => {
+                    Ok(extra) => extra,
+                    Err(PointerOverlapRejection::OverArrayLeafBound { required }) => {
+                        return Err(anyhow::anyhow!(
+                            "enum slot map: `{}` field {} overlaps pointer storage whose arrays are not supported above the bounded rewrite limit; rewrite requires {required} pointer conversions, supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}",
+                            name,
+                            flat
+                        ));
+                    }
+                    Err(PointerOverlapRejection::ProvenanceLoss) => {
                         return Err(anyhow::anyhow!(
                             "enum slot map: `{}` has overlapping pointer and non-identical storage at byte {}; refusing to erase LLVM pointer provenance",
                             name,
@@ -1658,7 +1924,8 @@ pub(crate) fn build_enum_slot_map(
     }
 
     // Phase 2: lay the slots down in byte order, filling every gap (and
-    // the tail) with [N x i8] so the struct's size is exactly rustc's.
+    // the tail) so the struct's size is exactly rustc's. One integer per gap
+    // where that is layout-neutral, else [N x i8]; see `make_enum_filler_type`.
     let mut emit_order: Vec<usize> = (0..claims.len()).collect();
     emit_order.sort_by_key(|&ci| claims[ci].0);
     let mut llvm_fields: Vec<TypeHandle> = Vec::new();
@@ -1667,7 +1934,9 @@ pub(crate) fn build_enum_slot_map(
     for &ci in &emit_order {
         let (offset, size, llvm_ty) = claims[ci];
         if current_offset < offset {
-            llvm_fields.push(make_padding_type(ctx, offset - current_offset));
+            let filler =
+                make_enum_filler_type(ctx, current_offset, offset - current_offset, abi_align);
+            llvm_fields.push(filler);
             current_offset = offset;
         }
         slot_of_claim[ci] = llvm_fields.len() as u32;
@@ -1675,7 +1944,9 @@ pub(crate) fn build_enum_slot_map(
         current_offset += size;
     }
     if current_offset < total_size {
-        llvm_fields.push(make_padding_type(ctx, total_size - current_offset));
+        let filler =
+            make_enum_filler_type(ctx, current_offset, total_size - current_offset, abi_align);
+        llvm_fields.push(filler);
     }
 
     // Sanity: the struct we just built must be exactly rustc's size.
@@ -1785,7 +2056,9 @@ pub(crate) fn find_unmodeled_enum_in_abi(
         } else if let Some(s) = ty_ref.downcast_ref::<MirSliceType>() {
             vec![s.element_ty]
         } else if let Some(s) = ty_ref.downcast_ref::<MirDisjointSliceType>() {
-            vec![s.element_ty]
+            let mut nested = vec![s.element_ty];
+            nested.extend_from_slice(&s.space_tys);
+            nested
         } else if let Some(a) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
             vec![a.element_ty]
         } else if let Some(s) = ty_ref.downcast_ref::<MirStructType>() {
@@ -2154,6 +2427,26 @@ pub(crate) fn make_slice_struct(ctx: &mut Context) -> TypeHandle {
     let ptr_ty = llvm_types::PointerType::get_generic(ctx);
     let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
     llvm_types::StructType::get_unnamed(ctx, vec![ptr_ty.into(), len_ty.into()]).into()
+}
+
+/// The fat pointer, followed by an index space's runtime layout fields.
+///
+/// With no such fields this is exactly [`make_slice_struct`], so a slice over
+/// an index space fixed in its type keeps its two-field representation.
+pub(crate) fn make_disjoint_slice_struct(
+    ctx: &mut Context,
+    space_tys: &[TypeHandle],
+) -> anyhow::Result<TypeHandle> {
+    if space_tys.is_empty() {
+        return Ok(make_slice_struct(ctx));
+    }
+    let ptr_ty = llvm_types::PointerType::get_generic(ctx);
+    let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let mut fields: Vec<TypeHandle> = vec![ptr_ty.into(), len_ty.into()];
+    for space_ty in space_tys {
+        fields.push(convert_type(ctx, *space_ty)?);
+    }
+    Ok(llvm_types::StructType::get_unnamed(ctx, fields).into())
 }
 
 #[cfg(test)]
@@ -2798,14 +3091,16 @@ mod tests {
         .into();
         // The pointer at byte 0 never shares bytes with the integer niche
         // carrier at byte 8, so it is representable: it gets its own `ptr` slot
-        // and the carrier stays an integer slot. `{ptr@0, i32@8, pad}`.
+        // and the carrier stays an integer slot. `{ptr@0, i32@8, i32 filler}`
+        // -- the trailing 4 bytes are 4-aligned inside an 8-aligned enum, so
+        // they lower to one `i32` rather than `[4 x i8]`.
         let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
         assert_eq!(map.field_slots, vec![None]);
         let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
         let carrier: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         assert_eq!(
             struct_fields(&ctx, map.llvm_struct_ty),
-            vec![lowered_pointer, carrier, pad(&mut ctx, 4)]
+            vec![lowered_pointer, carrier, llvm_int(&mut ctx, 32)]
         );
         assert_eq!(
             llvm_type_size_align(&ctx, map.llvm_struct_ty),
@@ -2897,11 +3192,13 @@ mod tests {
                 Some((16, 8))
             );
             let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
-            let padding = pad(&mut ctx, 8);
+            // The 8 bytes the pointer slot does not claim are 8-aligned inside
+            // an 8-aligned enum, so they lower to one `i64`, not `[8 x i8]`.
+            let filler = llvm_int(&mut ctx, 64);
             let expected = if pointer_first {
-                vec![lowered_pointer, padding]
+                vec![lowered_pointer, filler]
             } else {
-                vec![padding, lowered_pointer]
+                vec![filler, lowered_pointer]
             };
             assert_eq!(struct_fields(&ctx, map.llvm_struct_ty), expected);
         }
@@ -3018,14 +3315,15 @@ mod tests {
         let map = build_enum_slot_map(&mut ctx, enum_ty).unwrap();
         assert_eq!(map.field_slots, vec![None]);
         let lowered_pointer = convert_type(&mut ctx, pointer).unwrap();
+        // Each slice's length sits in the 8 bytes after its pointer, 8-aligned
+        // inside an 8-aligned enum, so both lower to one `i64`. This is the
+        // `split_at_mut_checked` shape, and the whole point of the widening:
+        // `{ptr, i64, ptr, i64}` moves two lengths as two values, where
+        // `{ptr, [8 x i8], ptr, [8 x i8]}` moved them as sixteen separate bytes.
+        let filler = llvm_int(&mut ctx, 64);
         assert_eq!(
             struct_fields(&ctx, map.llvm_struct_ty),
-            vec![
-                lowered_pointer,
-                pad(&mut ctx, 8),
-                lowered_pointer,
-                pad(&mut ctx, 8),
-            ]
+            vec![lowered_pointer, filler, lowered_pointer, filler]
         );
         assert_eq!(
             llvm_type_size_align(&ctx, map.llvm_struct_ty),
@@ -3206,7 +3504,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_slot_map_rejects_nonoverlapping_shared_pointer_payload() {
+    fn enum_slot_map_genericizes_nonoverlapping_shared_pointer_payload() {
         let mut ctx = make_ctx();
         let discr = mir_uint(&mut ctx, 32);
         let u32_ty = mir_uint(&mut ctx, 32);
@@ -3232,10 +3530,396 @@ mod tests {
             },
         )
         .into();
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("a direct shared-pointer payload should use generic physical storage");
+        let field_slot = map.field_slots[0].expect("shared pointer field should own a slot");
+        let stored_ty = map
+            .llvm_struct_ty
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .map(|struct_ty| struct_ty.field_type(field_slot as usize))
+            .expect("field slot must exist");
+        assert_eq!(
+            stored_ty
+                .deref(&ctx)
+                .downcast_ref::<llvm_types::PointerType>()
+                .expect("shared pointer storage must remain a pointer")
+                .address_space(),
+            llvm_types::address_space::GENERIC,
+            "enum storage must use a target-stable generic pointer"
+        );
+        assert_eq!(
+            map.field_llvm_types[0]
+                .deref(&ctx)
+                .downcast_ref::<llvm_types::PointerType>()
+                .expect("semantic field must remain a pointer")
+                .address_space(),
+            llvm_types::address_space::SHARED,
+            "payload operations must retain the semantic shared address space"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_genericizes_nested_shared_pointer_payload() {
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, u32_ty, false).into();
+        let wrapper: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "SharedPointerWrapper".into(),
+            vec!["pointer".into()],
+            vec![shared],
+            vec![0],
+            vec![0],
+            8,
+            8,
+        )
+        .into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "NestedSharedPointerPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout("Ptr".into(), vec![wrapper], vec![8], vec![8]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 16,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("a struct-nested shared pointer should use generic physical storage");
+        let field_slot = map.field_slots[0].expect("nested payload should own a slot");
+        let stored_ty = map
+            .llvm_struct_ty
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .map(|struct_ty| struct_ty.field_type(field_slot as usize))
+            .expect("field slot must exist");
+        assert!(
+            llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                stored_ty,
+                llvm_types::address_space::GENERIC
+            ),
+            "physical nested payload must contain a generic pointer"
+        );
+        assert!(
+            !llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                stored_ty,
+                llvm_types::address_space::SHARED
+            ),
+            "physical nested payload must not retain the target-dependent AS3 pointer"
+        );
+        assert!(
+            llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                map.field_llvm_types[0],
+                llvm_types::address_space::SHARED
+            ),
+            "semantic payload type must retain shared address-space semantics"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_genericizes_bounded_shared_pointer_array_payload() {
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, u32_ty, false).into();
+        let pointers: TypeHandle = MirArrayType::get(&mut ctx, shared, 2).into();
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "SharedPointerArrayPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout("Pointers".into(), vec![pointers], vec![8], vec![16]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 24,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let map = build_enum_slot_map(&mut ctx, enum_ty)
+            .expect("a bounded shared-pointer array should use generic physical storage");
+        let field_slot = map.field_slots[0].expect("bounded pointer array should own a slot");
+        let stored_ty = map
+            .llvm_struct_ty
+            .deref(&ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .map(|struct_ty| struct_ty.field_type(field_slot as usize))
+            .expect("field slot must exist");
+        assert!(
+            llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                stored_ty,
+                llvm_types::address_space::GENERIC
+            ),
+            "physical array payload must contain generic pointers"
+        );
+        assert!(
+            !llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                stored_ty,
+                llvm_types::address_space::SHARED
+            ),
+            "physical array payload must not retain target-dependent AS3 pointers"
+        );
+        assert!(
+            llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                map.field_llvm_types[0],
+                llvm_types::address_space::SHARED
+            ),
+            "semantic array payload must retain shared address-space semantics"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_oversized_shared_pointer_array_payload() {
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, u32_ty, false).into();
+        let count = MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES + 1;
+        let pointers: TypeHandle = MirArrayType::get(&mut ctx, shared, count).into();
+        let payload_size = count * 8;
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "OversizedSharedPointerArrayPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout(
+                    "Pointers".into(),
+                    vec![pointers],
+                    vec![8],
+                    vec![payload_size],
+                ),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 8 + payload_size,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
         let error = build_enum_slot_map(&mut ctx, enum_ty)
             .err()
-            .expect("shared pointer enum payload must reject");
-        assert!(error.to_string().contains("target-mode dependent"));
+            .expect("an oversized shared-pointer array must remain fail-closed");
+        assert!(
+            error
+                .to_string()
+                .contains("arrays containing shared-memory pointers are not supported"),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains(&format!(
+                "supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}"
+            )),
+            "{error}"
+        );
+    }
+
+    /// A struct payload holding two shared-pointer arrays whose leaves exceed
+    /// the bound only in total. The slot map is target-mode agnostic (it is
+    /// built once, before the exporter picks the legacy 64-bit or modern
+    /// p3:32 data layout), so this one gate covers both output modes.
+    fn struct_of_shared_pointer_arrays_over_total_bound(ctx: &mut Context) -> TypeHandle {
+        let u32_ty = mir_uint(ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(ctx, u32_ty, false).into();
+        let first: TypeHandle = MirArrayType::get(ctx, shared, 9).into();
+        let second: TypeHandle = MirArrayType::get(ctx, shared, 8).into();
+        MirStructType::get_with_full_layout(
+            ctx,
+            "SharedPointerArrayPair".into(),
+            vec!["first".into(), "second".into()],
+            vec![first, second],
+            vec![],
+            vec![0, 72],
+            136,
+            8,
+        )
+        .into()
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_struct_of_shared_pointer_arrays_over_total_bound() {
+        // Each array alone (9 and 8 leaves) is within the bound; their total
+        // of 17 is not. The payload-root gate must reject the direct layout
+        // with the same bound diagnostic as a single oversized array.
+        let mut ctx = make_ctx();
+        let discr = mir_uint(&mut ctx, 32);
+        let payload = struct_of_shared_pointer_arrays_over_total_bound(&mut ctx);
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "StructOfSharedPointerArraysPayload".into(),
+            discr,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("Unit".into()),
+                EnumVariant::new_with_layout("Pointers".into(), vec![payload], vec![8], vec![136]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 144,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Direct,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 32,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("two in-bound arrays exceeding the bound in total must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("arrays containing shared-memory pointers are not supported"),
+            "{error}"
+        );
+        assert!(
+            error.to_string().contains(&format!(
+                "rewrite requires 17 pointer conversions, supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}"
+            )),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_rejects_struct_of_shared_pointer_arrays_in_niche_layout() {
+        // The same over-bound payload in a niche layout must report the same
+        // bound diagnostic as the direct layout, not a pointer-provenance
+        // error from the overlap walk: the payload-root gate runs first in
+        // both layouts.
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 64);
+        let payload = struct_of_shared_pointer_arrays_over_total_bound(&mut ctx);
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "NicheStructOfSharedPointerArrays".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout("Some".into(), vec![payload], vec![0], vec![136]),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: 136,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("the payload-root bound must also gate niche layouts");
+        assert!(
+            error.to_string().contains(&format!(
+                "rewrite requires 17 pointer conversions, supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}"
+            )),
+            "{error}"
+        );
+        assert!(
+            !error.to_string().contains("pointer provenance"),
+            "the bound diagnostic must not be masked by the provenance error: {error}"
+        );
+    }
+
+    #[test]
+    fn enum_slot_map_reports_bound_for_oversized_pointer_array_over_niche_carrier() {
+        // Generic pointers pass the shared-pointer storage gate untouched, so
+        // an oversized generic-pointer array reaches the overlap walk. Its
+        // exhausted expansion budget must surface the bound diagnostic, not
+        // the unrelated provenance error.
+        let mut ctx = make_ctx();
+        let logical = mir_uint(&mut ctx, 64);
+        let pointee = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+        let count = MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES + 1;
+        let pointers: TypeHandle = MirArrayType::get(&mut ctx, pointer, count).into();
+        let payload_size = count * 8;
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "NicheOversizedGenericPointerArray".into(),
+            logical,
+            vec![0, 1],
+            vec![
+                EnumVariant::unit("None".into()),
+                EnumVariant::new_with_layout(
+                    "Some".into(),
+                    vec![pointers],
+                    vec![0],
+                    vec![payload_size],
+                ),
+            ],
+            EnumEncoding {
+                tag_offset: 0,
+                total_size: payload_size,
+                abi_align: 8,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Pointer,
+                carrier_width: 64,
+                untagged_variant: 1,
+                variant_inhabited: vec![1, 1],
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
+
+        let error = build_enum_slot_map(&mut ctx, enum_ty)
+            .err()
+            .expect("an oversized pointer-array expansion over a niche carrier must fail closed");
+        assert!(
+            error.to_string().contains(&format!(
+                "rewrite requires {count} pointer conversions, supported bound is {MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES}"
+            )),
+            "{error}"
+        );
+        assert!(
+            !error.to_string().contains("pointer provenance"),
+            "the bound diagnostic must not be masked by the provenance error: {error}"
+        );
     }
 
     #[test]
@@ -3349,7 +4033,7 @@ mod tests {
     }
 
     #[test]
-    fn union_storage_rejects_unrepresentable_over_alignment() {
+    fn union_storage_preserves_over_aligned_size_and_stride() {
         let mut ctx = make_ctx();
         let u32_ty = mir_uint(&mut ctx, 32);
         let union_ty = MirUnionType::get(
@@ -3361,8 +4045,13 @@ mod tests {
             32,
         );
         let union_data = union_ty.deref(&ctx).clone();
-        let err = build_union_storage_type(&mut ctx, &union_data).unwrap_err();
-        assert!(err.to_string().contains("up to 16 bytes"));
+        let storage = build_union_storage_type(&mut ctx, &union_data).unwrap();
+        assert_eq!(llvm_type_size_align(&ctx, storage), Some((32, 16)));
+
+        let union_handle: TypeHandle = union_ty.into();
+        let array: TypeHandle = MirArrayType::get(&mut ctx, union_handle, 3).into();
+        let llvm_array = convert_type(&mut ctx, array).unwrap();
+        assert_eq!(llvm_type_size_align(&ctx, llvm_array), Some((96, 16)));
     }
 
     #[test]

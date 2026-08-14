@@ -773,12 +773,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_output_marker_with_24_inputs() {
-        let kind = InlinePtxCallKind::from_path("cuda_device::ptx::__ptx_asm_out_24")
+    fn parses_output_marker_with_32_inputs() {
+        let kind = InlinePtxCallKind::from_path("cuda_device::ptx::__ptx_asm_out_32")
             .expect("output marker should be recognized");
 
-        assert!(matches!(kind, InlinePtxCallKind::Output { inputs: 24 }));
-        assert_eq!(kind.inputs(), 24);
+        assert!(matches!(kind, InlinePtxCallKind::Output { inputs: 32 }));
+        assert_eq!(kind.inputs(), 32);
         assert!(kind.has_output());
     }
 }

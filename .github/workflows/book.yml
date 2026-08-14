@@ -3,20 +3,37 @@ name: Deploy cuda-oxide Book
 on:
   push:
     branches: [main]
+  # Validate the book on PRs too. The build job alone runs there; `deploy` is
+  # gated below, so a pull request never publishes. Without this the book was
+  # only ever built after merge, so a PR that broke it could not be caught by
+  # review or by CI.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
+# Only checkout rights by default. The Pages deployment permissions live on
+# the deploy job alone, so the build job, which is what pull requests run,
+# never holds a write token.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
+# Serialising every run under one `pages` group is a deploy constraint, and
+# applying it workflow-wide would queue unrelated PR builds behind each other.
+# Scope this to the ref, and keep the single-deploy guarantee on the deploy job
+# itself. Superseded PR runs are cancelled; pushes to main are not, so a
+# publish in flight is never interrupted.
 concurrency:
-  group: pages
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A pip install plus one sphinx-build; the job settles in ~2 minutes. Every
+    # other workflow in the repo bounds its jobs, and an unbounded one that
+    # hangs -- a wedged install, a sphinx that never returns -- burns to the
+    # 6-hour default instead of failing.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -29,8 +46,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r cuda-oxide-book/requirements.txt
 
+      # `-W` matches the Rust docs gate, which builds under
+      # RUSTDOCFLAGS="-D warnings". Without it a broken cross-reference, a
+      # malformed directive or a page dropped from a toctree still exits 0 and
+      # publishes. `--keep-going` reports every warning in one run instead of
+      # stopping at the first.
       - name: Build Sphinx site
-        run: sphinx-build -b html cuda-oxide-book cuda-oxide-book/_build/html
+        run: >-
+          sphinx-build -W --keep-going -b html
+          cuda-oxide-book cuda-oxide-book/_build/html
 
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -38,7 +62,20 @@ jobs:
 
   deploy:
     needs: build
+    # Publishing is for main only. A pull request builds the book to prove it
+    # is sound and stops there; it never touches the Pages environment or
+    # holds the deployment permissions below.
+    if: github.event_name != 'pull_request'
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
+    # One deploy-pages action. It waits on the Pages API, which is exactly the
+    # kind of step worth bounding rather than leaving to the 6-hour default.
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

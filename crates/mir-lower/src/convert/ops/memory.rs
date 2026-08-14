@@ -49,14 +49,17 @@
 //! ```
 
 use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
-use crate::convert::types::{convert_type, get_type_size, validate_initialized_global_layout};
+use crate::convert::types::{
+    StructLayoutInfo, build_struct_slot_map, convert_type, get_type_size, mir_type_abi_align,
+    validate_initialized_global_layout,
+};
 use crate::helpers;
-use dialect_mir::types::MirPtrType;
+use dialect_mir::types::{MirPtrType, MirStructType};
 use llvm_export::attributes::IntegerOverflowFlagsAttr;
 use llvm_export::op_interfaces::IntBinArithOpWithOverflowFlag;
 use llvm_export::ops as llvm;
 use llvm_export::ops::GlobalOpExt;
-use llvm_export::types::{ArrayType, FuncType, VoidType};
+use llvm_export::types::{ArrayType, FuncType, StructType, VoidType};
 use pliron::attribute::AttrObj;
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::CallOpCallable;
@@ -74,6 +77,7 @@ use pliron::operation::Operation;
 use pliron::result::Result;
 use pliron::r#type::{TypeHandle, Typed};
 use pliron::utils::apint::APInt;
+use pliron::value::Value;
 
 fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
     pliron::create_error!(
@@ -91,7 +95,7 @@ pub(crate) fn convert_store(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
 
@@ -102,25 +106,100 @@ pub(crate) fn convert_store(
         }
     };
 
+    // A whole-value store of a layout-divergent (repr(packed)) struct would
+    // write the natural LLVM image: fields at natural offsets, natural total
+    // size. Both disagree with rustc's layout for the bytes behind `ptr`, so
+    // refuse rather than corrupt. Same rule as `convert_load` and
+    // `convert_construct_struct`.
+    fail_on_divergent_aggregate(ctx, value_mir_type(ctx, operands_info, val), "storing")?;
+
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
     if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_store.get_operation(), true);
     }
-    copy_alignment(ctx, op, llvm_store.get_operation());
+    // The stored value's own type answers first, as it did before. A scalar
+    // records none, though, so fall back to whatever the address itself proved
+    // when it was computed -- for a field projection that is the aggregate's
+    // `abi_align` narrowed to the field's offset, which is otherwise lost here
+    // and costs the pair its vectorization. This mirrors `convert_load`, which
+    // consults the same record for the same reason. When both answer, the
+    // weaker wins: a field of a packed aggregate can place an abi-aligned type
+    // at a byte-aligned address, and the address's proved alignment is the
+    // ceiling of what the store may claim.
+    let abi = value_abi_align(ctx, operands_info, val);
+    let proved = pointer_proved_alignment(ctx, ptr);
+    let align = match (abi, proved) {
+        (Some(abi), Some(proved)) => Some(abi.min(proved)),
+        (abi, proved) => abi.or(proved),
+    };
+    if let Some(align) = align {
+        llvm_export::ops::set_op_alignment(ctx, llvm_store.get_operation(), align as u32);
+    }
     rewriter.insert_operation(ctx, llvm_store.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
 }
 
-/// Copy the ABI alignment stamped on a MIR memory op onto its lowered LLVM op.
+/// Recover the `repr(align(N))` ABI alignment of `value` at conversion time.
 ///
-/// The alignment is stamped by the pre-pass in `lowering.rs` while types are
-/// still MIR; this helper transfers it to the newly created LLVM op so the
-/// exporter can emit `align N`.
-fn copy_alignment(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operation>) {
-    if let Some(align) = llvm_export::ops::op_alignment(ctx, mir_op) {
-        llvm_export::ops::set_op_alignment(ctx, llvm_op, align);
+/// The alignment lives on MIR aggregate types (`abi_align`); the converted
+/// LLVM struct types cannot express over-alignment. The conversion driver may
+/// already have converted the value's type (block arguments are converted
+/// before any rewrite runs; replaced op results carry the new type), but it
+/// records every such change. So check the current type first, then walk the
+/// value's conversion history, newest first, for a MIR type that records an
+/// alignment.
+fn value_abi_align(ctx: &Context, operands_info: &OperandsInfo, value: Value) -> Option<u64> {
+    mir_type_abi_align(ctx, value.get_type(ctx)).or_else(|| {
+        operands_info
+            .lookup_operand_history(value)
+            .iter()
+            .rev()
+            .find_map(|ty| mir_type_abi_align(ctx, *ty))
+    })
+}
+
+/// The MIR type of `value`: its current type when that is still a MIR type,
+/// else the newest MIR type in its conversion history (same walk as
+/// [`value_abi_align`], for the same reason).
+fn value_mir_type(ctx: &Context, operands_info: &OperandsInfo, value: Value) -> TypeHandle {
+    let current = value.get_type(ctx);
+    if current.deref(ctx).is::<MirStructType>() {
+        return current;
     }
+    operands_info
+        .lookup_operand_history(value)
+        .iter()
+        .rev()
+        .copied()
+        .find(|ty| ty.deref(ctx).is::<MirStructType>())
+        .unwrap_or(current)
+}
+
+/// Refuse a whole-value move of a struct whose rustc layout the natural LLVM
+/// struct type cannot express (`StructSlotMap::layout_diverges`, i.e.
+/// repr(packed)). Field ADDRESSES for such structs use rustc's byte offsets,
+/// so a natural-layout value image would silently read or write the wrong
+/// bytes; `verb` names the operation for the diagnostic.
+fn fail_on_divergent_aggregate(ctx: &mut Context, ty: TypeHandle, verb: &str) -> Result<()> {
+    let layout = {
+        let ty_ref = ty.deref(ctx);
+        match ty_ref.downcast_ref::<MirStructType>() {
+            Some(s) => StructLayoutInfo::of_struct(s),
+            None => return Ok(()),
+        }
+    };
+    let map = build_struct_slot_map(ctx, &layout).map_err(anyhow_to_pliron)?;
+    if map.layout_diverges {
+        return pliron::input_err_noloc!(
+            "{} a struct whose rustc layout diverges from the natural LLVM layout \
+             (repr(packed)) by value is not supported; keep the value behind a \
+             pointer and access fields with addr_of! plus \
+             read_unaligned/write_unaligned",
+            verb
+        );
+    }
+    Ok(())
 }
 
 fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op: Ptr<Operation>) {
@@ -134,6 +213,22 @@ fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op:
         llvm_export::ops::set_debug_local_declaration_location(
             ctx, llvm_op, file, pos.line, pos.column,
         );
+    }
+}
+
+/// Carry Rust-local provenance from the MIR alloca to the LLVM alloca.
+///
+/// This is compiler-only metadata stored in the in-memory dialect operation;
+/// it is not emitted as LLVM metadata because an unrecognized metadata node is
+/// not a preservation contract for middle-end passes. The textual exporter
+/// instead consumes the attribute to choose a stable SSA name before `opt`.
+fn copy_local_memory_provenance(
+    ctx: &mut Context,
+    mir_op: Ptr<Operation>,
+    llvm_op: Ptr<Operation>,
+) {
+    if let Some(provenance) = llvm_export::ops::local_memory_provenance(ctx, mir_op) {
+        llvm_export::ops::set_local_memory_provenance(ctx, llvm_op, provenance);
     }
 }
 
@@ -312,6 +407,30 @@ fn convert_mem_transfer(
     Ok(())
 }
 
+/// Alignment the op that computed `ptr` recorded about the address it produced.
+///
+/// Field addresses stamp this during their own conversion, where the aggregate's
+/// `abi_align` is still in hand; by the time a load that consumes the address is
+/// converted, `mir.field_addr` is already a GEP and the MIR aggregate type is no
+/// longer reachable from the load's operands.
+///
+/// Known fidelity limit: the claim rides the address value, not the place
+/// access that justified it. `&raw const (*p).x` through a merely 4-aligned
+/// `p: *const Aligned8` is legal Rust so long as the place itself is never
+/// accessed, yet the later read through the raw pointer consumes this same
+/// stamped GEP and inherits the aggregate's alignment, an over-claim for that
+/// pointer. rustc keeps the two apart by threading alignment through place
+/// evaluation and dropping it at the `&raw` boundary; dialect-mir erases that
+/// distinction before lowering runs, so full fidelity would require stamping
+/// loads during MIR translation instead. Accepted for now: the pattern needs
+/// an actually under-aligned pointer to an over-aligned aggregate, projected
+/// via `&raw` inside a kernel, and any direct access through such a place is
+/// UB to begin with.
+fn pointer_proved_alignment(ctx: &Context, ptr: Value) -> Option<u64> {
+    let defining_op = ptr.defining_op()?;
+    llvm_export::ops::address_alignment(ctx, defining_op).map(u64::from)
+}
+
 /// Convert `mir.load` to `llvm.load`.
 ///
 /// Takes a single pointer operand and returns the loaded value.
@@ -324,13 +443,38 @@ pub(crate) fn convert_load(
 ) -> Result<()> {
     let ptr = op.deref(ctx).get_operand(0);
     let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+
+    // A whole-value load of a layout-divergent (repr(packed)) struct would
+    // read the natural LLVM image: fields at natural offsets, natural total
+    // size. Both disagree with rustc's layout of the bytes behind `ptr`, so
+    // refuse rather than fabricate. Same rule as `convert_store` and
+    // `convert_construct_struct`.
+    fail_on_divergent_aggregate(ctx, result_ty, "loading")?;
+
     let llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
 
     let llvm_load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
     if dialect_mir::ops::MirLoadOp::new(op).is_volatile(ctx) {
         llvm_export::ops::set_op_volatile(ctx, llvm_load.get_operation(), true);
     }
-    copy_alignment(ctx, op, llvm_load.get_operation());
+    // The loaded value's ABI alignment comes from this op's own result type,
+    // which is still the MIR type: result types are only converted by the
+    // op's own rewrite. A scalar records none, so fall back to whatever the
+    // address itself proved when it was computed -- for a field projection
+    // that is the aggregate's `abi_align` narrowed to the field's offset,
+    // which is otherwise lost here and costs the pair its vectorization.
+    // When both answer, the weaker wins: a field of a packed aggregate can
+    // place an abi-aligned type at a byte-aligned address, and the address's
+    // proved alignment is the ceiling of what the load may claim.
+    let abi = mir_type_abi_align(ctx, result_ty);
+    let proved = pointer_proved_alignment(ctx, ptr);
+    let align = match (abi, proved) {
+        (Some(abi), Some(proved)) => Some(abi.min(proved)),
+        (abi, proved) => abi.or(proved),
+    };
+    if let Some(align) = align {
+        llvm_export::ops::set_op_alignment(ctx, llvm_load.get_operation(), align as u32);
+    }
     rewriter.insert_operation(ctx, llvm_load.get_operation());
     rewriter.replace_operation(ctx, op, llvm_load.get_operation());
 
@@ -394,8 +538,13 @@ pub(crate) fn convert_alloca(
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
     let alloca = llvm::AllocaOp::new(ctx, llvm_pointee, one_val);
-    copy_alignment(ctx, op, alloca.get_operation());
+    // The allocated type's ABI alignment comes from this op's own result
+    // pointee, which is still the MIR type at rewrite time.
+    if let Some(align) = mir_type_abi_align(ctx, mir_pointee) {
+        llvm_export::ops::set_op_alignment(ctx, alloca.get_operation(), align as u32);
+    }
     copy_debug_local_variable(ctx, op, alloca.get_operation());
+    copy_local_memory_provenance(ctx, op, alloca.get_operation());
     rewriter.insert_operation(ctx, alloca.get_operation());
     rewriter.replace_operation(ctx, op, alloca.get_operation());
 
@@ -412,10 +561,11 @@ pub(crate) fn convert_ref(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let operand = op.deref(ctx).get_operand(0);
     let operand_ty = operand.get_type(ctx);
+    let abi_align = value_abi_align(ctx, operands_info, operand);
 
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
     let one_apint =
@@ -426,15 +576,19 @@ pub(crate) fn convert_ref(
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
     let alloca = llvm::AllocaOp::new(ctx, operand_ty, one_val);
-    // Propagate alignment stamped by the pre-pass (covers repr(align(N))
-    // structs). Without this, the synthesised alloca would be under-aligned
-    // relative to any loads/stores that claim the struct's true alignment.
-    copy_alignment(ctx, op, alloca.get_operation());
+    // Honour the referent's repr(align(N)) ABI alignment. Without this, the
+    // synthesised alloca would be under-aligned relative to any loads/stores
+    // that claim the struct's true alignment.
+    if let Some(align) = abi_align {
+        llvm_export::ops::set_op_alignment(ctx, alloca.get_operation(), align as u32);
+    }
     rewriter.insert_operation(ctx, alloca.get_operation());
     let alloca_ptr = alloca.get_operation().deref(ctx).get_result(0);
 
     let store = llvm::StoreOp::new(ctx, operand, alloca_ptr);
-    copy_alignment(ctx, op, store.get_operation());
+    if let Some(align) = abi_align {
+        llvm_export::ops::set_op_alignment(ctx, store.get_operation(), align as u32);
+    }
     rewriter.insert_operation(ctx, store.get_operation());
 
     rewriter.replace_operation_with_values(ctx, op, vec![alloca_ptr]);
@@ -476,6 +630,8 @@ pub(crate) fn convert_ptr_offset(
         vec![llvm_export::ops::GepIndex::Value(offset)],
         elem_ty,
     );
+    let inbounds = dialect_mir::ops::MirPtrOffsetOp::new(op).is_inbounds(ctx);
+    llvm::set_gep_inbounds(ctx, llvm_gep.get_operation(), inbounds);
     rewriter.insert_operation(ctx, llvm_gep.get_operation());
     rewriter.replace_operation(ctx, op, llvm_gep.get_operation());
 
@@ -496,15 +652,22 @@ pub fn convert_shared_alloc_dc(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     shared_globals: &mut SharedGlobalsMap,
+    next_shared_mem_index: &mut usize,
 ) -> Result<()> {
     use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
 
-    let (alloc_key, mir_elem_type, size, alignment) = {
+    let (alloc_key, source_name, mir_elem_type, size, alignment) = {
         let shared_alloc_op = dialect_mir::ops::MirSharedAllocOp::new(op);
         let op_ref = op.deref(ctx);
 
         let alloc_key: Option<String> = shared_alloc_op
             .get_attr_alloc_key(ctx)
+            .map(|s| String::from((*s).clone()));
+
+        // Optional and diagnostic: the Rust path of the originating `static`,
+        // carried through so the emitted global can name its source.
+        let source_name: Option<String> = shared_alloc_op
+            .get_attr_source_name(ctx)
             .map(|s| String::from((*s).clone()));
 
         let elem_type_attr = op_ref
@@ -529,7 +692,7 @@ pub fn convert_shared_alloc_dc(
 
         let alignment = shared_alloc_op.get_alignment_value(ctx).unwrap_or(0);
 
-        (alloc_key, mir_elem_type, size, alignment)
+        (alloc_key, source_name, mir_elem_type, size, alignment)
     };
 
     // Cache hit only when the op carries a key AND that key is already in
@@ -545,10 +708,14 @@ pub fn convert_shared_alloc_dc(
             ctx,
             op,
             shared_globals,
-            mir_elem_type,
-            size,
-            alignment,
-            alloc_key,
+            next_shared_mem_index,
+            SharedAllocSpec {
+                mir_elem_type,
+                size,
+                alignment,
+                alloc_key,
+                source_name: source_name.as_deref(),
+            },
         )?
     };
 
@@ -557,6 +724,17 @@ pub fn convert_shared_alloc_dc(
     rewriter.replace_operation(ctx, op, address_of_op.get_operation());
 
     Ok(())
+}
+
+/// Everything `create_shared_global` needs about one `mir.shared_alloc`.
+///
+/// Mirrors [`DeviceGlobalSpec`] for the shared-memory path.
+struct SharedAllocSpec<'a> {
+    mir_elem_type: TypeHandle,
+    size: u64,
+    alignment: u64,
+    alloc_key: Option<String>,
+    source_name: Option<&'a str>,
 }
 
 /// Create a shared memory global variable in the module.
@@ -568,32 +746,47 @@ pub fn convert_shared_alloc_dc(
 /// - Unique generated name (`__shared_mem_N`)
 ///
 /// The global is inserted at the front of the module block. When
-/// `alloc_key` is `Some`, the key is moved into `shared_globals` so that
+/// `spec.alloc_key` is `Some`, the key is moved into `shared_globals` so that
 /// later allocations with the same key reuse this global (caller is
 /// expected to have already checked the cache for a hit).
+///
+/// `spec.source_name`, when present, is the Rust path of the `static` this
+/// allocation came from. The generated symbol stays anonymous; the name is
+/// recorded as an attribute on the global so the exporter can render it
+/// beside the definition. Only the allocation that *creates* the global
+/// contributes a name — a later allocation with the same `alloc_key` hits
+/// the cache and never reaches this function — which is consistent because
+/// the key and the name are both derived from the same constant.
+///
+/// `next_shared_mem_index` is scoped to one `MirToLlvmConversionDriver`
+/// instance (one module), not a process-global counter: `N` is a function of
+/// this module's own MIR walk order, not of how many other modules have
+/// lowered a shared allocation earlier in the process (#706).
 fn create_shared_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     shared_globals: &mut SharedGlobalsMap,
-    mir_elem_type: TypeHandle,
-    size: u64,
-    alignment: u64,
-    alloc_key: Option<String>,
+    next_shared_mem_index: &mut usize,
+    spec: SharedAllocSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
-    let llvm_elem_type = convert_type(ctx, mir_elem_type).map_err(anyhow_to_pliron)?;
-    let array_type = ArrayType::get(ctx, llvm_elem_type, size);
+    let llvm_elem_type = convert_type(ctx, spec.mir_elem_type).map_err(anyhow_to_pliron)?;
+    let array_type = ArrayType::get(ctx, llvm_elem_type, spec.size);
 
-    static SHARED_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let counter = SHARED_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let counter = *next_shared_mem_index;
+    *next_shared_mem_index += 1;
     let name: pliron::identifier::Identifier =
         format!("__shared_mem_{counter}").try_into().unwrap();
 
-    let global_op = if alignment > 0 {
-        llvm::GlobalOp::new_with_alignment(ctx, name.clone(), array_type.into(), alignment)
+    let global_op = if spec.alignment > 0 {
+        llvm::GlobalOp::new_with_alignment(ctx, name.clone(), array_type.into(), spec.alignment)
     } else {
         llvm::GlobalOp::new(ctx, name.clone(), array_type.into())
     };
     global_op.set_address_space(ctx, llvm_export::types::address_space::SHARED);
+    if let Some(source_name) = spec.source_name {
+        use llvm_export::ops::GlobalOpExt;
+        global_op.set_shared_source_name(ctx, source_name);
+    }
 
     let parent_block = op
         .deref(ctx)
@@ -609,7 +802,7 @@ fn create_shared_global(
 
     global_op.get_operation().insert_at_front(module_block, ctx);
 
-    if let Some(key) = alloc_key {
+    if let Some(key) = spec.alloc_key {
         shared_globals.insert(key, name.clone());
     }
 
@@ -627,10 +820,19 @@ pub fn convert_global_alloc_dc(
     op: Ptr<Operation>,
     _operands_info: &OperandsInfo,
     device_globals: &mut DeviceGlobalsMap,
+    next_device_global_index: &mut usize,
 ) -> Result<()> {
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let (global_key, mir_global_type, alignment, addr_space, initializer_hex) = {
+    let (
+        global_key,
+        mir_global_type,
+        alignment,
+        addr_space,
+        initializer_hex,
+        initializer_relocations,
+        immutable,
+    ) = {
         let global_op = dialect_mir::ops::MirGlobalAllocOp::new(op);
         let op_ref = op.deref(ctx);
 
@@ -659,6 +861,10 @@ pub fn convert_global_alloc_dc(
             .attributes
             .get::<StringAttr>(&"global_initializer_hex".try_into().unwrap())
             .map(|attr| String::from((*attr).clone()));
+        let initializer_relocations = op_ref
+            .attributes
+            .get::<StringAttr>(&"global_initializer_relocations".try_into().unwrap())
+            .map(|attr| String::from((*attr).clone()));
 
         // Read the address space the op's result already carries — set by
         // mir-importer based on the static's type (`ConstantMemory<T>` → 4,
@@ -686,6 +892,8 @@ pub fn convert_global_alloc_dc(
             alignment,
             addr_space,
             initializer_hex,
+            initializer_relocations,
+            global_op.is_immutable(ctx),
         )
     };
 
@@ -696,12 +904,15 @@ pub fn convert_global_alloc_dc(
             ctx,
             op,
             device_globals,
+            next_device_global_index,
             DeviceGlobalSpec {
                 key: &global_key,
                 mir_type: mir_global_type,
                 alignment,
                 addr_space,
                 initializer_hex: initializer_hex.as_deref(),
+                initializer_relocations: initializer_relocations.as_deref(),
+                immutable,
             },
         )?
     };
@@ -719,18 +930,28 @@ struct DeviceGlobalSpec<'a> {
     alignment: u64,
     addr_space: u32,
     initializer_hex: Option<&'a str>,
+    initializer_relocations: Option<&'a str>,
+    /// Nothing writes this storage, so it exports as LLVM `constant`. Set only
+    /// for the compiler's own promoted constants; see `MirGlobalAllocOp`.
+    immutable: bool,
 }
 
+/// `next_device_global_index` is scoped to one `MirToLlvmConversionDriver`
+/// instance (one module), not a process-global counter: `N` is a function of
+/// this module's own MIR walk order, not of how many other modules have
+/// lowered a device global earlier in the process (#706).
 fn create_device_global(
     ctx: &mut Context,
     op: Ptr<Operation>,
     device_globals: &mut DeviceGlobalsMap,
+    next_device_global_index: &mut usize,
     spec: DeviceGlobalSpec<'_>,
 ) -> Result<pliron::identifier::Identifier> {
     // An explicit initializer is already the evaluated Rust allocation image.
-    // Keep it as `[N x i8]` all the way through LLVM instead of rebuilding a
-    // typed constant. Typed reconstruction can lose NaN payload bits and needs
-    // a second, easily-divergent implementation of Rust struct padding.
+    // Pointer-free data stays `[N x i8]`. Initializers with relocations use a
+    // segmented LLVM struct whose literal spans remain byte arrays and whose
+    // pointer slots become pointer-width integers. This preserves both exact
+    // bytes and linker-visible pointer provenance.
     let semantic_llvm_type = convert_type(ctx, spec.mir_type).map_err(anyhow_to_pliron)?;
     let (llvm_global_type, alignment) = if let Some(initializer_hex) = spec.initializer_hex {
         let byte_count = initializer_hex_byte_count(initializer_hex).map_err(anyhow_to_pliron)?;
@@ -741,12 +962,21 @@ fn create_device_global(
         }
         validate_initialized_global_layout(ctx, spec.mir_type, byte_count, spec.alignment)
             .map_err(anyhow_to_pliron)?;
-        let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
-        (
-            ArrayType::get(ctx, i8_ty.into(), byte_count).into(),
-            spec.alignment,
-        )
+
+        let storage_type = if let Some(encoded) = spec.initializer_relocations {
+            relocated_initializer_storage_type(ctx, byte_count, spec.alignment, encoded)
+                .map_err(anyhow_to_pliron)?
+        } else {
+            let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+            ArrayType::get(ctx, i8_ty.into(), byte_count).into()
+        };
+        (storage_type, spec.alignment)
     } else {
+        if spec.initializer_relocations.is_some() {
+            return Err(anyhow_to_pliron(anyhow::anyhow!(
+                "device global carries relocation metadata without initializer bytes"
+            )));
+        }
         (semantic_llvm_type, spec.alignment)
     };
 
@@ -762,9 +992,8 @@ fn create_device_global(
                 ))
             })?
         } else {
-            static DEVICE_GLOBAL_COUNTER: std::sync::atomic::AtomicUsize =
-                std::sync::atomic::AtomicUsize::new(0);
-            let counter = DEVICE_GLOBAL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let counter = *next_device_global_index;
+            *next_device_global_index += 1;
             format!("__device_global_{counter}").try_into().unwrap()
         };
 
@@ -774,8 +1003,15 @@ fn create_device_global(
         llvm::GlobalOp::new(ctx, name.clone(), llvm_global_type)
     };
     global_op.set_address_space(ctx, spec.addr_space);
+    global_op.set_source_global_key(ctx, spec.key);
     if let Some(initializer_hex) = spec.initializer_hex {
         global_op.set_initializer_hex(ctx, initializer_hex);
+    }
+    if let Some(initializer_relocations) = spec.initializer_relocations {
+        global_op.set_initializer_relocations(ctx, initializer_relocations);
+    }
+    if spec.immutable {
+        global_op.mark_immutable(ctx);
     }
 
     let parent_block = op
@@ -794,6 +1030,97 @@ fn create_device_global(
     device_globals.insert(spec.key.to_string(), name.clone());
 
     Ok(name)
+}
+
+fn relocated_initializer_storage_type(
+    ctx: &mut Context,
+    byte_count: u64,
+    allocation_alignment: u64,
+    encoded: &str,
+) -> std::result::Result<TypeHandle, anyhow::Error> {
+    let mut relocations =
+        llvm::decode_global_initializer_relocations(encoded).map_err(anyhow::Error::msg)?;
+    if relocations.is_empty() {
+        anyhow::bail!("device global relocation metadata contains no relocations");
+    }
+    relocations.sort_by_key(|relocation| relocation.source_offset);
+
+    let mut cursor = 0u64;
+    let mut fields = Vec::with_capacity(relocations.len() * 2 + 1);
+    let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+
+    for (index, relocation) in relocations.iter().enumerate() {
+        if relocation.width_bytes != 8 {
+            anyhow::bail!(
+                "device global relocation {index} uses unsupported {}-byte pointer storage; CUDA global/constant pointers require 8 bytes",
+                relocation.width_bytes
+            );
+        }
+        if !matches!(relocation.target_address_space, 1 | 4) {
+            anyhow::bail!(
+                "device global relocation {index} targets unsupported CUDA address space {}",
+                relocation.target_address_space
+            );
+        }
+        if relocation.target_key.is_empty() {
+            anyhow::bail!("device global relocation {index} has an empty target key");
+        }
+
+        let width = u64::from(relocation.width_bytes);
+        if relocation.source_offset % width != 0 {
+            anyhow::bail!(
+                "device global relocation {index} starts at unaligned byte offset {} for a {}-byte pointer",
+                relocation.source_offset,
+                relocation.width_bytes
+            );
+        }
+        if allocation_alignment < width {
+            anyhow::bail!(
+                "device global relocation {index} requires {}-byte alignment but the Rust allocation alignment is {}",
+                relocation.width_bytes,
+                allocation_alignment
+            );
+        }
+        if relocation.source_offset < cursor {
+            anyhow::bail!(
+                "device global relocation {index} overlaps the previous relocation or literal span"
+            );
+        }
+        let end = relocation
+            .source_offset
+            .checked_add(width)
+            .ok_or_else(|| anyhow::anyhow!("device global relocation {index} offset overflows"))?;
+        if end > byte_count {
+            anyhow::bail!(
+                "device global relocation {index} occupies bytes {}..{} but the initializer is only {} bytes",
+                relocation.source_offset,
+                end,
+                byte_count
+            );
+        }
+
+        if relocation.source_offset > cursor {
+            fields
+                .push(ArrayType::get(ctx, i8_ty.into(), relocation.source_offset - cursor).into());
+        }
+        fields.push(IntegerType::get(ctx, relocation.width_bytes * 8, Signedness::Signless).into());
+        cursor = end;
+    }
+
+    if cursor < byte_count {
+        fields.push(ArrayType::get(ctx, i8_ty.into(), byte_count - cursor).into());
+    }
+
+    let storage: TypeHandle = StructType::get_unnamed(ctx, fields).into();
+    let lowered_size = get_type_size(ctx, storage);
+    if lowered_size != byte_count {
+        anyhow::bail!(
+            "relocated device global storage lowers to {} bytes, but rustc evaluated {} bytes",
+            lowered_size,
+            byte_count
+        );
+    }
+    Ok(storage)
 }
 
 fn initializer_hex_byte_count(hex: &str) -> std::result::Result<u64, anyhow::Error> {
@@ -985,10 +1312,10 @@ mod tests {
     use super::*;
     use crate::convert::ops::test_util::*;
     use dialect_mir::ops as mir;
-    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
+    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType, MirUnionType};
     use llvm_export::op_interfaces::PointerTypeResult;
     use llvm_export::ops as llvm;
-    use llvm_export::types::{PointerType, address_space as llvm_addr};
+    use llvm_export::types::{PointerType, StructType, address_space as llvm_addr};
     use pliron::basic_block::BasicBlock;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
     use pliron::builtin::op_interfaces::SymbolOpInterface;
@@ -1244,6 +1571,778 @@ mod tests {
         assert_eq!(count_ops::<mir::MirLoadOp>(&ctx, &body), 0);
     }
 
+    /// Lower `mir.load (mir.field_addr %p, field_index)` for a struct of
+    /// signless integer fields with the given layout and report the alignment
+    /// stamped on the resulting `llvm.load`. `None` means no stamp survived
+    /// and the exporter's natural-alignment default applies.
+    fn lowered_field_load_alignment(
+        field_bit_widths: Vec<u32>,
+        field_offsets: Vec<u64>,
+        total_size: u64,
+        abi_align: u64,
+        field_index: u32,
+    ) -> Option<u32> {
+        use dialect_mir::attributes::FieldIndexAttr;
+
+        let mut ctx = make_ctx();
+        let field_types: Vec<TypeHandle> = field_bit_widths
+            .iter()
+            .map(|w| IntegerType::get(&ctx, *w, Signedness::Signless).into())
+            .collect();
+        let field_names = (0..field_types.len()).map(|i| format!("f{i}")).collect();
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "FieldLoadAlign".into(),
+            field_names,
+            field_types.clone(),
+            vec![],
+            field_offsets,
+            total_size,
+            abi_align,
+        )
+        .into();
+        let struct_ptr_ty = MirPtrType::get_generic(&mut ctx, struct_ty, false);
+        let field_ty = field_types[field_index as usize];
+        let field_ptr_ty = MirPtrType::get_generic(&mut ctx, field_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![struct_ptr_ty.into()], vec![]);
+        let struct_ptr_val = block.deref(&ctx).get_argument(0);
+
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![field_ptr_ty.into()],
+            vec![struct_ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op)
+            .set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+        field_addr_op.insert_at_back(block, &ctx);
+        let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![field_ty],
+            vec![field_ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected one llvm.load");
+        llvm_export::ops::op_alignment(&ctx, load.get_operation())
+    }
+
+    /// Field 0 of an over-aligned struct sits at the aggregate's own
+    /// alignment, which the field's scalar result type cannot state on its
+    /// own. This is what lets LoadStoreVectorizer fuse the adjacent pair.
+    #[test]
+    fn convert_load_inherits_overaligned_field_alignment_at_offset_zero() {
+        // #[repr(C, align(8))] struct { a: i32, b: i32 }
+        assert_eq!(
+            lowered_field_load_alignment(vec![32, 32], vec![0, 4], 8, 8, 0),
+            Some(8)
+        );
+    }
+
+    /// A field at a nonzero offset proves `gcd(abi_align, offset)`: an i32 at
+    /// offset 8 of an align-16 struct proves 8, beating its natural 4.
+    #[test]
+    fn convert_load_narrows_field_alignment_to_gcd_of_align_and_offset() {
+        // #[repr(C, align(16))] struct { a: i64, b: i32 }
+        assert_eq!(
+            lowered_field_load_alignment(vec![64, 32], vec![0, 8], 16, 16, 1),
+            Some(8)
+        );
+    }
+
+    /// A `#[repr(C, packed)]`-style layout the natural LLVM struct cannot
+    /// express: field addresses use rustc's byte offsets, so a whole-value
+    /// load of the natural image would read different bytes. It must fail to
+    /// lower, not fabricate a value.
+    #[test]
+    fn packed_struct_whole_value_load_fails_closed() {
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, packed_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty.into()], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![packed_ty],
+            vec![ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("whole-value load of a packed struct must fail to lower");
+        assert!(
+            format!("{err:?}").contains("diverges from the natural LLVM layout"),
+            "the refusal must name the layout divergence: {err:?}"
+        );
+    }
+
+    /// The store-side twin of the test above: a whole-value store would write
+    /// the natural image (wrong offsets, wrong size) over rustc-layout bytes.
+    #[test]
+    fn packed_struct_whole_value_store_fails_closed() {
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, packed_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty.into(), packed_ty], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+        let val = block.deref(&ctx).get_argument(1);
+
+        let store_op = Operation::new(
+            &mut ctx,
+            mir::MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![ptr_val, val],
+            vec![],
+            0,
+        );
+        store_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("whole-value store of a packed struct must fail to lower");
+        assert!(
+            format!("{err:?}").contains("diverges from the natural LLVM layout"),
+            "the refusal must name the layout divergence: {err:?}"
+        );
+    }
+
+    /// A naturally aligned inner struct sitting at a packed byte offset: the
+    /// field address only proves align 1, and the load must claim that over
+    /// the inner type's recorded abi alignment. Claiming the abi would stamp
+    /// `align 4` on a 1-aligned address, which llc may honor with a wider
+    /// access than the bytes allow.
+    #[test]
+    fn convert_load_claims_address_alignment_over_abi_at_packed_offsets() {
+        use dialect_mir::attributes::FieldIndexAttr;
+
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let inner_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Inner".into(),
+            vec!["v".into()],
+            vec![u32_ty],
+            vec![0],
+            vec![0],
+            4,
+            4,
+        )
+        .into();
+        let outer_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedOuter".into(),
+            vec!["tag".into(), "inner".into()],
+            vec![u8_ty, inner_ty],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let outer_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, outer_ty, false).into();
+        let inner_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, inner_ty, false).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![outer_ptr_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![inner_ptr_ty],
+            vec![base],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        field_addr_op.insert_at_back(block, &ctx);
+        let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![inner_ty],
+            vec![field_ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected one llvm.load");
+        assert_eq!(
+            llvm_export::ops::op_alignment(&ctx, load.get_operation()),
+            Some(1),
+            "the load must claim the address's proved alignment, not the inner abi"
+        );
+    }
+
+    /// A struct with no extra alignment proves nothing beyond the scalar's
+    /// natural alignment: the stamp equals the exporter's default 4, so the
+    /// emitted access is unchanged.
+    #[test]
+    fn convert_load_keeps_natural_alignment_without_overalignment() {
+        // struct { a: i32, b: i32 } with rustc's natural abi_align 4
+        assert_eq!(
+            lowered_field_load_alignment(vec![32, 32], vec![0, 4], 8, 4, 1),
+            Some(4)
+        );
+    }
+
+    /// dialect-mir only verifier-enforces power-of-two alignment for unions
+    /// and enums. A malformed hand-built struct layout must decline the stamp
+    /// rather than emit a non-power-of-two `align N` that llc rejects.
+    #[test]
+    fn convert_load_declines_non_power_of_two_field_alignment() {
+        assert_eq!(
+            lowered_field_load_alignment(vec![32], vec![0], 12, 12, 0),
+            None
+        );
+    }
+
+    /// Lower `mir.store %v, (mir.field_addr %p, field_index)` for a struct of
+    /// signless integer fields with the given layout and report the alignment
+    /// stamped on the resulting `llvm.store`. `None` means no stamp survived
+    /// and the exporter's natural-alignment default applies.
+    fn lowered_field_store_alignment(
+        field_bit_widths: Vec<u32>,
+        field_offsets: Vec<u64>,
+        total_size: u64,
+        abi_align: u64,
+        field_index: u32,
+    ) -> Option<u32> {
+        use dialect_mir::attributes::FieldIndexAttr;
+
+        let mut ctx = make_ctx();
+        let field_types: Vec<TypeHandle> = field_bit_widths
+            .iter()
+            .map(|w| IntegerType::get(&ctx, *w, Signedness::Signless).into())
+            .collect();
+        let field_names = (0..field_types.len()).map(|i| format!("f{i}")).collect();
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "FieldStoreAlign".into(),
+            field_names,
+            field_types.clone(),
+            vec![],
+            field_offsets,
+            total_size,
+            abi_align,
+        )
+        .into();
+        let struct_ptr_ty = MirPtrType::get_generic(&mut ctx, struct_ty, true);
+        let field_ty = field_types[field_index as usize];
+        let field_ptr_ty = MirPtrType::get_generic(&mut ctx, field_ty, true);
+
+        // The stored value arrives as a kernel argument of the field's own
+        // scalar type, so `value_abi_align` reports nothing about it and the
+        // address's stamp is the only alignment left -- the case this covers.
+        let (module_ptr, block) =
+            build_kernel(&mut ctx, vec![struct_ptr_ty.into(), field_ty], vec![]);
+        let struct_ptr_val = block.deref(&ctx).get_argument(0);
+        let val = block.deref(&ctx).get_argument(1);
+
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![field_ptr_ty.into()],
+            vec![struct_ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op)
+            .set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+        field_addr_op.insert_at_back(block, &ctx);
+        let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let store_op = Operation::new(
+            &mut ctx,
+            mir::MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![field_ptr_val, val],
+            vec![],
+            0,
+        );
+        store_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let store = find_first::<llvm::StoreOp>(&ctx, &body).expect("expected one llvm.store");
+        llvm_export::ops::op_alignment(&ctx, store.get_operation())
+    }
+
+    /// Field 0 of an over-aligned struct sits at the aggregate's own alignment,
+    /// which the stored scalar's type cannot state. This is what lets
+    /// LoadStoreVectorizer fuse the adjacent pair into one wide store.
+    #[test]
+    fn convert_store_inherits_overaligned_field_alignment_at_offset_zero() {
+        // #[repr(C, align(8))] struct { a: i32, b: i32 }
+        assert_eq!(
+            lowered_field_store_alignment(vec![32, 32], vec![0, 4], 8, 8, 0),
+            Some(8)
+        );
+    }
+
+    /// A field at a nonzero offset proves `gcd(abi_align, offset)`: an i32 at
+    /// offset 8 of an align-16 struct proves 8, beating its natural 4.
+    #[test]
+    fn convert_store_narrows_field_alignment_to_gcd_of_align_and_offset() {
+        // #[repr(C, align(16))] struct { a: i64, b: i32 }
+        assert_eq!(
+            lowered_field_store_alignment(vec![64, 32], vec![0, 8], 16, 16, 1),
+            Some(8)
+        );
+    }
+
+    /// A struct with no extra alignment proves nothing beyond the scalar's
+    /// natural alignment, so the emitted store is unchanged. Widening here
+    /// would claim an alignment the source never guaranteed.
+    #[test]
+    fn convert_store_keeps_natural_alignment_without_overalignment() {
+        // struct { a: i32, b: i32 } with rustc's natural abi_align 4
+        assert_eq!(
+            lowered_field_store_alignment(vec![32, 32], vec![0, 4], 8, 4, 1),
+            Some(4)
+        );
+    }
+
+    /// A malformed hand-built layout must decline the stamp rather than emit a
+    /// non-power-of-two `align N` that llc rejects. Same guard the load path
+    /// has, and it matters more here: an over-aligned store instruction on an
+    /// under-aligned address is undefined, not merely slow.
+    #[test]
+    fn convert_store_declines_non_power_of_two_field_alignment() {
+        assert_eq!(
+            lowered_field_store_alignment(vec![32], vec![0], 12, 12, 0),
+            None
+        );
+    }
+
+    /// Lower `load (&arr[index])` where `arr` is the array field of an
+    /// over-aligned struct, and report the alignment the load ends up with.
+    ///
+    /// `index` of `Some(i)` builds a constant index, `None` a runtime one.
+    fn lowered_element_load_alignment(
+        element_bits: u32,
+        element_count: u64,
+        struct_abi_align: u64,
+        index: Option<u64>,
+    ) -> Option<u32> {
+        use dialect_mir::attributes::FieldIndexAttr;
+        use pliron::builtin::attributes::IntegerAttr;
+        use std::num::NonZeroUsize;
+
+        let mut ctx = make_ctx();
+        let element_ty: TypeHandle =
+            IntegerType::get(&ctx, element_bits, Signedness::Signless).into();
+        let array_ty: TypeHandle =
+            dialect_mir::types::MirArrayType::get(&mut ctx, element_ty, element_count).into();
+        let elem_bytes = u64::from(element_bits) / 8;
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "ElementLoadAlign".into(),
+            vec!["lanes".into()],
+            vec![array_ty],
+            vec![],
+            vec![0],
+            elem_bytes * element_count,
+            struct_abi_align,
+        )
+        .into();
+        let struct_ptr_ty = MirPtrType::get_generic(&mut ctx, struct_ty, false);
+        let array_ptr_ty = MirPtrType::get_generic(&mut ctx, array_ty, false);
+        let element_ptr_ty = MirPtrType::get_generic(&mut ctx, element_ty, false);
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+
+        let (module_ptr, block) =
+            build_kernel(&mut ctx, vec![struct_ptr_ty.into(), i64_ty], vec![]);
+        let struct_ptr_val = block.deref(&ctx).get_argument(0);
+
+        // &s.lanes -- carries the struct's alignment onto the array address.
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![array_ptr_ty.into()],
+            vec![struct_ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        field_addr_op.insert_at_back(block, &ctx);
+        let array_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let index_val = match index {
+            Some(i) => {
+                let constant = Operation::new(
+                    &mut ctx,
+                    mir::MirConstantOp::get_concrete_op_info(),
+                    vec![i64_ty],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                mir::MirConstantOp::new(constant).set_attr_value(
+                    &ctx,
+                    IntegerAttr::new(
+                        IntegerType::get(&ctx, 64, Signedness::Signed),
+                        APInt::from_u64(i, NonZeroUsize::new(64).unwrap()),
+                    ),
+                );
+                constant.insert_at_back(block, &ctx);
+                constant.deref(&ctx).get_result(0)
+            }
+            None => block.deref(&ctx).get_argument(1),
+        };
+
+        let elem_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![element_ptr_ty.into()],
+            vec![array_ptr_val, index_val],
+            vec![],
+            0,
+        );
+        elem_addr_op.insert_at_back(block, &ctx);
+        let elem_ptr_val = elem_addr_op.deref(&ctx).get_result(0);
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![element_ty],
+            vec![elem_ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected one llvm.load");
+        llvm_export::ops::op_alignment(&ctx, load.get_operation())
+    }
+
+    /// Element 0 inherits the whole alignment the base address proved, which is
+    /// what lets the adjacent pair fuse into one wide load.
+    #[test]
+    fn convert_load_inherits_base_alignment_at_element_zero() {
+        // &(#[repr(C, align(8))] struct { lanes: [i32; 2] }).lanes[0]
+        assert_eq!(lowered_element_load_alignment(32, 2, 8, Some(0)), Some(8));
+    }
+
+    /// A nonzero constant index proves `gcd(base, i * stride)`: element 1 of an
+    /// align-8 `[i32; 2]` sits at byte 4, so it proves 4, not 8.
+    #[test]
+    fn convert_load_narrows_element_alignment_to_gcd_with_offset() {
+        assert_eq!(lowered_element_load_alignment(32, 2, 8, Some(1)), Some(4));
+    }
+
+    /// A runtime index can land on any element, so only what every stride
+    /// preserves may be claimed -- `gcd(base, stride)`, never the base itself.
+    #[test]
+    fn convert_load_claims_only_stride_alignment_for_a_runtime_index() {
+        assert_eq!(lowered_element_load_alignment(32, 2, 8, None), Some(4));
+    }
+
+    /// A base with no extra alignment proves nothing beyond the element's own
+    /// natural alignment, so the emitted access is unchanged.
+    #[test]
+    fn convert_load_keeps_natural_element_alignment_without_overalignment() {
+        assert_eq!(lowered_element_load_alignment(32, 2, 4, Some(0)), Some(4));
+    }
+
+    /// Like [`lowered_element_load_alignment`], but for an array whose element
+    /// is an aggregate built by `element_ty_of` (which also reports the
+    /// element's stored size in bytes). The claim on the element address must
+    /// then come from the element's *exact* stride — rustc's stored size,
+    /// padding included — not from any LLVM-level approximation.
+    ///
+    /// With `load_first_scalar` the element must itself be an array and the
+    /// access becomes `s.lanes[index][0]`, mirroring the nested-read chain
+    /// where the outer stamp is inherited by the inner index-0 address and
+    /// ends up on a scalar load that LoadStoreVectorizer trusts. Without it,
+    /// the element itself is loaded.
+    ///
+    /// Reports `(element address stamp, final load alignment)`.
+    fn lowered_aggregate_element_alignments(
+        element_ty_of: impl FnOnce(&mut Context) -> (TypeHandle, u64),
+        element_count: u64,
+        struct_abi_align: u64,
+        index: Option<u64>,
+        load_first_scalar: bool,
+    ) -> (Option<u32>, Option<u32>) {
+        use dialect_mir::attributes::FieldIndexAttr;
+        use pliron::builtin::attributes::IntegerAttr;
+        use std::num::NonZeroUsize;
+
+        let mut ctx = make_ctx();
+        let (element_ty, elem_bytes) = element_ty_of(&mut ctx);
+        let inner_scalar_ty = load_first_scalar.then(|| {
+            let element_ref = element_ty.deref(&ctx);
+            element_ref
+                .downcast_ref::<MirArrayType>()
+                .expect("load_first_scalar needs an array element")
+                .element_type()
+        });
+        let array_ty: TypeHandle = MirArrayType::get(&mut ctx, element_ty, element_count).into();
+        let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "AggregateElementAlign".into(),
+            vec!["lanes".into()],
+            vec![array_ty],
+            vec![],
+            vec![0],
+            elem_bytes * element_count,
+            struct_abi_align,
+        )
+        .into();
+        let struct_ptr_ty = MirPtrType::get_generic(&mut ctx, struct_ty, false);
+        let array_ptr_ty = MirPtrType::get_generic(&mut ctx, array_ty, false);
+        let element_ptr_ty = MirPtrType::get_generic(&mut ctx, element_ty, false);
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+
+        let (module_ptr, block) =
+            build_kernel(&mut ctx, vec![struct_ptr_ty.into(), i64_ty], vec![]);
+        let struct_ptr_val = block.deref(&ctx).get_argument(0);
+
+        // &s.lanes -- carries the struct's alignment onto the array address.
+        let field_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![array_ptr_ty.into()],
+            vec![struct_ptr_val],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        field_addr_op.insert_at_back(block, &ctx);
+        let array_ptr_val = field_addr_op.deref(&ctx).get_result(0);
+
+        let constant_index = |ctx: &mut Context, i: u64| {
+            let constant = Operation::new(
+                ctx,
+                mir::MirConstantOp::get_concrete_op_info(),
+                vec![i64_ty],
+                vec![],
+                vec![],
+                0,
+            );
+            mir::MirConstantOp::new(constant).set_attr_value(
+                ctx,
+                IntegerAttr::new(
+                    IntegerType::get(ctx, 64, Signedness::Signed),
+                    APInt::from_u64(i, NonZeroUsize::new(64).unwrap()),
+                ),
+            );
+            constant.insert_at_back(block, ctx);
+            constant.deref(ctx).get_result(0)
+        };
+
+        let index_val = match index {
+            Some(i) => constant_index(&mut ctx, i),
+            None => block.deref(&ctx).get_argument(1),
+        };
+
+        let elem_addr_op = Operation::new(
+            &mut ctx,
+            mir::MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![element_ptr_ty.into()],
+            vec![array_ptr_val, index_val],
+            vec![],
+            0,
+        );
+        elem_addr_op.insert_at_back(block, &ctx);
+        let elem_ptr_val = elem_addr_op.deref(&ctx).get_result(0);
+
+        let (loaded_ty, loaded_ptr_val) = match inner_scalar_ty {
+            Some(scalar_ty) => {
+                let zero_val = constant_index(&mut ctx, 0);
+                let scalar_ptr_ty = MirPtrType::get_generic(&mut ctx, scalar_ty, false);
+                let inner_addr_op = Operation::new(
+                    &mut ctx,
+                    mir::MirArrayElementAddrOp::get_concrete_op_info(),
+                    vec![scalar_ptr_ty.into()],
+                    vec![elem_ptr_val, zero_val],
+                    vec![],
+                    0,
+                );
+                inner_addr_op.insert_at_back(block, &ctx);
+                (scalar_ty, inner_addr_op.deref(&ctx).get_result(0))
+            }
+            None => (element_ty, elem_ptr_val),
+        };
+
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![loaded_ty],
+            vec![loaded_ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        // GEP order follows source order: field address, then the element
+        // address under test (then the inner index-0 address when nested).
+        let geps = find_all::<llvm::GetElementPtrOp>(&ctx, &body);
+        assert_eq!(geps.len(), if load_first_scalar { 3 } else { 2 });
+        let element_gep_align = llvm_export::ops::address_alignment(&ctx, geps[1].get_operation());
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected one llvm.load");
+        let load_align = llvm_export::ops::op_alignment(&ctx, load.get_operation());
+        (element_gep_align, load_align)
+    }
+
+    /// `[f32; 3]` element under an align-8 base: stride is 12, so a runtime
+    /// index proves `gcd(8, 12) = 4` — and the inner index-0 scalar read
+    /// inherits exactly that. Guards against sizing the element through an
+    /// LLVM-level approximation, whose guessed stride of 8 would stamp
+    /// align 8 onto addresses that are only 4-aligned (a miscompile once
+    /// LoadStoreVectorizer trusts it).
+    #[test]
+    fn convert_load_claims_exact_aggregate_stride_for_nested_array_elements() {
+        use pliron::builtin::types::FP32Type;
+        // &(#[repr(C, align(8))] struct { lanes: [[f32; 3]; 4] }).lanes[i][0]
+        let nested_f32x3 = |ctx: &mut Context| {
+            let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+            (MirArrayType::get(ctx, f32_ty, 3).into(), 12)
+        };
+        assert_eq!(
+            lowered_aggregate_element_alignments(nested_f32x3, 4, 8, None, true),
+            (Some(4), Some(4))
+        );
+    }
+
+    /// A constant index into the same nested array uses the exact byte
+    /// offset: element 1 sits at byte 12 (`gcd(8, 12) = 4`), element 2 at
+    /// byte 24 (`gcd(8, 24) = 8`, the full base alignment again).
+    #[test]
+    fn convert_load_narrows_nested_element_alignment_by_exact_byte_offset() {
+        use pliron::builtin::types::FP32Type;
+        let nested_f32x3 = |ctx: &mut Context| {
+            let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+            (MirArrayType::get(ctx, f32_ty, 3).into(), 12)
+        };
+        assert_eq!(
+            lowered_aggregate_element_alignments(nested_f32x3, 4, 8, Some(1), true),
+            (Some(4), Some(4))
+        );
+        assert_eq!(
+            lowered_aggregate_element_alignments(nested_f32x3, 4, 8, Some(2), true),
+            (Some(8), Some(8))
+        );
+    }
+
+    /// A tuple element's stride comes from rustc's recorded `total_size`
+    /// (trailing padding included): `(f32, f32, f32)` stores 12 bytes, so an
+    /// align-8 base proves only 4 on a runtime element address.
+    #[test]
+    fn convert_array_element_addr_takes_tuple_stride_from_recorded_layout() {
+        use pliron::builtin::types::FP32Type;
+        let f32x3_tuple = |ctx: &mut Context| {
+            let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+            let tuple_ty: TypeHandle =
+                MirTupleType::get_with_layout(ctx, vec![f32_ty; 3], vec![], vec![0, 4, 8], 12, 4)
+                    .into();
+            (tuple_ty, 12)
+        };
+        let (element_gep_align, _load_align) =
+            lowered_aggregate_element_alignments(f32x3_tuple, 4, 8, None, false);
+        assert_eq!(element_gep_align, Some(4));
+    }
+
+    /// `f16` arrives from the importer as `MirFP16Type`, not the converted
+    /// LLVM `half`, and its stride is exactly 2: an align-8 base proves 2 on
+    /// a runtime element address and `gcd(8, 4) = 4` at element 2. Guards
+    /// the arm the importer actually exercises — the old sizing guessed 8
+    /// for this type too, the same over-claim as the aggregate cases.
+    #[test]
+    fn convert_load_claims_exact_f16_element_stride() {
+        let f16_scalar = |ctx: &mut Context| {
+            let f16_ty: TypeHandle = dialect_mir::types::MirFP16Type::get(ctx).into();
+            (f16_ty, 2)
+        };
+        assert_eq!(
+            lowered_aggregate_element_alignments(f16_scalar, 4, 8, None, false),
+            (Some(2), Some(2))
+        );
+        assert_eq!(
+            lowered_aggregate_element_alignments(f16_scalar, 4, 8, Some(2), false),
+            (Some(4), Some(4))
+        );
+    }
+
+    /// An element whose stored size is unknown (a struct built without rustc
+    /// layout) must not have its stride guessed: the element address claims
+    /// nothing and the load keeps the previous, weaker-but-sound behaviour.
+    #[test]
+    fn convert_array_element_addr_declines_unknown_element_stride() {
+        use pliron::builtin::types::FP32Type;
+        let opaque_struct = |ctx: &mut Context| {
+            let f32_ty: TypeHandle = FP32Type::get(ctx).into();
+            let struct_ty: TypeHandle =
+                MirStructType::get(ctx, "OpaqueElement".into(), vec!["x".into()], vec![f32_ty])
+                    .into();
+            (struct_ty, 4)
+        };
+        assert_eq!(
+            lowered_aggregate_element_alignments(opaque_struct, 4, 8, None, false),
+            (None, None)
+        );
+    }
+
     #[test]
     fn convert_dbg_value_lowers_to_llvm_dbg_value() {
         let mut ctx = make_ctx();
@@ -1322,6 +2421,40 @@ mod tests {
     }
 
     #[test]
+    fn convert_alloca_preserves_local_memory_provenance() {
+        let mut ctx = make_ctx();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, true);
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let alloca_op = Operation::new(
+            &mut ctx,
+            mir::MirAllocaOp::get_concrete_op_info(),
+            vec![mir_ptr_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        let provenance = llvm_export::ops::LocalMemoryProvenanceAttr {
+            local_index: 3,
+            size_bytes: 16,
+            binding_name: "scratch".into(),
+            type_name: "[u32; 4]".into(),
+        };
+        llvm_export::ops::set_local_memory_provenance(&mut ctx, alloca_op, provenance.clone());
+        alloca_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).unwrap();
+        let copied =
+            llvm_export::ops::local_memory_provenance(&ctx, alloca.get_operation()).unwrap();
+        assert_eq!(copied, provenance);
+    }
+
+    #[test]
     fn mem2reg_salvages_tagged_alloca_into_mir_dbg_value() {
         let mut ctx = make_ctx();
         let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
@@ -1379,7 +2512,7 @@ mod tests {
         let loaded = load_op.deref(&ctx).get_result(0);
         append_mir_return(&mut ctx, block, vec![loaded]);
 
-        let mut analyses = pliron::pass_manager::AnalysisManager::default();
+        let mut analyses = pliron::pass::AnalysisManager::default();
         pliron::opts::mem2reg::mem2reg(module_ptr, &mut ctx, &mut analyses)
             .expect("mem2reg should promote the local slot");
 
@@ -1516,6 +2649,70 @@ mod tests {
     }
 
     #[test]
+    fn convert_ref_preserves_over_aligned_union_array_layout_and_alignment() {
+        for abi_align in [32, 64] {
+            let mut ctx = make_ctx();
+            let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+            let union_ty: TypeHandle = MirUnionType::get(
+                &mut ctx,
+                format!("Align{abi_align}Union"),
+                vec!["word".into()],
+                vec![u32_ty],
+                abi_align,
+                abi_align,
+            )
+            .into();
+            let array_ty: TypeHandle = MirArrayType::get(&mut ctx, union_ty, 3).into();
+            let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, array_ty, false);
+            let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+            let undef = mir::MirUndefOp::new(&mut ctx, array_ty);
+            undef.get_operation().insert_at_back(block, &ctx);
+            let value = undef.get_operation().deref(&ctx).get_result(0);
+            let ref_op = Operation::new(
+                &mut ctx,
+                mir::MirRefOp::get_concrete_op_info(),
+                vec![mir_ptr_ty.into()],
+                vec![value],
+                vec![],
+                0,
+            );
+            mir::MirRefOp::new(ref_op).set_mutable(&mut ctx, false);
+            ref_op.insert_at_back(block, &ctx);
+            append_mir_return(&mut ctx, block, vec![]);
+
+            crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+            let body = kernel_blocks(&ctx, module_ptr);
+            let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).expect("expected llvm.alloca");
+            let store = find_first::<llvm::StoreOp>(&ctx, &body).expect("expected llvm.store");
+            let llvm_array_ty = alloca.result_pointee_type(&ctx);
+            let llvm_array_data = llvm_array_ty.deref(&ctx);
+            let llvm_array = llvm_array_data
+                .downcast_ref::<ArrayType>()
+                .expect("over-aligned union array must remain an LLVM array");
+
+            assert_eq!(llvm_array.size(), 3);
+            assert_eq!(
+                crate::convert::types::llvm_type_size_align(&ctx, llvm_array.elem_type()),
+                Some((abi_align, 16))
+            );
+            assert_eq!(
+                crate::convert::types::llvm_type_size_align(&ctx, llvm_array_ty),
+                Some((abi_align * 3, 16))
+            );
+            assert_eq!(
+                llvm_export::ops::op_alignment(&ctx, alloca.get_operation()),
+                Some(abi_align as u32)
+            );
+            assert_eq!(
+                llvm_export::ops::op_alignment(&ctx, store.get_operation()),
+                Some(abi_align as u32)
+            );
+        }
+    }
+
+    #[test]
     fn convert_ptr_offset_lowers_to_gep_with_pointee_elem_type() {
         let mut ctx = make_ctx();
         let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
@@ -1549,6 +2746,43 @@ mod tests {
             .downcast_ref::<IntegerType>()
             .expect("gep src_elem_type should be IntegerType");
         assert_eq!(int_ty.width(), 32, "gep elem type must be i32 (pointee)");
+        assert!(
+            llvm::gep_inbounds(&ctx, gep.get_operation()),
+            "ordinary pointer offsets retain the in-bounds contract"
+        );
+    }
+
+    #[test]
+    fn convert_wrapping_ptr_offset_lowers_to_non_inbounds_gep() {
+        let mut ctx = make_ctx();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![mir_ptr_ty.into(), i64_ty], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+        let off_val = block.deref(&ctx).get_argument(1);
+
+        let off_op = Operation::new(
+            &mut ctx,
+            mir::MirPtrOffsetOp::get_concrete_op_info(),
+            vec![mir_ptr_ty.into()],
+            vec![ptr_val, off_val],
+            vec![],
+            0,
+        );
+        mir::MirPtrOffsetOp::new(off_op).set_inbounds(&mut ctx, false);
+        off_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let gep = find_first::<llvm::GetElementPtrOp>(&ctx, &body).expect("expected one llvm.gep");
+        assert!(
+            !llvm::gep_inbounds(&ctx, gep.get_operation()),
+            "wrapping pointer offsets must not promise in-bounds arithmetic"
+        );
     }
 
     // =========================================================================
@@ -1868,6 +3102,18 @@ mod tests {
     /// Build a `mir.shared_alloc` returning `MirPtrType<i32, addrspace=3>` of
     /// length `size`, with the given alloc_key, and append it to `block`.
     fn append_shared_alloc(ctx: &mut Context, block: Ptr<BasicBlock>, alloc_key: &str, size: u64) {
+        append_shared_alloc_named(ctx, block, alloc_key, size, None);
+    }
+
+    /// As [`append_shared_alloc`], additionally carrying the Rust path of the
+    /// `static` the allocation came from.
+    fn append_shared_alloc_named(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        alloc_key: &str,
+        size: u64,
+        source_name: Option<&str>,
+    ) {
         use pliron::builtin::attributes::IntegerAttr;
         use pliron::utils::apint::APInt;
 
@@ -1889,6 +3135,9 @@ mod tests {
         );
         alloc.set_attr_size(ctx, size_attr);
         alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key.to_string()));
+        if let Some(source_name) = source_name {
+            alloc.set_attr_source_name(ctx, StringAttr::new(source_name.to_string()));
+        }
         op.insert_at_back(block, ctx);
     }
 
@@ -1969,6 +3218,157 @@ mod tests {
         assert_eq!(count_ops::<llvm::AddressOfOp>(&ctx, &body), 3);
     }
 
+    /// Collect `(symbol, source_name)` for every shared global in the module.
+    fn shared_global_source_names(
+        ctx: &Context,
+        module_ptr: Ptr<Operation>,
+    ) -> Vec<(String, Option<String>)> {
+        use llvm_export::ops::GlobalOpExt;
+
+        let top = module_top_block(ctx, module_ptr);
+        let mut named: Vec<_> = top
+            .deref(ctx)
+            .iter(ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, ctx))
+            .filter(|g| g.address_space(ctx) == llvm_addr::SHARED)
+            .map(|g| {
+                (
+                    g.get_symbol_name(ctx).to_string(),
+                    g.shared_source_name(ctx),
+                )
+            })
+            .collect();
+        // Globals are inserted at the front of the module block, so iteration
+        // order is the reverse of creation order. Sort for a stable assertion.
+        named.sort();
+        named
+    }
+
+    #[test]
+    fn shared_alloc_source_name_reaches_the_generated_global() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_shared_alloc_named(&mut ctx, block, "k1", 64, Some("my_kernel::TILE"));
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let named = shared_global_source_names(&ctx, module_ptr);
+        assert_eq!(named.len(), 1, "expected exactly one shared global");
+        let (symbol, source_name) = &named[0];
+        // The symbol itself must stay anonymous: the whole point of the
+        // sidecar attribute is that it does not perturb the emitted name.
+        assert!(
+            symbol.starts_with("__shared_mem_"),
+            "the generated symbol must not be renamed, got `{symbol}`"
+        );
+        assert_eq!(source_name.as_deref(), Some("my_kernel::TILE"));
+    }
+
+    #[test]
+    fn shared_alloc_without_source_name_leaves_the_global_unlabelled() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_shared_alloc(&mut ctx, block, "k1", 64);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let named = shared_global_source_names(&ctx, module_ptr);
+        assert_eq!(named.len(), 1);
+        assert_eq!(named[0].1, None, "an unnamed allocation must stay unnamed");
+    }
+
+    #[test]
+    fn shared_alloc_source_names_are_per_global_not_shared_across_them() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        // Two references to one static dedupe onto a single global, and a
+        // second static gets its own. Each global must carry its own name —
+        // the failure this guards is one name leaking onto every allocation.
+        append_shared_alloc_named(&mut ctx, block, "tile", 64, Some("my_kernel::TILE"));
+        append_shared_alloc_named(&mut ctx, block, "tile", 64, Some("my_kernel::TILE"));
+        append_shared_alloc_named(&mut ctx, block, "scratch", 32, Some("my_kernel::SCRATCH"));
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let names: Vec<_> = shared_global_source_names(&ctx, module_ptr)
+            .into_iter()
+            .map(|(_, source_name)| source_name)
+            .collect();
+        assert_eq!(names.len(), 2, "the shared alloc_key must still dedupe");
+        let mut names: Vec<_> = names.into_iter().map(|n| n.expect("named")).collect();
+        names.sort();
+        assert_eq!(names, vec!["my_kernel::SCRATCH", "my_kernel::TILE"]);
+    }
+
+    #[test]
+    fn shared_alloc_source_name_reaches_the_exported_llvm_ir() {
+        // The end the feature exists for: a consumer holding only the emitted
+        // artifact can tell which Rust `static` a `__shared_mem_N` block is.
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_shared_alloc_named(&mut ctx, block, "tile", 64, Some("my_kernel::TILE"));
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let module = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_ptr, &ctx)
+            .expect("lowered top-level op is a module");
+        let ir = llvm_export::export::export_module_to_string(&ctx, &module).expect("export");
+
+        let comment_index = ir
+            .find("; shared source: my_kernel::TILE")
+            .unwrap_or_else(|| panic!("exported IR must name the shared source:\n{ir}"));
+        let definition_index = ir
+            .find("__shared_mem_")
+            .expect("exported IR must declare the shared global");
+        assert!(
+            comment_index < definition_index,
+            "the source comment must precede the global it describes:\n{ir}"
+        );
+    }
+
+    /// A `__shared_mem_N` or `__device_global_N` index must depend only on
+    /// the module being lowered, not on how many allocations any OTHER
+    /// module has already lowered in this process (#706). Before the fix,
+    /// each `N` came from a `static AtomicUsize` shared across every call in
+    /// the process, so lowering the second of these two modules would have
+    /// produced `__shared_mem_1` and `__device_global_1`, not the `_0` names.
+    #[test]
+    fn shared_and_device_global_indices_are_per_module_not_process_global() {
+        for _ in 0..2 {
+            let mut ctx = make_ctx();
+            let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+            append_shared_alloc(&mut ctx, block, "k", 64);
+            append_global_alloc(&mut ctx, block, "ordinary_static", false);
+            append_mir_return(&mut ctx, block, vec![]);
+
+            crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+            let top = module_top_block(&ctx, module_ptr);
+            let names: Vec<String> = top
+                .deref(&ctx)
+                .iter(&ctx)
+                .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+                .map(|g| g.get_symbol_name(&ctx).to_string())
+                .collect();
+            assert!(
+                names.iter().any(|n| n == "__shared_mem_0"),
+                "a module with exactly one shared allocation must always name it \
+                 __shared_mem_0, regardless of how many other modules already lowered \
+                 one in this process (got {names:?})"
+            );
+            assert!(
+                names.iter().any(|n| n == "__device_global_0"),
+                "a module with exactly one ordinary device global must always name it \
+                 __device_global_0, regardless of how many other modules already \
+                 lowered one in this process (got {names:?})"
+            );
+        }
+    }
+
     fn append_global_alloc(
         ctx: &mut Context,
         block: Ptr<BasicBlock>,
@@ -2039,6 +3439,46 @@ mod tests {
     }
 
     #[test]
+    fn immutable_marking_survives_lowering_and_is_not_assumed() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        // Two ordinary addrspace(1) globals, distinguished by their source key.
+        // Only the promoted one claims immutability; the plain static must not
+        // acquire it, or the exporter would write `constant` for storage the
+        // host can still overwrite by symbol.
+        let promoted = append_global_alloc(&mut ctx, block, "promoted_table", false);
+        mir::MirGlobalAllocOp::new(promoted).mark_immutable(&mut ctx);
+        append_global_alloc(&mut ctx, block, "plain_static", false);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let top = module_top_block(&ctx, module_ptr);
+        let globals: Vec<llvm::GlobalOp> = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .collect();
+        let by_key = |key: &str| -> llvm::GlobalOp {
+            *globals
+                .iter()
+                .find(|g| g.source_global_key(&ctx).as_deref() == Some(key))
+                .unwrap_or_else(|| panic!("no lowered global carries source key {key}"))
+        };
+
+        assert!(
+            by_key("promoted_table").is_immutable(&ctx),
+            "a global marked immutable in MIR must stay immutable through lowering"
+        );
+        assert!(
+            !by_key("plain_static").is_immutable(&ctx),
+            "lowering must not infer immutability; only the promoted-constant \
+             sites may claim it"
+        );
+    }
+
+    #[test]
     fn initialized_global_lowers_to_byte_storage() {
         let mut ctx = make_ctx();
         let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
@@ -2073,5 +3513,118 @@ mod tests {
         assert_eq!(elem.width(), 8);
         assert_eq!(global.get_alignment(&ctx), Some(4));
         assert_eq!(global.initializer_hex(&ctx).as_deref(), Some("3412c07f"));
+    }
+
+    #[test]
+    fn relocated_global_lowers_to_segmented_storage() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let word_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let mir_global_ty: TypeHandle = MirArrayType::get(&mut ctx, word_ty, 3).into();
+        let result_ty = MirPtrType::get_global(&mut ctx, mir_global_ty, false);
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirGlobalAllocOp::get_concrete_op_info(),
+            vec![result_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        let alloc = mir::MirGlobalAllocOp::new(op);
+        alloc.set_attr_global_type(&ctx, TypeAttr::new(mir_global_ty));
+        alloc.set_attr_global_key(&ctx, StringAttr::new("reference_table".to_string()));
+        alloc.set_alignment_value(&mut ctx, 8);
+        op.deref_mut(&ctx).attributes.set(
+            "global_initializer_hex".try_into().unwrap(),
+            StringAttr::new("000000000000000000000000000000000000000000000000".to_string()),
+        );
+        let encoded =
+            llvm::encode_global_initializer_relocations(&[llvm::GlobalInitializerRelocation {
+                source_offset: 8,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 4,
+                target_key: "target_static".to_string(),
+            }]);
+        op.deref_mut(&ctx).attributes.set(
+            "global_initializer_relocations".try_into().unwrap(),
+            StringAttr::new(encoded.clone()),
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let top = module_top_block(&ctx, module_ptr);
+        let global = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .find_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .expect("expected lowered device global");
+        let global_ty = global.get_type(&ctx);
+        let global_ty_ref = global_ty.deref(&ctx);
+        let storage = global_ty_ref
+            .downcast_ref::<StructType>()
+            .expect("relocated initializer must use segmented struct storage");
+        assert_eq!(storage.num_fields(), 3);
+        assert_eq!(
+            global.source_global_key(&ctx).as_deref(),
+            Some("reference_table")
+        );
+        assert_eq!(
+            global.initializer_relocations(&ctx).as_deref(),
+            Some(encoded.as_str())
+        );
+    }
+
+    #[test]
+    fn relocated_global_rejects_overlapping_slots() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let word_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let mir_global_ty: TypeHandle = MirArrayType::get(&mut ctx, word_ty, 2).into();
+        let result_ty = MirPtrType::get_global(&mut ctx, mir_global_ty, false);
+        let op = Operation::new(
+            &mut ctx,
+            mir::MirGlobalAllocOp::get_concrete_op_info(),
+            vec![result_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        let alloc = mir::MirGlobalAllocOp::new(op);
+        alloc.set_attr_global_type(&ctx, TypeAttr::new(mir_global_ty));
+        alloc.set_attr_global_key(&ctx, StringAttr::new("overlap".to_string()));
+        alloc.set_alignment_value(&mut ctx, 8);
+        op.deref_mut(&ctx).attributes.set(
+            "global_initializer_hex".try_into().unwrap(),
+            StringAttr::new("00000000000000000000000000000000".to_string()),
+        );
+        let encoded = llvm::encode_global_initializer_relocations(&[
+            llvm::GlobalInitializerRelocation {
+                source_offset: 0,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 0,
+                target_key: "a".to_string(),
+            },
+            llvm::GlobalInitializerRelocation {
+                source_offset: 0,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 0,
+                target_key: "b".to_string(),
+            },
+        ]);
+        op.deref_mut(&ctx).attributes.set(
+            "global_initializer_relocations".try_into().unwrap(),
+            StringAttr::new(encoded),
+        );
+        op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("overlapping relocations must fail closed");
+        assert!(error.to_string().contains("overlaps"), "{error}");
     }
 }

@@ -54,6 +54,7 @@ cargo oxide update --force          # inside the workspace, run setup via update
 | `--emit-nvvm-ir`             | run, build, pipeline             | Generate NVVM IR for libNVVM                    |
 | `--arch <sm_XX>`             | run, sanitize, build, test, pipeline, emit-ltoir, inspect, debug | Target architecture override |
 | `--features <F>`             | run, sanitize, debug, build, build passthrough, emit-ltoir, inspect | Comma-separated cargo features to enable |
+| `--device-features <F>`      | run, build                       | Comma-separated features for metadata-declared device crates only |
 | `--bin <NAME>`               | run, sanitize, debug                | Specific binary target to build/run      |
 | `--tool <T>`                 | sanitize                         | Compute Sanitizer tool: `memcheck`, `racecheck`, `initcheck`, or `synccheck` |
 | `-o, --output <P>`           | emit-ltoir                       | Output path for the `.ltoir` artifact           |
@@ -63,6 +64,8 @@ cargo oxide update --force          # inside the workspace, run setup via update
 | `-v, --verbose`              | run, sanitize, build, test, emit-ltoir, inspect | Show detailed compilation output           |
 | `--no-fmad`                  | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Keep ordinary multiply and add/subtract operations separate |
 | `--unchecked-indexing`       | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Elide device slice/array bounds checks (UB on OOB) |
+| `--lineinfo`                 | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Emit device line-number info for profilers (nvcc `-lineinfo`) |
+| `--device-debug`             | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Emit full device debug info; disables libNVVM optimization (nvcc `-G`) |
 | `--force`                    | update                           | Inside the workspace, run `setup` instead of advising it |
 | `--async`                    | new                              | Use the async template                          |
 | `--cgdb`                     | debug                            | Use cgdb instead of cuda-gdb                    |
@@ -83,6 +86,20 @@ and versioned `.target` files and passes `-fma=0` through libNVVM and
 nvJitLink. Keep both sidecars with the artifact when another build system
 consumes it.
 
+`--lineinfo` and `--device-debug` select the device debug policy, mirroring nvcc's
+`-lineinfo` and `-G`. `--lineinfo` preserves source line mappings with optimization
+intact and reaches nvJitLink as `-lineinfo`; `--device-debug` emits full debug
+information and additionally passes `-g` with `-opt=0` to libNVVM, so device
+optimization is disabled. Asking for both yields full debug, because full debug
+already carries line tables.
+
+Both are equivalent to `CUDA_OXIDE_DEBUG=line` and `CUDA_OXIDE_DEBUG=full`, and an
+explicit flag outranks that variable. Omitting the flags exports nothing rather than
+`off`, so an absent flag never cancels a debug level the environment or
+`cuda-oxide.toml` already requested. Because the policy changes what the CUDA compiler
+stages are asked to do, it participates in the codegen fingerprint: switching it
+rebuilds device code instead of reusing artifacts compiled under a different policy.
+
 `--materialize-cubin` moves the remaining libNVVM and nvJitLink work into the
 host build. The executable embeds a native cubin, so deployment does not need
 libNVVM, nvJitLink, or a first-load compilation step. This trades portability
@@ -99,11 +116,14 @@ rechecks them inside the backend; use the wrapper flag instead of setting
 `CUDA_OXIDE_MATERIALIZE_CUBIN` around raw Cargo. That variable is an internal
 wrapper/backend signal, not a supported user interface: raw Cargo may reuse a
 previous artifact without running the backend, and a backend invocation without
-the wrapper's fingerprint is rejected. Generic `#[cuda_module]`
-kernels, `#[device] extern` declarations, and metadata-interop examples are
-rejected because their run-time multi-artifact linking is not yet represented
-by this single-cubin path. Materialization is also a final-output mode, so it
-cannot be combined with `--emit-nvvm-ir` or `emit-ltoir`.
+the wrapper's fingerprint is rejected. Generic `#[cuda_module]` kernels and
+`#[device] extern` declarations are rejected because their run-time
+multi-artifact linking is not yet represented by this single-cubin path.
+Metadata-interop projects keep rejecting this global flag; they can instead
+request one independently finalized cubin per declared device crate with
+`artifact-kind = "cubin"`, as described below. Materialization is also a
+final-output mode, so it cannot be combined with `--emit-nvvm-ir` or
+`emit-ltoir`.
 
 ## Commands
 
@@ -137,11 +157,55 @@ cargo oxide run cutile_inter_kernel
 Interop examples can declare extra cuda-oxide device crates with
 `[[package.metadata.cuda-oxide.device-crates]]`, plus optional
 `[package.metadata.cuda-oxide.interop]` metadata. `cargo oxide run` builds those
-device crates with `rustc-codegen-cuda`, writes their PTX to the
-configured location, and then builds/runs the host crate normally.
+device crates with `rustc-codegen-cuda`, writes each configured artifact, and
+then builds/runs the host crate normally. PTX remains the default;
 `cutile_inter_kernel` uses this path:
 the host crate is a cutile-rs program, while `simt/` is a cuda-oxide SIMT PTX
 crate loaded by the host at runtime.
+
+Device crates that need a deployment-time native artifact can opt into the
+same libNVVM and nvJitLink finalizer used by cuda-oxide's embedded
+materialization path. When a device package defines multiple binary targets,
+select one explicitly with `bin`:
+
+```toml
+[[package.metadata.cuda-oxide.device-crates]]
+manifest-path = "device/Cargo.toml"
+artifact-dir = "device"
+artifact-name = "simt_device"
+artifact-kind = "cubin"
+source-identity = true
+bin = "simt-device"
+```
+
+`artifact-kind` accepts `ptx` (the default) or `cubin`. Cubin export requires a
+concrete target from `--arch`, `CUDA_OXIDE_TARGET`, project configuration, or
+the device detected by `run`; that requirement is checked before the device
+build. The cubin itself is always finalized for the target the backend records
+in the emitted `<name>.target` sidecar, which can differ from the request hint
+when the kernel needs a newer architecture than the detected device. When
+`source-identity` is true, cargo-oxide also writes `<artifact>.identity`
+containing the built target (read back from the `.target` sidecar, or from the
+PTX's own `.target` directive for `ptx` artifacts), the normalized
+`--device-features` selection, the artifact digest, and Cargo depfile-derived
+source digests. Paths in that sidecar are relative to the artifact directory.
+
+Use `--device-features` when the nested device crate and host crate have
+different feature sets:
+
+```bash
+cargo oxide build interop-app --arch sm_120a \
+  --features host-integration \
+  --device-features tensor-cores
+```
+
+`inspect` accepts only PTX interop artifacts; use the declared cubin file
+directly for native artifact inspection.
+
+`cargo oxide` validates `bin`, builds only that target with `cargo build
+--bin`, and uses the selected binary name for the artifact unless
+`artifact-name` is set. Omitting `bin` preserves the package-default build
+behavior.
 
 ### `cargo oxide sanitize <example>`
 

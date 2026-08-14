@@ -12,6 +12,7 @@ error[E0277]: the trait bound `DisjointSlice<'static, u32, RowMajorTiles<2, 4, 1
              `DisjointSlice<'_, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `DisjointSlice<'_, T, Runtime2DIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
              `DisjointSlice<'_, T, RuntimeRowMajorTiles<ROWS, COLS>>` implements `cuda_device::__LaunchContractDisjointSlice<T, 2>`
+             `DisjointSlice<'_, T, WarpIndex>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
              `DisjointSlice<'_, T>` implements `cuda_device::__LaunchContractDisjointSlice<T, 1>`
 note: required by a bound in `requires_one_dimensional_contract`
   --> tests/compile_fail/thread_index_row_major_tiles_not_domain1.rs:10:41

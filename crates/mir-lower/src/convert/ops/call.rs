@@ -811,6 +811,20 @@ fn convert_rust_bit_intrinsic(
 
     if matches!(intrinsic, RustBitIntrinsic::Bswap) && value_width == 8 {
         // LLVM has no useful byte swap for a single byte; Rust's semantics are identity.
+        //
+        // The result type is checked first. `bitcast` requires both types to be
+        // non-aggregate and of one size, so a result that is not an 8-bit
+        // integer would leave this arm emitting IR that LLVM rejects. Every
+        // other arm reaches `cast_integer_value_to_type` below, which performs
+        // the same check; this one returns early and would otherwise skip it.
+        let result_width = integer_bit_width(ctx, result_type, loc.clone())?;
+        if result_width != value_width {
+            return pliron::input_err!(
+                loc,
+                "bswap on an {value_width}-bit integer cannot produce a \
+                 {result_width}-bit result"
+            );
+        }
         let bitcast = llvm::BitcastOp::new(ctx, value, result_type);
         rewriter.insert_operation(ctx, bitcast.get_operation());
         rewriter.replace_operation(ctx, op, bitcast.get_operation());
@@ -1528,15 +1542,27 @@ fn flatten_arguments(
         let arg_ty = arg.get_type(ctx);
 
         enum FlattenKind {
-            Slice,
-            Struct { layout: StructLayoutInfo },
+            /// `(ptr, len)`, then one argument per index-space layout field
+            /// (empty for `&[T]` and for slices over type-fixed spaces).
+            Slice {
+                space_tys: Vec<TypeHandle>,
+            },
+            Struct {
+                layout: StructLayoutInfo,
+            },
             None,
         }
 
         let flatten_kind = if let Some(mir_ty) = operands_info.lookup_most_recent_type(*arg) {
             let ty_ref = mir_ty.deref(ctx);
-            if ty_ref.is::<MirSliceType>() || ty_ref.is::<MirDisjointSliceType>() {
-                FlattenKind::Slice
+            if ty_ref.is::<MirSliceType>() {
+                FlattenKind::Slice {
+                    space_tys: Vec::new(),
+                }
+            } else if let Some(slice_ty) = ty_ref.downcast_ref::<MirDisjointSliceType>() {
+                FlattenKind::Slice {
+                    space_tys: slice_ty.space_tys.clone(),
+                }
             } else if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
                 FlattenKind::Struct {
                     layout: StructLayoutInfo::of_struct(struct_ty),
@@ -1549,7 +1575,7 @@ fn flatten_arguments(
         };
 
         match flatten_kind {
-            FlattenKind::Slice => {
+            FlattenKind::Slice { space_tys } => {
                 let ptr_ty = llvm_types::PointerType::get_generic(ctx);
                 let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
 
@@ -1580,6 +1606,38 @@ fn flatten_arguments(
                 )?;
                 flattened_args.push(len_val);
                 flattened_arg_types.push(len_ty);
+
+                // Index-space layout fields (e.g. a runtime row width) follow
+                // at aggregate slots `2 + i`. `convert_function_type` gave the
+                // callee one parameter per non-zero-sized field, so the call
+                // must supply them symmetrically or the callee would read a
+                // garbage row width from a missing argument.
+                for (i, space_ty) in space_tys.into_iter().enumerate() {
+                    let converted = convert_type(ctx, space_ty).map_err(|e| {
+                        pliron::input_error_noloc!(
+                            "failed to convert disjoint-slice index-space field type: {e}"
+                        )
+                    })?;
+                    // A zero-sized field contributes no parameter, matching
+                    // the signature conversion.
+                    if is_zero_sized_type(ctx, converted) {
+                        continue;
+                    }
+                    let slot = u32::try_from(2 + i).expect("index-space field slot fits u32");
+                    let extract_space = llvm::ExtractValueOp::new(ctx, *arg, vec![slot])?;
+                    rewriter.insert_operation(ctx, extract_space.get_operation());
+                    let space_val = extract_space.get_operation().deref(ctx).get_result(0);
+
+                    let (space_val, space_ty) = coerce_arg_to_param_ty(
+                        ctx,
+                        rewriter,
+                        space_val,
+                        converted,
+                        take_expected(&flattened_arg_types),
+                    )?;
+                    flattened_args.push(space_val);
+                    flattened_arg_types.push(space_ty);
+                }
             }
             FlattenKind::Struct { layout } => {
                 // Walk in memory order (the order `convert_function_type`

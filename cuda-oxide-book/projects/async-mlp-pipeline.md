@@ -109,14 +109,14 @@ pub fn sgemm_naive(
     alpha: f32, a: &[f32], b: &[f32],
     beta: f32, mut c: DisjointSlice<f32, Runtime2DIndex>,
 ) {
-    let n_sz = n as usize;
     let row = thread::index_2d_row();
     let col = thread::index_2d_col();
 
-    // SAFETY: every thread sees the same `n_sz` (same kernel arg).
-    if let Some(c_idx) = unsafe { thread::index_2d_runtime(n_sz) } {
-        // col < n_sz guaranteed by `Some` -- no manual check needed
+    // The row width comes from `c`, bound on the host to this same `n`.
+    if let Some(c_idx) = thread::index_2d_runtime(&c) {
+        // col < n guaranteed by `Some` -- no manual check needed
         if row < m as usize {
+            let n_sz = n as usize;
             let k_sz = k as usize;
             let mut sum = 0.0f32;
             let mut i = 0usize;
@@ -134,9 +134,11 @@ pub fn sgemm_naive(
 
 Each thread computes one element of the output matrix. The 2D thread index
 maps directly to the (row, col) position. `DisjointSlice` checks bounds and
-requires the matching index-space type. The remaining proof is explicit: every
-thread uses the same runtime stride, Z is inactive, and the raw 2D launch shape
-matches the kernel.
+requires the matching index-space type. `c`'s row width is not a per-call
+argument: the host binds it into the slice once at launch, and
+`index_2d_runtime(&c)` reads it back, so every thread resolves against the
+same row width by construction. The remaining proof is explicit: Z is
+inactive and the raw 2D launch shape matches the kernel.
 
 :::{tip}
 This is intentionally a *naive* GEMM — one thread, one element, no shared
@@ -351,9 +353,12 @@ This is where the magic lives. For each batch, we build a four-stage chain:
                 w0.cu_deviceptr(), w0.len() as u64,
                 0.0f32,
                 hidden.cu_deviceptr(), hidden.len() as u64,
+                DIM as u32,  // hidden's row width: the third packet word a
+                             // DisjointSlice<_, Runtime2DIndex> takes
             ));
-            // SAFETY: packet/config match sgemm_naive, the scheduler uses the
-            // module's context, and the owned wrapper retains its allocations.
+            // SAFETY: packet/config match sgemm_naive (including the width
+            // word for `c`), the scheduler uses the module's context, and the
+            // owned wrapper retains its allocations.
             let launch = unsafe { builder.finalize_unchecked(gemm_cfg) };
             let launch = OwnedAsyncKernelLaunch::new(launch, (input, w0, hidden));
             launch.and_then(move |(_input, _w0, hidden)| {
@@ -424,7 +429,9 @@ at the same index, this is safe — no thread reads another's write.
 the raw packet and geometry become runnable, so each call has a local safety
 proof. `OwnedAsyncKernelLaunch` keeps its buffers alive. Prefer generated
 owned-async methods with `PreparedLaunch<K>` when the kernel declares a launch
-contract.
+contract; for a runtime-width output like `c`, the generated method takes
+`cuda_host::RowWidthOwned::new(buffer, width)` and marshals the third packet
+word for you.
 
 ### Step 4: Spawn and collect
 

@@ -183,10 +183,19 @@ pub mod ops {
         /// synchronize threads or write memory: `bar.sync`, `mma.sync`,
         /// `wgmma`, `tcgen05`, `cp.async`.
         Convergent,
-        /// Convergent, no side effects. Warp-collective operations whose
-        /// result depends on which threads are active but that produce no
-        /// observable effects beyond their register output: `shfl.sync`,
-        /// `vote.sync`, `match.sync`.
+        /// Convergent, no side effects: the asm must not cross divergent
+        /// control flow, but may be merged with an identical call or dropped
+        /// when its result is unused.
+        ///
+        /// Currently unused, and warp collectives are not candidates for it. A
+        /// collective's result depends on every lane's input, not just the
+        /// operands of this call, so two calls with equal operands are not
+        /// interchangeable. Upstream LLVM says the same by declaring `shfl`,
+        /// `vote`, `match`, `redux`, and `activemask`
+        /// `IntrConvergent, IntrInaccessibleMemOnly` rather than `IntrNoMem`;
+        /// those lower through [`AsmKind::Convergent`] here. This variant would
+        /// fit a convergent op that is a true function of its own operands, and
+        /// no such op is currently modelled.
         ConvergentPure,
         /// Side effects, not convergent. Non-collective operations that
         /// modify memory or hardware state: `st.global` via asm, hardware
@@ -264,12 +273,174 @@ pub mod ops {
     /// Op-attribute key for a `GlobalOp`'s Rust static initializer bytes,
     /// encoded as lowercase hex.
     const GLOBAL_INITIALIZER_HEX_KEY: &str = "cuda_oxide_global_initializer_hex";
+    /// Stable rustc-side identity of the static represented by a `GlobalOp`.
+    ///
+    /// The emitted LLVM symbol is not sufficient for relocation lookup because
+    /// ordinary device globals receive generated `__device_global_N` names.
+    const GLOBAL_SOURCE_KEY: &str = "cuda_oxide_global_source_key";
+    /// Versioned, length-prefixed pointer-relocation metadata for an initialized
+    /// Rust static.
+    const GLOBAL_INITIALIZER_RELOCATIONS_KEY: &str = "cuda_oxide_global_initializer_relocations";
+    /// Marks a `GlobalOp` whose storage no code ever writes, so it is exported
+    /// as LLVM `constant` rather than `global`.
+    ///
+    /// Set only for storage this compiler itself materialises from an evaluated
+    /// Rust constant: the initializer is the whole value, no device code holds a
+    /// mutable path to it, and no host setter is generated for its name. A Rust
+    /// `static` / `static mut` never carries this, and neither does anything
+    /// reachable through `#[constant]` or `#[device_global]`, because the host
+    /// writes those by symbol.
+    ///
+    /// This is deliberately a property of the *storage*, not of a pointer's
+    /// `is_mutable` bit: a shared reference to a mutable static is an immutable
+    /// pointer to mutable storage, and #413 records that `MirPtrType::is_mutable`
+    /// must not be read as a promise about the pointee.
+    const GLOBAL_IMMUTABLE_KEY: &str = "cuda_oxide_global_immutable";
+    /// Rust path of the shared-memory `static` a generated `__shared_mem_N`
+    /// global came from.
+    ///
+    /// Distinct from [`GLOBAL_SOURCE_KEY`], which is a *relocation identity*:
+    /// the exporter indexes it, requires it to be unique across globals, and
+    /// resolves initializer pointers through it. This key is purely
+    /// descriptive, is never indexed, and carries no uniqueness requirement.
+    const GLOBAL_SHARED_SOURCE_NAME_KEY: &str = "cuda_oxide_global_shared_source_name";
+    /// Marks a `GlobalOp` as externally consumed even when device code does not
+    /// reference it. The exporter adds marked globals to `@llvm.used`, keeping
+    /// profiler metadata alive through libNVVM and nvJitLink materialization.
+    const GLOBAL_RETAINED_KEY: &str = "cuda_oxide_global_retained";
+
+    /// One pointer-width relocation inside an evaluated Rust static initializer.
+    ///
+    /// `source_offset` and `target_addend` are byte offsets. `target_key` is the
+    /// stable rustc global key, not the generated LLVM symbol name.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct GlobalInitializerRelocation {
+        pub source_offset: u64,
+        pub width_bytes: u32,
+        pub target_address_space: u32,
+        pub target_addend: u64,
+        pub target_key: String,
+    }
+
+    /// Encode initializer relocations using a versioned, length-prefixed format.
+    ///
+    /// The target key is length-prefixed rather than delimiter-escaped because
+    /// Rust mangled symbols may contain punctuation that is meaningful to simpler
+    /// ad-hoc formats.
+    pub fn encode_global_initializer_relocations(
+        relocations: &[GlobalInitializerRelocation],
+    ) -> String {
+        fn put_u64(out: &mut String, value: u64) {
+            out.push_str(&value.to_string());
+            out.push(' ');
+        }
+
+        fn put_str(out: &mut String, value: &str) {
+            put_u64(out, value.len() as u64);
+            out.push_str(value);
+            out.push(' ');
+        }
+
+        let mut encoded = String::from("v1 ");
+        put_u64(&mut encoded, relocations.len() as u64);
+        for relocation in relocations {
+            put_u64(&mut encoded, relocation.source_offset);
+            put_u64(&mut encoded, u64::from(relocation.width_bytes));
+            put_u64(&mut encoded, u64::from(relocation.target_address_space));
+            put_u64(&mut encoded, relocation.target_addend);
+            put_str(&mut encoded, &relocation.target_key);
+        }
+        encoded
+    }
+
+    /// Decode the format produced by [`encode_global_initializer_relocations`].
+    pub fn decode_global_initializer_relocations(
+        encoded: &str,
+    ) -> Result<Vec<GlobalInitializerRelocation>, String> {
+        fn take_u64(bytes: &[u8], pos: &mut usize, field: &str) -> Result<u64, String> {
+            let start = *pos;
+            while *pos < bytes.len() && bytes[*pos].is_ascii_digit() {
+                *pos += 1;
+            }
+            if start == *pos || *pos >= bytes.len() || bytes[*pos] != b' ' {
+                return Err(format!(
+                    "malformed global initializer relocation metadata while reading {field}"
+                ));
+            }
+            let value = std::str::from_utf8(&bytes[start..*pos])
+                .map_err(|_| format!("non-UTF-8 digits in relocation {field}"))?
+                .parse::<u64>()
+                .map_err(|_| format!("invalid integer in relocation {field}"))?;
+            *pos += 1;
+            Ok(value)
+        }
+
+        fn take_str(bytes: &[u8], pos: &mut usize, field: &str) -> Result<String, String> {
+            let len = usize::try_from(take_u64(bytes, pos, &format!("{field} length"))?)
+                .map_err(|_| format!("relocation {field} length does not fit usize"))?;
+            let end = (*pos)
+                .checked_add(len)
+                .ok_or_else(|| format!("relocation {field} length overflows"))?;
+            let raw = bytes
+                .get(*pos..end)
+                .ok_or_else(|| format!("truncated relocation {field}"))?;
+            let value = std::str::from_utf8(raw)
+                .map_err(|_| format!("relocation {field} is not UTF-8"))?
+                .to_string();
+            *pos = end;
+            if *pos >= bytes.len() || bytes[*pos] != b' ' {
+                return Err(format!("relocation {field} is missing its terminator"));
+            }
+            *pos += 1;
+            Ok(value)
+        }
+
+        let bytes = encoded.as_bytes();
+        if !bytes.starts_with(b"v1 ") {
+            return Err("unsupported global initializer relocation metadata version".to_string());
+        }
+        let mut pos = 3;
+        let count = usize::try_from(take_u64(bytes, &mut pos, "relocation count")?)
+            .map_err(|_| "relocation count does not fit usize".to_string())?;
+        if count > bytes.len() {
+            return Err("global initializer relocation count is implausibly large".to_string());
+        }
+
+        let mut relocations = Vec::with_capacity(count);
+        for index in 0..count {
+            let source_offset = take_u64(bytes, &mut pos, "source offset")?;
+            let width_bytes = u32::try_from(take_u64(bytes, &mut pos, "pointer width")?)
+                .map_err(|_| format!("relocation {index} pointer width does not fit u32"))?;
+            let target_address_space =
+                u32::try_from(take_u64(bytes, &mut pos, "target address space")?).map_err(
+                    |_| format!("relocation {index} target address space does not fit u32"),
+                )?;
+            let target_addend = take_u64(bytes, &mut pos, "target addend")?;
+            let target_key = take_str(bytes, &mut pos, "target key")?;
+            relocations.push(GlobalInitializerRelocation {
+                source_offset,
+                width_bytes,
+                target_address_space,
+                target_addend,
+                target_key,
+            });
+        }
+
+        if pos != bytes.len() {
+            return Err("trailing bytes in global initializer relocation metadata".to_string());
+        }
+        Ok(relocations)
+    }
 
     /// Op-attribute key under which a memory op's (`load` / `store` / `alloca`)
     /// explicit ABI alignment is stashed. Stamped by the mir-lower alignment
     /// pre-pass (while types are still MIR, so `repr(align(N))` is visible)
     /// and emitted as `align N` during export.
     const OP_ALIGNMENT_KEY: &str = "cuda_oxide_op_alignment";
+
+    /// Op-attribute key controlling whether a GEP is emitted with LLVM's
+    /// `inbounds` promise. Absence denotes an in-bounds GEP.
+    const GEP_INBOUNDS_KEY: &str = "cuda_oxide_gep_inbounds";
 
     /// Op-attribute key controlling whether an inline asm op is emitted with
     /// LLVM's `sideeffect` marker. Absent means true, matching the conservative
@@ -293,6 +464,24 @@ pub mod ops {
             .get::<BoolAttr>(&key)
             .map(|attr| bool::from((*attr).clone()))
             .unwrap_or(false)
+    }
+
+    /// Stamp the source pointer arithmetic contract onto an LLVM GEP.
+    pub fn set_gep_inbounds(ctx: &mut Context, op: Ptr<Operation>, inbounds: bool) {
+        let key = Identifier::try_new(GEP_INBOUNDS_KEY.to_string()).expect("valid identifier");
+        op.deref_mut(ctx)
+            .attributes
+            .set(key, BoolAttr::new(inbounds));
+    }
+
+    /// Return whether an LLVM GEP carries the `inbounds` promise.
+    pub fn gep_inbounds(ctx: &Context, op: Ptr<Operation>) -> bool {
+        let key = Identifier::try_new(GEP_INBOUNDS_KEY.to_string()).expect("valid identifier");
+        op.deref(ctx)
+            .attributes
+            .get::<BoolAttr>(&key)
+            .map(|attr| bool::from(attr.clone()))
+            .unwrap_or(true)
     }
 
     /// Debug type metadata for a local variable described by `llvm.dbg.declare`.
@@ -561,6 +750,9 @@ pub mod ops {
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
     const OP_VOLATILE_KEY: &str = "cuda_oxide_op_volatile";
+    /// Op-attribute key for the alignment an address computation guarantees.
+    /// Lowering-internal: never exported.
+    const ADDRESS_ALIGNMENT_KEY: &str = "cuda_oxide_address_alignment";
 
     /// Stamp the ABI alignment (bytes) onto a memory op.
     pub fn set_op_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
@@ -571,6 +763,28 @@ pub mod ops {
     /// Read the ABI alignment (bytes) stamped on a memory op, if any.
     pub fn op_alignment(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
         let key = Identifier::try_new(OP_ALIGNMENT_KEY.to_string()).expect("valid identifier");
+        op.deref(ctx)
+            .attributes
+            .get::<AlignmentAttr>(&key)
+            .map(|a| a.0)
+    }
+
+    /// Stamp the alignment (bytes) that an *address-producing* op guarantees.
+    ///
+    /// Distinct from [`set_op_alignment`], which states the alignment of a
+    /// memory op's own access and is what the exporter prints as `align N`.
+    /// This records what a computed address proves about itself, so a later
+    /// load through it can state an alignment its own result type does not
+    /// know. Nothing exports it: it is consumed during lowering and is inert
+    /// on the op that carries it.
+    pub fn set_address_alignment(ctx: &mut Context, op: Ptr<Operation>, align: u32) {
+        let key = Identifier::try_new(ADDRESS_ALIGNMENT_KEY.to_string()).expect("valid identifier");
+        op.deref_mut(ctx).attributes.set(key, AlignmentAttr(align));
+    }
+
+    /// Read the alignment an address-producing op guarantees, if any.
+    pub fn address_alignment(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
+        let key = Identifier::try_new(ADDRESS_ALIGNMENT_KEY.to_string()).expect("valid identifier");
         op.deref(ctx)
             .attributes
             .get::<AlignmentAttr>(&key)
@@ -629,6 +843,56 @@ pub mod ops {
             argument_index,
             ty,
         })
+    }
+
+    /// Rust-local provenance for the post-optimization local-memory diagnostic.
+    ///
+    /// `mir-importer` attaches this to the `mir.alloca` of every named Rust
+    /// source local, `mir-lower` copies it to the LLVM alloca, and the textual
+    /// exporter folds it into the alloca's SSA value name so it survives the
+    /// external `opt` binary exactly as long as the allocation itself does.
+    /// The attribute is a first-class IR citizen inside both dialects; only the
+    /// exported SSA name uses a string encoding, because the value name is the
+    /// sole channel `opt` reliably preserves on surviving instructions.
+    #[pliron_attr(name = "llvm.local_memory_provenance", format, verifier = "succ")]
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    pub struct LocalMemoryProvenanceAttr {
+        /// Index of the Rust MIR local backing the allocation.
+        pub local_index: u64,
+        /// ABI size of the local in bytes (0 when the layout is unavailable).
+        pub size_bytes: u64,
+        /// Source binding name of the local.
+        pub binding_name: StringAttr,
+        /// Compact source-level spelling of the local's type.
+        pub type_name: StringAttr,
+    }
+
+    /// Op-attribute key for [`LocalMemoryProvenanceAttr`] on `mir.alloca` and
+    /// `llvm.alloca`.
+    const LOCAL_MEMORY_PROVENANCE_KEY: &str = "cuda_oxide_local_memory_provenance";
+
+    /// Attach Rust-local provenance to a stack-slot op.
+    pub fn set_local_memory_provenance(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        provenance: LocalMemoryProvenanceAttr,
+    ) {
+        let key = Identifier::try_new(LOCAL_MEMORY_PROVENANCE_KEY.to_string())
+            .expect("valid local-memory provenance attribute key");
+        op.deref_mut(ctx).attributes.set(key, provenance);
+    }
+
+    /// Read Rust-local provenance from a stack-slot op, if present.
+    pub fn local_memory_provenance(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Option<LocalMemoryProvenanceAttr> {
+        let key = Identifier::try_new(LOCAL_MEMORY_PROVENANCE_KEY.to_string())
+            .expect("valid local-memory provenance attribute key");
+        op.deref(ctx)
+            .attributes
+            .get::<LocalMemoryProvenanceAttr>(&key)
+            .cloned()
     }
 
     /// Attach the MIR source-scope id that owns this source local.
@@ -999,6 +1263,35 @@ pub mod ops {
         fn set_initializer_hex(&self, ctx: &mut Context, hex: &str);
         /// Read lowered Rust static initializer bytes, encoded as hex.
         fn initializer_hex(&self, ctx: &Context) -> Option<String>;
+        /// Attach the stable rustc global key represented by this LLVM global.
+        fn set_source_global_key(&self, ctx: &mut Context, key: &str);
+        /// Read the stable rustc global key represented by this LLVM global.
+        fn source_global_key(&self, ctx: &Context) -> Option<String>;
+        /// Attach serialized initializer relocation metadata.
+        fn set_initializer_relocations(&self, ctx: &mut Context, encoded: &str);
+        /// Read serialized initializer relocation metadata.
+        fn initializer_relocations(&self, ctx: &Context) -> Option<String>;
+        /// Mark this global's storage as never written, so it exports as
+        /// `constant` rather than `global`.
+        ///
+        /// Only storage the compiler materialises from an evaluated constant may
+        /// claim this: the initializer is the whole value, the symbol name is
+        /// generated so no host setter can reach it, and nothing is handed a
+        /// mutable path to it. A Rust `static` never carries it.
+        fn mark_immutable(&self, ctx: &mut Context);
+        /// Whether this global's storage was marked never-written.
+        fn is_immutable(&self, ctx: &Context) -> bool;
+        /// Attach the Rust path of the shared-memory `static` this global came from.
+        ///
+        /// Descriptive only: the exporter renders it as a comment above the
+        /// global and nothing in code generation consumes it.
+        fn set_shared_source_name(&self, ctx: &mut Context, source_name: &str);
+        /// Read the Rust path of the shared-memory `static` this global came from.
+        fn shared_source_name(&self, ctx: &Context) -> Option<String>;
+        /// Keep this global alive through LLVM/NVVM internalization and linking.
+        fn mark_retained(&self, ctx: &mut Context);
+        /// Whether this global was explicitly marked as externally consumed.
+        fn is_retained(&self, ctx: &Context) -> bool;
     }
 
     impl GlobalOpExt for GlobalOp {
@@ -1046,12 +1339,107 @@ pub mod ops {
                 .get::<StringAttr>(&key)
                 .map(|attr| String::from((*attr).clone()))
         }
+
+        fn set_source_global_key(&self, ctx: &mut Context, source_key: &str) {
+            let key = Identifier::try_new(GLOBAL_SOURCE_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, StringAttr::new(source_key.to_string()));
+        }
+
+        fn source_global_key(&self, ctx: &Context) -> Option<String> {
+            let key = Identifier::try_new(GLOBAL_SOURCE_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<StringAttr>(&key)
+                .map(|attr| String::from((*attr).clone()))
+        }
+
+        fn set_initializer_relocations(&self, ctx: &mut Context, encoded: &str) {
+            let key = Identifier::try_new(GLOBAL_INITIALIZER_RELOCATIONS_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, StringAttr::new(encoded.to_string()));
+        }
+
+        fn initializer_relocations(&self, ctx: &Context) -> Option<String> {
+            let key = Identifier::try_new(GLOBAL_INITIALIZER_RELOCATIONS_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<StringAttr>(&key)
+                .map(|attr| String::from((*attr).clone()))
+        }
+
+        fn mark_immutable(&self, ctx: &mut Context) {
+            let key =
+                Identifier::try_new(GLOBAL_IMMUTABLE_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, pliron::builtin::attributes::UnitAttr);
+        }
+
+        fn is_immutable(&self, ctx: &Context) -> bool {
+            let key =
+                Identifier::try_new(GLOBAL_IMMUTABLE_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<pliron::builtin::attributes::UnitAttr>(&key)
+                .is_some()
+        }
+
+        fn set_shared_source_name(&self, ctx: &mut Context, source_name: &str) {
+            let key = Identifier::try_new(GLOBAL_SHARED_SOURCE_NAME_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, StringAttr::new(source_name.to_string()));
+        }
+
+        fn shared_source_name(&self, ctx: &Context) -> Option<String> {
+            let key = Identifier::try_new(GLOBAL_SHARED_SOURCE_NAME_KEY.to_string())
+                .expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<StringAttr>(&key)
+                .map(|attr| String::from((*attr).clone()))
+        }
+
+        fn mark_retained(&self, ctx: &mut Context) {
+            let key =
+                Identifier::try_new(GLOBAL_RETAINED_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref_mut(ctx)
+                .attributes
+                .set(key, pliron::builtin::attributes::UnitAttr);
+        }
+
+        fn is_retained(&self, ctx: &Context) -> bool {
+            let key =
+                Identifier::try_new(GLOBAL_RETAINED_KEY.to_string()).expect("valid identifier");
+            self.get_operation()
+                .deref(ctx)
+                .attributes
+                .get::<pliron::builtin::attributes::UnitAttr>(&key)
+                .is_some()
+        }
     }
 
     #[cfg(test)]
     mod tests {
         use super::{
-            DebugLocalTypeKind, DebugTypeMember, deserialize_debug_type, serialize_debug_type,
+            DebugLocalTypeKind, DebugTypeMember, GlobalInitializerRelocation,
+            decode_global_initializer_relocations, deserialize_debug_type,
+            encode_global_initializer_relocations, serialize_debug_type,
         };
 
         fn round_trip(ty: &DebugLocalTypeKind) -> DebugLocalTypeKind {
@@ -1116,6 +1504,45 @@ pub mod ops {
                 size_bits: 64,
             };
             assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn round_trips_global_initializer_relocations() {
+            let relocations = vec![
+                GlobalInitializerRelocation {
+                    source_offset: 0,
+                    width_bytes: 8,
+                    target_address_space: 1,
+                    target_addend: 0,
+                    target_key: "ordinary static with spaces".to_string(),
+                },
+                GlobalInitializerRelocation {
+                    source_offset: 16,
+                    width_bytes: 8,
+                    target_address_space: 4,
+                    target_addend: 24,
+                    target_key: "_ZN4test6TARGET17h0123456789abcdefE".to_string(),
+                },
+            ];
+            let encoded = encode_global_initializer_relocations(&relocations);
+            assert_eq!(
+                decode_global_initializer_relocations(&encoded).expect("decode succeeds"),
+                relocations
+            );
+        }
+
+        #[test]
+        fn rejects_truncated_global_initializer_relocations() {
+            let relocation = GlobalInitializerRelocation {
+                source_offset: 0,
+                width_bytes: 8,
+                target_address_space: 1,
+                target_addend: 0,
+                target_key: "target".to_string(),
+            };
+            let mut encoded = encode_global_initializer_relocations(&[relocation]);
+            encoded.pop();
+            assert!(decode_global_initializer_relocations(&encoded).is_err());
         }
 
         #[test]

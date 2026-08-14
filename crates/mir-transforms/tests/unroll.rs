@@ -28,7 +28,7 @@ use pliron::graph::{ControlFlowGraph, dominance::DomInfo};
 use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::pass_manager::AnalysisManager;
+use pliron::pass::AnalysisManager;
 use pliron::region::Region;
 
 use mir_transforms::analyses::loop_info::LoopInfo;

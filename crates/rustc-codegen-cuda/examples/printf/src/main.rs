@@ -179,9 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
 
-    let module = ctx.load_module_from_file("printf.ptx")?;
-    let module = kernels::from_module(module).expect("Failed to initialize typed CUDA module");
-
+    let module = kernels::load(&ctx)?;
     let cfg = LaunchConfig {
         grid_dim: (1, 1, 1),
         block_dim: (32, 1, 1),

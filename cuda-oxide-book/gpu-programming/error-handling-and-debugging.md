@@ -192,8 +192,8 @@ cuda-oxide has three device debug modes:
 | Mode | How to enable it | What you get | Cost |
 |:-----|:-----------------|:-------------|:-----|
 | Off | default for normal `build` / `run` | Fastest generated PTX, no source mapping | none |
-| Line tables | `cargo oxide debug`, or `CUDA_OXIDE_DEBUG=line-tables` | Source breakpoints, stepping, backtraces | low |
-| Full | `CUDA_OXIDE_DEBUG=full cargo oxide debug <example>` | Line tables plus basic argument/local inspection | higher |
+| Line tables | `--lineinfo`, `cargo oxide debug`, or `CUDA_OXIDE_DEBUG=line-tables` | Source breakpoints, stepping, backtraces | low |
+| Full | `--device-debug`, or `CUDA_OXIDE_DEBUG=full` | Line tables plus basic argument/local inspection | higher |
 
 Think of line tables as a map from machine instructions back to source lines:
 
@@ -267,6 +267,23 @@ The `CUDA_OXIDE_DEBUG` override works with `build`, `run`, `pipeline`, and
 CUDA_OXIDE_DEBUG=line-tables cargo oxide pipeline vecadd
 CUDA_OXIDE_DEBUG=full cargo oxide debug vecadd
 ```
+
+Each mode also has a flag, which is what the environment variable is a shorthand
+for. `--lineinfo` selects line tables and `--device-debug` selects full debug,
+matching `nvcc -lineinfo` and `nvcc -G`; both are accepted by `build`, `run`,
+`pipeline`, `test`, `sanitize`, `inspect`, and `emit-ltoir`:
+
+```bash
+cargo oxide build vecadd --lineinfo
+cargo oxide run vecadd --device-debug        # same as CUDA_OXIDE_DEBUG=full
+```
+
+Two rules settle what happens when they are combined. `--device-debug`
+supersedes `--lineinfo`, so passing both gives full debug. And *omitting* both
+does not mean "off": the flags export `CUDA_OXIDE_DEBUG` for the build only when
+they ask for something, so an absent flag leaves a level the surrounding
+environment already set alone instead of quietly opting out of it. A flag that is
+present does export, and so wins over an inherited value.
 
 Useful aliases:
 

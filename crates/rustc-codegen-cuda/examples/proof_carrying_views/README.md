@@ -38,7 +38,7 @@ thread::index_1d_u32(launch_context)       -> returns this thread's 1-D index
 The launch context is explicit so the call shows where its checked launch facts
 come from. It is a local device value, not a kernel argument.
 
-The 2-D epilogue encodes its logical row pitch in
+The 2-D epilogue encodes its logical row width in
 `RowMajorTiles<1, 2, 64>`. The caller must choose `64` to match the buffer's
 actual layout. One check proves the full rectangle stays within its row and
 parent allocation; both interior accesses are then check-free.

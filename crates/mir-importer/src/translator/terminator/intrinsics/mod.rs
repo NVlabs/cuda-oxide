@@ -8,18 +8,23 @@
 //! This module handles the translation of `cuda_device` intrinsic calls into
 //! `dialect-nvvm` operations. Intrinsics are organized by functional category:
 //!
-//! | Module      | Intrinsics                                                                   |
-//! |-------------|------------------------------------------------------------------------------|
-//! | `generated` | Admitted generated intrinsics, including `sync_threads`                     |
-//! | `indexing`  | `threadIdx_*`, `blockIdx_*`, `index_1d`, `index_2d::<S>`, `index_2d_runtime` |
-//! | `sync`      | `mbarrier_*`, `fence_*`                                                     |
-//! | `cluster`   | `cluster_ctaidX`, `cluster_sync`, `map_shared_rank`                          |
-//! | `warp`      | `shuffle_*`, `vote_*`, `lane_id`                                             |
-//! | `wgmma`     | Hopper WGMMA matrix operations                                               |
-//! | `tcgen05`   | Blackwell tensor core (tcgen05) operations                                   |
-//! | `tma`       | Tensor Memory Access (TMA) operations                                        |
-//! | `memory`    | `SharedArray`, `stmatrix_*`, type conversions                                |
-//! | `debug`     | `clock`, `clock64`, `globaltimer`, `trap`, `breakpoint`                      |
+//! | Module       | Intrinsics                                                                   |
+//! |--------------|------------------------------------------------------------------------------|
+//! | `generated`  | Every catalog intrinsic, dispatched by canonical and compatibility path      |
+//! | `indexing`   | `threadIdx_*`, `blockIdx_*`, `index_1d`, `index_2d::<S>`, `index_2d_runtime` |
+//! | `memory`     | `SharedArray`, `stmatrix_*`, type conversions                                |
+//! | `atomic`     | Atomic read-modify-write and compare-exchange                                |
+//! | `wgmma`      | Hopper WGMMA matrix operations                                               |
+//! | `tma`        | Tensor Memory Access (TMA) operations                                        |
+//! | `debug`      | `clock`, `clock64`, `globaltimer`, `trap`, `breakpoint`                      |
+//! | `asm`        | Inline PTX marker calls                                                      |
+//! | `iket`       | `cuda_device::iket` compiler markers                                         |
+//! | `layout`     | Rust DST layout intrinsics: `size_of_val`, `align_of_val`                    |
+//! | `bigint`     | Rust compiler bigint helpers                                                 |
+//! | `bitops`     | Rust compiler bit-manipulation intrinsics                                    |
+//! | `exact_div`  | Rust compiler `exact_div`                                                    |
+//! | `float_math` | Rust compiler floating-point math intrinsics                                 |
+//! | `saturating` | Rust compiler saturating integer intrinsics                                  |
 //!
 //! # Architecture
 //!
@@ -44,9 +49,10 @@ pub mod debug;
 pub mod exact_div;
 pub mod float_math;
 pub mod generated;
+pub mod iket;
 pub mod indexing;
+pub mod layout;
 pub mod memory;
 pub mod saturating;
 pub mod tma;
-pub mod warp;
 pub mod wgmma;

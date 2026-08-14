@@ -85,26 +85,13 @@ impl MirTupleType {
         total_size: u64,
         abi_align: u64,
     ) -> TypedHandle<Self> {
-        Type::register_instance(
+        Type::instantiate(
             MirTupleType {
                 types,
                 mem_to_decl,
                 field_offsets,
                 total_size,
                 abi_align,
-            },
-            ctx,
-        )
-    }
-
-    pub fn get_existing(ctx: &Context, types: Vec<TypeHandle>) -> Option<TypedHandle<Self>> {
-        Type::get_instance(
-            MirTupleType {
-                types,
-                mem_to_decl: vec![],
-                field_offsets: vec![],
-                total_size: 0,
-                abi_align: 0,
             },
             ctx,
         )
@@ -232,7 +219,7 @@ impl MirPtrType {
         is_mutable: bool,
         address_space: u32,
     ) -> TypedHandle<Self> {
-        Type::register_instance(
+        Type::instantiate(
             MirPtrType {
                 pointee,
                 is_mutable,
@@ -283,22 +270,6 @@ impl MirPtrType {
         Self::get(ctx, pointee, is_mutable, address_space::TMEM)
     }
 
-    pub fn get_existing(
-        ctx: &Context,
-        pointee: TypeHandle,
-        is_mutable: bool,
-        address_space: u32,
-    ) -> Option<TypedHandle<Self>> {
-        Type::get_instance(
-            MirPtrType {
-                pointee,
-                is_mutable,
-                address_space,
-            },
-            ctx,
-        )
-    }
-
     pub fn is_mutable(&self) -> bool {
         self.is_mutable
     }
@@ -340,11 +311,7 @@ pub struct MirSliceType {
 
 impl MirSliceType {
     pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
-        Type::register_instance(MirSliceType { element_ty }, ctx)
-    }
-
-    pub fn get_existing(ctx: &Context, element_ty: TypeHandle) -> Option<TypedHandle<Self>> {
-        Type::get_instance(MirSliceType { element_ty }, ctx)
+        Type::instantiate(MirSliceType { element_ty }, ctx)
     }
 
     pub fn element_type(&self) -> TypeHandle {
@@ -361,27 +328,84 @@ impl Verify for MirSliceType {
 /// A disjoint slice type.
 ///
 /// Same layout as slice, but enforces thread-local access semantics in the compiler.
-/// Syntax: `mir.disjoint_slice <type>`
+/// Syntax: `mir.disjoint_slice <type, [space types]>`
+///
+/// # Index-space layout fields
+///
+/// A disjoint slice is `{ ptr, len }` followed by whatever runtime layout its
+/// index space carries. An index space whose geometry is fixed in its type
+/// carries none, so `space_tys` is empty and the slice keeps its two-field
+/// shape and kernel ABI. A space with a runtime row width contributes one `u32`
+/// field, which the host writes into the launch packet beside the pointer and
+/// length.
+///
+/// The fields appear in declaration order after `len`, so field index `2 + i`
+/// selects `space_tys[i]`.
 ///
 /// # Verification
 /// * Element type must be valid.
-#[pliron_type(name = "mir.disjoint_slice", format = "`<` $element_ty `>`")]
+#[pliron_type(
+    name = "mir.disjoint_slice",
+    format = "`<` $element_ty `,` `[` vec($space_tys, CharSpace(`,`)) `]` `>`"
+)]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirDisjointSliceType {
     pub element_ty: TypeHandle,
+    /// Runtime layout fields the index space carries, after `{ ptr, len }`.
+    pub space_tys: Vec<TypeHandle>,
 }
 
 impl MirDisjointSliceType {
+    /// A slice over an index space that carries no runtime layout.
     pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
-        Type::register_instance(MirDisjointSliceType { element_ty }, ctx)
+        Type::instantiate(
+            MirDisjointSliceType {
+                element_ty,
+                space_tys: Vec::new(),
+            },
+            ctx,
+        )
     }
 
-    pub fn get_existing(ctx: &Context, element_ty: TypeHandle) -> Option<TypedHandle<Self>> {
-        Type::get_instance(MirDisjointSliceType { element_ty }, ctx)
+    /// A slice whose index space carries `space_tys` after `{ ptr, len }`.
+    pub fn get_with_space(
+        ctx: &mut Context,
+        element_ty: TypeHandle,
+        space_tys: Vec<TypeHandle>,
+    ) -> TypedHandle<Self> {
+        Type::instantiate(
+            MirDisjointSliceType {
+                element_ty,
+                space_tys,
+            },
+            ctx,
+        )
     }
 
     pub fn element_type(&self) -> TypeHandle {
         self.element_ty
+    }
+
+    /// The index space's runtime layout fields, after `{ ptr, len }`.
+    pub fn space_types(&self) -> &[TypeHandle] {
+        &self.space_tys
+    }
+
+    /// Total field count: `ptr`, `len`, then one per index-space layout field.
+    pub fn field_count(&self) -> usize {
+        2 + self.space_tys.len()
+    }
+
+    /// The type of field `index`, or `None` when it is out of bounds.
+    ///
+    /// Fields 0 and 1 are the pointer and length, whose types depend on the
+    /// element type and target, so this only answers for the index-space
+    /// fields that follow them.
+    pub fn space_field_type(&self, index: usize) -> Option<TypeHandle> {
+        index
+            .checked_sub(2)
+            .and_then(|i| self.space_tys.get(i))
+            .copied()
     }
 }
 
@@ -500,7 +524,7 @@ impl MirStructType {
         total_size: u64,
         abi_align: u64,
     ) -> TypedHandle<Self> {
-        Type::register_instance(
+        Type::instantiate(
             MirStructType {
                 name,
                 field_names,
@@ -509,27 +533,6 @@ impl MirStructType {
                 field_offsets,
                 total_size,
                 abi_align,
-            },
-            ctx,
-        )
-    }
-
-    /// Get an existing struct type if it exists.
-    pub fn get_existing(
-        ctx: &Context,
-        name: String,
-        field_names: Vec<String>,
-        field_types: Vec<TypeHandle>,
-    ) -> Option<TypedHandle<Self>> {
-        Type::get_instance(
-            MirStructType {
-                name,
-                field_names,
-                field_types,
-                mem_to_decl: vec![],
-                field_offsets: vec![],
-                total_size: 0,
-                abi_align: 0,
             },
             ctx,
         )
@@ -645,7 +648,7 @@ impl MirUnionType {
         total_size: u64,
         abi_align: u64,
     ) -> TypedHandle<Self> {
-        Type::register_instance(
+        Type::instantiate(
             MirUnionType {
                 name,
                 field_names,
@@ -734,16 +737,7 @@ pub struct MirArrayType {
 impl MirArrayType {
     /// Create a new array type.
     pub fn get(ctx: &mut Context, element_ty: TypeHandle, size: u64) -> TypedHandle<Self> {
-        Type::register_instance(MirArrayType { element_ty, size }, ctx)
-    }
-
-    /// Get an existing array type if it exists.
-    pub fn get_existing(
-        ctx: &Context,
-        element_ty: TypeHandle,
-        size: u64,
-    ) -> Option<TypedHandle<Self>> {
-        Type::get_instance(MirArrayType { element_ty, size }, ctx)
+        Type::instantiate(MirArrayType { element_ty, size }, ctx)
     }
 
     /// Get the element type.
@@ -1163,7 +1157,7 @@ impl MirEnumType {
             all_field_sizes.extend(v.field_sizes);
         }
 
-        Type::register_instance(
+        Type::instantiate(
             MirEnumType {
                 name,
                 discriminant_ty,
@@ -1283,6 +1277,23 @@ impl MirEnumType {
 
     pub fn niche_start(&self) -> u128 {
         self.niche_start.0
+    }
+
+    /// Position of variant `variant`'s field `field` in `all_field_types`.
+    ///
+    /// `all_field_types` concatenates the variants in order, so this one index
+    /// names a (variant, field) pair. Operations that address a payload take
+    /// it in place of a second attribute.
+    ///
+    /// `None` when either the variant or the field is out of range.
+    pub fn flat_field_index(&self, variant: usize, field: usize) -> Option<usize> {
+        let counts = self.variant_field_counts.get(..variant)?;
+        if field >= *self.variant_field_counts.get(variant)? as usize {
+            return None;
+        }
+        let base: usize = counts.iter().map(|count| *count as usize).sum();
+        let flat = base + field;
+        (flat < self.all_field_types.len()).then_some(flat)
     }
 
     pub fn variant_is_inhabited(&self, index: usize) -> Option<bool> {
@@ -2005,5 +2016,41 @@ mod enum_layout_tests {
         value.total_size = 8;
         value.abi_align = 8;
         assert!(value.verify(&ctx).is_err());
+    }
+
+    /// `all_field_types` runs variant by variant, so one flat index names a
+    /// (variant, field) pair. Operations that address a payload rely on that.
+    #[test]
+    fn flat_field_index_walks_variants_in_order() {
+        let ctx = Context::new();
+        let payload: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let mut value = niche(&ctx);
+        // Variant 0 has one field, variant 1 has two, variant 2 has none.
+        value.variant_names = vec!["A".into(), "B".into(), "C".into()];
+        value.variant_discriminants = vec![0, 1, 2];
+        value.variant_field_counts = vec![1, 2, 0];
+        value.all_field_types = vec![payload, payload, payload];
+        value.all_field_offsets = vec![0, 0, 1];
+        value.all_field_sizes = vec![1, 1, 1];
+        value.variant_inhabited = vec![1, 1, 1];
+
+        assert_eq!(value.flat_field_index(0, 0), Some(0));
+        assert_eq!(value.flat_field_index(1, 0), Some(1));
+        assert_eq!(value.flat_field_index(1, 1), Some(2));
+
+        // A field past the variant's own count is not that variant's, even
+        // when the flat position exists.
+        assert_eq!(value.flat_field_index(0, 1), None);
+        // A variant with no fields has none to address.
+        assert_eq!(value.flat_field_index(2, 0), None);
+        // Out-of-range variant.
+        assert_eq!(value.flat_field_index(3, 0), None);
+
+        // Layout metadata shorter than the counts promise (an inconsistent
+        // enum that its own verifier would reject): the final bound check
+        // still refuses rather than naming a position past
+        // `all_field_types`.
+        value.all_field_types = vec![payload, payload];
+        assert_eq!(value.flat_field_index(1, 1), None);
     }
 }

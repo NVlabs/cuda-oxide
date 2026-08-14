@@ -1,4 +1,7 @@
-sphinx>=7.0
+# Upper-bounded on the major: the build runs warnings-as-errors (-W), and a
+# new Sphinx major routinely introduces warnings, which would redden every PR
+# and the main-branch deploy overnight. Bump the bound deliberately instead.
+sphinx>=7.0,<10
 pydata-sphinx-theme>=0.15
 myst-parser>=3.0
 sphinx-copybutton>=0.5

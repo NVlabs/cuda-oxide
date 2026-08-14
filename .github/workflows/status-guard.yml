@@ -25,3 +25,107 @@ jobs:
 
       - name: Verify error* examples are in STATUS.md and smoketest.sh
         run: bash scripts/check-error-example-status.sh
+
+  # Both of the things this checks are otherwise only visible when the suite
+  # runs on a GPU: the compile-only lane collapses every category into
+  # verdict_compile, so it never exercises classify() or the standard-category
+  # success marker. 981b9eb0 is the precedent -- a new example landed with no
+  # marker and needed a follow-up commit on main to stop reporting FAIL.
+  example-smoketest-contract:
+    name: smoketest example contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads sources only: no cargo, no CUDA toolkit, no LLVM.
+      - name: Verify smoketest categories and standard-example success markers
+        run: bash scripts/check-example-smoketest-contract.sh
+
+  # README's Crate Overview is the only map of the tree a newcomer gets, and
+  # nothing fails when a crate is missing from it: dialect-iket and iket-lower
+  # were both absent, 1,700 lines with no row between them.
+  crate-inventory:
+    name: crate inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads Cargo.toml and README.md: no cargo, no lockfile, no network.
+      - name: Verify README lists every workspace member
+        run: bash scripts/check-crate-inventory.sh
+
+  # The pin is copied into places no build compares: the nested backend pin
+  # (rustup reads it for the backend's own [workspace], so a mismatch there
+  # is a load failure rather than a warning), the scaffold `cargo oxide new`
+  # writes into user projects, the devcontainer's preinstalled toolchain, the
+  # book's quoted [toolchain] blocks, and the dated rustup/cargo commands in
+  # the book and READMEs. #727 added rustfmt to both real files and left both
+  # book quotes behind.
+  toolchain-pin-parity:
+    name: toolchain pin parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads sources only: no rustup, no cargo, no CUDA toolkit.
+      - name: Verify every copy of the toolchain pin agrees
+        run: bash scripts/check-toolchain-parity.sh
+
+  # The book's Command reference is the only complete list of the CLI surface in
+  # the docs, and adding a subcommand to the clap enum is a one-line change that
+  # leaves it silently short -- `test`, `fmt`, `update` and `emit-ltoir` were all
+  # missing when that table was written (#794).
+  cli-doc-coverage:
+    name: CLI command reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads the clap enum and the book: no cargo, no build, no network.
+      - name: Verify the book documents every cargo oxide subcommand
+        run: bash scripts/check-cli-doc-coverage.sh
+
+  # A Rust code block in the book is something a reader pastes. When a device
+  # function is renamed the book keeps compiling and rendering, so the stale name
+  # survives until someone tries it -- #797 and the `warp::shuffle_xor_i32` entry
+  # in the API quick reference were both found by hand, months apart.
+  book-api-names:
+    name: book device-API names
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads the book and cuda-device's sources: no cargo, no build, no network.
+      - name: Verify every device call the book shows resolves
+        run: bash scripts/check-book-api-names.sh
+
+  # #702 let a kernel-only crate drop the host surface (and with it `cuda.h`) via
+  # `cuda-macros = { default-features = false }`, which is what #701 asked for.
+  # Nothing exercised it: no example takes that configuration, and every other
+  # lane that builds a kernel crate has the toolkit installed. The bad direction
+  # is quiet too -- proc-macro features unify per graph, so a stray
+  # `cuda-macros/host` makes the expansion emit `cuda_host::` paths that a
+  # device-only crate cannot resolve, and that surfaces downstream rather than
+  # here.
+  device-only-build:
+    name: device-only kernel crate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Deliberately no CUDA toolkit step: a toolkit on the runner would mask
+      # exactly the dependency this job exists to keep out of the graph.
+      - name: Verify a kernel-only crate builds with no host surface
+        run: bash scripts/check-device-only-build.sh

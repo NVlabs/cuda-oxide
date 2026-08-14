@@ -8,7 +8,8 @@
 //! Every field of a Rust union is a different typed view of the same bytes.
 //! This example checks construction through either field, cross-field reads,
 //! unequal field sizes, arrays, nested structs, generic fields, pointers, and
-//! passing a union through an ordinary device function.
+//! passing a union through an ordinary device function. It also checks that
+//! an over-aligned union keeps its size and array stride.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, kernel, thread};
@@ -94,6 +95,12 @@ union AlignedZeroUnion {
 union TupleBytes {
     value: (u8, u64),
     bytes: [u8; 16],
+}
+
+#[derive(Clone, Copy)]
+#[repr(C, align(32))]
+union OverAlignedWord {
+    word: u32,
 }
 
 struct Wrapper {
@@ -315,6 +322,16 @@ mod kernels {
                 // A synthetic value for a void-lowered call result must retain
                 // the union's 16-byte address requirement.
                 20 => aligned_zero_address(&make_aligned_zero()),
+                // Storage for an over-aligned union retains the 32-byte Rust
+                // size, so consecutive array elements use the same stride.
+                21 => {
+                    let values = [
+                        OverAlignedWord { word: 0x11 },
+                        OverAlignedWord { word: 0x22 },
+                        OverAlignedWord { word: 0x33 },
+                    ];
+                    unsafe { values[0].word | (values[1].word << 8) | (values[2].word << 16) }
+                }
                 _ => 0,
             };
         }
@@ -332,7 +349,7 @@ mod kernels {
 }
 
 fn main() {
-    const EXPECTED: [u32; 21] = [
+    const EXPECTED: [u32; 22] = [
         0,
         0x1122_3344,
         0x5566_7788,
@@ -354,6 +371,7 @@ fn main() {
         0x1818,
         0x2222,
         0,
+        0x0033_2211,
     ];
     const N: usize = EXPECTED.len();
 

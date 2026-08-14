@@ -12,15 +12,17 @@
 use crate::error::PipelineError;
 use crate::export::{
     DeviceExternDecl, export_llvm_ir, module_uses_libdevice, render_llvm_ir,
-    resolve_nvvm_target_with_generated, unresolved_external_symbols, validate_nvvm_debug_support,
+    resolve_nvvm_target_with_generated, unresolved_external_symbols,
+    unresolved_libdevice_ptx_declarations, validate_nvvm_debug_support,
 };
 use crate::generated::{
     GeneratedMarkerPolicy, collect_generated_intrinsic_requirements_for_backend,
 };
 use crate::generated_intrinsic_targets::GeneratedIntrinsicBackend;
+use crate::iket::{has_iket_operations, materialize as materialize_iket, strip as strip_iket};
 use crate::llvm_tools::LlvmToolchain;
 use crate::lower::{add_device_extern_declarations, lower_to_llvm};
-use crate::options::BackendOptions;
+use crate::options::{BackendOptions, IketInstrumentation};
 use crate::prep::{MirPreparation, prepare_mir_module};
 use crate::ptx::{PtxModule, generate_ptx, generate_ptx_with_toolchain};
 use crate::target::detect_features_in_llvm_text;
@@ -68,8 +70,13 @@ impl PipelineTrace {
 
 #[derive(Clone, Copy, Debug)]
 enum OutputPolicy {
-    SelfContainedPtx,
-    ExternalLinkAllowed { request_nvvm_ir: bool },
+    SelfContainedPtx {
+        /// Whether `__nv_*` symbols may be left for the IR-level libdevice link.
+        allow_libdevice: bool,
+    },
+    ExternalLinkAllowed {
+        request_nvvm_ir: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -118,11 +125,12 @@ impl<'a> ModulePipelineRequest<'a> {
         backend: &'a BackendOptions,
         debug_kind: DebugKind,
         toolchain: &'a LlvmToolchain,
+        allow_libdevice: bool,
         files: OutputFiles<'a>,
     ) -> Self {
         Self {
             device_externs: &[],
-            output_policy: OutputPolicy::SelfContainedPtx,
+            output_policy: OutputPolicy::SelfContainedPtx { allow_libdevice },
             backend,
             debug_kind,
             toolchain: ToolchainPolicy::Explicit(toolchain),
@@ -174,7 +182,48 @@ pub fn compile_translated_module(
         request.trace.emit("\n=== Verifying dialect-mir module ===");
     }
 
+    // `CUDA_OXIDE_IKET=off` strips the semantic annotation ops up front,
+    // before the full-debug preparation gate below: a disabled build of an
+    // annotated kernel must compile in every configuration, including a
+    // full-debug build in which the unstripped IKET operations would
+    // otherwise be rejected before the policy was ever consulted.
+    if request.backend.iket == IketInstrumentation::Disabled {
+        strip_iket(ctx, module)?;
+    }
+
+    // IKET's placeholder ABI is keyed by the concrete sm_* family, but the
+    // definitive target is normally resolved only after LLVM lowering
+    // (`generate_ptx` on the PTX path, `resolve_nvvm_target_with_generated`
+    // on the NVVM path), where a device hint that cannot lower a detected
+    // feature is silently raised to the feature floor. Materializing from
+    // the pre-resolution hint could then bake a placeholder shape for a
+    // family the module is never compiled for. So when IKET operations are
+    // present, promote the hint to the pipeline's explicit target: both
+    // resolvers honor an explicit target exactly (they validate it and fail
+    // loudly instead of raising it), so the placeholder shape and the
+    // compiled target can no longer diverge.
+    let pinned_backend: BackendOptions;
+    let backend: &BackendOptions = if request.backend.target_arch.is_none()
+        && request.backend.device_arch_hint.is_some()
+        && has_iket_operations(ctx, module)
+    {
+        pinned_backend = BackendOptions {
+            target_arch: request.backend.device_arch_hint.clone(),
+            target_arch_source: "the detected GPU, pinned by IKET materialization",
+            ..request.backend.clone()
+        };
+        &pinned_backend
+    } else {
+        request.backend
+    };
+
     let promote_and_unroll = !request.debug_kind.variables_enabled();
+    if !promote_and_unroll && has_iket_operations(ctx, module) {
+        return Err(PipelineError::Lowering(
+            "IKET requires MIR preparation; full variable debug information is not supported for an instrumented kernel"
+                .to_owned(),
+        ));
+    }
     if request.trace.verbose {
         if promote_and_unroll {
             request
@@ -186,7 +235,15 @@ pub fn compile_translated_module(
                 .emit("\n=== Skipping mem2reg (full debug keeps locals in memory) ===");
         }
     }
-    prepare_mir_module(ctx, module, MirPreparation { promote_and_unroll })?;
+    prepare_mir_module(
+        ctx,
+        module,
+        MirPreparation {
+            promote_and_unroll,
+            verbose: request.trace.verbose,
+            mir_pass_pipeline: backend.mir_pass_pipeline.as_deref(),
+        },
+    )?;
     if request.trace.verbose {
         request.trace.emit("dialect-mir preparation successful ✓");
     }
@@ -198,6 +255,11 @@ pub fn compile_translated_module(
             .trace
             .emit(format!("{}", module.deref(ctx).disp(ctx)));
     }
+
+    // After the pinning above, `backend.target_arch` is exactly the target
+    // the rest of the pipeline will compile for (or `None`, in which case
+    // materialization fails with its explicit-target requirement).
+    materialize_iket(ctx, module, backend.target_arch.as_deref(), &backend.iket)?;
 
     // Calls need structured extern declarations before lowering so pointer
     // address spaces are preserved by the call converter.
@@ -223,9 +285,7 @@ pub fn compile_translated_module(
     let libdevice_path = libnvvm_sys::find_libdevice().ok();
     let can_ir_link_libdevice = libdevice_path.is_some()
         && match request.toolchain {
-            ToolchainPolicy::Discover => {
-                crate::llvm_tools::libdevice_ir_linking_available(request.backend)
-            }
+            ToolchainPolicy::Discover => crate::llvm_tools::libdevice_ir_linking_available(backend),
             ToolchainPolicy::Explicit(toolchain) => toolchain.llvm_link.is_some(),
         };
 
@@ -252,7 +312,7 @@ pub fn compile_translated_module(
     lower_to_llvm(
         ctx,
         module,
-        !request.backend.no_fma,
+        !backend.no_fma,
         backend_selection.intrinsic_backend,
     )?;
 
@@ -311,8 +371,8 @@ pub fn compile_translated_module(
 
     let (nvvm_target, nvvm_dialect) = if emit_nvvm_ir {
         let target = resolve_nvvm_target_with_generated(
-            request.backend.target_arch.as_deref(),
-            request.backend.device_arch_hint.as_deref(),
+            backend.target_arch.as_deref(),
+            backend.device_arch_hint.as_deref(),
             automatic_features,
             &generated_requirements,
         )?;
@@ -361,8 +421,16 @@ pub fn compile_translated_module(
         request.trace.emit("LLVM dialect verification successful ✓");
     }
 
-    if matches!(request.output_policy, OutputPolicy::SelfContainedPtx) {
-        let symbols = unresolved_external_symbols(ctx, module);
+    if let OutputPolicy::SelfContainedPtx { allow_libdevice } = request.output_policy {
+        if let Some(error) = libdevice_availability_error(
+            allow_libdevice,
+            needs_libdevice,
+            can_ir_link_libdevice,
+            libdevice_path.is_some(),
+        ) {
+            return Err(error);
+        }
+        let symbols = unlinkable_symbols(unresolved_external_symbols(ctx, module), allow_libdevice);
         if !symbols.is_empty() {
             return Err(PipelineError::UnsupportedLinking { symbols });
         }
@@ -428,7 +496,7 @@ pub fn compile_translated_module(
         ToolchainPolicy::Discover => generate_ptx(
             ptx_module,
             request.debug_kind,
-            request.backend,
+            backend,
             request.trace.sink,
             &generated_requirements,
             ptx_libdevice,
@@ -436,12 +504,36 @@ pub fn compile_translated_module(
         ToolchainPolicy::Explicit(toolchain) => generate_ptx_with_toolchain(
             ptx_module,
             request.debug_kind,
-            request.backend,
+            backend,
             toolchain,
             &generated_requirements,
             ptx_libdevice,
         )?,
     };
+    // Self-contained PTX promises a single artifact the CUDA driver can load
+    // with no further step, so an unresolved `__nv_*` symbol here is a
+    // compile-time failure: `llvm-link --only-needed` resolves whatever it
+    // finds in libdevice.10.bc and stays silent about the rest, and `opt` and
+    // `llc` both exit 0 on what remains, so the alternative is PTX that fails
+    // only at `cuModuleLoad` on the device, with no diagnostic. Under
+    // `ExternalLinkAllowed` (the rustc frontend) an unresolved `__nv_*` stays
+    // legitimate: that consumer owns a later libNVVM/nvJitLink step and
+    // resolves it there, so this check must not run for that policy.
+    if matches!(request.output_policy, OutputPolicy::SelfContainedPtx { .. }) {
+        let ptx_text = std::fs::read_to_string(request.files.ptx).map_err(|error| {
+            PipelineError::PtxGeneration(format!(
+                "failed to read generated PTX to check for unresolved libdevice symbols ({}): {error}",
+                request.files.ptx.display()
+            ))
+        })?;
+        let unresolved = unresolved_libdevice_ptx_declarations(&ptx_text);
+        if !unresolved.is_empty() {
+            return Err(PipelineError::UnsupportedLinking {
+                symbols: unresolved,
+            });
+        }
+    }
+
     if request.trace.verbose {
         request.trace.emit(format!(
             "✓ PTX written to {} (target: {})",
@@ -584,7 +676,7 @@ fn should_emit_nvvm_ir(
     can_ir_link_libdevice: bool,
 ) -> bool {
     match policy {
-        OutputPolicy::SelfContainedPtx => false,
+        OutputPolicy::SelfContainedPtx { .. } => false,
         OutputPolicy::ExternalLinkAllowed { request_nvvm_ir } => {
             if request_nvvm_ir {
                 return true;
@@ -594,6 +686,48 @@ fn should_emit_nvvm_ir(
             uses_strict_libdevice && !can_ir_link_libdevice
         }
     }
+}
+
+/// Narrow collected unresolved symbols to those the artifact cannot resolve.
+///
+/// Under `allow_libdevice`, `__nv_*` entry points are dropped: the IR-level
+/// `llvm-link` step further down resolves them against `libdevice.10.bc`.
+/// Every other unresolved symbol still fails the compilation, so
+/// `UnsupportedLinking` keeps its meaning for device externs.
+fn unlinkable_symbols(mut symbols: Vec<String>, allow_libdevice: bool) -> Vec<String> {
+    if allow_libdevice {
+        symbols.retain(|symbol| !crate::export::is_libdevice_symbol(symbol));
+    }
+    symbols
+}
+
+/// Whether a compilation that opted into libdevice can be completed.
+///
+/// Returns the failure to report, or `None` when compilation may continue.
+/// Factored out of `compile_translated_module` so the decision is testable
+/// with no module, no toolchain, and no CUDA installation.
+///
+/// `can_ir_link_libdevice` is false when either piece is missing, so
+/// `libdevice_found` is what separates a missing CUDA toolkit from an
+/// incomplete LLVM toolchain. Neither is a defect in the caller's module,
+/// and the two have different fixes, so the message names which one it is.
+fn libdevice_availability_error(
+    allow_libdevice: bool,
+    needs_libdevice: bool,
+    can_ir_link_libdevice: bool,
+    libdevice_found: bool,
+) -> Option<PipelineError> {
+    if !allow_libdevice || !needs_libdevice || can_ir_link_libdevice {
+        return None;
+    }
+    let message = if libdevice_found {
+        "no `llvm-link` sharing the selected `llc`'s LLVM major was found"
+    } else {
+        "`libdevice.10.bc` was not found in any CUDA installation"
+    };
+    Some(PipelineError::LibdeviceUnavailable {
+        message: message.to_string(),
+    })
 }
 
 fn as_lowered_verification(error: PipelineError) -> PipelineError {
@@ -673,16 +807,22 @@ mod tests {
 
     #[test]
     fn standalone_never_silently_switches_to_a_linkable_artifact() {
-        assert!(!should_emit_nvvm_ir(
-            OutputPolicy::SelfContainedPtx,
-            false,
-            false
-        ));
-        assert!(!should_emit_nvvm_ir(
-            OutputPolicy::SelfContainedPtx,
-            true,
-            false
-        ));
+        // Opting into libdevice must not open the NVVM IR route: the standalone
+        // surface promises one artifact kind out, whatever the linking policy.
+        for allow_libdevice in [false, true] {
+            let policy = OutputPolicy::SelfContainedPtx { allow_libdevice };
+            for uses_strict_libdevice in [false, true] {
+                for can_ir_link_libdevice in [false, true] {
+                    assert!(
+                        !should_emit_nvvm_ir(policy, uses_strict_libdevice, can_ir_link_libdevice),
+                        "self-contained PTX emitted NVVM IR for \
+                         allow_libdevice={allow_libdevice}, \
+                         uses_strict_libdevice={uses_strict_libdevice}, \
+                         can_ir_link_libdevice={can_ir_link_libdevice}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -938,8 +1078,14 @@ mod tests {
         assert!(nvvm.emit_nvvm_ir);
         assert_eq!(nvvm.intrinsic_backend, mir_lower::IntrinsicBackend::LibNvvm);
 
-        let standalone =
-            select_pre_lowering_backend(&ctx, ordinary, OutputPolicy::SelfContainedPtx, false);
+        let standalone = select_pre_lowering_backend(
+            &ctx,
+            ordinary,
+            OutputPolicy::SelfContainedPtx {
+                allow_libdevice: false,
+            },
+            false,
+        );
         assert!(!standalone.emit_nvvm_ir);
         assert_eq!(
             standalone.intrinsic_backend,
@@ -959,5 +1105,80 @@ mod tests {
             PipelineError::LoweredVerification { message, operation }
                 if message == "invalid lowered op" && operation.as_deref() == Some("llvm.bad")
         ));
+    }
+
+    #[test]
+    fn self_contained_linking_rejects_every_unresolved_symbol() {
+        let symbols = vec![
+            "__nv_sqrtf".to_string(),
+            "vprintf".to_string(),
+            "my_device_extern".to_string(),
+        ];
+        assert_eq!(
+            unlinkable_symbols(symbols.clone(), false),
+            symbols,
+            "without the libdevice opt-in nothing is filtered"
+        );
+    }
+
+    #[test]
+    fn libdevice_linking_drops_only_libdevice_symbols() {
+        let symbols = vec![
+            "__nv_erff".to_string(),
+            "__nv_sqrtf".to_string(),
+            "my_device_extern".to_string(),
+            "vprintf".to_string(),
+        ];
+        assert_eq!(
+            unlinkable_symbols(symbols, true),
+            vec!["my_device_extern".to_string(), "vprintf".to_string()],
+            "device externs still fail the compilation"
+        );
+    }
+
+    #[test]
+    fn libdevice_linking_accepts_a_purely_libdevice_module() {
+        let symbols = vec!["__nv_sqrtf".to_string(), "__nv_expf".to_string()];
+        assert!(unlinkable_symbols(symbols, true).is_empty());
+    }
+
+    #[test]
+    fn libdevice_symbol_predicate_matches_the_nv_prefix_only() {
+        assert!(crate::export::is_libdevice_symbol("__nv_sqrtf"));
+        assert!(crate::export::is_libdevice_symbol("__nv_"));
+        assert!(!crate::export::is_libdevice_symbol("__nvvm_thing"));
+        assert!(!crate::export::is_libdevice_symbol("nv_sqrtf"));
+        assert!(!crate::export::is_libdevice_symbol("my___nv_sqrtf"));
+    }
+
+    #[test]
+    fn libdevice_availability_names_the_missing_piece() {
+        // Missing bitcode: the CUDA toolkit was not found.
+        let error = libdevice_availability_error(true, true, false, false)
+            .expect("an unlinkable libdevice module must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("libdevice.10.bc"),
+            "message names the missing bitcode: {message}"
+        );
+
+        // Bitcode present, linker absent: the LLVM toolchain is incomplete.
+        let error = libdevice_availability_error(true, true, false, true)
+            .expect("an unlinkable libdevice module must fail");
+        let message = error.to_string();
+        assert!(
+            message.contains("llvm-link"),
+            "message names the missing linker: {message}"
+        );
+    }
+
+    #[test]
+    fn libdevice_availability_permits_every_compilable_case() {
+        // Not opted in: the ordinary unresolved-symbol rejection handles it.
+        assert!(libdevice_availability_error(false, true, false, false).is_none());
+        // Opted in but the module needs no libdevice: nothing to link.
+        assert!(libdevice_availability_error(true, false, false, false).is_none());
+        // Opted in, needed, and linkable: the ordinary path proceeds.
+        assert!(libdevice_availability_error(true, true, true, true).is_none());
     }
 }

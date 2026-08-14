@@ -22,8 +22,8 @@ use std::mem::MaybeUninit;
 /// allocator (`cuMemAllocAsync`).
 ///
 /// The returned pointer is usable by any kernel or memcpy enqueued on `stream`
-/// after this call. Pair with [`free_async`] on the same (or a synchronized)
-/// stream.
+/// after this call. Pair with [`free_async`] on a stream ordered after this
+/// allocation and every use of the pointer.
 ///
 /// # Safety
 ///
@@ -41,16 +41,23 @@ pub unsafe fn malloc_async(
     }
 }
 
-/// Frees device memory previously allocated with [`malloc_async`].
+/// Frees device memory previously allocated with [`malloc_async`] or
+/// [`malloc_sync`].
 ///
 /// The free is enqueued on `stream` and completes in stream order. The pointer
-/// must not be accessed by any work enqueued after this call on the same stream.
+/// must not be accessed by any work enqueued after this call. If the pointer
+/// came from [`malloc_async`], `stream` must be ordered after its allocation
+/// stream. Every other stream using the pointer must also be ordered before
+/// `stream`.
 ///
 /// # Safety
 ///
-/// - `dptr` must have been returned by [`malloc_async`] and not yet freed.
+/// - `dptr` must have been returned by [`malloc_async`] or [`malloc_sync`] and
+///   not yet freed.
 /// - `stream` must be a valid `CUstream` from the same context as the
 ///   allocation.
+/// - All allocation and use work on other streams must happen before the free
+///   on `stream`.
 pub unsafe fn free_async(
     dptr: CUdeviceptr,
     stream: cuda_bindings::CUstream,

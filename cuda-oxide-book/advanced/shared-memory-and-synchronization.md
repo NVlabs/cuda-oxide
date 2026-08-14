@@ -103,8 +103,8 @@ pub fn tiled_sgemm(
         t += 1;
     }
 
-    // SAFETY: every thread sees the same `n_sz`.
-    if let Some(c_idx) = unsafe { thread::index_2d_runtime(n_sz) } {
+    // The row width comes from `c`, bound on the host to this same `n`.
+    if let Some(c_idx) = thread::index_2d_runtime(&c) {
         if let Some(c_elem) = c.get_mut(c_idx) {
             *c_elem = sum;
         }

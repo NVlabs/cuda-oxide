@@ -593,6 +593,52 @@ and a `cta_group` parameter in LLVM 21. Older `llc` versions reject it with
 intrinsic emitters per LLVM version, we set 21 as the minimum.
 ```
 
+### Picking `opt` to match
+
+`llc` is not the only LLVM binary the pipeline runs: the middle-end
+optimization stage needs `opt`, and the two must come from the **same LLVM
+major**. Mixing them is the failure this ordering exists to prevent -- `opt`
+from one release can emit IR that `llc` from another does not accept.
+
+So `llc` is resolved first, by the table above, and its major is read from
+`llc --version`. `opt` is then chosen to match:
+
+| Priority | Source                                             | Notes                                                                 |
+| :------- | :------------------------------------------------- | :-------------------------------------------------------------------- |
+| 1st      | `$CUDA_OXIDE_OPT` (if set)                         | Always respected. A major mismatch against the chosen `llc` is not silently corrected -- it records a diagnostic naming both binaries. |
+| 2nd      | The `opt` beside the chosen `llc`                  | LLVM installs keep their tools side by side. Still version-checked: a mismatched sibling is rejected, and it is only accepted unverified when `llc`'s own version cannot be read. |
+| 3rd      | Rust toolchain's `llvm-tools` `opt`                | `<sysroot>/lib/rustlib/<host>/bin/opt`. Filtered to the same major as `llc`. |
+| 4th      | `opt-22` / `opt-21` / `opt` on `PATH`              | Filtered to the same major as `llc`.                                  |
+
+If no same-major `opt` exists, resolution records a diagnostic naming every
+rejected candidate. The experimental API treats a requested optimization as
+strict and fails; the legacy rustc path falls back to running unoptimized.
+
+Because step 2 keys off whichever `llc` won, pinning `CUDA_OXIDE_LLC` alone is
+usually enough -- the matching `opt` is normally found next to it, and setting
+`CUDA_OXIDE_OPT` as well is only needed when the pair is split across
+directories.
+
+### The other two inputs the pipeline looks for
+
+`llvm-link` is needed only when device code calls into libdevice and the PTX
+path resolves those calls with an IR-level link. `libdevice.10.bc` is needed
+more often: the NVVM path adds it to every module it finalizes, whether or not
+the kernel calls into libdevice. Both have their own override:
+
+| Variable | Selects | Discovery when unset |
+| :------- | :------ | :------------------- |
+| `CUDA_OXIDE_LLVM_LINK` | the `llvm-link` binary | the same four steps as `opt` -- beside the chosen `llc`, then the sysroot, then versioned names on `PATH`, filtered to `llc`'s major. When the variable *is* set it is respected as `CUDA_OXIDE_OPT` is, with a diagnostic naming both binaries if its major differs from `llc`'s |
+| `CUDA_OXIDE_LIBDEVICE` | the `libdevice.10.bc` bitcode file; a path that does not exist is skipped silently | `<root>/nvvm/libdevice/libdevice.10.bc` for each of `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda` |
+
+When either piece is missing, the two paths react differently. An ordinary
+build does not fail: the backend's path decision sees that the IR-level link
+is unavailable and falls back to the NVVM path, the same automatic switch
+described under target selection. The experimental API's `Linking::Libdevice`
+is strict and fails up front instead, with a `LibdeviceUnavailable` error
+naming the missing piece: `libdevice.10.bc`, or an `llvm-link` sharing the
+selected `llc`'s major.
+
 ## Atomic operations in legacy NVVM IR
 
 An “LLVM-level atomic” is an atomic instruction in the NVVM input. It is not a

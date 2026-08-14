@@ -10,7 +10,10 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel};
-use cuda_device::{bf16x2 as device_bf16x2, f16x2 as device_f16x2, float as device_float};
+use cuda_device::{
+    bf16 as device_bf16, bf16x2 as device_bf16x2, f16 as device_f16, f16x2 as device_f16x2,
+    float as device_float,
+};
 use cuda_intrinsics::matrix;
 use cuda_intrinsics::prmt::{prmt, prmt_b4e, prmt_ecl, prmt_ecr, prmt_f4e, prmt_rc8, prmt_rc16};
 use cuda_intrinsics::sreg::{
@@ -25,7 +28,12 @@ use cuda_intrinsics::warp::{
     shuffle_up_sync, shuffle_up_u64_sync, shuffle_xor_f32_sync, shuffle_xor_sync,
     shuffle_xor_u64_sync, sync_mask, uni_sync,
 };
-use cuda_intrinsics::{bf16x2 as raw_bf16x2, f16x2 as raw_f16x2, float as raw_float};
+use cuda_intrinsics::{
+    bf16 as raw_bf16, bf16x2 as raw_bf16x2, f16 as raw_f16, f16x2 as raw_f16x2, float as raw_float,
+};
+
+/// Scalar half min/max results checked per launch: six `f16` then six `bf16`.
+const HALF_MINMAX_RESULTS: usize = 12;
 
 #[cuda_module]
 mod kernels {
@@ -209,13 +217,17 @@ mod kernels {
     ///
     /// This coverage kernel is compiled but not launched by the example.
     #[kernel]
+    #[allow(clippy::too_many_arguments)]
     pub fn compile_extended_minmax(
         mut output_f32: DisjointSlice<f32>,
         mut output_packed: DisjointSlice<u32>,
+        mut output_half: DisjointSlice<u16>,
         a32: f32,
         b32: f32,
         a_packed: u32,
         b_packed: u32,
+        a_half: u16,
+        b_half: u16,
     ) {
         if cuda_device::thread::index_1d().get() != 0 {
             return;
@@ -252,6 +264,32 @@ mod kernels {
             device_bf16x2::max_xorsign_abs_bf16x2(a_packed, b_packed),
             device_f16x2::max_xorsign_abs_f16x2(a_packed, b_packed),
         ];
+        let values_half = [
+            raw_f16::min_f16(a_half, b_half),
+            device_f16::min_ftz_f16(a_half, b_half),
+            raw_f16::min_nan_f16(a_half, b_half),
+            device_f16::min_ftz_nan_f16(a_half, b_half),
+            raw_f16::min_xorsign_abs_f16(a_half, b_half),
+            device_f16::min_ftz_xorsign_abs_f16(a_half, b_half),
+            raw_f16::min_nan_xorsign_abs_f16(a_half, b_half),
+            device_f16::min_ftz_nan_xorsign_abs_f16(a_half, b_half),
+            raw_bf16::min_bf16(a_half, b_half),
+            device_bf16::min_nan_bf16(a_half, b_half),
+            raw_bf16::min_xorsign_abs_bf16(a_half, b_half),
+            device_bf16::min_nan_xorsign_abs_bf16(a_half, b_half),
+            raw_f16::max_f16(a_half, b_half),
+            device_f16::max_ftz_f16(a_half, b_half),
+            raw_f16::max_nan_f16(a_half, b_half),
+            device_f16::max_ftz_nan_f16(a_half, b_half),
+            raw_f16::max_xorsign_abs_f16(a_half, b_half),
+            device_f16::max_ftz_xorsign_abs_f16(a_half, b_half),
+            raw_f16::max_nan_xorsign_abs_f16(a_half, b_half),
+            device_f16::max_ftz_nan_xorsign_abs_f16(a_half, b_half),
+            raw_bf16::max_bf16(a_half, b_half),
+            device_bf16::max_nan_bf16(a_half, b_half),
+            raw_bf16::max_xorsign_abs_bf16(a_half, b_half),
+            device_bf16::max_nan_xorsign_abs_bf16(a_half, b_half),
+        ];
         for (index, value) in values_f32.into_iter().enumerate() {
             if index < output_f32.len() {
                 // SAFETY: the bounds check covers this unique output slot.
@@ -263,6 +301,42 @@ mod kernels {
                 // SAFETY: the bounds check covers this unique output slot.
                 unsafe { *output_packed.get_unchecked_mut(index) = value };
             }
+        }
+        for (index, value) in values_half.into_iter().enumerate() {
+            if index < output_half.len() {
+                // SAFETY: the bounds check covers this unique output slot.
+                unsafe { *output_half.get_unchecked_mut(index) = value };
+            }
+        }
+    }
+
+    /// Computes scalar `f16` and `bf16` min/max forms for host verification.
+    ///
+    /// Unlike the coverage kernels above this one is launched, so the results
+    /// are checked bit-exactly against the PTX ISA semantics on the host.
+    /// Values are carried as raw `u16` bit patterns.
+    #[kernel]
+    pub fn scalar_half_minmax(
+        mut output: DisjointSlice<[u16; HALF_MINMAX_RESULTS]>,
+        a_f16: u16,
+        b_f16: u16,
+        a_bf16: u16,
+        b_bf16: u16,
+    ) {
+        let index = cuda_device::thread::index_1d();
+        if let Some(row) = output.get_mut(index) {
+            row[0] = raw_f16::min_f16(a_f16, b_f16);
+            row[1] = raw_f16::max_f16(a_f16, b_f16);
+            row[2] = raw_f16::min_nan_f16(a_f16, b_f16);
+            row[3] = raw_f16::max_nan_f16(a_f16, b_f16);
+            row[4] = raw_f16::min_xorsign_abs_f16(a_f16, b_f16);
+            row[5] = raw_f16::max_xorsign_abs_f16(a_f16, b_f16);
+            row[6] = device_bf16::min_bf16(a_bf16, b_bf16);
+            row[7] = device_bf16::max_bf16(a_bf16, b_bf16);
+            row[8] = device_bf16::min_nan_bf16(a_bf16, b_bf16);
+            row[9] = device_bf16::max_nan_bf16(a_bf16, b_bf16);
+            row[10] = device_bf16::min_xorsign_abs_bf16(a_bf16, b_bf16);
+            row[11] = device_bf16::max_xorsign_abs_bf16(a_bf16, b_bf16);
         }
     }
 
@@ -1179,6 +1253,15 @@ fn main() {
     const ELEMENTS: u32 = WIDTH * HEIGHT * DEPTH;
 
     let context = CudaContext::new(0).expect("failed to create CUDA context");
+
+    // The generated intrinsics exercised here include bf16 operations, which
+    // require sm_80 (Ampere) or later.
+    let (major, minor) = context.compute_capability().expect("compute capability");
+    if major < 8 {
+        println!("skipping: bf16 intrinsics require sm_80+ (device is sm_{major}{minor})");
+        return;
+    }
+
     let stream = context.default_stream();
     let mut output =
         DeviceBuffer::<u32>::zeroed(&stream, ELEMENTS as usize).expect("failed to allocate output");
@@ -1207,5 +1290,131 @@ fn main() {
     let expected: Vec<u32> = (1..=ELEMENTS).collect();
     assert_eq!(actual, expected);
 
+    verify_scalar_half_minmax(&module, &stream);
+
     println!("PASS: generated X/Y/Z-coordinate intrinsics produced every row-major volume index");
+}
+
+/// Bit patterns for the scalar half inputs and their expected min/max results.
+///
+/// `f16` and `bf16` differ only in exponent width, so the same decimal values
+/// have different encodings: `1.0` is `0x3C00` as `f16` and `0x3F80` as `bf16`,
+/// while `-2.0` is `0xC000` in both.
+mod half_bits {
+    pub const F16_ONE: u16 = 0x3C00;
+    pub const F16_MINUS_TWO: u16 = 0xC000;
+    pub const F16_MINUS_ONE: u16 = 0xBC00;
+    /// An IEEE quiet NaN, used as a kernel *input*.
+    pub const F16_INPUT_QNAN: u16 = 0x7E00;
+    /// The canonical NaN PTX `.NaN` min/max *returns*, measured on sm_86.
+    ///
+    /// This is not the IEEE default quiet NaN (`0x7E00`): PTX canonicalizes to
+    /// an all-ones exponent and mantissa with a clear sign, the 16-bit analogue
+    /// of the `0x7fffffff` the ISA specifies for `f32`.
+    pub const F16_CANONICAL_NAN: u16 = 0x7FFF;
+
+    pub const BF16_ONE: u16 = 0x3F80;
+    pub const BF16_MINUS_TWO: u16 = 0xC000;
+    pub const BF16_MINUS_ONE: u16 = 0xBF80;
+    /// An IEEE quiet NaN, used as a kernel *input*.
+    pub const BF16_INPUT_QNAN: u16 = 0x7FC0;
+    /// The canonical NaN PTX `.NaN` min/max *returns*, measured on sm_86.
+    pub const BF16_CANONICAL_NAN: u16 = 0x7FFF;
+}
+
+/// Launches the scalar half min/max kernel and checks every result bit-exactly.
+///
+/// Two launches are needed because the `NaN` modifier only differs from the
+/// plain form when an input is NaN: the plain form returns the numeric operand,
+/// while the `NaN` form returns a canonical NaN.
+fn verify_scalar_half_minmax(module: &kernels::LoadedModule, stream: &cuda_core::CudaStream) {
+    use half_bits::*;
+
+    let launch = |a_f16: u16, b_f16: u16, a_bf16: u16, b_bf16: u16| -> [u16; HALF_MINMAX_RESULTS] {
+        let mut buffer = DeviceBuffer::<[u16; HALF_MINMAX_RESULTS]>::zeroed(stream, 1)
+            .expect("failed to allocate scalar half output");
+        // SAFETY: one thread, one row, and the row is live for the launch.
+        unsafe {
+            module
+                .scalar_half_minmax(
+                    stream,
+                    LaunchConfig {
+                        grid_dim: (1, 1, 1),
+                        block_dim: (1, 1, 1),
+                        shared_mem_bytes: 0,
+                    },
+                    &mut buffer,
+                    a_f16,
+                    b_f16,
+                    a_bf16,
+                    b_bf16,
+                )
+                .expect("failed to launch scalar half min/max kernel");
+        }
+        buffer
+            .to_host_vec(stream)
+            .expect("failed to copy scalar half output to the host")[0]
+    };
+
+    // Numeric inputs: +1.0 and -2.0. Asymmetric, and opposite signs so the
+    // `xorsign.abs` forms are distinguishable from the plain ones.
+    let numeric = launch(F16_ONE, F16_MINUS_TWO, BF16_ONE, BF16_MINUS_TWO);
+    let expected_numeric = [
+        F16_MINUS_TWO, // min(1.0, -2.0)
+        F16_ONE,       // max(1.0, -2.0)
+        F16_MINUS_TWO, // min.NaN with no NaN input matches the plain form
+        F16_ONE,       // max.NaN likewise
+        F16_MINUS_ONE, // min.xorsign.abs: min(|1|,|2|) = 1, sign = 0 XOR 1 = 1
+        F16_MINUS_TWO, // max.xorsign.abs: max(|1|,|2|) = 2, sign = 1
+        BF16_MINUS_TWO,
+        BF16_ONE,
+        BF16_MINUS_TWO,
+        BF16_ONE,
+        BF16_MINUS_ONE,
+        BF16_MINUS_TWO,
+    ];
+    for (index, (actual, expected)) in numeric.iter().zip(expected_numeric.iter()).enumerate() {
+        assert_eq!(
+            actual, expected,
+            "scalar half min/max slot {index} mismatch: got {actual:#06x}, want {expected:#06x}"
+        );
+    }
+
+    // NaN in the first operand. The plain forms must return the number; the
+    // `NaN` forms must return a canonical NaN.
+    let with_nan = launch(F16_INPUT_QNAN, F16_ONE, BF16_INPUT_QNAN, BF16_ONE);
+    assert_eq!(
+        with_nan[0], F16_ONE,
+        "min.f16 must return the numeric operand"
+    );
+    assert_eq!(
+        with_nan[1], F16_ONE,
+        "max.f16 must return the numeric operand"
+    );
+    assert_eq!(
+        with_nan[2], F16_CANONICAL_NAN,
+        "min.NaN.f16 must return a canonical NaN"
+    );
+    assert_eq!(
+        with_nan[3], F16_CANONICAL_NAN,
+        "max.NaN.f16 must return a canonical NaN"
+    );
+    assert_eq!(
+        with_nan[6], BF16_ONE,
+        "min.bf16 must return the numeric operand"
+    );
+    assert_eq!(
+        with_nan[7], BF16_ONE,
+        "max.bf16 must return the numeric operand"
+    );
+    assert_eq!(
+        with_nan[8], BF16_CANONICAL_NAN,
+        "min.NaN.bf16 must return a canonical NaN"
+    );
+    assert_eq!(
+        with_nan[9], BF16_CANONICAL_NAN,
+        "max.NaN.bf16 must return a canonical NaN"
+    );
+
+    println!("PASS: scalar f16 and bf16 min/max produced bit-exact PTX ISA results");
 }

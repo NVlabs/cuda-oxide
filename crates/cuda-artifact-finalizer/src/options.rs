@@ -17,6 +17,29 @@ pub enum DebugPolicy {
     Full,
 }
 
+impl DebugPolicy {
+    /// Parse a `CUDA_OXIDE_DEBUG` value into a debug policy.
+    ///
+    /// This is the single alias table for the environment variable. The
+    /// rustc codegen backend uses it to select the DWARF emission level,
+    /// and cargo-oxide uses it to decide build policy (a full-debug build
+    /// disables MIR optimization so aggregate locals survive to DWARF).
+    /// Keeping both behind one parser means every accepted spelling, such
+    /// as `2` for `full`, drives the whole pipeline consistently.
+    ///
+    /// Returns `None` for unrecognized values so callers fall back to
+    /// their own defaults.
+    #[must_use]
+    pub fn parse_env_override(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "0" | "off" | "none" => Some(Self::None),
+            "1" | "line" | "lines" | "line-tables" | "line-tables-only" => Some(Self::LineTables),
+            "2" | "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+}
+
 /// Typed options shared by the libNVVM and nvJitLink stages.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct FinalizationOptions {
@@ -64,10 +87,6 @@ impl FinalizationOptions {
         self.debug
     }
 
-    pub(crate) fn nvvm_verify_options(&self) -> Vec<String> {
-        vec![format!("-arch={}", self.target.compute())]
-    }
-
     pub(crate) fn nvvm_compile_options(&self) -> Vec<String> {
         let mut options = vec![
             format!("-arch={}", self.target.compute()),
@@ -81,18 +100,62 @@ impl FinalizationOptions {
         options
     }
 
-    pub(crate) fn nvjitlink_options(&self, output: FinalizerOutput) -> Vec<String> {
+    pub(crate) fn nvjitlink_ltoir_options(&self, output: FinalizerOutput) -> Vec<String> {
         let mut options = vec![format!("-arch={}", self.target.sm()), "-lto".to_string()];
         if output == FinalizerOutput::Ptx {
             options.push("-ptx".to_string());
         }
+        self.append_nvjitlink_codegen_options(&mut options);
+        options
+    }
+
+    /// Options for compiling one PTX module to cubin (no `-lto`).
+    ///
+    /// `-lineinfo` and `-g` are honored on this route (verified on CUDA 13.3:
+    /// debug sections appear in the cubin). `-fma=<n>` is accepted without
+    /// `-lto` but observed to be inert for PTX input on CUDA 13.3 nvJitLink:
+    /// `-fma=0` and `-fma=1` produce byte-identical cubins even for
+    /// contractable modeless `mul.f32`+`add.f32` PTX, which standalone
+    /// `ptxas --fmad=false` does split. FMA policy for PTX inputs is
+    /// therefore decided by the PTX producer (cuda-oxide's llc pass emits
+    /// pre-fused `fma.rn` and modeless mul/add pairs that nvJitLink's
+    /// internal SASS stage contracts by default). The option is still passed
+    /// and digested so a future toolkit that honors it stays cache-correct.
+    pub(crate) fn nvjitlink_ptx_options(&self) -> Vec<String> {
+        let mut options = vec![format!("-arch={}", self.target.sm())];
+        self.append_nvjitlink_codegen_options(&mut options);
+        options
+    }
+
+    fn append_nvjitlink_codegen_options(&self, options: &mut Vec<String>) {
         options.push(self.fma_option().to_string());
         match self.debug {
             DebugPolicy::None => {}
             DebugPolicy::LineTables => options.push("-lineinfo".to_string()),
             DebugPolicy::Full => options.push("-g".to_string()),
         }
-        options
+    }
+
+    /// Non-semantic nvJitLink options used only to collect resource diagnostics.
+    ///
+    /// These options deliberately stay out of artifact provenance and cache keys:
+    /// they request compiler reporting without changing the generated program.
+    ///
+    /// `-no-cache` bypasses nvJitLink's own JIT cache for cubin output. A
+    /// cache hit skips ptxas entirely and replays no info log, so a warm link
+    /// would silently return an empty resource report; the report path exists
+    /// to observe a real compile.
+    pub(crate) fn nvjitlink_diagnostic_options(&self, output: FinalizerOutput) -> Vec<String> {
+        match output {
+            FinalizerOutput::Cubin => {
+                vec![
+                    "-verbose".to_string(),
+                    "-Xptxas=-v".to_string(),
+                    "-no-cache".to_string(),
+                ]
+            }
+            FinalizerOutput::Ptx => vec!["-verbose".to_string()],
+        }
     }
 
     fn fma_option(&self) -> &'static str {
@@ -118,7 +181,7 @@ pub enum FinalizerOutput {
 pub struct NamedInput<'a> {
     /// Name shown by CUDA-tool diagnostics and included in provenance.
     pub name: &'a str,
-    /// Complete LTOIR input bytes.
+    /// Complete input bytes in the format selected by the linker operation.
     pub bytes: &'a [u8],
 }
 
@@ -134,6 +197,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn debug_policy_env_override_accepts_every_alias() {
+        for (value, expected) in [
+            ("0", DebugPolicy::None),
+            ("off", DebugPolicy::None),
+            ("none", DebugPolicy::None),
+            ("1", DebugPolicy::LineTables),
+            ("line", DebugPolicy::LineTables),
+            ("lines", DebugPolicy::LineTables),
+            ("line-tables", DebugPolicy::LineTables),
+            ("line-tables-only", DebugPolicy::LineTables),
+            ("2", DebugPolicy::Full),
+            ("full", DebugPolicy::Full),
+        ] {
+            assert_eq!(
+                DebugPolicy::parse_env_override(value),
+                Some(expected),
+                "alias `{value}` must parse"
+            );
+        }
+        // Whitespace and case are ignored, unknown values are rejected.
+        assert_eq!(
+            DebugPolicy::parse_env_override(" Full "),
+            Some(DebugPolicy::Full)
+        );
+        assert_eq!(DebugPolicy::parse_env_override("verbose"), None);
+        assert_eq!(DebugPolicy::parse_env_override(""), None);
+    }
+
+    #[test]
     fn option_order_preserves_target_lto_output_fma_and_debug_policy() {
         let target: CudaArch = "sm_90a".parse().unwrap();
         let base = FinalizationOptions::new(target).with_fma_contraction(false);
@@ -143,14 +235,20 @@ mod tests {
             ["-arch=compute_90a", "-gen-lto", "-fma=0"]
         );
         assert_eq!(
-            base.nvjitlink_options(FinalizerOutput::Cubin),
+            base.nvjitlink_ltoir_options(FinalizerOutput::Cubin),
             ["-arch=sm_90a", "-lto", "-fma=0"]
         );
         assert_eq!(
             base.clone()
                 .with_debug_policy(DebugPolicy::LineTables)
-                .nvjitlink_options(FinalizerOutput::Ptx),
+                .nvjitlink_ltoir_options(FinalizerOutput::Ptx),
             ["-arch=sm_90a", "-lto", "-ptx", "-fma=0", "-lineinfo"]
+        );
+        assert_eq!(
+            base.clone()
+                .with_debug_policy(DebugPolicy::LineTables)
+                .nvjitlink_ptx_options(),
+            ["-arch=sm_90a", "-fma=0", "-lineinfo"]
         );
         assert_eq!(
             base.clone()
@@ -166,8 +264,35 @@ mod tests {
         );
         assert_eq!(
             base.with_debug_policy(DebugPolicy::Full)
-                .nvjitlink_options(FinalizerOutput::Cubin),
+                .nvjitlink_ltoir_options(FinalizerOutput::Cubin),
             ["-arch=sm_90a", "-lto", "-fma=0", "-g"]
+        );
+    }
+
+    #[test]
+    fn resource_diagnostics_are_separate_from_semantic_link_options() {
+        let options = FinalizationOptions::new("sm_90a".parse().unwrap());
+
+        assert_eq!(
+            options.nvjitlink_diagnostic_options(FinalizerOutput::Cubin),
+            ["-verbose", "-Xptxas=-v", "-no-cache"]
+        );
+        assert_eq!(
+            options.nvjitlink_diagnostic_options(FinalizerOutput::Ptx),
+            ["-verbose"]
+        );
+        let diagnostic = options.nvjitlink_diagnostic_options(FinalizerOutput::Cubin);
+        assert!(
+            options
+                .nvjitlink_ltoir_options(FinalizerOutput::Cubin)
+                .iter()
+                .all(|option| !diagnostic.contains(option))
+        );
+        assert!(
+            options
+                .nvjitlink_ptx_options()
+                .iter()
+                .all(|option| !diagnostic.contains(option))
         );
     }
 
@@ -188,7 +313,16 @@ mod tests {
             );
             assert_eq!(
                 options
-                    .nvjitlink_options(FinalizerOutput::Cubin)
+                    .nvjitlink_ltoir_options(FinalizerOutput::Cubin)
+                    .iter()
+                    .filter(|option| option.starts_with("-fma="))
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+                [expected]
+            );
+            assert_eq!(
+                options
+                    .nvjitlink_ptx_options()
                     .iter()
                     .filter(|option| option.starts_with("-fma="))
                     .map(String::as_str)

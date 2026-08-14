@@ -3,12 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Regression test for assigning through nested runtime array indexes.
+//! Regression tests for assigning through nested array indexes.
 //!
 //! MIR represents `local[i][j] = value` as a two-level `Index, Index`
-//! projection. The statement translator must lower that chained projection to
-//! an address and store through it instead of rejecting the assignment before
-//! the generic projection walker can handle it.
+//! projection. Fixing either level at a constant produces `ConstantIndex,
+//! Index`, `Index, ConstantIndex`, or `ConstantIndex, ConstantIndex`. The
+//! statement translator must lower every combination to an address and store
+//! through it instead of rejecting the assignment before the generic
+//! projection walker can handle it.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::{DisjointSlice, cuda_module, kernel};
@@ -42,6 +44,41 @@ mod kernels {
 
         if let Some((slot, _idx)) = out.get_mut_indexed() {
             *slot = values[i][j];
+        }
+    }
+
+    #[kernel]
+    pub fn nested_constant_runtime_index_assignment_kernel(j: usize, mut out: DisjointSlice<u32>) {
+        let mut values = [[0u32; 3]; 5];
+        values[4][j] = 0x6b00_0000 | j as u32;
+
+        if let Some((slot, _idx)) = out.get_mut_indexed() {
+            *slot = values[4][j];
+        }
+    }
+
+    // Runtime outer row followed by a constant inner column: the mirrored
+    // `Index, ConstantIndex` projection pair.
+    #[kernel]
+    pub fn nested_runtime_constant_index_assignment_kernel(i: usize, mut out: DisjointSlice<u32>) {
+        let mut values = [[0u32; 3]; 5];
+        values[i][2] = 0x7c00_0000 | i as u32;
+
+        if let Some((slot, _idx)) = out.get_mut_indexed() {
+            *slot = values[i][2];
+        }
+    }
+
+    // Both indexes constant. rustc usually keeps this as a
+    // `ConstantIndex, ConstantIndex` projection pair in optimized MIR, so it
+    // exercises the remaining combination of the merged translator arm.
+    #[kernel]
+    pub fn nested_constant_constant_index_assignment_kernel(mut out: DisjointSlice<u32>) {
+        let mut values = [[0u32; 3]; 5];
+        values[1][2] = 0x8d00_0102;
+
+        if let Some((slot, _idx)) = out.get_mut_indexed() {
+            *slot = values[1][2];
         }
     }
 }
@@ -83,5 +120,59 @@ fn main() {
     .expect("Non-square kernel launch failed");
     assert_eq!(out_ns.to_host_vec(&stream).unwrap(), vec![0x5a00_0402]);
 
-    println!("PASS: nested runtime indexes assigned and read back correctly (square + non-square)");
+    // Constant outer row followed by a runtime inner column: write [4][2].
+    let mut out_constant_runtime = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
+    // SAFETY: one thread is launched, the output contains one element, and j=2
+    // is within the inner array's length of 3.
+    unsafe {
+        module.nested_constant_runtime_index_assignment_kernel(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            2usize,
+            &mut out_constant_runtime,
+        )
+    }
+    .expect("Constant/runtime nested-index kernel launch failed");
+    assert_eq!(
+        out_constant_runtime.to_host_vec(&stream).unwrap(),
+        vec![0x6b00_0002],
+    );
+
+    // Runtime outer row followed by a constant inner column: write [3][2].
+    let mut out_runtime_constant = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
+    // SAFETY: one thread is launched, the output contains one element, and i=3
+    // is within the outer array's length of 5.
+    unsafe {
+        module.nested_runtime_constant_index_assignment_kernel(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            3usize,
+            &mut out_runtime_constant,
+        )
+    }
+    .expect("Runtime/constant nested-index kernel launch failed");
+    assert_eq!(
+        out_runtime_constant.to_host_vec(&stream).unwrap(),
+        vec![0x7c00_0003],
+    );
+
+    // Both indexes constant: write [1][2].
+    let mut out_constant_constant = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
+    // SAFETY: one thread is launched and the output contains one element.
+    unsafe {
+        module.nested_constant_constant_index_assignment_kernel(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            &mut out_constant_constant,
+        )
+    }
+    .expect("Constant/constant nested-index kernel launch failed");
+    assert_eq!(
+        out_constant_constant.to_host_vec(&stream).unwrap(),
+        vec![0x8d00_0102],
+    );
+
+    println!(
+        "PASS: nested index assignments (runtime and constant, in every combination) wrote and read back correctly"
+    );
 }

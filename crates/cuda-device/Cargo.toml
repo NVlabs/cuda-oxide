@@ -6,8 +6,14 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Device-side intrinsics and types for CUDA kernels in Rust"
+readme = "README.md"
 
 [dependencies]
+# Inherits the workspace entry, which sets `default-features = false` and so
+# leaves the `host` feature off. That matters here specifically: cuda-device is
+# in every kernel crate's graph, so requesting `host` at this edge would unify
+# it back on for all of them and defeat the feature. `cuda-host` requests
+# `host` explicitly, so any build that loads or launches a module still has it.
 cuda-macros = { workspace = true }
 
 [dev-dependencies]

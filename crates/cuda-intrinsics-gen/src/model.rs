@@ -160,6 +160,8 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub register_mma_f8f6f4_f16: Option<RegisterMmaF8F6F4Admission>,
     #[serde(default)]
+    pub register_mma_mxf8f6f4_f32: Option<RegisterMmaF8F6F4Admission>,
+    #[serde(default)]
     pub register_mma_fp8: Option<RegisterMmaFp8Admission>,
     #[serde(default)]
     pub register_mma_ampere_float: Option<RegisterMmaAmpereFloatAdmission>,
@@ -517,9 +519,15 @@ pub struct ClcAdmissionVariant {
 pub struct TmaAdmission {
     pub llvm_evidence_profile: String,
     pub libnvvm_evidence_profile: String,
+    #[serde(default)]
+    pub reduce_llvm_evidence_profile: Option<String>,
+    #[serde(default)]
+    pub reduce_libnvvm_evidence_profile: Option<String>,
     pub runtime_validation: RuntimeValidation,
     #[serde(rename = "variant")]
     pub variants: Vec<TmaAdmissionVariant>,
+    #[serde(rename = "reduce_variant", default)]
+    pub reduce_variants: Vec<TmaReductionAdmissionVariant>,
 }
 
 /// One reviewed TMA operation and its reserved ABI ID.
@@ -528,6 +536,16 @@ pub struct TmaAdmission {
 pub struct TmaAdmissionVariant {
     pub abi_id: String,
     pub operation: TmaOperation,
+}
+
+/// One reviewed tensor-reduction operation and its reserved ABI ID.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TmaReductionAdmissionVariant {
+    pub abi_id: String,
+    pub operation: TmaReductionOperation,
+    pub load_mode: TmaReductionLoadMode,
+    pub dimensions: u8,
 }
 
 /// Compact admission for the existing Tensor Core Generation 5 operations.
@@ -1132,8 +1150,19 @@ pub enum ClcAdapter {
 #[serde(deny_unknown_fields)]
 pub struct Tma {
     pub operation: TmaOperation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduction: Option<TmaReduction>,
     pub adapter: TmaAdapter,
     pub runtime_validation: RuntimeValidation,
+}
+
+impl Tma {
+    pub const fn dimensions(&self) -> Option<usize> {
+        match &self.reduction {
+            Some(reduction) => Some(reduction.dimensions as usize),
+            None => self.operation.dimensions(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1151,9 +1180,44 @@ pub enum TmaOperation {
     S2gTile3d,
     S2gTile4d,
     S2gTile5d,
+    Reduce,
     CommitGroup,
     WaitGroup,
     WaitGroupRead,
+    PrefetchTensorMap,
+    PrefetchTile1d,
+    PrefetchTile2d,
+    PrefetchTile3d,
+    PrefetchTile4d,
+    PrefetchTile5d,
+    #[serde(rename = "prefetch_tile_gather4_2d")]
+    PrefetchTileGather4TwoDimensional,
+    PrefetchTile1dCacheHint,
+    PrefetchTile2dCacheHint,
+    PrefetchTile3dCacheHint,
+    PrefetchTile4dCacheHint,
+    PrefetchTile5dCacheHint,
+    #[serde(rename = "prefetch_tile_gather4_2d_cache_hint")]
+    PrefetchTileGather4TwoDimensionalCacheHint,
+    ReplaceBoxDim,
+    ReplaceElementStride,
+    ReplaceElementType,
+    ReplaceFillMode,
+    ReplaceGlobalAddress,
+    ReplaceGlobalDim,
+    ReplaceGlobalStride,
+    ReplaceInterleaveLayout,
+    ReplaceRank,
+    ReplaceSwizzleAtomicity,
+    ReplaceSwizzleMode,
+    FenceProxyTensorMapAcquireCluster,
+    FenceProxyTensorMapAcquireCta,
+    FenceProxyTensorMapAcquireGpu,
+    FenceProxyTensorMapAcquireSystem,
+    FenceProxyTensorMapReleaseCluster,
+    FenceProxyTensorMapReleaseCta,
+    FenceProxyTensorMapReleaseGpu,
+    FenceProxyTensorMapReleaseSystem,
 }
 
 impl TmaOperation {
@@ -1167,9 +1231,99 @@ impl TmaOperation {
             Self::G2sTile3d | Self::S2gTile3d => Some(3),
             Self::G2sTile4d | Self::S2gTile4d => Some(4),
             Self::G2sTile5d | Self::S2gTile5d => Some(5),
-            Self::CommitGroup | Self::WaitGroup | Self::WaitGroupRead => None,
+            Self::Reduce
+            | Self::CommitGroup
+            | Self::WaitGroup
+            | Self::WaitGroupRead
+            | Self::PrefetchTensorMap
+            | Self::PrefetchTile1d
+            | Self::PrefetchTile2d
+            | Self::PrefetchTile3d
+            | Self::PrefetchTile4d
+            | Self::PrefetchTile5d
+            | Self::PrefetchTileGather4TwoDimensional
+            | Self::PrefetchTile1dCacheHint
+            | Self::PrefetchTile2dCacheHint
+            | Self::PrefetchTile3dCacheHint
+            | Self::PrefetchTile4dCacheHint
+            | Self::PrefetchTile5dCacheHint
+            | Self::PrefetchTileGather4TwoDimensionalCacheHint
+            | Self::ReplaceBoxDim
+            | Self::ReplaceElementStride
+            | Self::ReplaceElementType
+            | Self::ReplaceFillMode
+            | Self::ReplaceGlobalAddress
+            | Self::ReplaceGlobalDim
+            | Self::ReplaceGlobalStride
+            | Self::ReplaceInterleaveLayout
+            | Self::ReplaceRank
+            | Self::ReplaceSwizzleAtomicity
+            | Self::ReplaceSwizzleMode
+            | Self::FenceProxyTensorMapAcquireCluster
+            | Self::FenceProxyTensorMapAcquireCta
+            | Self::FenceProxyTensorMapAcquireGpu
+            | Self::FenceProxyTensorMapAcquireSystem
+            | Self::FenceProxyTensorMapReleaseCluster
+            | Self::FenceProxyTensorMapReleaseCta
+            | Self::FenceProxyTensorMapReleaseGpu
+            | Self::FenceProxyTensorMapReleaseSystem => None,
         }
     }
+
+    pub const fn prefetch_coordinate_count(self) -> Option<usize> {
+        match self {
+            Self::PrefetchTile1d | Self::PrefetchTile1dCacheHint => Some(1),
+            Self::PrefetchTile2d | Self::PrefetchTile2dCacheHint => Some(2),
+            Self::PrefetchTile3d | Self::PrefetchTile3dCacheHint => Some(3),
+            Self::PrefetchTile4d | Self::PrefetchTile4dCacheHint => Some(4),
+            Self::PrefetchTile5d
+            | Self::PrefetchTile5dCacheHint
+            | Self::PrefetchTileGather4TwoDimensional
+            | Self::PrefetchTileGather4TwoDimensionalCacheHint => Some(5),
+            _ => None,
+        }
+    }
+
+    pub const fn uses_prefetch_cache_hint(self) -> bool {
+        matches!(
+            self,
+            Self::PrefetchTile1dCacheHint
+                | Self::PrefetchTile2dCacheHint
+                | Self::PrefetchTile3dCacheHint
+                | Self::PrefetchTile4dCacheHint
+                | Self::PrefetchTile5dCacheHint
+                | Self::PrefetchTileGather4TwoDimensionalCacheHint
+        )
+    }
+}
+
+/// Closed identity for one TMA tensor-reduction operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TmaReduction {
+    pub operation: TmaReductionOperation,
+    pub load_mode: TmaReductionLoadMode,
+    pub dimensions: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TmaReductionOperation {
+    Add,
+    And,
+    Dec,
+    Inc,
+    Max,
+    Min,
+    Or,
+    Xor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TmaReductionLoadMode {
+    Tile,
+    Im2col,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1178,8 +1332,18 @@ pub enum TmaAdapter {
     G2sPointersCoordinatesBarrierInjectDefaults,
     G2sPointersCoordinatesBarrierMaskInjectDefaults,
     S2gPointersCoordinatesInjectDefaults,
+    ReductionPointersCoordinatesInjectDefaults,
     NoOperands,
     CompileTimeConstantMaxPending,
+    DescriptorPointer,
+    DescriptorCoordinatesInjectDefaults,
+    DescriptorCoordinatesCacheHintInjectFlag,
+    DescriptorAndAddressPointers,
+    DescriptorOrdinalAndU32,
+    DescriptorOrdinalAndU64,
+    DescriptorAndImmediateU32,
+    DescriptorAndRuntimeU32,
+    DescriptorPointerInjectBytes,
 }
 
 /// Closed semantic contract for one tcgen05 operation.
@@ -1652,6 +1816,62 @@ pub enum BackendLoweringMechanism {
     InlinePtx,
 }
 
+/// Closed identity for the small execution-control families that share a
+/// result-less MIR/dialect representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ExecutionControlOperation {
+    BarrierCtaSync,
+    BarrierCtaSyncAligned,
+    BarrierCtaArrive,
+    BarrierCtaArriveAligned,
+    GridDependencyLaunchDependents,
+    GridDependencyWait,
+    SetMaxNRegInc,
+    SetMaxNRegDec,
+}
+
+impl ExecutionControlOperation {
+    pub fn from_catalog_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "barrier_cta_sync" => Self::BarrierCtaSync,
+            "barrier_cta_sync_aligned" => Self::BarrierCtaSyncAligned,
+            "barrier_cta_arrive" => Self::BarrierCtaArrive,
+            "barrier_cta_arrive_aligned" => Self::BarrierCtaArriveAligned,
+            "grid_dependency_launch_dependents" => Self::GridDependencyLaunchDependents,
+            "grid_dependency_wait" => Self::GridDependencyWait,
+            "setmaxnreg_inc" => Self::SetMaxNRegInc,
+            "setmaxnreg_dec" => Self::SetMaxNRegDec,
+            _ => return None,
+        })
+    }
+
+    pub const fn family(self) -> &'static str {
+        match self {
+            Self::BarrierCtaSync
+            | Self::BarrierCtaSyncAligned
+            | Self::BarrierCtaArrive
+            | Self::BarrierCtaArriveAligned => "counted_barrier",
+            Self::GridDependencyLaunchDependents | Self::GridDependencyWait => "grid_dependency",
+            Self::SetMaxNRegInc | Self::SetMaxNRegDec => "register_control",
+        }
+    }
+
+    pub const fn operand_count(self) -> usize {
+        match self {
+            Self::BarrierCtaSync
+            | Self::BarrierCtaSyncAligned
+            | Self::BarrierCtaArrive
+            | Self::BarrierCtaArriveAligned => 2,
+            Self::GridDependencyLaunchDependents | Self::GridDependencyWait => 0,
+            Self::SetMaxNRegInc | Self::SetMaxNRegDec => 1,
+        }
+    }
+
+    pub const fn requires_immediate_operands(self) -> bool {
+        matches!(self, Self::SetMaxNRegInc | Self::SetMaxNRegDec)
+    }
+}
+
 /// Closed semantic identity for the generated `ldmatrix` family.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1804,6 +2024,7 @@ pub struct RegisterMma {
 pub enum RegisterMmaKind {
     Standard,
     F8f6f4,
+    Mxf8f6f4,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -1891,6 +2112,7 @@ pub enum RegisterMmaAdapter {
     C2I32A1U32B1U32ToD2I32,
     C4I32A4U32B2U32ToD4I32,
     C4I32A2U32B1U32ToD4I32,
+    C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32,
 }
 
 /// Where the stable `cuda_device::wmma` callable is defined.
@@ -2442,7 +2664,11 @@ pub enum PackedAluOperation {
     Sub,
     Mul,
     Fma,
+    FmaFtz,
+    FmaSat,
+    FmaFtzSat,
     FmaRelu,
+    FmaFtzRelu,
     Min,
     Max,
     Neg,
@@ -2583,6 +2809,8 @@ pub struct ExtendedMinMax {
 #[serde(rename_all = "snake_case")]
 pub enum ExtendedMinMaxFormat {
     F32,
+    F16,
+    Bf16,
     F16x2,
     Bf16x2,
 }
@@ -2612,6 +2840,9 @@ pub enum ExtendedMinMaxNan {
 #[serde(rename_all = "snake_case")]
 pub enum ExtendedMinMaxAdapter {
     DirectF32,
+    /// A single 16-bit float carried as its `u16` bit pattern, matching how
+    /// `packed_conversion` already carries `e4m3x2` and `e5m2x2` operands.
+    DirectHalfU16,
     DirectPackedU32,
 }
 

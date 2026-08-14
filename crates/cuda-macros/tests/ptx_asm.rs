@@ -25,6 +25,7 @@ fn ptx_asm_accepts_compile_time_strings() {
 fn ptx_asm_accepts_inout() {
     let t = trybuild::TestCases::new();
     t.pass("tests/pass/ptx_asm_inout.rs");
+    t.pass("tests/pass/ptx_asm_marker_arity_contract.rs");
 }
 
 #[test]

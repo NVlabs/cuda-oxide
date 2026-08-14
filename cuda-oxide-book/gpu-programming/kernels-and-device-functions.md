@@ -163,6 +163,71 @@ clear error: `"CUDA-OXIDE: FORBIDDEN CRATE IN DEVICE CODE"` with a list of
 allowed crates (`core`, `alloc`, `cuda_device`, and your local crate).
 :::
 
+## Conditional compilation
+
+`#[cfg(...)]` works in device code exactly as it does anywhere else in Rust.
+What is missing is anything to gate *on*: the compiler supplies no
+target-derived `cfg`, so a kernel has no way to ask which architecture it is
+being compiled for. Arch requirements live in doc comments and are enforced by
+the caller, which is why an example that needs `redux.sync` checks
+`ctx.compute_capability()` on the host and skips rather than specializing the
+kernel.
+
+`--device-cfg NAME` is how you supply one yourself. It is repeatable, and each
+occurrence becomes a `--cfg NAME` in the build's rustflags:
+
+```bash
+# From the crate directory, not with an example name -- see below.
+cargo oxide build --device-cfg ampere_up
+```
+
+```rust
+// One instruction where the target allows it, a shuffle tree everywhere else.
+#[cfg(ampere_up)]
+let total = warp::redux_sync_add(u32::MAX, value);
+
+#[cfg(not(ampere_up))]
+let total = {
+    let mut acc = value;
+    let mut offset = 16;
+    while offset > 0 {
+        acc = acc.wrapping_add(warp::shuffle_xor(acc, offset));
+        offset /= 2;
+    }
+    acc
+};
+```
+
+Four things are worth knowing before reaching for it.
+
+**It is not limited to device code.** The flag travels as a rustflag, so every
+crate cargo compiles for that build sees the `cfg`, host code included.
+
+**It switches `build` into passthrough mode.** Passing it means `build` no
+longer takes an example name, so
+`cargo oxide build my_example --device-cfg ampere_up` is rejected; run it from
+the crate's own directory instead. (`test` is passthrough already, flag or no
+flag.) If the gate can live in the crate's manifest, an ordinary Cargo feature
+(`#[cfg(feature = "ampere_up")]`) does the same job without giving up
+example-name invocations; `--device-cfg` earns its keep when you need a `cfg`
+injected without touching any Cargo.toml.
+
+**rustc warns about an undeclared `cfg` name.** The `unexpected_cfgs` lint
+checks every `#[cfg(...)]` against the declared set, and an injected
+`--cfg ampere_up` is not in it, so each use prints an
+`unexpected cfg condition name` warning. Declare it in the kernel crate's
+manifest to silence them:
+
+```toml
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ampere_up)"] }
+```
+
+**Nothing ties it to `--arch`.** If the `cfg` name stands for an architecture,
+you are the one keeping the two in step -- passing `--device-cfg ampere_up`
+without the matching `--arch` will happily build the specialized path for
+whatever target was selected, and PTX that the assembler then rejects.
+
 (loop-unrolling)=
 
 ## Loop unrolling
@@ -278,6 +343,50 @@ occupancy hint and composes with either.
 #[kernel]
 #[launch_bounds(256, 2)]   // correct
 pub fn my_kernel(...) { }
+```
+
+:::
+
+### When the bound forces spills
+
+A launch bound is ultimately a cap on registers per thread: promising ptxas more
+resident threads leaves each of them fewer registers to work with. If the kernel
+needs more than the cap allows, ptxas does not fail -- it **spills** the excess
+to local memory, and the occupancy the bound bought is then paid for again on
+every access to a spilled value.
+
+That is easy to miss, because the build succeeds. cuda-oxide warns instead, at
+the kernel's definition span:
+
+```text
+warning: kernel `cuda_oxide_kernel_a1b2c3d4_my_kernel` compiled with
+         `#[launch_bounds(256, 2)]` and spills registers
+  = note: ptxas reports 96 bytes spill stores and 96 bytes spill loads
+  = note: ptxas allocated 40 registers per thread
+  = help: relax `min_blocks_per_sm` or reduce register pressure
+```
+
+(Byte counts and register totals are whatever ptxas reported for your kernel.)
+Only kernels carrying `#[launch_bounds]` are checked -- without a bound there is
+no promise for ptxas to satisfy at the expense of registers. The warning can
+only fire in builds that materialize a native cubin (`--materialize-cubin`, or
+any build that embeds a cubin): a plain PTX build never runs ptxas, so there is
+no resource report to inspect.
+
+The usual responses are to raise `max_threads`, drop or relax `min_blocks`, or
+cut register pressure in the kernel itself. Spilling is not automatically wrong:
+a kernel can be faster spilling a little at high occupancy than not spilling at
+low occupancy. The warning exists because that is a trade worth making
+deliberately rather than by accident.
+
+:::{warning}
+`#[allow(...)]` does **not** silence these. They are raw span diagnostics rather
+than lints, so the suppression attribute does not apply to them. The escape
+hatch is an environment variable, meant for builds that measured the spill and
+accepted it:
+
+```bash
+CUDA_OXIDE_NO_SPILL_WARN=1 cargo oxide build my_kernels --materialize-cubin
 ```
 
 :::

@@ -49,10 +49,10 @@ Two safe/raw pairs, checked against a CPU reference:
   leaves early hangs the block). Staging reads `.get(i).unwrap_or(0.0)`,
   so an out-of-range load becomes zero fill, with no extra control flow.
 
-Both safe kernels write C through `tile_2d32_rt`, whose single `unsafe`
-obligation is that every thread passes the same row width. Here the width
-is `n`, a kernel argument, and all threads of a launch read the same
-arguments, so the obligation holds by construction.
+Both safe kernels write C through `tile_2d32_rt`, which is safe: the row
+width is not passed at the call site at all. The host binds it into C's
+slice once for the launch (`cuda_host::RowWidth`), so every thread reads
+the same width by construction and no call-site obligation remains.
 
 The launch contract makes the buffer sizes part of the kernel's interface:
 
