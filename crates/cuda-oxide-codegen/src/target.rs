@@ -131,6 +131,13 @@ fn contains_sm90_features(contents: &str) -> bool {
         || contains_multimem_features(contents)
 }
 
+/// Native two-lane f32 arithmetic requires PTX 8.2 and sm_100+.
+fn contains_f32x2_features(contents: &str) -> bool {
+    ["add.rn.f32x2", "fma.rn.f32x2"]
+        .iter()
+        .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
+}
+
 /// Native packed bf16 atomic add was added in PTX 7.8 for sm_90.
 fn contains_packed_bf16_atomic_features(contents: &str) -> bool {
     contains_instruction_mnemonic(contents, "atom.global.add.noftz.bf16x2")
@@ -1061,7 +1068,9 @@ pub fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
             DetectedFeatures::Ldmatrix,
         ),
         (
-            contains_tma_sm100_features(contents) || contains_clc_features(contents),
+            contains_tma_sm100_features(contents)
+                || contains_clc_features(contents)
+                || contains_f32x2_features(contents),
             DetectedFeatures::Sm100,
         ),
         (
@@ -1139,6 +1148,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_fence_acquire_release_features(contents)
         || contains_multimem_features(contents)
         || contains_redux_f32_features(contents)
+        || contains_f32x2_features(contents)
     {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx86);
     }
@@ -2817,6 +2827,25 @@ mod tests {
                 detect_features_in_llvm_text(near_miss),
                 DetectedFeatures::Basic
             );
+        }
+    }
+
+    #[test]
+    fn f32x2_detection_requires_sm100_and_rounds_ptx82_to_ptx86() {
+        for mnemonic in ["add.rn.f32x2 $0, $1, $2;", "fma.rn.f32x2 $0, $1, $2, $3;"] {
+            assert!(contains_f32x2_features(mnemonic));
+            let requirements = detect_module_requirements_in_llvm_text(mnemonic);
+            assert_eq!(requirements.features, DetectedFeatures::Sm100);
+            // LLVM exposes PTX versions discretely; 8.6 is the nearest
+            // supported feature at or above this instruction's PTX 8.2 floor.
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86);
+            assert!(!arch_satisfies("sm_90", requirements.features));
+            assert!(arch_satisfies("sm_100", requirements.features));
+            assert!(arch_satisfies("sm_120", requirements.features));
+        }
+
+        for near_miss in ["add.rn.f32x2x $0, $1, $2;", "fma.rn.f32x2x $0, $1, $2, $3;"] {
+            assert!(!contains_f32x2_features(near_miss));
         }
     }
 
