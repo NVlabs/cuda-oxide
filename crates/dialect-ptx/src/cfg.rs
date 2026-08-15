@@ -3,15 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Conservative intraprocedural control-flow recovery for PTX.
+//! Conservative intraprocedural control-flow recovery over surface PTX.
 //!
 //! The analysis models the control-flow forms defined through PTX ISA 9.3:
 //! direct `bra`, indexed `brx.idx` via `.branchtargets`, predicated
 //! fallthrough, `ret`, `exit`, and terminating `trap`. Calls fall through
 //! within the caller. A newer PTX version or an unclosed target relation is a
 //! hard error so clients never receive a guessed graph.
+//!
+//! This graph is a read-only recovery result over [`ptx_syntax::Document`]. It
+//! deliberately does not claim that the projected Pliron operation tree has
+//! native basic-block structure. Turning this proof into native CFG is a
+//! separate, fallible normalization step.
 
-use ptx_syntax::{Document, Instruction, ScopeId, StatementId, StatementKind, split_top_level};
+use ptx_syntax::{
+    Document, Instruction, LabelId, ScopeId, StatementId, StatementKind, split_top_level,
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
@@ -23,6 +30,18 @@ pub enum EdgeKind {
     Fallthrough,
     Branch,
     IndexedBranch,
+}
+
+/// A control-flow edge that leaves the callable rather than targeting another
+/// recovered basic block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ExitKind {
+    /// Return from a `.func`, or terminate the calling thread from an `.entry`.
+    Return,
+    /// Terminate the current thread through `exit`.
+    Thread,
+    /// Abort execution through the PTX debug `trap` instruction.
+    Trap,
 }
 
 /// Stable index of a block within one [`CallableControlFlow`].
@@ -58,14 +77,24 @@ impl Edge {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BasicBlock {
     id: BlockId,
+    labels: Vec<LabelId>,
     instructions: Vec<StatementId>,
     successors: Vec<Edge>,
     predecessors: Vec<Edge>,
+    exit: Option<ExitKind>,
 }
 
 impl BasicBlock {
     pub fn id(&self) -> BlockId {
         self.id
+    }
+
+    /// Source labels which designate this block, in source order.
+    ///
+    /// Several PTX labels may alias the same instruction and therefore the
+    /// same recovered block.
+    pub fn labels(&self) -> &[LabelId] {
+        &self.labels
     }
 
     /// Authoritative syntax statements for the instructions in this block.
@@ -79,6 +108,13 @@ impl BasicBlock {
 
     pub fn predecessors(&self) -> &[Edge] {
         &self.predecessors
+    }
+
+    /// The callable-exit edge produced by this block's final instruction.
+    ///
+    /// A predicated exit also has a normal fallthrough successor.
+    pub fn exit(&self) -> Option<ExitKind> {
+        self.exit
     }
 }
 
@@ -204,6 +240,19 @@ pub enum CfgError {
         callable: String,
         table: String,
     },
+    DuplicateBranchTable {
+        callable: String,
+        table: String,
+    },
+    BranchTableOutsideCallableScope {
+        callable: String,
+        table: String,
+    },
+    BranchTableAfterUse {
+        callable: String,
+        instruction: StatementId,
+        table: String,
+    },
     OpenFallthrough {
         callable: String,
         instruction: StatementId,
@@ -268,6 +317,23 @@ impl fmt::Display for CfgError {
             Self::MalformedBranchTable { callable, table } => write!(
                 formatter,
                 "PTX .branchtargets table {table:?} in {callable:?} is malformed"
+            ),
+            Self::DuplicateBranchTable { callable, table } => write!(
+                formatter,
+                "PTX callable {callable:?} defines .branchtargets table {table:?} more than once"
+            ),
+            Self::BranchTableOutsideCallableScope { callable, table } => write!(
+                formatter,
+                "PTX .branchtargets table {table:?} in {callable:?} is not declared at callable scope"
+            ),
+            Self::BranchTableAfterUse {
+                callable,
+                instruction,
+                table,
+            } => write!(
+                formatter,
+                "PTX brx.idx statement {} in {callable:?} uses .branchtargets table {table:?} before its declaration",
+                instruction.index()
             ),
             Self::OpenFallthrough {
                 callable,
@@ -337,7 +403,13 @@ fn analyze_callable(
         .iter()
         .map(|index| (document.instructions()[*index].statement(), *index))
         .collect();
-    let mut labels = BTreeMap::<String, usize>::new();
+    #[derive(Clone, Copy)]
+    struct LabelBinding {
+        instruction: usize,
+        label: LabelId,
+    }
+
+    let mut labels = BTreeMap::<String, LabelBinding>::new();
     for label in document.labels().iter().filter(|label| {
         let span = label.span();
         span.start >= body_start && span.end <= body_end
@@ -354,10 +426,11 @@ fn analyze_callable(
         }) else {
             continue;
         };
-        if labels
-            .insert(label.name().to_string(), instruction)
-            .is_some()
-        {
+        let binding = LabelBinding {
+            instruction,
+            label: label.id(),
+        };
+        if labels.insert(label.name().to_string(), binding).is_some() {
             return Err(CfgError::DuplicateLabel {
                 callable: callable_name.to_string(),
                 label: label.name().to_string(),
@@ -365,7 +438,12 @@ fn analyze_callable(
         }
     }
 
-    let mut branch_tables = BTreeMap::<String, Vec<String>>::new();
+    struct BranchTable {
+        declaration_start: usize,
+        targets: Vec<String>,
+    }
+
+    let mut branch_tables = BTreeMap::<String, BranchTable>::new();
     for directive in document.directives().iter().filter(|directive| {
         let span = directive.span();
         span.start >= body_start && span.end <= body_end && directive.name() == ".branchtargets"
@@ -373,6 +451,12 @@ fn analyze_callable(
         let Some(table) = directive.labels().last() else {
             continue;
         };
+        if directive.scope() != callable_scope {
+            return Err(CfgError::BranchTableOutsideCallableScope {
+                callable: callable_name.to_string(),
+                table: table.to_string(),
+            });
+        }
         let arguments = directive.arguments().trim_end().trim_end_matches(';');
         let Some(targets) = split_top_level(arguments) else {
             return Err(CfgError::MalformedBranchTable {
@@ -386,15 +470,24 @@ fn analyze_callable(
                 table: table.to_string(),
             });
         }
-        branch_tables.insert(
-            table.to_string(),
-            targets.into_iter().map(str::to_string).collect(),
-        );
+        let branch_table = BranchTable {
+            declaration_start: directive.span().start,
+            targets: targets.into_iter().map(str::to_string).collect(),
+        };
+        if branch_tables
+            .insert(table.to_string(), branch_table)
+            .is_some()
+        {
+            return Err(CfgError::DuplicateBranchTable {
+                callable: callable_name.to_string(),
+                table: table.to_string(),
+            });
+        }
     }
 
     let mut leaders = BTreeSet::from([0usize]);
-    for instruction in labels.values() {
-        leaders.insert(positions[instruction]);
+    for binding in labels.values() {
+        leaders.insert(positions[&binding.instruction]);
     }
     for (position, instruction) in instruction_indices.iter().copied().enumerate() {
         if terminator_kind(&document.instructions()[instruction]).is_some()
@@ -415,12 +508,14 @@ fn analyze_callable(
                 .unwrap_or(instruction_indices.len());
             BasicBlock {
                 id: BlockId(ordinal),
+                labels: Vec::new(),
                 instructions: instruction_indices[start..end]
                     .iter()
                     .map(|index| document.instructions()[*index].statement())
                     .collect(),
                 successors: Vec::new(),
                 predecessors: Vec::new(),
+                exit: None,
             }
         })
         .collect();
@@ -429,8 +524,26 @@ fn analyze_callable(
         .collect();
     let label_blocks: BTreeMap<&str, usize> = labels
         .iter()
-        .map(|(label, instruction)| (label.as_str(), block_for_position[positions[instruction]]))
+        .map(|(label, binding)| {
+            (
+                label.as_str(),
+                block_for_position[positions[&binding.instruction]],
+            )
+        })
         .collect();
+    for binding in labels.values() {
+        let block = block_for_position[positions[&binding.instruction]];
+        blocks[block].labels.push(binding.label);
+    }
+    for block in &mut blocks {
+        block.labels.sort_by_key(|label| {
+            document
+                .label(*label)
+                .expect("CFG label belongs to the document")
+                .span()
+                .start
+        });
+    }
 
     for block_index in 0..blocks.len() {
         let instruction_statement = *blocks[block_index]
@@ -479,7 +592,7 @@ fn analyze_callable(
                         instruction: instruction_statement,
                     }
                 })?;
-                let targets =
+                let branch_table =
                     branch_tables
                         .get(table)
                         .ok_or_else(|| CfgError::UnknownBranchTable {
@@ -487,7 +600,14 @@ fn analyze_callable(
                             instruction: instruction_statement,
                             table: table.to_string(),
                         })?;
-                for target in targets {
+                if branch_table.declaration_start >= instruction.span().start {
+                    return Err(CfgError::BranchTableAfterUse {
+                        callable: callable_name.to_string(),
+                        instruction: instruction_statement,
+                        table: table.to_string(),
+                    });
+                }
+                for target in &branch_table.targets {
                     let target_block =
                         label_blocks.get(target.as_str()).copied().ok_or_else(|| {
                             CfgError::UnknownBranchTarget {
@@ -511,7 +631,15 @@ fn analyze_callable(
                     )?;
                 }
             }
-            Some(TerminatorKind::Return) => {
+            Some(kind @ (TerminatorKind::Return | TerminatorKind::Exit | TerminatorKind::Trap)) => {
+                blocks[block_index].exit = Some(match kind {
+                    TerminatorKind::Return => ExitKind::Return,
+                    TerminatorKind::Exit => ExitKind::Thread,
+                    TerminatorKind::Trap => ExitKind::Trap,
+                    TerminatorKind::Branch | TerminatorKind::IndexedBranch => {
+                        unreachable!("matched an exiting terminator")
+                    }
+                });
                 if instruction.predicate().is_some() {
                     add_fallthrough(
                         &mut successors,
@@ -580,6 +708,8 @@ enum TerminatorKind {
     Branch,
     IndexedBranch,
     Return,
+    Exit,
+    Trap,
 }
 
 fn terminator_kind(instruction: &Instruction<'_>) -> Option<TerminatorKind> {
@@ -587,7 +717,9 @@ fn terminator_kind(instruction: &Instruction<'_>) -> Option<TerminatorKind> {
     match (parts.next(), parts.next()) {
         (Some("bra"), _) => Some(TerminatorKind::Branch),
         (Some("brx"), Some("idx")) => Some(TerminatorKind::IndexedBranch),
-        (Some("ret" | "exit" | "trap"), _) => Some(TerminatorKind::Return),
+        (Some("ret"), _) => Some(TerminatorKind::Return),
+        (Some("exit"), _) => Some(TerminatorKind::Exit),
+        (Some("trap"), _) => Some(TerminatorKind::Trap),
         _ => None,
     }
 }
@@ -646,6 +778,7 @@ L1:
             }]
         );
         assert!(blocks[2].successors().is_empty());
+        assert_eq!(blocks[2].exit(), Some(ExitKind::Return));
     }
 
     #[test]
@@ -707,6 +840,78 @@ Done:
         assert!(matches!(
             analyze(".version 9.0\n.entry kernel() { ret;"),
             Err(CfgError::UnclosedCallable { .. })
+        ));
+    }
+
+    #[test]
+    fn preserves_alias_labels_nested_scopes_unreachable_blocks_and_exit_kinds() {
+        let source = "\
+.version 9.3
+.target sm_120a
+.visible .entry kernel() {
+    {
+L0: Alias: @%p0 ret;
+    }
+    trap;
+Dead:
+    @%p1 exit;
+    ret;
+}
+";
+        let document = Document::parse(source).unwrap();
+        let cfg = ControlFlow::analyze(&document).unwrap();
+        let blocks = cfg.callables()[0].blocks();
+        assert_eq!(blocks.len(), 4);
+
+        let label_names = |block: &BasicBlock| {
+            block
+                .labels()
+                .iter()
+                .map(|label| document.label(*label).unwrap().name())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(label_names(&blocks[0]), ["L0", "Alias"]);
+        assert_eq!(blocks[0].exit(), Some(ExitKind::Return));
+        assert_eq!(
+            blocks[0].successors(),
+            [Edge {
+                block: BlockId(1),
+                kind: EdgeKind::Fallthrough,
+            }]
+        );
+        assert_eq!(blocks[1].exit(), Some(ExitKind::Trap));
+        assert!(blocks[1].successors().is_empty());
+        assert_eq!(label_names(&blocks[2]), ["Dead"]);
+        assert_eq!(blocks[2].exit(), Some(ExitKind::Thread));
+        assert_eq!(
+            blocks[2].successors(),
+            [Edge {
+                block: BlockId(3),
+                kind: EdgeKind::Fallthrough,
+            }]
+        );
+        assert_eq!(blocks[3].exit(), Some(ExitKind::Return));
+    }
+
+    #[test]
+    fn requires_branch_target_tables_at_callable_scope_before_use() {
+        assert!(matches!(
+            analyze(
+                ".version 9.3\n.entry kernel() {\n@%p0 brx.idx %r0, targets;\ntargets: .branchtargets L0;\nL0: ret;\n}\n"
+            ),
+            Err(CfgError::BranchTableAfterUse { .. })
+        ));
+        assert!(matches!(
+            analyze(
+                ".version 9.3\n.entry kernel() {\n{ targets: .branchtargets L0; }\n@%p0 brx.idx %r0, targets;\nL0: ret;\n}\n"
+            ),
+            Err(CfgError::BranchTableOutsideCallableScope { .. })
+        ));
+        assert!(matches!(
+            analyze(
+                ".version 9.3\n.entry kernel() {\ntargets: .branchtargets L0;\ntargets: .branchtargets L0;\n@%p0 brx.idx %r0, targets;\nL0: ret;\n}\n"
+            ),
+            Err(CfgError::DuplicateBranchTable { .. })
         ));
     }
 }
