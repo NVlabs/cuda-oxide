@@ -21,6 +21,7 @@ use ptx_syntax::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
+use std::ops::Range;
 
 const SUPPORTED_PTX_MAJOR: u16 = 9;
 const SUPPORTED_PTX_MINOR: u16 = 3;
@@ -74,11 +75,33 @@ impl Edge {
     }
 }
 
+/// A maximal contiguous run of block instructions in one lexical PTX scope.
+///
+/// CFG blocks and lexical scopes are orthogonal: one recovered block can
+/// contain several segments, including a return to an outer scope after a
+/// nested scope closes. The range indexes [`BasicBlock::instructions`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScopeSegment {
+    scope: ScopeId,
+    instruction_range: Range<usize>,
+}
+
+impl ScopeSegment {
+    pub fn scope(&self) -> ScopeId {
+        self.scope
+    }
+
+    pub fn instruction_range(&self) -> Range<usize> {
+        self.instruction_range.clone()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BasicBlock {
     id: BlockId,
     labels: Vec<LabelId>,
     instructions: Vec<StatementId>,
+    scope_segments: Vec<ScopeSegment>,
     successors: Vec<Edge>,
     predecessors: Vec<Edge>,
     exit: Option<ExitKind>,
@@ -100,6 +123,10 @@ impl BasicBlock {
     /// Authoritative syntax statements for the instructions in this block.
     pub fn instructions(&self) -> &[StatementId] {
         &self.instructions
+    }
+
+    pub fn scope_segments(&self) -> &[ScopeSegment] {
+        &self.scope_segments
     }
 
     pub fn successors(&self) -> &[Edge] {
@@ -506,13 +533,16 @@ fn analyze_callable(
                 .get(ordinal + 1)
                 .copied()
                 .unwrap_or(instruction_indices.len());
+            let instructions = instruction_indices[start..end]
+                .iter()
+                .map(|index| document.instructions()[*index].statement())
+                .collect::<Vec<_>>();
+            let scope_segments = recover_scope_segments(document, &instructions);
             BasicBlock {
                 id: BlockId(ordinal),
                 labels: Vec::new(),
-                instructions: instruction_indices[start..end]
-                    .iter()
-                    .map(|index| document.instructions()[*index].statement())
-                    .collect(),
+                instructions,
+                scope_segments,
                 successors: Vec::new(),
                 predecessors: Vec::new(),
                 exit: None,
@@ -681,6 +711,36 @@ fn analyze_callable(
         name: callable_name.to_string(),
         blocks,
     })
+}
+
+fn recover_scope_segments(
+    document: &Document<'_>,
+    instructions: &[StatementId],
+) -> Vec<ScopeSegment> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    while start < instructions.len() {
+        let scope = document
+            .statement(instructions[start])
+            .expect("CFG instruction belongs to the document")
+            .scope();
+        let mut end = start + 1;
+        while end < instructions.len()
+            && document
+                .statement(instructions[end])
+                .expect("CFG instruction belongs to the document")
+                .scope()
+                == scope
+        {
+            end += 1;
+        }
+        segments.push(ScopeSegment {
+            scope,
+            instruction_range: start..end,
+        });
+        start = end;
+    }
+    segments
 }
 
 fn add_fallthrough(
@@ -913,5 +973,36 @@ Dead:
             ),
             Err(CfgError::DuplicateBranchTable { .. })
         ));
+    }
+
+    #[test]
+    fn preserves_lexical_scope_segments_inside_one_cfg_block() {
+        let source = "\
+.version 9.3
+.entry kernel() {
+    mov.u32 %r0, 0;
+    {
+        add.u32 %r0, %r0, 1;
+    }
+    sub.u32 %r0, %r0, 1;
+    ret;
+}
+";
+        let document = Document::parse(source).unwrap();
+        let cfg = ControlFlow::analyze(&document).unwrap();
+        let block = &cfg.callables()[0].blocks()[0];
+        assert_eq!(block.instructions().len(), 4);
+        assert_eq!(block.scope_segments().len(), 3);
+        assert_eq!(block.scope_segments()[0].instruction_range(), 0..1);
+        assert_eq!(block.scope_segments()[1].instruction_range(), 1..2);
+        assert_eq!(block.scope_segments()[2].instruction_range(), 2..4);
+        assert_eq!(
+            block.scope_segments()[0].scope(),
+            block.scope_segments()[2].scope()
+        );
+        assert_ne!(
+            block.scope_segments()[0].scope(),
+            block.scope_segments()[1].scope()
+        );
     }
 }

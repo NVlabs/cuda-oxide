@@ -6,7 +6,7 @@
 use crate::attributes::CallableKindAttr;
 use crate::cfg::{
     BasicBlock as RecoveredBasicBlock, BlockId, CallableControlFlow, CfgError, ControlFlow, Edge,
-    ExitKind,
+    ExitKind, ScopeSegment,
 };
 use crate::ops::{
     PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
@@ -411,6 +411,19 @@ impl ProjectedCfgBlock<'_, '_> {
             })
     }
 
+    pub fn scope_segments(
+        &self,
+    ) -> impl ExactSizeIterator<Item = ProjectedCfgScopeSegment<'_, '_>> + '_ {
+        self.recovered
+            .scope_segments()
+            .iter()
+            .map(|segment| ProjectedCfgScopeSegment {
+                projection: self.projection,
+                block: self.recovered,
+                recovered: segment,
+            })
+    }
+
     pub fn successors(&self) -> &[Edge] {
         self.recovered.successors()
     }
@@ -421,6 +434,44 @@ impl ProjectedCfgBlock<'_, '_> {
 
     pub fn exit(&self) -> Option<ExitKind> {
         self.recovered.exit()
+    }
+}
+
+/// One lexical scope segment within a recovered CFG block.
+#[derive(Clone, Copy)]
+pub struct ProjectedCfgScopeSegment<'projection, 'source> {
+    projection: &'projection Projection<'source>,
+    block: &'projection RecoveredBasicBlock,
+    recovered: &'projection ScopeSegment,
+}
+
+impl ProjectedCfgScopeSegment<'_, '_> {
+    pub fn recovered(&self) -> &ScopeSegment {
+        self.recovered
+    }
+
+    pub fn scope(&self) -> ScopeId {
+        self.recovered.scope()
+    }
+
+    /// The existing lexical Pliron block for this source scope.
+    pub fn lexical_block(&self) -> Ptr<BasicBlock> {
+        self.projection
+            .block_for_source_scope(self.scope())
+            .expect("a recovered scope belongs to its projection")
+    }
+
+    pub fn instructions(&self) -> impl Iterator<Item = (StatementId, Ptr<Operation>)> + '_ {
+        self.block.instructions()[self.recovered.instruction_range()]
+            .iter()
+            .copied()
+            .map(|statement| {
+                let operation = self
+                    .projection
+                    .operation_for_statement(statement)
+                    .expect("a recovered instruction belongs to its projection");
+                (statement, operation)
+            })
     }
 }
 
@@ -882,6 +933,18 @@ Done:
                 );
                 assert!(Operation::is_op::<PtxInstructionOp>(operation, &ctx));
                 assert_eq!(cfg.block_for_operation(operation).unwrap().id(), block.id());
+            }
+            for segment in block.scope_segments() {
+                assert_eq!(
+                    projection.source_scope(segment.lexical_block()),
+                    Some(segment.scope())
+                );
+                for (statement, _) in segment.instructions() {
+                    assert_eq!(
+                        projection.document().statement(statement).unwrap().scope(),
+                        segment.scope()
+                    );
+                }
             }
         }
 
