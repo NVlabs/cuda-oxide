@@ -16,6 +16,7 @@ pub mod cfg;
 pub mod emitter;
 pub mod ops;
 mod projection;
+pub mod raising;
 pub mod registers;
 pub mod scopes;
 
