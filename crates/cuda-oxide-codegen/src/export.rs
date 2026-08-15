@@ -453,14 +453,14 @@ fn collect_unresolved_external_symbols(
 /// Recursively scan for declared or called CUDA libdevice functions.
 fn op_uses_libdevice(ctx: &Context, op_ptr: Ptr<Operation>) -> bool {
     if let Some(func) = Operation::get_op::<llvm_export::ops::FuncOp>(op_ptr, ctx)
-        && is_libdevice_symbol(&func.get_symbol_name(ctx))
+        && is_libdevice_symbol(func.get_symbol_name(ctx).as_ref())
     {
         return true;
     }
 
     if let Some(call) = Operation::get_op::<llvm_export::ops::CallOp>(op_ptr, ctx)
         && let CallOpCallable::Direct(callee) = call.callee(ctx)
-        && is_libdevice_symbol(&callee.to_string())
+        && is_libdevice_symbol(callee.as_ref())
     {
         return true;
     }

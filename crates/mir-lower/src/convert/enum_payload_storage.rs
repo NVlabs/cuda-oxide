@@ -60,7 +60,10 @@ enum TypeShape {
     Pointer(u32),
     Array(TypeHandle, u64),
     Vector(TypeHandle),
-    Struct(Vec<TypeHandle>),
+    Struct {
+        fields: Vec<TypeHandle>,
+        layout: llvm_types::StructLayout,
+    },
     Identity,
 }
 
@@ -111,7 +114,10 @@ fn rewrite_storage_type(
         } else if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
             TypeShape::Vector(vector.elem_type())
         } else if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
-            TypeShape::Struct(struct_ty.fields().collect())
+            TypeShape::Struct {
+                fields: struct_ty.fields().collect(),
+                layout: struct_ty.layout(),
+            }
         } else {
             TypeShape::Identity
         }
@@ -172,7 +178,7 @@ fn rewrite_storage_type(
                 array_shared_pointer_leaves: 0,
             })
         }
-        TypeShape::Struct(fields) => {
+        TypeShape::Struct { fields, layout } => {
             let mut storage_fields = Vec::with_capacity(fields.len());
             let mut changed = false;
             let mut shared_pointer_leaves = 0_u64;
@@ -197,7 +203,7 @@ fn rewrite_storage_type(
                 storage_fields.push(storage.ty);
             }
             let ty = if changed {
-                llvm_types::StructType::get_unnamed(ctx, storage_fields).into()
+                llvm_types::StructType::get_unnamed(ctx, (storage_fields, layout)).into()
             } else {
                 semantic_ty
             };

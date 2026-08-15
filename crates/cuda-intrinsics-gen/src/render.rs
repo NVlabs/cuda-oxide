@@ -15006,7 +15006,10 @@ fn convert_generated_tcgen05_load(
     }
     let result_ty = llvm_types::StructType::get_unnamed(
         ctx,
-        (0..count).map(|_| scalar_ty).collect(),
+        (
+            (0..count).map(|_| scalar_ty).collect(),
+            llvm_types::StructLayout::Unpacked,
+        ),
     );
     let inline_asm = inline_asm_convergent(
         ctx,

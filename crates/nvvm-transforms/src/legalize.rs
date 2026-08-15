@@ -174,7 +174,7 @@ pub(crate) fn legalize_nvvm_bit_intrinsics(
         let CallOpCallable::Direct(callee) = call.callee(ctx) else {
             continue;
         };
-        if legacy_bit_rewrite(&callee.to_string()).is_some() {
+        if legacy_bit_rewrite(callee.as_ref()).is_some() {
             return pliron::input_err!(
                 op.deref(ctx).loc(),
                 "NVVM bit-intrinsic legalization left unsupported call @{callee} behind"
@@ -1186,7 +1186,10 @@ fn rewrite_shuffle(ctx: &mut Context, op: Ptr<Operation>, name: &str) -> Result<
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
     let i1_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty, i1_ty]);
+    let struct_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (vec![i32_ty, i1_ty], llvm_types::StructLayout::Unpacked),
+    );
     let func_ty = llvm_types::FuncType::get(
         ctx,
         struct_ty.into(),
@@ -1269,7 +1272,10 @@ fn rewrite_vote(ctx: &mut Context, op: Ptr<Operation>, name: &str) -> Result<()>
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
     let i1_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty, i1_ty]);
+    let struct_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (vec![i32_ty, i1_ty], llvm_types::StructLayout::Unpacked),
+    );
     let func_ty =
         llvm_types::FuncType::get(ctx, struct_ty.into(), vec![i32_ty, i32_ty, i1_ty], false);
     let parent_block = op.deref(ctx).get_parent_block().ok_or_else(|| {

@@ -137,7 +137,10 @@ fn register_result_type(ctx: &mut Context, register_count: usize) -> TypeHandle 
     } else {
         llvm_types::StructType::get_unnamed(
             ctx,
-            (0..register_count).map(|_| i32_ty.into()).collect(),
+            (
+                (0..register_count).map(|_| i32_ty.into()).collect(),
+                llvm_types::StructLayout::Unpacked,
+            ),
         )
         .into()
     }

@@ -104,8 +104,11 @@ pub(crate) fn convert_inline_ptx(
                     .map_err(|err| pliron::input_error!(loc.clone(), "{err}"))?;
                 llvm_field_types.push(llvm_ty);
             }
-            let struct_ty: TypeHandle =
-                llvm_types::StructType::get_unnamed(ctx, llvm_field_types).into();
+            let struct_ty: TypeHandle = llvm_types::StructType::get_unnamed(
+                ctx,
+                (llvm_field_types, llvm_types::StructLayout::Unpacked),
+            )
+            .into();
 
             let inline_asm = llvm::InlineAsmOp::new(
                 ctx,

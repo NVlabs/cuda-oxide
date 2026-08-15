@@ -4985,7 +4985,7 @@ fn test_fp8_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), anyhow
             && let CallOpCallable::Direct(callee) = call.callee(&ctx)
         {
             assert!(
-                !FP8_CONVERSION_INTRINSICS.contains(&callee.to_string().as_str()),
+                !FP8_CONVERSION_INTRINSICS.contains(&callee.as_ref()),
                 "libNVVM FP8 conversions must not use typed intrinsics"
             );
         }
@@ -5220,7 +5220,7 @@ fn test_scalar_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), any
             && let CallOpCallable::Direct(callee) = call.callee(&ctx)
         {
             assert!(
-                !SCALAR_CONVERSION_INTRINSICS.contains(&callee.to_string().as_str()),
+                !SCALAR_CONVERSION_INTRINSICS.contains(&callee.as_ref()),
                 "libNVVM scalar conversions must not use typed intrinsics"
             );
         }
@@ -5387,7 +5387,7 @@ fn test_scalar_arithmetic_llvm_uses_inline_ptx_only_for_saturation() -> Result<(
     for op in lowered_kernel_body(&ctx, module_ptr) {
         if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
             && let CallOpCallable::Direct(callee) = call.callee(&ctx)
-            && is_representative_scalar_arithmetic_intrinsic(&callee.to_string())
+            && is_representative_scalar_arithmetic_intrinsic(callee.as_ref())
         {
             calls.push(callee.to_string());
         }
@@ -5446,7 +5446,7 @@ fn test_scalar_arithmetic_libnvvm_uses_exact_inline_ptx() -> Result<(), anyhow::
     for op in lowered_kernel_body(&ctx, module_ptr) {
         if let Some(call) = Operation::get_op::<llvm::CallOp>(op, &ctx)
             && let CallOpCallable::Direct(callee) = call.callee(&ctx)
-            && is_representative_scalar_arithmetic_intrinsic(&callee.to_string())
+            && is_representative_scalar_arithmetic_intrinsic(callee.as_ref())
         {
             calls.push(callee.to_string());
         }
@@ -5623,7 +5623,7 @@ fn test_stmatrix_libnvvm_uses_exact_convergent_memory_asm() -> Result<(), anyhow
             && let CallOpCallable::Direct(callee) = call.callee(&ctx)
         {
             assert!(
-                !STMATRIX_TYPED_INTRINSICS.contains(&callee.to_string().as_str()),
+                !STMATRIX_TYPED_INTRINSICS.contains(&callee.as_ref()),
                 "libNVVM stmatrix lowering must not emit typed intrinsic calls"
             );
         }

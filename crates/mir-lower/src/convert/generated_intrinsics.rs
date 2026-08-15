@@ -334,8 +334,13 @@ fn convert_generated_tcgen05_load(
         rewriter.replace_operation_with_values(ctx, op, vec![result]);
         return Ok(());
     }
-    let result_ty =
-        llvm_types::StructType::get_unnamed(ctx, (0..count).map(|_| scalar_ty).collect());
+    let result_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            (0..count).map(|_| scalar_ty).collect(),
+            llvm_types::StructLayout::Unpacked,
+        ),
+    );
     let inline_asm = inline_asm_convergent(
         ctx,
         rewriter,
