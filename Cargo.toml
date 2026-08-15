@@ -5,6 +5,7 @@ members = [
     "crates/cuda-intrinsics",
     "crates/cuda-intrinsics-gen",
     "crates/ptx-syntax",
+    "crates/dialect-ptx",
     "crates/cuda-device",
     "crates/cuda-artifact-finalizer",
     "crates/cuda-host",
@@ -62,6 +63,7 @@ pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "0d3f25df6d0
 llvm-export = { path = "crates/llvm-export" }
 dialect-mir = { path = "crates/dialect-mir" }
 dialect-iket = { path = "crates/dialect-iket" }
+dialect-ptx = { path = "crates/dialect-ptx" }
 dialect-nvvm = { path = "crates/dialect-nvvm" }
 mir-lower = { path = "crates/mir-lower" }
 iket-lower = { path = "crates/iket-lower" }
