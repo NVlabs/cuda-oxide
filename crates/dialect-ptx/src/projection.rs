@@ -5,15 +5,15 @@
 
 use crate::attributes::CallableKindAttr;
 use crate::ops::{
-    PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
+    PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use ptx_syntax::{
-    Callable, CallableKind, Directive, Document, Instruction, ParseError, ScopeId, StatementId,
-    StatementKind,
+    Callable, CallableKind, Directive, Document, Instruction, Label, LabelId, ParseError, ScopeId,
+    StatementId, StatementKind,
 };
 use std::collections::HashMap;
 use std::ops::Range;
@@ -21,6 +21,7 @@ use std::ops::Range;
 /// The authoritative syntax node from which a projected entity was built.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SourceNode {
+    Label { label: LabelId },
     Statement { statement: StatementId },
     Scope { scope: ScopeId },
 }
@@ -28,6 +29,7 @@ pub enum SourceNode {
 impl SourceNode {
     pub fn statement(self) -> Option<StatementId> {
         match self {
+            Self::Label { .. } => None,
             Self::Statement { statement } => Some(statement),
             Self::Scope { .. } => None,
         }
@@ -35,8 +37,16 @@ impl SourceNode {
 
     pub fn scope(self) -> Option<ScopeId> {
         match self {
+            Self::Label { .. } => None,
             Self::Statement { .. } => None,
             Self::Scope { scope } => Some(scope),
+        }
+    }
+
+    pub fn label(self) -> Option<LabelId> {
+        match self {
+            Self::Label { label } => Some(label),
+            Self::Statement { .. } | Self::Scope { .. } => None,
         }
     }
 }
@@ -176,6 +186,7 @@ struct Projector<'ctx, 'document, 'source> {
     directives: HashMap<StatementId, &'document Directive<'source>>,
     callables: HashMap<StatementId, &'document Callable<'source>>,
     instructions: HashMap<StatementId, &'document Instruction<'source>>,
+    labels: HashMap<StatementId, Vec<&'document Label<'source>>>,
     nodes: Vec<ProjectedNode>,
     blocks: Vec<ProjectedBlock>,
 }
@@ -210,6 +221,10 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
             .iter()
             .map(|instruction| (instruction.statement(), instruction))
             .collect();
+        let mut labels: HashMap<StatementId, Vec<&Label<'source>>> = HashMap::new();
+        for label in document.labels() {
+            labels.entry(label.statement()).or_default().push(label);
+        }
         Self {
             ctx,
             document,
@@ -218,6 +233,7 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
             directives,
             callables,
             instructions,
+            labels,
             nodes: Vec::new(),
             blocks: Vec::new(),
         }
@@ -318,6 +334,7 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
         scope: ScopeId,
         destination: Ptr<BasicBlock>,
     ) {
+        self.project_labels(statement, destination);
         if let Some(callable) = self.callables.get(&statement).copied() {
             let kind = match callable.kind() {
                 CallableKind::Entry => CallableKindAttr::Entry,
@@ -381,6 +398,7 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
     }
 
     fn project_statement(&mut self, statement: StatementId, destination: Ptr<BasicBlock>) {
+        let projected_labels = self.project_labels(statement, destination);
         let statement_node = self
             .document
             .statement(statement)
@@ -392,9 +410,18 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
                     .get_operation()
             }),
             StatementKind::Instruction => self.instructions.get(&statement).map(|instruction| {
+                let prefix = instruction
+                    .predicate()
+                    .map_or_else(String::new, |predicate| {
+                        format!(
+                            "@{}{}",
+                            if predicate.is_negated() { "!" } else { "" },
+                            predicate.register()
+                        )
+                    });
                 PtxInstructionOp::build(
                     self.ctx,
-                    instruction.prefix(),
+                    &prefix,
                     instruction.head(),
                     instruction.operands(),
                 )
@@ -414,6 +441,7 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
                 )
                 .get_operation()
             }),
+            StatementKind::Label if projected_labels => return,
             StatementKind::Label | StatementKind::Preprocessor | StatementKind::Unknown => None,
         }
         .unwrap_or_else(|| {
@@ -426,6 +454,20 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
             destination,
         );
     }
+
+    fn project_labels(&mut self, statement: StatementId, destination: Ptr<BasicBlock>) -> bool {
+        let labels = self.labels.get(&statement).cloned().unwrap_or_default();
+        for label in &labels {
+            let operation = PtxLabelOp::build(self.ctx, label.name()).get_operation();
+            self.record_operation(
+                operation,
+                SourceNode::Label { label: label.id() },
+                label.span(),
+                destination,
+            );
+        }
+        !labels.is_empty()
+    }
 }
 
 fn trim_header(text: &str) -> &str {
@@ -435,7 +477,7 @@ fn trim_header(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::{PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxRawOp, PtxScopeOp};
+    use crate::ops::{PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxScopeOp};
     use pliron::common_traits::Verify;
     use pliron::context::Context;
     use pliron::linked_list::ContainsLinkedList;
@@ -480,7 +522,7 @@ L0:
             .iter(&ctx)
             .collect();
         assert!(Operation::is_op::<PtxDirectiveOp>(callable_ops[0], &ctx));
-        assert!(Operation::is_op::<PtxRawOp>(callable_ops[1], &ctx));
+        assert!(Operation::is_op::<PtxLabelOp>(callable_ops[1], &ctx));
         assert!(Operation::is_op::<PtxInstructionOp>(callable_ops[2], &ctx));
         assert!(Operation::is_op::<PtxScopeOp>(callable_ops[3], &ctx));
         assert!(Operation::is_op::<PtxInstructionOp>(callable_ops[4], &ctx));
@@ -491,6 +533,12 @@ L0:
                 projection.source_node(node.operation()),
                 Some(node.source_node())
             );
+            if let SourceNode::Label { label } = node.source_node() {
+                assert_eq!(
+                    projection.document().label(label).unwrap().span(),
+                    node.source_span()
+                );
+            }
         }
         for block in projection.blocks() {
             assert_eq!(

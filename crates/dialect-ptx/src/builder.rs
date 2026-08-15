@@ -8,7 +8,7 @@
 use crate::attributes::CallableKindAttr;
 use crate::emitter::{EmitError, emit_module};
 use crate::ops::{
-    PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
+    PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
@@ -121,6 +121,13 @@ pub struct PtxBodyBuilder<'builder> {
 }
 
 impl PtxBodyBuilder<'_> {
+    pub fn label(&mut self, name: &str) -> &mut Self {
+        PtxLabelOp::build(self.ctx, name)
+            .get_operation()
+            .insert_at_back(self.block, self.ctx);
+        self
+    }
+
     pub fn directive(&mut self, name: &str, arguments: &str) -> &mut Self {
         PtxDirectiveOp::build(self.ctx, name, arguments)
             .get_operation()
@@ -178,6 +185,7 @@ mod tests {
         builder.version("8.9").target("sm_120a").address_size(64);
         builder.visible_entry("kernel", "()", |body| {
             body.directive(".reg", ".b32 %r<2>;");
+            body.label("L0");
             body.instruction("", "mov.u32", ["%r0", "7"]);
             body.instruction("", "ret", std::iter::empty::<&str>());
         });
@@ -191,6 +199,7 @@ mod tests {
 .visible .entry kernel()
 {
     .reg .b32 %r<2>;
+    L0:
     mov.u32 %r0, 7;
     ret;
 }

@@ -33,9 +33,31 @@ pub struct Document<'source> {
     scopes: Vec<Scope>,
     diagnostics: Vec<Diagnostic>,
     coverage: Coverage,
+    labels: Vec<Label<'source>>,
     directives: Vec<Directive<'source>>,
     callables: Vec<Callable<'source>>,
     instructions: Vec<Instruction<'source>>,
+}
+
+/// Stable index of a projected label in [`Document::labels`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LabelId(usize);
+
+impl LabelId {
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
+/// One PTX statement label, including a label prefixed to another statement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Label<'source> {
+    source: &'source str,
+    id: LabelId,
+    statement: StatementId,
+    scope: ScopeId,
+    span: Range<usize>,
+    name_span: Range<usize>,
 }
 
 /// A typed view of one PTX directive statement.
@@ -52,6 +74,7 @@ pub struct Directive<'source> {
     line_span: Range<usize>,
     name_span: Range<usize>,
     arguments_span: Range<usize>,
+    label_name_spans: Vec<Range<usize>>,
 }
 
 /// The two callable forms defined by PTX.
@@ -69,7 +92,9 @@ pub struct Callable<'source> {
     scope: ScopeId,
     definition_scope: Option<ScopeId>,
     kind: CallableKind,
+    span: Range<usize>,
     header_span: Range<usize>,
+    body_span: Option<Range<usize>>,
     name_span: Range<usize>,
     is_extern: bool,
 }
@@ -88,6 +113,21 @@ pub struct Instruction<'source> {
     prefix_span: Range<usize>,
     head_span: Range<usize>,
     operand_spans: Vec<Range<usize>>,
+    label_name_spans: Vec<Range<usize>>,
+    predicate: Option<Predicate<'source>>,
+}
+
+/// A guard predicate recovered from an instruction statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Predicate<'source> {
+    register: &'source str,
+    negated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LabelSpans {
+    span: Range<usize>,
+    name_span: Range<usize>,
 }
 
 /// A lexical error which prevents reliable source-span recovery.
@@ -117,7 +157,7 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 impl<'source> Document<'source> {
-    /// Parse the structural instruction view of `source`.
+    /// Parse a lossless structural view of `source`.
     ///
     /// Tokens losslessly partition the original source. Unknown instruction
     /// heads are accepted, while unterminated comments and strings fail the
@@ -126,6 +166,7 @@ impl<'source> Document<'source> {
         let tokens = lexer::lex(source)?;
         let masked = mask_non_code(source, &tokens);
         let mut parsed = syntax::parse(source, &tokens);
+        let labels = discover_labels(source, &tokens, &parsed.statements);
         let (directives, directive_diagnostics) =
             discover_directives(source, &tokens, &parsed.statements);
         let (callables, callable_diagnostics) =
@@ -152,6 +193,7 @@ impl<'source> Document<'source> {
             scopes: parsed.scopes,
             diagnostics: parsed.diagnostics,
             coverage: parsed.coverage,
+            labels,
             directives,
             callables,
             instructions,
@@ -198,6 +240,14 @@ impl<'source> Document<'source> {
         self.coverage
     }
 
+    pub fn labels(&self) -> &[Label<'source>] {
+        &self.labels
+    }
+
+    pub fn label(&self, id: LabelId) -> Option<&Label<'source>> {
+        self.labels.get(id.index())
+    }
+
     pub fn directives(&self) -> &[Directive<'source>] {
         &self.directives
     }
@@ -211,6 +261,29 @@ impl<'source> Document<'source> {
     }
 }
 
+impl<'source> Label<'source> {
+    pub fn id(&self) -> LabelId {
+        self.id
+    }
+
+    pub fn statement(&self) -> StatementId {
+        self.statement
+    }
+
+    pub fn scope(&self) -> ScopeId {
+        self.scope
+    }
+
+    /// Byte range covering the label name and terminal colon.
+    pub fn span(&self) -> Range<usize> {
+        self.span.clone()
+    }
+
+    pub fn name(&self) -> &'source str {
+        &self.source[self.name_span.clone()]
+    }
+}
+
 impl<'source> Directive<'source> {
     pub fn statement(&self) -> StatementId {
         self.statement
@@ -220,8 +293,8 @@ impl<'source> Directive<'source> {
         self.scope
     }
 
-    /// Byte range covering the directive without leading indentation, trailing
-    /// comment, or newline.
+    /// Byte range covering optional labels and the directive without leading
+    /// indentation, trailing comment, or newline.
     pub fn span(&self) -> Range<usize> {
         self.span.clone()
     }
@@ -234,6 +307,12 @@ impl<'source> Directive<'source> {
 
     pub fn name(&self) -> &'source str {
         &self.source[self.name_span.clone()]
+    }
+
+    pub fn labels(&self) -> impl ExactSizeIterator<Item = &'source str> + '_ {
+        self.label_name_spans
+            .iter()
+            .map(|span| &self.source[span.clone()])
     }
 
     pub fn arguments(&self) -> &'source str {
@@ -267,9 +346,19 @@ impl<'source> Callable<'source> {
         self.kind
     }
 
+    /// Byte range covering the complete declaration or definition.
+    pub fn span(&self) -> Range<usize> {
+        self.span.clone()
+    }
+
     /// Byte range from the first linkage directive through the callable name.
     pub fn header_span(&self) -> Range<usize> {
         self.header_span.clone()
+    }
+
+    /// Source range inside a definition's outer braces.
+    pub fn body_span(&self) -> Option<Range<usize>> {
+        self.body_span.clone()
     }
 
     pub fn name(&self) -> &'source str {
@@ -311,6 +400,16 @@ impl<'source> Instruction<'source> {
         &self.source[self.prefix_span.clone()]
     }
 
+    pub fn labels(&self) -> impl ExactSizeIterator<Item = &'source str> + '_ {
+        self.label_name_spans
+            .iter()
+            .map(|span| &self.source[span.clone()])
+    }
+
+    pub fn predicate(&self) -> Option<Predicate<'source>> {
+        self.predicate
+    }
+
     /// Exact opcode and ordered modifier spelling.
     pub fn head(&self) -> &'source str {
         &self.source[self.head_span.clone()]
@@ -328,11 +427,44 @@ impl<'source> Instruction<'source> {
     }
 }
 
+impl<'source> Predicate<'source> {
+    pub fn register(self) -> &'source str {
+        self.register
+    }
+
+    pub fn is_negated(self) -> bool {
+        self.negated
+    }
+}
+
 /// Split a comma-separated PTX operand list without splitting nested register
 /// lists, addresses, or parameter tuples.
 pub fn split_top_level(source: &str) -> Option<Vec<&str>> {
     split_top_level_spans(source, 0)
         .map(|spans| spans.into_iter().map(|span| &source[span]).collect())
+}
+
+fn discover_labels<'source>(
+    source: &'source str,
+    tokens: &[Token],
+    statements: &[Statement],
+) -> Vec<Label<'source>> {
+    let mut labels = Vec::new();
+    for statement in statements {
+        let significant = significant_token_indices(tokens, statement);
+        let (_, spans) = leading_label_spans(source, tokens, &significant);
+        for spans in spans {
+            labels.push(Label {
+                source,
+                id: LabelId(labels.len()),
+                statement: statement.id(),
+                scope: statement.scope(),
+                span: spans.span,
+                name_span: spans.name_span,
+            });
+        }
+    }
+    labels
 }
 
 fn discover_directives<'source>(
@@ -347,11 +479,12 @@ fn discover_directives<'source>(
         .filter(|statement| statement.kind() == StatementKind::Directive)
     {
         let significant = significant_token_indices(tokens, statement);
-        let Some(name) = significant.iter().find_map(|index| {
-            let token = &tokens[*index];
-            (token.kind() == TokenKind::Word && token.text(source).starts_with('.'))
-                .then_some(token)
-        }) else {
+        let (cursor, label_spans) = leading_label_spans(source, tokens, &significant);
+        let Some(name) = significant
+            .get(cursor)
+            .map(|index| &tokens[*index])
+            .filter(|token| token.kind() == TokenKind::Word && token.text(source).starts_with('.'))
+        else {
             diagnostics.push(Diagnostic::new(
                 DiagnosticKind::MalformedDirective,
                 statement.span(),
@@ -366,6 +499,10 @@ fn discover_directives<'source>(
             line_span: physical_line_span(source, span.start),
             arguments_span: trim_span(source, name.span().end..span.end),
             name_span: name.span(),
+            label_name_spans: label_spans
+                .into_iter()
+                .map(|spans| spans.name_span)
+                .collect(),
             span,
         });
     }
@@ -433,13 +570,22 @@ fn discover_callables<'source>(
             .iter()
             .find(|scope| scope.header() == Some(statement.id()))
             .map(Scope::id);
+        let definition = definition_scope.and_then(|scope| scopes.get(scope.index()));
+        let closed_definition = definition.filter(|scope| scope.close_span().is_some());
+        let span = closed_definition.map_or_else(
+            || statement.span(),
+            |scope| statement.span().start..scope.span().end,
+        );
+        let body_span = closed_definition.map(Scope::body_span);
         callables.push(Callable {
             source,
             statement: statement.id(),
             scope: statement.scope(),
             definition_scope,
             kind,
+            span,
             header_span: statement.span().start..name.span().end,
+            body_span,
             name_span: name.span(),
             is_extern: significant[..keyword_cursor]
                 .iter()
@@ -454,6 +600,26 @@ fn significant_token_indices(tokens: &[Token], statement: &Statement) -> Vec<usi
         .token_range()
         .filter(|index| !tokens[*index].kind().is_trivia())
         .collect()
+}
+
+fn leading_label_spans(
+    source: &str,
+    tokens: &[Token],
+    significant: &[usize],
+) -> (usize, Vec<LabelSpans>) {
+    let mut cursor = 0usize;
+    let mut spans = Vec::new();
+    while cursor + 1 < significant.len()
+        && tokens[significant[cursor]].kind() == TokenKind::Word
+        && tokens[significant[cursor + 1]].text(source) == ":"
+        && (cursor + 2 == significant.len() || tokens[significant[cursor + 2]].text(source) != ":")
+    {
+        let name_span = tokens[significant[cursor]].span();
+        let span = name_span.start..tokens[significant[cursor + 1]].span().end;
+        spans.push(LabelSpans { span, name_span });
+        cursor += 2;
+    }
+    (cursor, spans)
 }
 
 fn skip_balanced_tokens(
@@ -529,14 +695,8 @@ fn instruction_from_statement<'source>(
     statement: &Statement,
 ) -> Option<Instruction<'source>> {
     let significant = significant_token_indices(tokens, statement);
-    let mut cursor = 0usize;
-    while cursor + 1 < significant.len()
-        && tokens[significant[cursor]].kind() == TokenKind::Word
-        && tokens[significant[cursor + 1]].text(source) == ":"
-        && (cursor + 2 == significant.len() || tokens[significant[cursor + 2]].text(source) != ":")
-    {
-        cursor += 2;
-    }
+    let (mut cursor, label_spans) = leading_label_spans(source, tokens, &significant);
+    let mut predicate = None;
     if significant
         .get(cursor)
         .is_some_and(|index| tokens[*index].text(source) == "@")
@@ -548,6 +708,16 @@ fn instruction_from_statement<'source>(
         {
             cursor += 1;
         }
+        let register = tokens.get(*significant.get(cursor)?)?;
+        if register.kind() != TokenKind::Word {
+            return None;
+        }
+        predicate = Some(Predicate {
+            register: register.text(source),
+            negated: significant
+                .get(cursor.wrapping_sub(1))
+                .is_some_and(|index| tokens[*index].text(source) == "!"),
+        });
         cursor += 1;
     }
     let head_start = tokens.get(*significant.get(cursor)?)?;
@@ -579,6 +749,11 @@ fn instruction_from_statement<'source>(
         prefix_span,
         head_span,
         operand_spans,
+        label_name_spans: label_spans
+            .into_iter()
+            .map(|spans| spans.name_span)
+            .collect(),
+        predicate,
     })
 }
 
@@ -667,6 +842,9 @@ mod tests {
         assert_eq!(document.instructions().len(), 2);
         let future = &document.instructions()[0];
         assert_eq!(future.prefix(), "L0: @!%p1");
+        assert_eq!(future.labels().collect::<Vec<_>>(), ["L0"]);
+        assert_eq!(future.predicate().unwrap().register(), "%p1");
+        assert!(future.predicate().unwrap().is_negated());
         assert_eq!(future.head(), "future.op.u32");
         assert_eq!(
             future.operands().collect::<Vec<_>>(),
@@ -720,6 +898,37 @@ mod tests {
     }
 
     #[test]
+    fn projects_prefixed_and_standalone_labels_with_lineage() {
+        let source = "L0:\nL1: L2: @%p0 bra L0;\nts: .branchtargets L0, L1;\n";
+        let document = Document::parse(source).unwrap();
+        assert_eq!(
+            document
+                .labels()
+                .iter()
+                .map(Label::name)
+                .collect::<Vec<_>>(),
+            ["L0", "L1", "L2", "ts"]
+        );
+        assert_eq!(
+            document.instructions()[0].labels().collect::<Vec<_>>(),
+            ["L1", "L2"]
+        );
+        assert_eq!(
+            document.directives()[0].labels().collect::<Vec<_>>(),
+            ["ts"]
+        );
+        assert_eq!(document.directives()[0].name(), ".branchtargets");
+        assert_eq!(document.directives()[0].arguments(), "L0, L1;");
+        for label in document.labels() {
+            assert_eq!(document.label(label.id()), Some(label));
+            assert_eq!(
+                document.statement(label.statement()).unwrap().scope(),
+                label.scope()
+            );
+        }
+    }
+
+    #[test]
     fn projects_multiline_callable_headers_and_definition_scopes() {
         let source = "\
 .visible
@@ -734,10 +943,22 @@ mod tests {
         assert_eq!(document.callables()[0].kind(), CallableKind::Entry);
         assert!(!document.callables()[0].is_extern());
         assert!(document.callables()[0].definition_scope().is_some());
+        assert!(document.callables()[0].body_span().is_some());
+        assert_eq!(
+            &source[document.callables()[0].span()],
+            ".visible\n.entry kernel() { ret; }"
+        );
         assert_eq!(document.callables()[1].name(), "__nv_helper");
         assert_eq!(document.callables()[1].kind(), CallableKind::Function);
         assert!(document.callables()[1].is_extern());
         assert!(document.callables()[1].definition_scope().is_none());
+        assert_eq!(
+            document.callables()[1].span(),
+            document
+                .statement(document.callables()[1].statement())
+                .unwrap()
+                .span()
+        );
         assert_eq!(document.callables()[2].name(), "local_helper");
         assert!(!document.callables()[2].is_extern());
         assert!(document.callables()[2].definition_scope().is_some());
@@ -746,6 +967,25 @@ mod tests {
                 .statement(callable.statement())
                 .is_some_and(|statement| statement.kind() == StatementKind::CallableHeader)
         }));
+    }
+
+    #[test]
+    fn does_not_claim_an_unclosed_callable_body() {
+        let document = Document::parse(".entry incomplete() {\nret;\n").unwrap();
+        let callable = &document.callables()[0];
+        assert!(callable.definition_scope().is_some());
+        assert!(callable.body_span().is_none());
+        assert_eq!(
+            callable.span(),
+            callable.header_span().start
+                ..document.statement(callable.statement()).unwrap().span().end
+        );
+        assert!(
+            document
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.kind() == DiagnosticKind::UnterminatedDelimiter)
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! Deterministic PTX assembly-syntax emission from structured operations.
 
 use crate::ops::{
-    PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
+    PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -112,6 +112,12 @@ fn emit_operation(
         }
         return Ok(());
     }
+    if let Some(label) = Operation::get_op::<PtxLabelOp>(operation, ctx) {
+        write_indent(output, indent)?;
+        output.write_str(&label.name(ctx))?;
+        output.write_str(":\n")?;
+        return Ok(());
+    }
     if let Some(scope) = Operation::get_op::<PtxScopeOp>(operation, ctx) {
         let header = scope.header(ctx);
         if !header.is_empty() {
@@ -181,6 +187,7 @@ mod tests {
 .address_size 64
 .visible .entry kernel() {
     .reg .b32 %r<2>;
+L0: @%p0 add.u32 %r0, %r0, 1;
     {
       mov.u32 %r0, 7;
     }
@@ -200,6 +207,8 @@ mod tests {
 .visible .entry kernel()
 {
     .reg .b32 %r<2>;
+    L0:
+    @%p0 add.u32 %r0, %r0, 1;
     {
         mov.u32 %r0, 7;
     }

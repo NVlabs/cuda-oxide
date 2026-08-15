@@ -17,6 +17,6 @@ byte-span lineage in a side table. Source lineage is not a required operation
 attribute, so generated operations never need synthetic source locations.
 
 The dialect currently models module and lexical scopes, callable declarations
-and definitions, directives, generic instructions, and a raw escape hatch.
+and definitions, directives, labels, generic instructions, and a raw escape hatch.
 Typed ISA operations can be added incrementally without making the lossless
 parser reject newer PTX spellings.

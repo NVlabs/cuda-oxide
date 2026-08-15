@@ -123,6 +123,45 @@ impl Verify for PtxDirectiveOp {
     }
 }
 
+/// One PTX statement label. Labels remain explicit operations until control
+/// flow recovery resolves them to Pliron basic blocks.
+#[pliron_op(
+    name = "ptx.label",
+    format,
+    interfaces = [NRegionsInterface<0>, NOpdsInterface<0>, NResultsInterface<0>],
+    attributes = (label_name: StringAttr)
+)]
+pub struct PtxLabelOp;
+
+impl PtxLabelOp {
+    pub fn build(ctx: &mut Context, name: &str) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
+        let wrapped = Self { op };
+        wrapped.set_attr_label_name(ctx, StringAttr::new(name.to_string()));
+        wrapped
+    }
+
+    pub fn name(&self, ctx: &Context) -> String {
+        self.get_attr_label_name(ctx)
+            .expect("verified ptx.label has a name")
+            .as_str()
+            .to_string()
+    }
+}
+
+impl Verify for PtxLabelOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let operation = self.get_operation().deref(ctx);
+        let Some(name) = self.get_attr_label_name(ctx) else {
+            return verify_err!(operation.loc(), "ptx.label requires a name");
+        };
+        if name.as_str().is_empty() {
+            return verify_err!(operation.loc(), "PTX label name must not be empty");
+        }
+        Ok(())
+    }
+}
+
 /// A declaration or definition of a PTX `.entry` or `.func`.
 ///
 /// Declarations have no regions. Definitions own exactly one region containing
@@ -453,6 +492,7 @@ impl Verify for PtxRawOp {
 pub fn register(ctx: &mut Context) {
     PtxModuleOp::register(ctx);
     PtxDirectiveOp::register(ctx);
+    PtxLabelOp::register(ctx);
     PtxCallableOp::register(ctx);
     PtxScopeOp::register(ctx);
     PtxInstructionOp::register(ctx);
