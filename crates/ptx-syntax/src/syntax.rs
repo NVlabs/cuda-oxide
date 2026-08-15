@@ -156,6 +156,8 @@ pub enum DiagnosticKind {
     UnmatchedClosingDelimiter,
     UnterminatedDelimiter,
     UnterminatedStatement,
+    MalformedDirective,
+    MalformedCallable,
     MalformedInstruction,
 }
 
@@ -461,15 +463,24 @@ fn scan_item(source: &str, tokens: &[Token], start: usize) -> ScanOutcome {
     while cursor < tokens.len() {
         let token = &tokens[cursor];
         if token.kind().is_trivia() {
-            if delimiters.is_empty()
-                && token.text(source).contains('\n')
-                && should_end_at_line(source, tokens, start..cursor)
-            {
-                return ScanOutcome {
-                    end: last_significant + 1,
-                    terminator: Terminator::Line,
-                    diagnostic: None,
-                };
+            if token.text(source).contains('\n') {
+                if delimiters.is_empty() && should_end_at_line(source, tokens, start..cursor) {
+                    return ScanOutcome {
+                        end: last_significant + 1,
+                        terminator: Terminator::Line,
+                        diagnostic: None,
+                    };
+                }
+                if !delimiters.is_empty()
+                    && next_significant(tokens, cursor + 1)
+                        .is_some_and(|next| starts_callable_header(source, tokens, next))
+                {
+                    return ScanOutcome {
+                        end: last_significant + 1,
+                        terminator: Terminator::Recovery,
+                        diagnostic: Some(DiagnosticKind::UnterminatedDelimiter),
+                    };
+                }
             }
             cursor += 1;
             continue;
@@ -635,6 +646,28 @@ fn contains_callable_keyword(source: &str, tokens: &[Token], range: Range<usize>
     })
 }
 
+fn starts_callable_header(source: &str, tokens: &[Token], start: usize) -> bool {
+    let mut cursor = start;
+    while let Some(token) = tokens.get(cursor) {
+        if token.kind().is_trivia() {
+            if token.text(source).contains('\n') {
+                return false;
+            }
+            cursor += 1;
+            continue;
+        }
+        if token.kind() != TokenKind::Word {
+            return false;
+        }
+        match token.text(source) {
+            ".entry" | ".func" => return true,
+            word if is_linkage_prefix(word) => cursor += 1,
+            _ => return false,
+        }
+    }
+    false
+}
+
 fn is_linkage_prefix(word: &str) -> bool {
     matches!(word, ".visible" | ".extern" | ".weak" | ".common")
 }
@@ -796,6 +829,36 @@ mod tests {
             [StatementKind::Instruction, StatementKind::Instruction]
         );
         assert!(parsed.coverage.is_complete());
+    }
+
+    #[test]
+    fn recovers_a_truncated_callable_at_the_next_header() {
+        let parsed = parse_source(
+            ".visible .entry kernel(\n.extern .func helper(\n.extern .func final();\n",
+        );
+        assert_eq!(
+            parsed
+                .statements
+                .iter()
+                .map(Statement::kind)
+                .collect::<Vec<_>>(),
+            [
+                StatementKind::CallableHeader,
+                StatementKind::CallableHeader,
+                StatementKind::CallableHeader,
+            ]
+        );
+        assert_eq!(
+            parsed
+                .diagnostics
+                .iter()
+                .map(Diagnostic::kind)
+                .collect::<Vec<_>>(),
+            [
+                DiagnosticKind::UnterminatedDelimiter,
+                DiagnosticKind::UnterminatedDelimiter,
+            ]
+        );
     }
 
     #[test]

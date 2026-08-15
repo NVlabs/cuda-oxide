@@ -210,6 +210,7 @@ dependencies = [
  "libnvvm-sys",
  "nvjitlink-sys",
  "oxide-artifacts",
+ "ptx-syntax",
  "reserved-oxide-symbols",
  "serde_json",
  "sha2",
@@ -407,6 +408,7 @@ dependencies = [
  "cuda-device",
  "cuda-macros",
  "half",
+ "ptx-syntax",
  "sha2",
  "thiserror",
 ]
@@ -455,6 +457,7 @@ dependencies = [
  "mir-transforms",
  "nvvm-transforms",
  "pliron",
+ "ptx-syntax",
  "rustc-demangle",
  "tempfile",
  "thiserror",
