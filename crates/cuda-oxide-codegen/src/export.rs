@@ -16,6 +16,7 @@ use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
 use pliron::operation::Operation;
+use ptx_syntax::{CallableKind, Document, ParseError};
 use std::path::Path;
 
 /// An external device function declaration (for FFI with external LTOIR).
@@ -356,11 +357,6 @@ pub(crate) fn is_libdevice_symbol(name: &str) -> bool {
     name.starts_with("__nv_")
 }
 
-/// Whether `c` can appear in a PTX identifier (`followsym`).
-fn is_ptx_identifier_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_' || c == '$'
-}
-
 /// Names of `.extern .func` declarations in `ptx` that name a CUDA libdevice
 /// (`__nv_*`) symbol.
 ///
@@ -378,35 +374,19 @@ fn is_ptx_identifier_char(c: char) -> bool {
 /// device, with no diagnostic. This scan is what catches it at compile time
 /// for the self-contained output policy, where no later link step exists to
 /// resolve it.
-pub(crate) fn unresolved_libdevice_ptx_declarations(ptx: &str) -> Vec<String> {
-    let mut declared: Vec<String> = Vec::new();
-    for line in ptx.lines() {
-        let Some(rest) = line.trim_start().strip_prefix(".extern") else {
-            continue;
-        };
-        let Some(idx) = rest.find(".func") else {
-            continue;
-        };
-        let mut rest = rest[idx + ".func".len()..].trim_start();
-        // Skip the `(.param .b32 func_retval0)` clause of a value-returning
-        // declaration, matching `exported_nv_functions` in `ptx.rs`.
-        if let Some(after_open) = rest.strip_prefix('(') {
-            let Some(close) = after_open.find(')') else {
-                continue;
-            };
-            rest = after_open[close + 1..].trim_start();
-        }
-        let name: String = rest
-            .chars()
-            .take_while(|c| is_ptx_identifier_char(*c))
-            .collect();
-        if is_libdevice_symbol(&name) {
-            declared.push(name);
-        }
-    }
+pub(crate) fn unresolved_libdevice_ptx_declarations(ptx: &str) -> Result<Vec<String>, ParseError> {
+    let document = Document::parse(ptx)?;
+    let mut declared: Vec<String> = document
+        .callables()
+        .iter()
+        .filter(|callable| callable.kind() == CallableKind::Function && callable.is_extern())
+        .map(|callable| callable.name())
+        .filter(|name| is_libdevice_symbol(name))
+        .map(str::to_string)
+        .collect();
     declared.sort();
     declared.dedup();
-    declared
+    Ok(declared)
 }
 
 /// Return unresolved non-intrinsic LLVM function declarations.
@@ -842,7 +822,7 @@ mod tests {
 .func  (.param .b32 func_retval0) __nv_internal_only(
 ";
         assert_eq!(
-            unresolved_libdevice_ptx_declarations(ptx),
+            unresolved_libdevice_ptx_declarations(ptx).unwrap(),
             ["__nv_totally_not_real", "__nv_void_helper"]
         );
     }
@@ -854,6 +834,10 @@ mod tests {
 .visible .func __nv_helper(
 \tcall.uni __nv_helper, (param0);
 ";
-        assert!(unresolved_libdevice_ptx_declarations(ptx).is_empty());
+        assert!(
+            unresolved_libdevice_ptx_declarations(ptx)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

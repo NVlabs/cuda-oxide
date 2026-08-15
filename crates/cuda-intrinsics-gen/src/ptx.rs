@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use ptx_syntax::{Document, split_top_level};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -232,133 +233,26 @@ pub(crate) fn instructions_with_matching_head(
     if pattern.mnemonic.is_empty() {
         return Vec::new();
     }
-
-    let source = mask_non_code(source);
-    let bytes = source.as_bytes();
-    let mut search_from = 0;
-    let mut matches = Vec::new();
-
-    while search_from < source.len() {
-        let Some(relative_start) = source[search_from..].find(pattern.mnemonic.as_str()) else {
-            break;
-        };
-        let start = search_from + relative_start;
-        search_from = start + pattern.mnemonic.len();
-
-        if !is_instruction_start(bytes, start) {
-            continue;
-        }
-
-        let mut head_end = start;
-        while head_end < bytes.len() && is_instruction_head_byte(bytes[head_end]) {
-            head_end += 1;
-        }
-        if !instruction_head_matches(&source[start..head_end], pattern) {
-            continue;
-        }
-        if bytes
-            .get(head_end)
-            .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b';')
-        {
-            continue;
-        }
-
-        let Some(statement_end) = find_top_level_semicolon(&source, head_end) else {
-            continue;
-        };
-        let Some(operands) = split_top_level(&source[head_end..statement_end]) else {
-            continue;
-        };
-        matches.push(InstructionMatch {
-            offset: start,
-            end: statement_end + 1,
-            prefix: statement_prefix(&source, start).to_owned(),
-            operands: operands
-                .into_iter()
-                .map(|operand| operand.trim().to_owned())
-                .collect(),
-        });
-    }
-
-    matches
-}
-
-fn statement_prefix(source: &str, instruction_start: usize) -> &str {
-    let statement_start = source[..instruction_start]
-        .rfind([';', '{', '}'])
-        .map_or(0, |offset| offset + 1);
-    source[statement_start..instruction_start].trim()
-}
-
-fn is_instruction_start(source: &[u8], start: usize) -> bool {
-    start == 0
-        || source[start - 1].is_ascii_whitespace()
-        || matches!(source[start - 1], b';' | b'{' | b'}' | b':')
-}
-
-fn is_instruction_head_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':')
+    let Ok(document) = Document::parse(source) else {
+        return Vec::new();
+    };
+    document
+        .instructions()
+        .iter()
+        .filter(|instruction| instruction_head_matches(instruction.head(), pattern))
+        .map(|instruction| InstructionMatch {
+            offset: instruction.head_offset(),
+            end: instruction.end_offset(),
+            prefix: instruction.prefix().to_owned(),
+            operands: instruction.operands().map(str::to_owned).collect(),
+        })
+        .collect()
 }
 
 fn instruction_head_matches(head: &str, pattern: &InstructionPattern) -> bool {
     let mut parts = head.split('.');
     parts.next() == Some(pattern.mnemonic.as_str())
         && parts.eq(pattern.modifiers.iter().map(String::as_str))
-}
-
-fn find_top_level_semicolon(source: &str, start: usize) -> Option<usize> {
-    let mut delimiters = Vec::new();
-    for (relative, byte) in source.as_bytes()[start..].iter().copied().enumerate() {
-        match byte {
-            b'{' => delimiters.push(b'}'),
-            b'[' => delimiters.push(b']'),
-            b'(' => delimiters.push(b')'),
-            b'}' | b']' | b')' if delimiters.pop() != Some(byte) => return None,
-            b'}' | b']' | b')' => {}
-            b';' if delimiters.is_empty() => return Some(start + relative),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn split_top_level(source: &str) -> Option<Vec<&str>> {
-    let source = source.trim();
-    if source.is_empty() {
-        return Some(Vec::new());
-    }
-
-    let mut operands = Vec::new();
-    let mut delimiters = Vec::new();
-    let mut operand_start = 0;
-    for (index, byte) in source.bytes().enumerate() {
-        match byte {
-            b'{' => delimiters.push(b'}'),
-            b'[' => delimiters.push(b']'),
-            b'(' => delimiters.push(b')'),
-            b'}' | b']' | b')' if delimiters.pop() != Some(byte) => return None,
-            b'}' | b']' | b')' => {}
-            b',' if delimiters.is_empty() => {
-                let operand = source[operand_start..index].trim();
-                if operand.is_empty() {
-                    return None;
-                }
-                operands.push(operand);
-                operand_start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if !delimiters.is_empty() {
-        return None;
-    }
-
-    let operand = source[operand_start..].trim();
-    if operand.is_empty() {
-        return None;
-    }
-    operands.push(operand);
-    Some(operands)
 }
 
 fn operand_matches(operand: &str, pattern: &OperandPattern) -> bool {
@@ -482,82 +376,6 @@ fn enclosed_body(source: &str, open: u8, close: u8) -> Option<&str> {
         }
     }
     None
-}
-
-fn mask_non_code(source: &str) -> String {
-    #[derive(Clone, Copy)]
-    enum State {
-        Code,
-        LineComment,
-        BlockComment,
-        Quoted,
-    }
-
-    let source = source.as_bytes();
-    let mut masked = source.to_vec();
-    let mut state = State::Code;
-    let mut index = 0;
-    while index < source.len() {
-        match state {
-            State::Code if source[index..].starts_with(b"//") => {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-                state = State::LineComment;
-            }
-            State::Code if source[index..].starts_with(b"/*") => {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-                state = State::BlockComment;
-            }
-            State::Code if source[index] == b'"' => {
-                masked[index] = b' ';
-                index += 1;
-                state = State::Quoted;
-            }
-            State::Code => index += 1,
-            State::LineComment if source[index] == b'\n' => {
-                index += 1;
-                state = State::Code;
-            }
-            State::LineComment => {
-                masked[index] = b' ';
-                index += 1;
-            }
-            State::BlockComment if source[index..].starts_with(b"*/") => {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-                state = State::Code;
-            }
-            State::BlockComment => {
-                if source[index] != b'\n' {
-                    masked[index] = b' ';
-                }
-                index += 1;
-            }
-            State::Quoted if source[index] == b'\\' && index + 1 < source.len() => {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-            }
-            State::Quoted if source[index] == b'"' => {
-                masked[index] = b' ';
-                index += 1;
-                state = State::Code;
-            }
-            State::Quoted => {
-                if source[index] != b'\n' {
-                    masked[index] = b' ';
-                }
-                index += 1;
-            }
-        }
-    }
-
-    // Every replacement is one ASCII byte, so valid UTF-8 input stays valid.
-    String::from_utf8(masked).expect("masking PTX preserves UTF-8")
 }
 
 #[cfg(test)]
