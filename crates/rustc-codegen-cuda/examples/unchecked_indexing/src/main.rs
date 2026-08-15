@@ -284,8 +284,8 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
         return Err("compile-time marker `__unchecked_indexing_config` leaked into PTX".into());
     }
 
-    let checked = entry_body(&document, "indexed_sum_checked")?;
-    let unchecked = entry_body(&document, "indexed_sum_unchecked")?;
+    let checked = entry(&document, "indexed_sum_checked")?;
+    let unchecked = entry(&document, "indexed_sum_unchecked")?;
 
     // Default behavior: the checked kernel keeps its bounds checks, meaning
     // at least one trap block plus a guarded branch that jumps around/into it.
@@ -309,7 +309,7 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     // Generic opted kernel: the entry wrapper (named `scaled_gather_TID_<hash>`
     // by the generic-kernel naming scheme) carries the marker, so its entry
     // must contain zero traps.
-    let gather = entry_body_by_prefix(&document, "scaled_gather")?;
+    let gather = entry_by_prefix(&document, "scaled_gather")?;
     let gather_traps = count_traps(gather);
     if gather_traps != 0 {
         return Err(format!(
@@ -322,7 +322,7 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     // user-named implementation helper, which rustc MIR-inlines into the
     // caller. The helper body must not carry the elision marker, so the
     // caller's own (and the inlined helper's) bounds checks must survive.
-    let caller = entry_body(&document, "gather_then_check")?;
+    let caller = entry(&document, "gather_then_check")?;
     let caller_traps = count_traps(caller);
     if caller_traps == 0 {
         return Err(
@@ -344,54 +344,52 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn entry_body<'source>(
-    document: &ptx_syntax::Document<'source>,
+fn entry<'document, 'source>(
+    document: &'document ptx_syntax::Document<'source>,
     name: &str,
-) -> Result<&'source str, Box<dyn std::error::Error>> {
-    entry_body_from(
+) -> Result<ptx_syntax::CallableDefinition<'document, 'source>, Box<dyn std::error::Error>> {
+    entry_from(
         document
-            .callables_named(name)
-            .find(|callable| callable.kind() == ptx_syntax::CallableKind::Entry),
+            .definitions_named(name)
+            .find(|definition| definition.callable().kind() == ptx_syntax::CallableKind::Entry),
         name,
     )
 }
 
-/// Like [`entry_body`], but matches on an entry-name prefix. Generic kernel
+/// Like [`entry`], but matches on an entry-name prefix. Generic kernel
 /// entries are exported as `<name>_TID_<hex32>`, where the hash depends on
 /// the concrete instantiation.
-fn entry_body_by_prefix<'source>(
-    document: &ptx_syntax::Document<'source>,
+fn entry_by_prefix<'document, 'source>(
+    document: &'document ptx_syntax::Document<'source>,
     prefix: &str,
-) -> Result<&'source str, Box<dyn std::error::Error>> {
-    entry_body_from(
-        document.callables().iter().find(|callable| {
-            callable.kind() == ptx_syntax::CallableKind::Entry
-                && callable.name().starts_with(prefix)
+) -> Result<ptx_syntax::CallableDefinition<'document, 'source>, Box<dyn std::error::Error>> {
+    entry_from(
+        document.definitions().find(|definition| {
+            definition.callable().kind() == ptx_syntax::CallableKind::Entry
+                && definition.callable().name().starts_with(prefix)
         }),
         prefix,
     )
 }
 
-fn entry_body_from<'source>(
-    callable: Option<&ptx_syntax::Callable<'source>>,
+fn entry_from<'document, 'source>(
+    definition: Option<ptx_syntax::CallableDefinition<'document, 'source>>,
     name: &str,
-) -> Result<&'source str, Box<dyn std::error::Error>> {
-    callable
-        .and_then(|callable| callable.body_text().map(|_| callable.text()))
-        .ok_or_else(|| format!("missing or incomplete PTX entry `{name}`").into())
+) -> Result<ptx_syntax::CallableDefinition<'document, 'source>, Box<dyn std::error::Error>> {
+    definition.ok_or_else(|| format!("missing or incomplete PTX entry `{name}`").into())
 }
 
-fn count_traps(body: &str) -> usize {
-    body.lines()
-        .filter(|line| line.trim_start().starts_with("trap;"))
+fn count_traps(definition: ptx_syntax::CallableDefinition<'_, '_>) -> usize {
+    definition
+        .instructions()
+        .filter(|instruction| instruction.base_opcode() == "trap")
         .count()
 }
 
 /// A predicated branch such as `@%p1 bra $L__BB0_4;`, the shape of a bounds
 /// guard (and of the `get_mut` Option branch).
-fn has_guarded_branch(body: &str) -> bool {
-    body.lines().any(|line| {
-        let line = line.trim_start();
-        line.starts_with("@%p") && line.split_whitespace().any(|word| word == "bra")
-    })
+fn has_guarded_branch(definition: ptx_syntax::CallableDefinition<'_, '_>) -> bool {
+    definition
+        .instructions()
+        .any(|instruction| instruction.base_opcode() == "bra" && instruction.predicate().is_some())
 }
