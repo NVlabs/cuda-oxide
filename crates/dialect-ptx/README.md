@@ -22,3 +22,9 @@ Guard predicates (`@%p` / `@!%p`) are a typed attribute on instructions, and
 callable name/kind/external are typed attributes verified against the header
 text they print through. Typed ISA operations can be added incrementally
 without making the lossless parser reject newer PTX spellings.
+
+`Projection::control_flow` recovers a conservative intraprocedural CFG for
+direct and indexed branches, predicated fallthrough, and terminal instructions.
+It retains CST statement/scope lineage and fails closed for unsupported PTX
+versions or unresolved targets instead of attaching guessed successors to the
+operation tree.

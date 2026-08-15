@@ -4,6 +4,10 @@
  */
 
 use crate::attributes::{CallableKindAttr, PredicateAttr};
+use crate::cfg::{
+    BasicBlock as RecoveredBasicBlock, BlockId, CallableControlFlow, CfgError, ControlFlow, Edge,
+    ExitKind, ScopeSegment,
+};
 use crate::ops::{
     PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
 };
@@ -102,8 +106,10 @@ pub struct Projection<'source> {
     module: PtxModuleOp,
     nodes: Vec<ProjectedNode>,
     nodes_by_operation: HashMap<Ptr<Operation>, usize>,
+    nodes_by_source: HashMap<SourceNode, usize>,
     blocks: Vec<ProjectedBlock>,
     blocks_by_pointer: HashMap<Ptr<BasicBlock>, usize>,
+    blocks_by_source: HashMap<ScopeId, usize>,
 }
 
 impl<'source> Projection<'source> {
@@ -133,10 +139,20 @@ impl<'source> Projection<'source> {
             .enumerate()
             .map(|(index, node)| (node.operation, index))
             .collect();
+        let nodes_by_source = nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.source_node, index))
+            .collect();
         let blocks_by_pointer = blocks
             .iter()
             .enumerate()
             .map(|(index, block)| (block.block, index))
+            .collect();
+        let blocks_by_source = blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (block.source_scope, index))
             .collect();
 
         Self {
@@ -144,8 +160,10 @@ impl<'source> Projection<'source> {
             module,
             nodes,
             nodes_by_operation,
+            nodes_by_source,
             blocks,
             blocks_by_pointer,
+            blocks_by_source,
         }
     }
 
@@ -171,10 +189,289 @@ impl<'source> Projection<'source> {
             .map(|index| self.nodes[*index].source_node)
     }
 
+    /// Resolve source lineage back to the projected operation.
+    pub fn operation_for_source(&self, source: SourceNode) -> Option<Ptr<Operation>> {
+        self.nodes_by_source
+            .get(&source)
+            .map(|index| self.nodes[*index].operation)
+    }
+
+    pub fn operation_for_statement(&self, statement: StatementId) -> Option<Ptr<Operation>> {
+        self.operation_for_source(SourceNode::Statement { statement })
+    }
+
+    pub fn operation_for_label(&self, label: LabelId) -> Option<Ptr<Operation>> {
+        self.operation_for_source(SourceNode::Label { label })
+    }
+
+    pub fn operation_for_scope(&self, scope: ScopeId) -> Option<Ptr<Operation>> {
+        self.operation_for_source(SourceNode::Scope { scope })
+    }
+
     pub fn source_scope(&self, block: Ptr<BasicBlock>) -> Option<ScopeId> {
         self.blocks_by_pointer
             .get(&block)
             .map(|index| self.blocks[*index].source_scope)
+    }
+
+    /// Resolve one lexical source scope to its projected Pliron block.
+    pub fn block_for_source_scope(&self, scope: ScopeId) -> Option<Ptr<BasicBlock>> {
+        self.blocks_by_source
+            .get(&scope)
+            .map(|index| self.blocks[*index].block)
+    }
+
+    /// Recover conservative intraprocedural CFGs from the authoritative
+    /// lossless syntax. The returned graph retains `StatementId`/`ScopeId`
+    /// lineage and fails closed when PTX control-flow semantics are uncertain.
+    pub fn control_flow(&self) -> Result<ControlFlow, CfgError> {
+        ControlFlow::analyze(&self.document)
+    }
+
+    /// Join recovered surface CFG with projected Pliron operations without
+    /// claiming that those operations already inhabit native CFG blocks.
+    pub fn projected_control_flow(&self) -> Result<ProjectedControlFlow<'_, 'source>, CfgError> {
+        let recovered = self.control_flow()?;
+        let mut blocks_by_source = HashMap::new();
+        for (callable_index, callable) in recovered.callables().iter().enumerate() {
+            for block in callable.blocks() {
+                for label in block.labels() {
+                    blocks_by_source.insert(
+                        SourceNode::Label { label: *label },
+                        (callable_index, block.id()),
+                    );
+                }
+                for statement in block.instructions() {
+                    blocks_by_source.insert(
+                        SourceNode::Statement {
+                            statement: *statement,
+                        },
+                        (callable_index, block.id()),
+                    );
+                }
+            }
+        }
+        Ok(ProjectedControlFlow {
+            projection: self,
+            recovered,
+            blocks_by_source,
+        })
+    }
+}
+
+/// A read-only join between recovered surface CFG and projected operations.
+///
+/// The recovered graph remains authoritative for block boundaries and edges.
+/// This view only resolves its source lineage to the corresponding Pliron ops;
+/// it does not materialize Pliron basic blocks or successors.
+pub struct ProjectedControlFlow<'projection, 'source> {
+    projection: &'projection Projection<'source>,
+    recovered: ControlFlow,
+    blocks_by_source: HashMap<SourceNode, (usize, BlockId)>,
+}
+
+impl<'projection, 'source> ProjectedControlFlow<'projection, 'source> {
+    pub fn recovered(&self) -> &ControlFlow {
+        &self.recovered
+    }
+
+    pub fn callables(
+        &self,
+    ) -> impl ExactSizeIterator<Item = ProjectedCallableControlFlow<'_, 'source>> + '_ {
+        self.recovered
+            .callables()
+            .iter()
+            .map(|callable| ProjectedCallableControlFlow {
+                projection: self.projection,
+                recovered: callable,
+            })
+    }
+
+    pub fn for_callable_operation(
+        &self,
+        operation: Ptr<Operation>,
+    ) -> Option<ProjectedCallableControlFlow<'_, 'source>> {
+        let statement = self.projection.source_node(operation)?.statement()?;
+        self.for_callable_statement(statement)
+    }
+
+    pub fn for_callable_statement(
+        &self,
+        statement: StatementId,
+    ) -> Option<ProjectedCallableControlFlow<'_, 'source>> {
+        self.recovered
+            .for_callable(statement)
+            .map(|callable| ProjectedCallableControlFlow {
+                projection: self.projection,
+                recovered: callable,
+            })
+    }
+
+    /// Find the recovered CFG block containing one projected instruction or
+    /// label operation.
+    pub fn block_for_operation(
+        &self,
+        operation: Ptr<Operation>,
+    ) -> Option<ProjectedCfgBlock<'_, 'source>> {
+        self.block_for_source(self.projection.source_node(operation)?)
+    }
+
+    pub fn block_for_statement(
+        &self,
+        statement: StatementId,
+    ) -> Option<ProjectedCfgBlock<'_, 'source>> {
+        self.block_for_source(SourceNode::Statement { statement })
+    }
+
+    pub fn block_for_label(&self, label: LabelId) -> Option<ProjectedCfgBlock<'_, 'source>> {
+        self.block_for_source(SourceNode::Label { label })
+    }
+
+    fn block_for_source(&self, source: SourceNode) -> Option<ProjectedCfgBlock<'_, 'source>> {
+        let (callable, block) = self.blocks_by_source.get(&source).copied()?;
+        let recovered = self
+            .recovered
+            .callables()
+            .get(callable)?
+            .blocks()
+            .get(block.index())?;
+        Some(ProjectedCfgBlock {
+            projection: self.projection,
+            recovered,
+        })
+    }
+}
+
+/// One recovered callable paired with its projected `ptx.callable` operation.
+#[derive(Clone, Copy)]
+pub struct ProjectedCallableControlFlow<'projection, 'source> {
+    projection: &'projection Projection<'source>,
+    recovered: &'projection CallableControlFlow,
+}
+
+impl ProjectedCallableControlFlow<'_, '_> {
+    pub fn recovered(&self) -> &CallableControlFlow {
+        self.recovered
+    }
+
+    pub fn operation(&self) -> Ptr<Operation> {
+        self.projection
+            .operation_for_statement(self.recovered.callable())
+            .expect("a recovered callable belongs to its projection")
+    }
+
+    pub fn blocks(&self) -> impl ExactSizeIterator<Item = ProjectedCfgBlock<'_, '_>> + '_ {
+        self.recovered
+            .blocks()
+            .iter()
+            .map(|block| ProjectedCfgBlock {
+                projection: self.projection,
+                recovered: block,
+            })
+    }
+}
+
+/// One recovered CFG block with operation-level label and instruction views.
+#[derive(Clone, Copy)]
+pub struct ProjectedCfgBlock<'projection, 'source> {
+    projection: &'projection Projection<'source>,
+    recovered: &'projection RecoveredBasicBlock,
+}
+
+impl ProjectedCfgBlock<'_, '_> {
+    pub fn recovered(&self) -> &RecoveredBasicBlock {
+        self.recovered
+    }
+
+    pub fn id(&self) -> BlockId {
+        self.recovered.id()
+    }
+
+    pub fn labels(&self) -> impl Iterator<Item = (LabelId, Ptr<Operation>)> + '_ {
+        self.recovered.labels().iter().copied().map(|label| {
+            let operation = self
+                .projection
+                .operation_for_label(label)
+                .expect("a recovered label belongs to its projection");
+            (label, operation)
+        })
+    }
+
+    pub fn instructions(&self) -> impl Iterator<Item = (StatementId, Ptr<Operation>)> + '_ {
+        self.recovered
+            .instructions()
+            .iter()
+            .copied()
+            .map(|statement| {
+                let operation = self
+                    .projection
+                    .operation_for_statement(statement)
+                    .expect("a recovered instruction belongs to its projection");
+                (statement, operation)
+            })
+    }
+
+    pub fn scope_segments(
+        &self,
+    ) -> impl ExactSizeIterator<Item = ProjectedCfgScopeSegment<'_, '_>> + '_ {
+        self.recovered
+            .scope_segments()
+            .iter()
+            .map(|segment| ProjectedCfgScopeSegment {
+                projection: self.projection,
+                block: self.recovered,
+                recovered: segment,
+            })
+    }
+
+    pub fn successors(&self) -> &[Edge] {
+        self.recovered.successors()
+    }
+
+    pub fn predecessors(&self) -> &[Edge] {
+        self.recovered.predecessors()
+    }
+
+    pub fn exit(&self) -> Option<ExitKind> {
+        self.recovered.exit()
+    }
+}
+
+/// One lexical scope segment within a recovered CFG block.
+#[derive(Clone, Copy)]
+pub struct ProjectedCfgScopeSegment<'projection, 'source> {
+    projection: &'projection Projection<'source>,
+    block: &'projection RecoveredBasicBlock,
+    recovered: &'projection ScopeSegment,
+}
+
+impl ProjectedCfgScopeSegment<'_, '_> {
+    pub fn recovered(&self) -> &ScopeSegment {
+        self.recovered
+    }
+
+    pub fn scope(&self) -> ScopeId {
+        self.recovered.scope()
+    }
+
+    /// The existing lexical Pliron block for this source scope.
+    pub fn lexical_block(&self) -> Ptr<BasicBlock> {
+        self.projection
+            .block_for_source_scope(self.scope())
+            .expect("a recovered scope belongs to its projection")
+    }
+
+    pub fn instructions(&self) -> impl Iterator<Item = (StatementId, Ptr<Operation>)> + '_ {
+        self.block.instructions()[self.recovered.instruction_range()]
+            .iter()
+            .copied()
+            .map(|statement| {
+                let operation = self
+                    .projection
+                    .operation_for_statement(statement)
+                    .expect("a recovered instruction belongs to its projection");
+                (statement, operation)
+            })
     }
 }
 
@@ -519,6 +816,10 @@ L0:
                 projection.source_node(node.operation()),
                 Some(node.source_node())
             );
+            assert_eq!(
+                projection.operation_for_source(node.source_node()),
+                Some(node.operation())
+            );
             if let SourceNode::Label { label } = node.source_node() {
                 assert_eq!(
                     projection.document().label(label).unwrap().span(),
@@ -530,6 +831,10 @@ L0:
             assert_eq!(
                 projection.source_scope(block.block()),
                 Some(block.source_scope())
+            );
+            assert_eq!(
+                projection.block_for_source_scope(block.source_scope()),
+                Some(block.block())
             );
         }
         projection
@@ -595,5 +900,84 @@ L0:
         let callable = Operation::get_op::<PtxCallableOp>(operation, &ctx).unwrap();
         assert!(!callable.is_definition(&ctx));
         assert!(callable.is_external(&ctx));
+    }
+
+    #[test]
+    fn joins_recovered_cfg_to_projected_operations_without_materializing_blocks() {
+        let source = "\
+.version 9.3
+.target sm_120a
+.visible .entry kernel() {
+L0: Alias: @%p0 bra Done;
+    {
+        add.u32 %r0, %r0, 1;
+    }
+Done:
+    ret;
+}
+";
+        let mut ctx = Context::new();
+        crate::register(&mut ctx);
+        let projection = Projection::parse(&mut ctx, source).unwrap();
+        let cfg = projection.projected_control_flow().unwrap();
+        let callable = cfg.callables().next().unwrap();
+        let callable_operation = callable.operation();
+        assert!(Operation::is_op::<PtxCallableOp>(callable_operation, &ctx));
+        assert_eq!(
+            cfg.for_callable_operation(callable_operation)
+                .unwrap()
+                .recovered()
+                .callable(),
+            callable.recovered().callable()
+        );
+
+        let blocks = callable.blocks().collect::<Vec<_>>();
+        assert_eq!(blocks.len(), 3);
+        let labels = blocks[0].labels().collect::<Vec<_>>();
+        assert_eq!(labels.len(), 2);
+        assert_eq!(
+            labels
+                .iter()
+                .map(|(_, operation)| {
+                    Operation::get_op::<PtxLabelOp>(*operation, &ctx)
+                        .unwrap()
+                        .name(&ctx)
+                })
+                .collect::<Vec<_>>(),
+            ["L0", "Alias"]
+        );
+        assert_eq!(
+            cfg.block_for_operation(labels[0].1).unwrap().id(),
+            blocks[0].id()
+        );
+        for block in &blocks {
+            for (statement, operation) in block.instructions() {
+                assert_eq!(
+                    projection.source_node(operation),
+                    Some(SourceNode::Statement { statement })
+                );
+                assert!(Operation::is_op::<PtxInstructionOp>(operation, &ctx));
+                assert_eq!(cfg.block_for_operation(operation).unwrap().id(), block.id());
+            }
+            for segment in block.scope_segments() {
+                assert_eq!(
+                    projection.source_scope(segment.lexical_block()),
+                    Some(segment.scope())
+                );
+                for (statement, _) in segment.instructions() {
+                    assert_eq!(
+                        projection.document().statement(statement).unwrap().scope(),
+                        segment.scope()
+                    );
+                }
+            }
+        }
+
+        // Projection stays in its original lexical form: callable body plus
+        // nested scope, not three newly-materialized Pliron CFG blocks.
+        let projected_callable =
+            Operation::get_op::<PtxCallableOp>(callable_operation, &ctx).unwrap();
+        let region = projected_callable.region(&ctx).unwrap();
+        assert_eq!(region.deref(&ctx).iter(&ctx).count(), 1);
     }
 }

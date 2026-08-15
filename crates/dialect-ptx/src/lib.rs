@@ -12,13 +12,19 @@
 
 pub mod attributes;
 pub mod builder;
+pub mod cfg;
 pub mod emitter;
 pub mod ops;
 mod projection;
+pub mod registers;
+pub mod scopes;
 
 pub use builder::{PtxBodyBuilder, PtxBuilder};
 pub use emitter::{EmitError, emit_module, write_module};
-pub use projection::{ProjectedBlock, ProjectedNode, Projection, SourceNode};
+pub use projection::{
+    ProjectedBlock, ProjectedCallableControlFlow, ProjectedCfgBlock, ProjectedCfgScopeSegment,
+    ProjectedControlFlow, ProjectedNode, Projection, SourceNode,
+};
 
 use pliron::context::Context;
 use pliron::dialect::{Dialect, DialectName};
