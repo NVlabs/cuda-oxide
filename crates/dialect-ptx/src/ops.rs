@@ -10,14 +10,14 @@
 //! [`crate::Projection`]'s lineage table rather than in the operations, so a
 //! freshly-built module does not need to invent source spans.
 
-use crate::attributes::CallableKindAttr;
+use crate::attributes::{CallableKindAttr, TerminatorKindAttr};
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
         attributes::{BoolAttr, StringAttr, VecAttr},
         op_interfaces::{
-            NOpdsInterface, NRegionsInterface, NResultsInterface, NoTerminatorInterface,
-            OneRegionInterface, SingleBlockRegionInterface,
+            IsTerminatorInterface, NOpdsInterface, NRegionsInterface, NResultsInterface,
+            NoTerminatorInterface, OneRegionInterface, SingleBlockRegionInterface,
         },
     },
     common_traits::Verify,
@@ -309,6 +309,109 @@ impl Verify for PtxCallableOp {
     }
 }
 
+/// A PTX callable definition after transactional native-CFG raising.
+///
+/// Keeping this state distinct from [`PtxCallableOp`] lets surface projection
+/// remain a single-block, unterminated syntax tree while every block here is
+/// required to end in a real [`PtxTerminatorOp`].
+#[pliron_op(
+    name = "ptx.cfg_callable",
+    format,
+    interfaces = [
+        NRegionsInterface<1>,
+        OneRegionInterface,
+        NOpdsInterface<0>,
+        NResultsInterface<0>
+    ],
+    attributes = (
+        cfg_callable_name: StringAttr,
+        cfg_callable_kind: CallableKindAttr,
+        cfg_callable_external: BoolAttr,
+        cfg_callable_header: StringAttr
+    )
+)]
+pub struct PtxCfgCallableOp;
+
+impl PtxCfgCallableOp {
+    pub fn build(
+        ctx: &mut Context,
+        name: &str,
+        kind: CallableKindAttr,
+        is_extern: bool,
+        header: &str,
+    ) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 1);
+        let wrapped = Self { op };
+        wrapped.set_attr_cfg_callable_name(ctx, StringAttr::new(name.to_string()));
+        wrapped.set_attr_cfg_callable_kind(ctx, kind);
+        wrapped.set_attr_cfg_callable_external(ctx, BoolAttr::new(is_extern));
+        wrapped.set_attr_cfg_callable_header(ctx, StringAttr::new(header.to_string()));
+        wrapped
+    }
+
+    pub fn name(&self, ctx: &Context) -> String {
+        self.get_attr_cfg_callable_name(ctx)
+            .expect("verified ptx.cfg_callable has a name")
+            .as_str()
+            .to_string()
+    }
+
+    pub fn kind(&self, ctx: &Context) -> CallableKindAttr {
+        *self
+            .get_attr_cfg_callable_kind(ctx)
+            .expect("verified ptx.cfg_callable has a kind")
+    }
+
+    pub fn is_external(&self, ctx: &Context) -> bool {
+        bool::from(
+            self.get_attr_cfg_callable_external(ctx)
+                .expect("verified ptx.cfg_callable has an external flag")
+                .clone(),
+        )
+    }
+
+    pub fn header(&self, ctx: &Context) -> String {
+        self.get_attr_cfg_callable_header(ctx)
+            .expect("verified ptx.cfg_callable has a header")
+            .as_str()
+            .to_string()
+    }
+
+    pub fn region(&self, ctx: &Context) -> Ptr<Region> {
+        self.get_operation().deref(ctx).get_region(0)
+    }
+
+    pub fn append_block(&self, ctx: &mut Context) -> Ptr<BasicBlock> {
+        let region = self.region(ctx);
+        let block = BasicBlock::new(ctx, None, vec![]);
+        block.insert_at_back(region, ctx);
+        block
+    }
+}
+
+impl Verify for PtxCfgCallableOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let operation = self.get_operation().deref(ctx);
+        if self.get_attr_cfg_callable_name(ctx).is_none()
+            || self.get_attr_cfg_callable_kind(ctx).is_none()
+            || self.get_attr_cfg_callable_external(ctx).is_none()
+            || self.get_attr_cfg_callable_header(ctx).is_none()
+        {
+            return verify_err!(
+                operation.loc(),
+                "ptx.cfg_callable requires name, kind, external flag, and header"
+            );
+        }
+        if self.region(ctx).deref(ctx).get_entry_block().is_none() {
+            return verify_err!(
+                operation.loc(),
+                "ptx.cfg_callable requires at least one native CFG block"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// An anonymous or header-owned lexical PTX scope.
 #[pliron_op(
     name = "ptx.scope",
@@ -454,6 +557,227 @@ impl Verify for PtxInstructionOp {
     }
 }
 
+/// A PTX instruction which terminates one native Pliron basic block.
+///
+/// Source PTX has implicit fallthrough edges. `has_fallthrough` makes that
+/// relation explicit: when present, successor zero is the fallthrough block
+/// and all remaining successors are textual branch targets. A synthetic
+/// `Fallthrough` terminator emits no instruction.
+#[pliron_op(
+    name = "ptx.terminator",
+    format,
+    interfaces = [
+        NOpdsInterface<0>,
+        NResultsInterface<0>,
+        IsTerminatorInterface
+    ],
+    attributes = (
+        terminator_kind: TerminatorKindAttr,
+        terminator_prefix: StringAttr,
+        terminator_head: StringAttr,
+        terminator_operands: VecAttr,
+        terminator_has_fallthrough: BoolAttr
+    )
+)]
+pub struct PtxTerminatorOp;
+
+impl PtxTerminatorOp {
+    pub fn build<'operand>(
+        ctx: &mut Context,
+        kind: TerminatorKindAttr,
+        prefix: &str,
+        head: &str,
+        operands: impl IntoIterator<Item = &'operand str>,
+        has_fallthrough: bool,
+        successors: impl IntoIterator<Item = Ptr<BasicBlock>>,
+    ) -> Self {
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![],
+            vec![],
+            successors.into_iter().collect(),
+            0,
+        );
+        let wrapped = Self { op };
+        wrapped.set_attr_terminator_kind(ctx, kind);
+        wrapped.set_attr_terminator_prefix(ctx, StringAttr::new(prefix.to_string()));
+        wrapped.set_attr_terminator_head(ctx, StringAttr::new(head.to_string()));
+        wrapped.set_attr_terminator_operands(
+            ctx,
+            VecAttr::new(
+                operands
+                    .into_iter()
+                    .map(|operand| StringAttr::new(operand.to_string()).into())
+                    .collect(),
+            ),
+        );
+        wrapped.set_attr_terminator_has_fallthrough(ctx, BoolAttr::new(has_fallthrough));
+        wrapped
+    }
+
+    pub fn fallthrough(ctx: &mut Context, target: Ptr<BasicBlock>) -> Self {
+        Self::build(
+            ctx,
+            TerminatorKindAttr::Fallthrough,
+            "",
+            "",
+            std::iter::empty::<&str>(),
+            false,
+            [target],
+        )
+    }
+
+    pub fn kind(&self, ctx: &Context) -> TerminatorKindAttr {
+        *self
+            .get_attr_terminator_kind(ctx)
+            .expect("verified ptx.terminator has a kind")
+    }
+
+    pub fn prefix(&self, ctx: &Context) -> String {
+        self.get_attr_terminator_prefix(ctx)
+            .expect("verified ptx.terminator has a prefix")
+            .as_str()
+            .to_string()
+    }
+
+    pub fn head(&self, ctx: &Context) -> String {
+        self.get_attr_terminator_head(ctx)
+            .expect("verified ptx.terminator has a head")
+            .as_str()
+            .to_string()
+    }
+
+    pub fn operands(&self, ctx: &Context) -> Vec<String> {
+        self.get_attr_terminator_operands(ctx)
+            .expect("verified ptx.terminator has operands")
+            .0
+            .iter()
+            .map(|operand| {
+                operand
+                    .downcast_ref::<StringAttr>()
+                    .expect("verified PTX terminator operands are strings")
+                    .as_str()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    pub fn has_fallthrough(&self, ctx: &Context) -> bool {
+        bool::from(
+            self.get_attr_terminator_has_fallthrough(ctx)
+                .expect("verified ptx.terminator has a fallthrough flag")
+                .clone(),
+        )
+    }
+}
+
+impl Verify for PtxTerminatorOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let operation = self.get_operation().deref(ctx);
+        let Some(kind) = self
+            .get_attr_terminator_kind(ctx)
+            .map(|attribute| *attribute)
+        else {
+            return verify_err!(operation.loc(), "ptx.terminator requires a kind");
+        };
+        let Some(prefix) = self.get_attr_terminator_prefix(ctx) else {
+            return verify_err!(operation.loc(), "ptx.terminator requires a prefix");
+        };
+        let Some(head) = self.get_attr_terminator_head(ctx) else {
+            return verify_err!(operation.loc(), "ptx.terminator requires a head");
+        };
+        let Some(operands) = self.get_attr_terminator_operands(ctx) else {
+            return verify_err!(operation.loc(), "ptx.terminator requires operands");
+        };
+        if operands
+            .0
+            .iter()
+            .any(|operand| operand.downcast_ref::<StringAttr>().is_none())
+        {
+            return verify_err!(operation.loc(), "PTX terminator operands must be strings");
+        }
+        let Some(has_fallthrough) = self
+            .get_attr_terminator_has_fallthrough(ctx)
+            .map(|attribute| bool::from(attribute.clone()))
+        else {
+            return verify_err!(
+                operation.loc(),
+                "ptx.terminator requires a fallthrough flag"
+            );
+        };
+        let successor_count = operation.get_num_successors();
+        let head_parts = head.as_str().split('.').collect::<Vec<_>>();
+        let head_matches = match kind {
+            TerminatorKindAttr::Fallthrough => head.as_str().is_empty(),
+            TerminatorKindAttr::Branch => head_parts.first() == Some(&"bra"),
+            TerminatorKindAttr::IndexedBranch => {
+                head_parts.first() == Some(&"brx") && head_parts.get(1) == Some(&"idx")
+            }
+            TerminatorKindAttr::Return => head_parts.first() == Some(&"ret"),
+            TerminatorKindAttr::ThreadExit => head_parts.first() == Some(&"exit"),
+            TerminatorKindAttr::Trap => head_parts.first() == Some(&"trap"),
+        };
+        if !head_matches {
+            return verify_err!(
+                operation.loc(),
+                "PTX terminator kind does not match its instruction head"
+            );
+        }
+        let prefix_is_predicated = !prefix.as_str().trim().is_empty();
+        match kind {
+            TerminatorKindAttr::Fallthrough => {
+                if has_fallthrough
+                    || prefix_is_predicated
+                    || !operands.0.is_empty()
+                    || successor_count != 1
+                {
+                    return verify_err!(
+                        operation.loc(),
+                        "synthetic PTX fallthrough requires no text and exactly one successor"
+                    );
+                }
+            }
+            TerminatorKindAttr::Branch => {
+                if has_fallthrough != prefix_is_predicated
+                    || operands.0.len() != 1
+                    || successor_count != 1 + usize::from(has_fallthrough)
+                {
+                    return verify_err!(
+                        operation.loc(),
+                        "PTX branch requires one target and an optional predicated fallthrough"
+                    );
+                }
+            }
+            TerminatorKindAttr::IndexedBranch => {
+                if has_fallthrough != prefix_is_predicated
+                    || operands.0.len() < 2
+                    || successor_count <= usize::from(has_fallthrough)
+                {
+                    return verify_err!(
+                        operation.loc(),
+                        "PTX indexed branch requires targets and an optional predicated fallthrough"
+                    );
+                }
+            }
+            TerminatorKindAttr::Return
+            | TerminatorKindAttr::ThreadExit
+            | TerminatorKindAttr::Trap => {
+                if has_fallthrough != prefix_is_predicated
+                    || !operands.0.is_empty()
+                    || successor_count != usize::from(has_fallthrough)
+                {
+                    return verify_err!(
+                        operation.loc(),
+                        "PTX exit terminator permits only a predicated fallthrough successor"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// A structurally retained statement for syntax not yet modeled by this dialect.
 #[pliron_op(
     name = "ptx.raw",
@@ -494,7 +818,9 @@ pub fn register(ctx: &mut Context) {
     PtxDirectiveOp::register(ctx);
     PtxLabelOp::register(ctx);
     PtxCallableOp::register(ctx);
+    PtxCfgCallableOp::register(ctx);
     PtxScopeOp::register(ctx);
     PtxInstructionOp::register(ctx);
+    PtxTerminatorOp::register(ctx);
     PtxRawOp::register(ctx);
 }

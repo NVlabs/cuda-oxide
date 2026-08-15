@@ -6,7 +6,8 @@
 //! Deterministic PTX assembly-syntax emission from structured operations.
 
 use crate::ops::{
-    PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
+    PtxCallableOp, PtxCfgCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp,
+    PtxRawOp, PtxScopeOp, PtxTerminatorOp,
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -112,6 +113,19 @@ fn emit_operation(
         }
         return Ok(());
     }
+    if let Some(callable) = Operation::get_op::<PtxCfgCallableOp>(operation, ctx) {
+        write_indent(output, indent)?;
+        output.write_str(callable.header(ctx).trim())?;
+        output.write_char('\n')?;
+        write_indent(output, indent)?;
+        output.write_str("{\n")?;
+        for block in callable.region(ctx).deref(ctx).iter(ctx) {
+            emit_block(ctx, block, indent + 1, output)?;
+        }
+        write_indent(output, indent)?;
+        output.write_str("}\n")?;
+        return Ok(());
+    }
     if let Some(label) = Operation::get_op::<PtxLabelOp>(operation, ctx) {
         write_indent(output, indent)?;
         output.write_str(&label.name(ctx))?;
@@ -153,6 +167,30 @@ fn emit_operation(
         output.write_str(";\n")?;
         return Ok(());
     }
+    if let Some(terminator) = Operation::get_op::<PtxTerminatorOp>(operation, ctx) {
+        if terminator.kind(ctx) == crate::attributes::TerminatorKindAttr::Fallthrough {
+            return Ok(());
+        }
+        write_indent(output, indent)?;
+        let prefix = terminator.prefix(ctx);
+        if !prefix.is_empty() {
+            output.write_str(prefix.trim())?;
+            output.write_char(' ')?;
+        }
+        output.write_str(&terminator.head(ctx))?;
+        let operands = terminator.operands(ctx);
+        if !operands.is_empty() {
+            output.write_char(' ')?;
+            for (index, operand) in operands.iter().enumerate() {
+                if index != 0 {
+                    output.write_str(", ")?;
+                }
+                output.write_str(operand)?;
+            }
+        }
+        output.write_str(";\n")?;
+        return Ok(());
+    }
     if let Some(raw) = Operation::get_op::<PtxRawOp>(operation, ctx) {
         let text = raw.text(ctx);
         for line in text.trim().lines() {
@@ -178,6 +216,8 @@ fn write_indent(output: &mut impl Write, indent: usize) -> fmt::Result {
 mod tests {
     use super::*;
     use crate::Projection;
+    use crate::attributes::{CallableKindAttr, TerminatorKindAttr};
+    use crate::ops::{PtxCfgCallableOp, PtxInstructionOp, PtxLabelOp, PtxTerminatorOp};
 
     #[test]
     fn projection_emits_canonical_nested_ptx() {
@@ -218,5 +258,64 @@ L0: @%p0 add.u32 %r0, %r0, 1;
         );
         let reparsed = ptx_syntax::Document::parse(&emitted).unwrap();
         assert!(reparsed.coverage().is_complete());
+    }
+
+    #[test]
+    fn emits_native_cfg_blocks_without_synthetic_fallthrough_text() {
+        let mut ctx = Context::new();
+        crate::register(&mut ctx);
+        let module = PtxModuleOp::build(&mut ctx);
+        PtxDirectiveOp::build(&mut ctx, ".version", "9.3")
+            .get_operation()
+            .insert_at_back(module.body(&ctx), &ctx);
+        let callable = PtxCfgCallableOp::build(
+            &mut ctx,
+            "kernel",
+            CallableKindAttr::Entry,
+            false,
+            ".visible .entry kernel()",
+        );
+        callable
+            .get_operation()
+            .insert_at_back(module.body(&ctx), &ctx);
+        let entry = callable.append_block(&mut ctx);
+        let exit = callable.append_block(&mut ctx);
+        PtxLabelOp::build(&mut ctx, "L0")
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        PtxInstructionOp::build(&mut ctx, "", "mov.u32", ["%r0", "1"])
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        PtxTerminatorOp::fallthrough(&mut ctx, exit)
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        PtxLabelOp::build(&mut ctx, "Done")
+            .get_operation()
+            .insert_at_back(exit, &ctx);
+        PtxTerminatorOp::build(
+            &mut ctx,
+            TerminatorKindAttr::Return,
+            "",
+            "ret",
+            std::iter::empty::<&str>(),
+            false,
+            std::iter::empty(),
+        )
+        .get_operation()
+        .insert_at_back(exit, &ctx);
+
+        assert_eq!(
+            emit_module(&ctx, &module).unwrap(),
+            "\
+.version 9.3
+.visible .entry kernel()
+{
+    L0:
+    mov.u32 %r0, 1;
+    Done:
+    ret;
+}
+"
+        );
     }
 }
