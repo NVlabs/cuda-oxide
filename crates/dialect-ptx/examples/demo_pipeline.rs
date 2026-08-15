@@ -10,7 +10,7 @@
 
 use dialect_ptx::attributes::PredicateAttr;
 use dialect_ptx::ops::PtxInstructionOp;
-use dialect_ptx::{PtxBuilder, emit_module};
+use dialect_ptx::{PtxBuilder, emit_canonical_module};
 use pliron::context::Context;
 use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("== loop terminator ==");
     println!("{}", terminator.disp(&ctx));
 
-    let emitted = emit_module(&ctx, &module)?;
+    let emitted = emit_canonical_module(&ctx, &module)?;
     println!("== canonical PTX ==");
     print!("{emitted}");
 

@@ -6,7 +6,7 @@
 //! Ergonomic construction of structured PTX operations.
 
 use crate::attributes::{CallableKindAttr, PredicateAttr};
-use crate::emitter::{EmitError, emit_module};
+use crate::emitter::{EmitError, emit_canonical_module};
 use crate::ops::{
     PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
 };
@@ -110,7 +110,7 @@ impl<'ctx> PtxBuilder<'ctx> {
     }
 
     pub fn emit(self) -> Result<String, EmitError> {
-        emit_module(self.ctx, &self.module)
+        emit_canonical_module(self.ctx, &self.module)
     }
 }
 

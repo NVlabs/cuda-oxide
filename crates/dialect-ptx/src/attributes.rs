@@ -85,9 +85,22 @@ impl Verify for PredicateAttr {
     }
 }
 
+/// The control-flow role of a native PTX block terminator.
+#[pliron_attr(name = "ptx.terminator_kind", format, verifier = "succ")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TerminatorKindAttr {
+    Fallthrough,
+    Branch,
+    IndexedBranch,
+    Return,
+    ThreadExit,
+    Trap,
+}
+
 pub fn register(ctx: &mut Context) {
     CallableKindAttr::register(ctx);
     // Qualified: the inherent `PredicateAttr::register` accessor returns the
     // guarded register name.
     <PredicateAttr as Attribute>::register(ctx);
+    TerminatorKindAttr::register(ctx);
 }
