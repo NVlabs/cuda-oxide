@@ -4,6 +4,7 @@
  */
 
 use crate::attributes::CallableKindAttr;
+use crate::cfg::{CfgError, ControlFlow};
 use crate::ops::{
     PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
 };
@@ -175,6 +176,13 @@ impl<'source> Projection<'source> {
         self.blocks_by_pointer
             .get(&block)
             .map(|index| self.blocks[*index].source_scope)
+    }
+
+    /// Recover conservative intraprocedural CFGs from the authoritative
+    /// lossless syntax. The returned graph retains `StatementId`/`ScopeId`
+    /// lineage and fails closed when PTX control-flow semantics are uncertain.
+    pub fn control_flow(&self) -> Result<ControlFlow, CfgError> {
+        ControlFlow::analyze(&self.document)
     }
 }
 

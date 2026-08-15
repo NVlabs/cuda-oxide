@@ -12,6 +12,7 @@
 
 pub mod attributes;
 pub mod builder;
+pub mod cfg;
 pub mod emitter;
 pub mod ops;
 mod projection;

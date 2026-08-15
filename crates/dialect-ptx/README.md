@@ -20,3 +20,9 @@ The dialect currently models module and lexical scopes, callable declarations
 and definitions, directives, labels, generic instructions, and a raw escape hatch.
 Typed ISA operations can be added incrementally without making the lossless
 parser reject newer PTX spellings.
+
+`Projection::control_flow` recovers a conservative intraprocedural CFG for
+direct and indexed branches, predicated fallthrough, and terminal instructions.
+It retains CST statement/scope lineage and fails closed for unsupported PTX
+versions or unresolved targets instead of attaching guessed successors to the
+operation tree.
