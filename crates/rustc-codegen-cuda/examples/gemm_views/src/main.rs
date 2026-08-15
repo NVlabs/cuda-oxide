@@ -747,6 +747,7 @@ fn max_abs_diff(x: &[f32], y: &[f32]) -> f32 {
 fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("gemm_views.ptx");
     let ptx = std::fs::read_to_string(&path)?;
+    let document = ptx_syntax::Document::parse(&ptx)?;
 
     for marker in [
         "__launch_contract_config",
@@ -761,10 +762,10 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let safe_naive = entry_body(&ptx, "sgemm_naive_views")?;
-    let raw_naive = entry_body(&ptx, "sgemm_naive_raw")?;
-    let safe_tiled = entry_body(&ptx, "sgemm_tiled_views")?;
-    let raw_tiled = entry_body(&ptx, "sgemm_tiled_raw")?;
+    let safe_naive = entry_body(&document, "sgemm_naive_views")?;
+    let raw_naive = entry_body(&document, "sgemm_naive_raw")?;
+    let safe_tiled = entry_body(&document, "sgemm_tiled_views")?;
+    let raw_tiled = entry_body(&document, "sgemm_tiled_raw")?;
 
     for (name, body) in [
         ("sgemm_naive_views", safe_naive),
@@ -832,19 +833,15 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn entry_body<'a>(ptx: &'a str, name: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
-    let start = ptx
-        .find(&format!(".visible .entry {name}("))
-        .ok_or_else(|| format!("missing PTX entry `{name}`"))?;
-    let rest = &ptx[start..];
-    let open = rest
-        .find('{')
-        .ok_or_else(|| format!("PTX entry `{name}` has no body"))?;
-    let close = rest[open + 1..]
-        .find("\n}")
-        .map(|offset| open + 1 + offset + 2)
-        .ok_or_else(|| format!("PTX entry `{name}` has no closing brace"))?;
-    Ok(&rest[..close])
+fn entry_body<'source>(
+    document: &ptx_syntax::Document<'source>,
+    name: &str,
+) -> Result<&'source str, Box<dyn std::error::Error>> {
+    document
+        .callables_named(name)
+        .find(|callable| callable.kind() == ptx_syntax::CallableKind::Entry)
+        .and_then(|callable| callable.body_text().map(|_| callable.text()))
+        .ok_or_else(|| format!("missing or incomplete PTX entry `{name}`").into())
 }
 
 fn trap_count(body: &str) -> usize {

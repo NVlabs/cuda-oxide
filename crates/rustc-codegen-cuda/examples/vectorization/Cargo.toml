@@ -22,3 +22,4 @@ cuda-host = { path = "../../../cuda-host" }
 
 # Host-side CUDA runtime
 cuda-core = { path = "../../../cuda-core" }
+ptx-syntax = { path = "../../../ptx-syntax" }

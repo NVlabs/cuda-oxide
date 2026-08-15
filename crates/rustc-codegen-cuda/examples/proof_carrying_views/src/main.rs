@@ -310,6 +310,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("proof_carrying_views.ptx");
     let ptx = std::fs::read_to_string(&path)?;
+    let document = ptx_syntax::Document::parse(&ptx)?;
 
     for marker in [
         "__launch_contract_config",
@@ -324,13 +325,13 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let safe_element = entry_body(&ptx, "safe_element")?;
-    let raw_element = entry_body(&ptx, "raw_element")?;
-    let safe_tile = entry_body(&ptx, "safe_tile")?;
-    let raw_tile = entry_body(&ptx, "raw_tile")?;
-    let legacy_rank_guard = entry_body(&ptx, "legacy_rank_guard")?;
-    let safe_epilogue = entry_body(&ptx, "safe_epilogue")?;
-    let raw_epilogue = entry_body(&ptx, "raw_epilogue")?;
+    let safe_element = entry_body(&document, "safe_element")?;
+    let raw_element = entry_body(&document, "raw_element")?;
+    let safe_tile = entry_body(&document, "safe_tile")?;
+    let raw_tile = entry_body(&document, "raw_tile")?;
+    let legacy_rank_guard = entry_body(&document, "legacy_rank_guard")?;
+    let safe_epilogue = entry_body(&document, "safe_epilogue")?;
+    let raw_epilogue = entry_body(&document, "raw_epilogue")?;
 
     for (name, body) in [
         ("safe_element", safe_element),
@@ -449,19 +450,15 @@ fn data_memory_operation(line: &str, operation: &str) -> Option<String> {
     Some(mnemonic.to_owned())
 }
 
-fn entry_body<'a>(ptx: &'a str, name: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
-    let start = ptx
-        .find(&format!(".visible .entry {name}("))
-        .ok_or_else(|| format!("missing PTX entry `{name}`"))?;
-    let rest = &ptx[start..];
-    let open = rest
-        .find('{')
-        .ok_or_else(|| format!("PTX entry `{name}` has no body"))?;
-    let close = rest[open + 1..]
-        .find("\n}")
-        .map(|offset| open + 1 + offset + 2)
-        .ok_or_else(|| format!("PTX entry `{name}` has no closing brace"))?;
-    Ok(&rest[..close])
+fn entry_body<'source>(
+    document: &ptx_syntax::Document<'source>,
+    name: &str,
+) -> Result<&'source str, Box<dyn std::error::Error>> {
+    document
+        .callables_named(name)
+        .find(|callable| callable.kind() == ptx_syntax::CallableKind::Entry)
+        .and_then(|callable| callable.body_text().map(|_| callable.text()))
+        .ok_or_else(|| format!("missing or incomplete PTX entry `{name}`").into())
 }
 
 /// A kernel declaring an exact `block` in its launch contract carries that
