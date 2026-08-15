@@ -14,7 +14,7 @@ mod edit;
 mod lexer;
 mod syntax;
 
-pub use edit::{EditError, EditScript};
+pub use edit::{AppliedEdits, EditError, EditMap, EditScript, MapBias};
 pub use lexer::{Token, TokenKind};
 pub use syntax::{
     Coverage, Diagnostic, DiagnosticKind, Scope, ScopeId, Statement, StatementId, StatementKind,
@@ -37,6 +37,11 @@ pub struct Document<'source> {
     directives: Vec<Directive<'source>>,
     callables: Vec<Callable<'source>>,
     instructions: Vec<Instruction<'source>>,
+    statements_by_scope: Vec<Vec<StatementId>>,
+    labels_by_statement: Vec<Vec<LabelId>>,
+    directive_by_statement: Vec<Option<usize>>,
+    callable_by_statement: Vec<Option<usize>>,
+    instruction_by_statement: Vec<Option<usize>>,
 }
 
 /// Stable index of a projected label in [`Document::labels`].
@@ -166,6 +171,8 @@ pub struct Instruction<'source> {
 /// A guard predicate recovered from an instruction statement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Predicate<'source> {
+    source: &'source str,
+    start: u32,
     register: &'source str,
     register_start: u32,
     register_end: u32,
@@ -234,6 +241,26 @@ impl<'source> Document<'source> {
         parsed.diagnostics.extend(directive_diagnostics);
         parsed.diagnostics.extend(callable_diagnostics);
         parsed.diagnostics.extend(instruction_diagnostics);
+        let mut statements_by_scope = vec![Vec::new(); parsed.scopes.len()];
+        for statement in &parsed.statements {
+            statements_by_scope[statement.scope().index()].push(statement.id());
+        }
+        let mut labels_by_statement = vec![Vec::new(); parsed.statements.len()];
+        for label in &labels {
+            labels_by_statement[label.statement().index()].push(label.id());
+        }
+        let mut directive_by_statement = vec![None; parsed.statements.len()];
+        for (index, directive) in directives.iter().enumerate() {
+            directive_by_statement[directive.statement().index()] = Some(index);
+        }
+        let mut callable_by_statement = vec![None; parsed.statements.len()];
+        for (index, callable) in callables.iter().enumerate() {
+            callable_by_statement[callable.statement().index()] = Some(index);
+        }
+        let mut instruction_by_statement = vec![None; parsed.statements.len()];
+        for (index, instruction) in instructions.iter().enumerate() {
+            instruction_by_statement[instruction.statement().index()] = Some(index);
+        }
         Ok(Self {
             source,
             tokens,
@@ -245,6 +272,11 @@ impl<'source> Document<'source> {
             directives,
             callables,
             instructions,
+            statements_by_scope,
+            labels_by_statement,
+            directive_by_statement,
+            callable_by_statement,
+            instruction_by_statement,
         })
     }
 
@@ -275,6 +307,14 @@ impl<'source> Document<'source> {
         self.statements.get(id.index())
     }
 
+    pub fn statements_in_scope(&self, scope: ScopeId) -> impl Iterator<Item = &Statement> {
+        self.statements_by_scope
+            .get(scope.index())
+            .into_iter()
+            .flatten()
+            .map(|statement| &self.statements[statement.index()])
+    }
+
     pub fn scope(&self, id: ScopeId) -> Option<&Scope> {
         self.scopes.get(id.index())
     }
@@ -296,8 +336,47 @@ impl<'source> Document<'source> {
         self.labels.get(id.index())
     }
 
+    pub fn labels_for_statement(
+        &self,
+        statement: StatementId,
+    ) -> impl Iterator<Item = &Label<'source>> {
+        self.labels_by_statement
+            .get(statement.index())
+            .into_iter()
+            .flatten()
+            .map(|label| &self.labels[label.index()])
+    }
+
+    pub fn labels_in(&self, span: Range<usize>) -> impl Iterator<Item = &Label<'source>> {
+        let start = self
+            .labels
+            .partition_point(|label| label.span.start < span.start);
+        self.labels[start..]
+            .iter()
+            .take_while(move |label| label.span.start < span.end)
+            .filter(move |label| label.span.end <= span.end)
+    }
+
     pub fn directives(&self) -> &[Directive<'source>] {
         &self.directives
+    }
+
+    pub fn directive_for_statement(&self, statement: StatementId) -> Option<&Directive<'source>> {
+        self.directive_by_statement
+            .get(statement.index())
+            .copied()
+            .flatten()
+            .map(|index| &self.directives[index])
+    }
+
+    pub fn directives_in(&self, span: Range<usize>) -> impl Iterator<Item = &Directive<'source>> {
+        let start = self
+            .directives
+            .partition_point(|directive| directive.span.start < span.start);
+        self.directives[start..]
+            .iter()
+            .take_while(move |directive| directive.span.start < span.end)
+            .filter(move |directive| directive.span.end <= span.end)
     }
 
     /// Parse every `.reg` directive in source order.
@@ -319,6 +398,14 @@ impl<'source> Document<'source> {
 
     pub fn callables(&self) -> &[Callable<'source>] {
         &self.callables
+    }
+
+    pub fn callable_for_statement(&self, statement: StatementId) -> Option<&Callable<'source>> {
+        self.callable_by_statement
+            .get(statement.index())
+            .copied()
+            .flatten()
+            .map(|index| &self.callables[index])
     }
 
     /// Return every callable whose symbol exactly matches `name`.
@@ -355,6 +442,17 @@ impl<'source> Document<'source> {
 
     pub fn instructions(&self) -> &[Instruction<'source>] {
         &self.instructions
+    }
+
+    pub fn instruction_for_statement(
+        &self,
+        statement: StatementId,
+    ) -> Option<&Instruction<'source>> {
+        self.instruction_by_statement
+            .get(statement.index())
+            .copied()
+            .flatten()
+            .map(|index| &self.instructions[index])
     }
 
     /// Return instructions fully contained by `span` in source order.
@@ -396,6 +494,10 @@ impl<'source> Label<'source> {
     pub fn name(&self) -> &'source str {
         &self.source[self.name_span.clone()]
     }
+
+    pub fn name_span(&self) -> Range<usize> {
+        self.name_span.clone()
+    }
 }
 
 impl<'source> Directive<'source> {
@@ -421,6 +523,10 @@ impl<'source> Directive<'source> {
 
     pub fn name(&self) -> &'source str {
         &self.source[self.name_span.clone()]
+    }
+
+    pub fn name_span(&self) -> Range<usize> {
+        self.name_span.clone()
     }
 
     pub fn labels(&self) -> impl ExactSizeIterator<Item = &'source str> + '_ {
@@ -549,6 +655,10 @@ impl<'source> Callable<'source> {
         &self.source[self.name_span.clone()]
     }
 
+    pub fn name_span(&self) -> Range<usize> {
+        self.name_span.clone()
+    }
+
     pub fn is_extern(&self) -> bool {
         self.is_extern
     }
@@ -571,9 +681,13 @@ impl<'source> Callable<'source> {
     /// This includes parameter lists and callable directives such as
     /// `.maxntid`. Declarations and incomplete definitions return `None`.
     pub fn definition_header_text(&self) -> Option<&'source str> {
+        self.definition_header_span().map(|span| &self.source[span])
+    }
+
+    pub fn definition_header_span(&self) -> Option<Range<usize>> {
         self.body_span.as_ref().map(|body| {
             debug_assert_eq!(self.source.as_bytes()[body.start - 1], b'{');
-            &self.source[self.span.start..body.start - 1]
+            self.span.start..body.start - 1
         })
     }
 }
@@ -687,6 +801,14 @@ impl<'source> Instruction<'source> {
 }
 
 impl<'source> Predicate<'source> {
+    pub fn text(self) -> &'source str {
+        &self.source[self.span()]
+    }
+
+    pub fn span(self) -> Range<usize> {
+        self.start as usize..self.register_end as usize
+    }
+
     pub fn register(self) -> &'source str {
         self.register
     }
@@ -1099,6 +1221,7 @@ fn instruction_from_statement<'source>(
         .get(cursor)
         .is_some_and(|index| tokens[*index].text(source) == "@")
     {
+        let predicate_start = tokens[significant[cursor]].span().start;
         cursor += 1;
         if significant
             .get(cursor)
@@ -1111,6 +1234,10 @@ fn instruction_from_statement<'source>(
             return None;
         }
         predicate = Some(Predicate {
+            source,
+            start: predicate_start
+                .try_into()
+                .expect("the lexer rejects sources larger than u32::MAX"),
             register: register.text(source),
             register_start: register
                 .span()
