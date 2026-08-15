@@ -353,6 +353,8 @@ version = "0.2.1"
 dependencies = [
  "libnvvm-sys",
  "nvjitlink-sys",
+ "serde",
+ "serde_json",
  "sha2",
  "thiserror",
 ]

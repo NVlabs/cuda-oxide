@@ -12,6 +12,12 @@ Keeping that policy in one driverless crate is what lets the two paths agree.
 A rule that lived in the runtime loader alone could not be applied during a
 build, and one duplicated across both would drift.
 
+Build-time materialization passes a versioned `MaterializerHandshakeV1` from
+`cargo-oxide` to the codegen backend. Its named fields bind each content digest
+to a retained-file identity, so child processes can avoid rereading large CUDA
+DSOs while the content-derived combined digest remains Cargo's semantic
+fingerprint. Identity mismatches fall back to hashing the newly opened file.
+
 Consumers:
 
 - `cargo-oxide` and `rustc-codegen-cuda`, for build-time materialization;
