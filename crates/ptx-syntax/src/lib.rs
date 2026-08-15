@@ -77,6 +77,42 @@ pub struct Directive<'source> {
     label_name_spans: Vec<Range<usize>>,
 }
 
+/// A typed, lossless view of one `.reg` directive.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisterDeclaration<'source> {
+    source: &'source str,
+    statement: StatementId,
+    scope: ScopeId,
+    span: Range<usize>,
+    qualifier_spans: Vec<Range<usize>>,
+    bindings: Vec<RegisterBinding<'source>>,
+}
+
+/// One scalar register or register-bank binding in a `.reg` declaration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisterBinding<'source> {
+    source: &'source str,
+    span: Range<usize>,
+    name_span: Range<usize>,
+    bank_size: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegisterDeclarationErrorKind {
+    MissingQualifier,
+    MissingBinding,
+    UnexpectedToken,
+    InvalidBankSize,
+}
+
+/// A `.reg` directive that cannot be interpreted without guessing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegisterDeclarationError {
+    statement: StatementId,
+    offset: usize,
+    kind: RegisterDeclarationErrorKind,
+}
+
 /// The two callable forms defined by PTX.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallableKind {
@@ -262,6 +298,23 @@ impl<'source> Document<'source> {
         &self.directives
     }
 
+    /// Parse every `.reg` directive in source order.
+    ///
+    /// Structural parsing remains forward-compatible; consumers which need
+    /// register semantics receive an explicit error for an unfamiliar binding
+    /// grammar rather than a partial declaration.
+    pub fn register_declarations(
+        &self,
+    ) -> impl Iterator<Item = Result<RegisterDeclaration<'source>, RegisterDeclarationError>> + '_
+    {
+        self.directives
+            .iter()
+            .filter(|directive| directive.name() == ".reg")
+            .map(|directive| {
+                register_declaration_from_directive(self.source, &self.tokens, directive)
+            })
+    }
+
     pub fn callables(&self) -> &[Callable<'source>] {
         &self.callables
     }
@@ -386,6 +439,76 @@ impl<'source> Directive<'source> {
         &self.source[self.span.clone()]
     }
 }
+
+impl RegisterDeclaration<'_> {
+    pub fn statement(&self) -> StatementId {
+        self.statement
+    }
+
+    pub fn scope(&self) -> ScopeId {
+        self.scope
+    }
+
+    pub fn span(&self) -> Range<usize> {
+        self.span.clone()
+    }
+
+    pub fn qualifiers(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.qualifier_spans
+            .iter()
+            .map(|span| &self.source[span.clone()])
+    }
+
+    pub fn bindings(&self) -> &[RegisterBinding<'_>] {
+        &self.bindings
+    }
+}
+
+impl RegisterBinding<'_> {
+    pub fn span(&self) -> Range<usize> {
+        self.span.clone()
+    }
+
+    /// Scalar name, or the base name of a register bank.
+    pub fn name(&self) -> &str {
+        &self.source[self.name_span.clone()]
+    }
+
+    pub fn name_span(&self) -> Range<usize> {
+        self.name_span.clone()
+    }
+
+    /// Number of concrete registers in a bank such as `%r<4>`.
+    pub fn bank_size(&self) -> Option<u32> {
+        self.bank_size
+    }
+}
+
+impl RegisterDeclarationError {
+    pub fn statement(&self) -> StatementId {
+        self.statement
+    }
+
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    pub fn kind(&self) -> RegisterDeclarationErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Display for RegisterDeclarationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "malformed PTX .reg declaration at byte {} ({:?})",
+            self.offset, self.kind
+        )
+    }
+}
+
+impl std::error::Error for RegisterDeclarationError {}
 
 impl<'source> Callable<'source> {
     pub fn statement(&self) -> StatementId {
@@ -633,6 +756,141 @@ fn discover_directives<'source>(
         });
     }
     (directives, diagnostics)
+}
+
+fn register_declaration_from_directive<'source>(
+    source: &'source str,
+    tokens: &[Token],
+    directive: &Directive<'source>,
+) -> Result<RegisterDeclaration<'source>, RegisterDeclarationError> {
+    let error = |offset, kind| RegisterDeclarationError {
+        statement: directive.statement,
+        offset,
+        kind,
+    };
+    let first_token =
+        tokens.partition_point(|token| token.span().end <= directive.arguments_span.start);
+    let significant = tokens[first_token..]
+        .iter()
+        .take_while(|token| token.span().start < directive.arguments_span.end)
+        .filter(|token| {
+            let span = token.span();
+            span.start >= directive.arguments_span.start
+                && span.end <= directive.arguments_span.end
+                && !token.kind().is_trivia()
+        })
+        .collect::<Vec<_>>();
+    let Some(semicolon) = significant.last().filter(|token| token.text(source) == ";") else {
+        return Err(error(
+            directive.arguments_span.end,
+            RegisterDeclarationErrorKind::UnexpectedToken,
+        ));
+    };
+    let body = &significant[..significant.len() - 1];
+    let mut cursor = 0;
+    let mut qualifier_spans = Vec::new();
+    while let Some(token) = body
+        .get(cursor)
+        .filter(|token| token.kind() == TokenKind::Word && token.text(source).starts_with('.'))
+    {
+        qualifier_spans.push(token.span());
+        cursor += 1;
+    }
+    if qualifier_spans.is_empty() {
+        return Err(error(
+            body.first()
+                .map_or(semicolon.span().start, |token| token.span().start),
+            RegisterDeclarationErrorKind::MissingQualifier,
+        ));
+    }
+    if cursor == body.len() {
+        return Err(error(
+            semicolon.span().start,
+            RegisterDeclarationErrorKind::MissingBinding,
+        ));
+    }
+
+    let mut bindings = Vec::new();
+    loop {
+        let Some(name) = body.get(cursor).filter(|token| {
+            token.kind() == TokenKind::Word && !token.text(source).starts_with('.')
+        }) else {
+            let offset = body
+                .get(cursor)
+                .map_or(semicolon.span().start, |token| token.span().start);
+            return Err(error(offset, RegisterDeclarationErrorKind::MissingBinding));
+        };
+        cursor += 1;
+        let mut binding_end = name.span().end;
+        let bank_size = if body
+            .get(cursor)
+            .is_some_and(|token| token.text(source) == "<")
+        {
+            let Some(size) = body.get(cursor + 1) else {
+                return Err(error(
+                    binding_end,
+                    RegisterDeclarationErrorKind::InvalidBankSize,
+                ));
+            };
+            let Some(close) = body
+                .get(cursor + 2)
+                .filter(|token| token.text(source) == ">")
+            else {
+                return Err(error(
+                    size.span().start,
+                    RegisterDeclarationErrorKind::InvalidBankSize,
+                ));
+            };
+            let size = size
+                .text(source)
+                .parse::<u32>()
+                .ok()
+                .filter(|size| *size > 0)
+                .ok_or_else(|| {
+                    error(
+                        size.span().start,
+                        RegisterDeclarationErrorKind::InvalidBankSize,
+                    )
+                })?;
+            cursor += 3;
+            binding_end = close.span().end;
+            Some(size)
+        } else {
+            None
+        };
+        bindings.push(RegisterBinding {
+            source,
+            span: name.span().start..binding_end,
+            name_span: name.span(),
+            bank_size,
+        });
+
+        match body.get(cursor).map(|token| token.text(source)) {
+            None => break,
+            Some(",") if cursor + 1 < body.len() => cursor += 1,
+            Some(",") => {
+                return Err(error(
+                    body[cursor].span().end,
+                    RegisterDeclarationErrorKind::MissingBinding,
+                ));
+            }
+            Some(_) => {
+                return Err(error(
+                    body[cursor].span().start,
+                    RegisterDeclarationErrorKind::UnexpectedToken,
+                ));
+            }
+        }
+    }
+
+    Ok(RegisterDeclaration {
+        source,
+        statement: directive.statement,
+        scope: directive.scope,
+        span: directive.span(),
+        qualifier_spans,
+        bindings,
+    })
 }
 
 fn discover_callables<'source>(
@@ -1264,6 +1522,77 @@ mod tests {
             ["{%r1, %r2}", "[%rd1, {%r3, %r4}]", "(%r5, %r6)"]
         );
         assert!(split_top_level("%r1, [%r2").is_none());
+    }
+
+    #[test]
+    fn projects_scalar_multi_binding_and_bank_register_declarations() {
+        let source = "\
+.reg .pred %p0;
+{
+    .reg .u64 dst64, mbar64;
+    .reg .v2 .b32 %pair<4>;
+}
+";
+        let document = Document::parse(source).unwrap();
+        let declarations = document
+            .register_declarations()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(declarations.len(), 3);
+        assert_eq!(declarations[0].qualifiers().collect::<Vec<_>>(), [".pred"]);
+        assert_eq!(declarations[0].bindings()[0].name(), "%p0");
+        assert_eq!(declarations[0].bindings()[0].bank_size(), None);
+        assert_eq!(
+            declarations[1]
+                .bindings()
+                .iter()
+                .map(RegisterBinding::name)
+                .collect::<Vec<_>>(),
+            ["dst64", "mbar64"]
+        );
+        assert_eq!(
+            declarations[2].qualifiers().collect::<Vec<_>>(),
+            [".v2", ".b32"]
+        );
+        assert_eq!(declarations[2].bindings()[0].name(), "%pair");
+        assert_eq!(declarations[2].bindings()[0].bank_size(), Some(4));
+        assert_eq!(&source[declarations[2].bindings()[0].span()], "%pair<4>");
+        assert_eq!(&source[declarations[2].bindings()[0].name_span()], "%pair");
+        assert_ne!(declarations[0].scope(), declarations[1].scope());
+    }
+
+    #[test]
+    fn rejects_partial_register_declaration_semantics() {
+        let source = ".reg %r0;\n.reg .b32;\n.reg .b32 %r<0>;\n.reg .b32 %r0 = 1;\n";
+        let document = Document::parse(source).unwrap();
+        let errors = document
+            .register_declarations()
+            .map(Result::unwrap_err)
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 4);
+        assert_eq!(
+            errors[0].kind(),
+            RegisterDeclarationErrorKind::MissingQualifier
+        );
+        assert_eq!(
+            errors[1].kind(),
+            RegisterDeclarationErrorKind::MissingBinding
+        );
+        assert_eq!(
+            errors[2].kind(),
+            RegisterDeclarationErrorKind::InvalidBankSize
+        );
+        assert_eq!(
+            errors[3].kind(),
+            RegisterDeclarationErrorKind::UnexpectedToken
+        );
+        for error in errors {
+            assert_eq!(
+                document.statement(error.statement()).unwrap().kind(),
+                StatementKind::Directive
+            );
+            assert!(error.offset() < source.len());
+        }
     }
 
     #[test]
