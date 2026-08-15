@@ -4,6 +4,7 @@ members = [
     # Core crates
     "crates/cuda-intrinsics",
     "crates/cuda-intrinsics-gen",
+    "crates/ptx-syntax",
     "crates/cuda-device",
     "crates/cuda-artifact-finalizer",
     "crates/cuda-host",
@@ -84,6 +85,7 @@ nvjitlink-sys = { path = "crates/nvjitlink-sys" }
 reserved-oxide-symbols = { path = "crates/reserved-oxide-symbols" }
 fuzzer = { path = "crates/fuzzer" }
 oxide-artifacts = { path = "crates/oxide-artifacts" }
+ptx-syntax = { path = "crates/ptx-syntax" }
 
 # Common dependencies
 futures = "0.3"

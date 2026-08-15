@@ -1,0 +1,11 @@
+[package]
+name = "ptx-syntax"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Lossless structural views over PTX source text"
+
+[dependencies]
