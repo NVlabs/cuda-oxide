@@ -167,6 +167,8 @@ pub struct Instruction<'source> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Predicate<'source> {
     register: &'source str,
+    register_start: u32,
+    register_end: u32,
     negated: bool,
 }
 
@@ -632,6 +634,10 @@ impl<'source> Instruction<'source> {
         self.head_span.start
     }
 
+    pub fn head_span(&self) -> Range<usize> {
+        self.head_span.clone()
+    }
+
     /// Byte offset immediately after the terminal semicolon.
     pub fn end_offset(&self) -> usize {
         self.span.end
@@ -671,6 +677,10 @@ impl<'source> Instruction<'source> {
             .map(|span| &self.source[span.clone()])
     }
 
+    pub fn operand_spans(&self) -> impl ExactSizeIterator<Item = Range<usize>> + '_ {
+        self.operand_spans.iter().cloned()
+    }
+
     pub fn text(&self) -> &'source str {
         &self.source[self.span.clone()]
     }
@@ -683,6 +693,10 @@ impl<'source> Predicate<'source> {
 
     pub fn is_negated(self) -> bool {
         self.negated
+    }
+
+    pub fn register_span(self) -> Range<usize> {
+        self.register_start as usize..self.register_end as usize
     }
 }
 
@@ -1098,6 +1112,16 @@ fn instruction_from_statement<'source>(
         }
         predicate = Some(Predicate {
             register: register.text(source),
+            register_start: register
+                .span()
+                .start
+                .try_into()
+                .expect("the lexer rejects sources larger than u32::MAX"),
+            register_end: register
+                .span()
+                .end
+                .try_into()
+                .expect("the lexer rejects sources larger than u32::MAX"),
             negated: significant
                 .get(cursor.wrapping_sub(1))
                 .is_some_and(|index| tokens[*index].text(source) == "!"),
@@ -1229,10 +1253,22 @@ mod tests {
         assert_eq!(future.labels().collect::<Vec<_>>(), ["L0"]);
         assert_eq!(future.predicate().unwrap().register(), "%p1");
         assert!(future.predicate().unwrap().is_negated());
+        assert_eq!(
+            &source[future.predicate().unwrap().register_span()],
+            future.predicate().unwrap().register()
+        );
         assert_eq!(future.head(), "future.op.u32");
+        assert_eq!(&source[future.head_span()], future.head());
         assert_eq!(
             future.operands().collect::<Vec<_>>(),
             ["{%r1, %r2}", "[%rd3, {%r4, %r5}]"]
+        );
+        assert_eq!(
+            future
+                .operand_spans()
+                .map(|span| &source[span])
+                .collect::<Vec<_>>(),
+            future.operands().collect::<Vec<_>>()
         );
         assert_eq!(
             future.text(),
