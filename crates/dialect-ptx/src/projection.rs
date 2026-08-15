@@ -16,8 +16,7 @@ use pliron::context::{Context, Ptr};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use ptx_syntax::{
-    Callable, CallableKind, Directive, Document, Instruction, Label, LabelId, ParseError, ScopeId,
-    StatementId, StatementKind,
+    CallableKind, Document, LabelId, ParseError, ScopeId, StatementId, StatementKind,
 };
 use std::collections::HashMap;
 use std::ops::Range;
@@ -128,22 +127,28 @@ impl<'source> Projection<'source> {
     pub fn from_document(ctx: &mut Context, document: Document<'source>) -> Self {
         let module = PtxModuleOp::build(ctx);
         let root_block = module.body(ctx);
-        let (nodes, blocks) = {
+        let (nodes, blocks, source_aliases) = {
             let mut projector = Projector::new(ctx, &document);
             projector.record_block(root_block, ScopeId::ROOT);
             projector.project_scope(ScopeId::ROOT, root_block);
-            (projector.nodes, projector.blocks)
+            (projector.nodes, projector.blocks, projector.source_aliases)
         };
-        let nodes_by_operation = nodes
+        let nodes_by_operation: HashMap<Ptr<Operation>, usize> = nodes
             .iter()
             .enumerate()
             .map(|(index, node)| (node.operation, index))
             .collect();
-        let nodes_by_source = nodes
+        let mut nodes_by_source: HashMap<SourceNode, usize> = nodes
             .iter()
             .enumerate()
             .map(|(index, node)| (node.source_node, index))
             .collect();
+        for (source, operation) in source_aliases {
+            let index = *nodes_by_operation
+                .get(&operation)
+                .expect("source alias operation is projected");
+            nodes_by_source.insert(source, index);
+        }
         let blocks_by_pointer = blocks
             .iter()
             .enumerate()
@@ -478,61 +483,27 @@ impl ProjectedCfgScopeSegment<'_, '_> {
 struct Projector<'ctx, 'document, 'source> {
     ctx: &'ctx mut Context,
     document: &'document Document<'source>,
-    statements_by_scope: HashMap<ScopeId, Vec<StatementId>>,
-    scopes_by_parent: HashMap<ScopeId, Vec<ScopeId>>,
-    directives: HashMap<StatementId, &'document Directive<'source>>,
-    callables: HashMap<StatementId, &'document Callable<'source>>,
-    instructions: HashMap<StatementId, &'document Instruction<'source>>,
-    labels: HashMap<StatementId, Vec<&'document Label<'source>>>,
+    scopes_by_parent: Vec<Vec<ScopeId>>,
     nodes: Vec<ProjectedNode>,
     blocks: Vec<ProjectedBlock>,
+    source_aliases: Vec<(SourceNode, Ptr<Operation>)>,
 }
 
 impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
     fn new(ctx: &'ctx mut Context, document: &'document Document<'source>) -> Self {
-        let mut statements_by_scope: HashMap<ScopeId, Vec<StatementId>> = HashMap::new();
-        for statement in document.statements() {
-            statements_by_scope
-                .entry(statement.scope())
-                .or_default()
-                .push(statement.id());
-        }
-        let mut scopes_by_parent: HashMap<ScopeId, Vec<ScopeId>> = HashMap::new();
+        let mut scopes_by_parent = vec![Vec::new(); document.scopes().len()];
         for scope in document.scopes().iter().skip(1) {
             if let Some(parent) = scope.parent() {
-                scopes_by_parent.entry(parent).or_default().push(scope.id());
+                scopes_by_parent[parent.index()].push(scope.id());
             }
-        }
-        let directives = document
-            .directives()
-            .iter()
-            .map(|directive| (directive.statement(), directive))
-            .collect();
-        let callables = document
-            .callables()
-            .iter()
-            .map(|callable| (callable.statement(), callable))
-            .collect();
-        let instructions = document
-            .instructions()
-            .iter()
-            .map(|instruction| (instruction.statement(), instruction))
-            .collect();
-        let mut labels: HashMap<StatementId, Vec<&Label<'source>>> = HashMap::new();
-        for label in document.labels() {
-            labels.entry(label.statement()).or_default().push(label);
         }
         Self {
             ctx,
             document,
-            statements_by_scope,
             scopes_by_parent,
-            directives,
-            callables,
-            instructions,
-            labels,
             nodes: Vec::new(),
             blocks: Vec::new(),
+            source_aliases: Vec::new(),
         }
     }
 
@@ -571,11 +542,7 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
             AnonymousScope(ScopeId),
         }
 
-        let child_scopes = self
-            .scopes_by_parent
-            .get(&scope)
-            .cloned()
-            .unwrap_or_default();
+        let child_scopes = self.scopes_by_parent[scope.index()].clone();
         let scopes_by_header: HashMap<StatementId, ScopeId> = child_scopes
             .iter()
             .filter_map(|scope| {
@@ -585,11 +552,9 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
             })
             .collect();
         let mut events: Vec<(usize, Event)> = self
-            .statements_by_scope
-            .get(&scope)
-            .into_iter()
-            .flatten()
-            .copied()
+            .document
+            .statements_in_scope(scope)
+            .map(|statement| statement.id())
             .map(|statement| {
                 let start = self
                     .document
@@ -632,7 +597,7 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
         destination: Ptr<BasicBlock>,
     ) {
         self.project_labels(statement, destination);
-        if let Some(callable) = self.callables.get(&statement).copied() {
+        if let Some(callable) = self.document.callable_for_statement(statement) {
             let kind = match callable.kind() {
                 CallableKind::Entry => CallableKindAttr::Entry,
                 CallableKind::Function => CallableKindAttr::Function,
@@ -695,49 +660,79 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
     }
 
     fn project_statement(&mut self, statement: StatementId, destination: Ptr<BasicBlock>) {
-        let projected_labels = self.project_labels(statement, destination);
         let statement_node = self
             .document
             .statement(statement)
             .expect("indexed statement belongs to the document");
         let source_span = statement_node.span();
+        let directive_labels = if statement_node.kind() == StatementKind::Directive {
+            self.document
+                .labels_for_statement(statement)
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let projected_labels = if directive_labels.is_empty() {
+            self.project_labels(statement, destination)
+        } else {
+            false
+        };
         let operation = match statement_node.kind() {
-            StatementKind::Directive => self.directives.get(&statement).map(|directive| {
-                PtxDirectiveOp::build(self.ctx, directive.name(), directive.arguments())
-                    .get_operation()
-            }),
-            StatementKind::Instruction => self.instructions.get(&statement).map(|instruction| {
-                let prefix = instruction
-                    .predicate()
-                    .map_or_else(String::new, |predicate| {
-                        format!(
-                            "@{}{}",
-                            if predicate.is_negated() { "!" } else { "" },
-                            predicate.register()
+            StatementKind::Directive => {
+                self.document
+                    .directive_for_statement(statement)
+                    .map(|directive| {
+                        PtxDirectiveOp::build_labeled(
+                            self.ctx,
+                            directive_labels.iter().map(|label| label.name()),
+                            directive.name(),
+                            directive.arguments(),
                         )
-                    });
-                PtxInstructionOp::build(
-                    self.ctx,
-                    &prefix,
-                    instruction.head(),
-                    instruction.operands(),
-                )
-                .get_operation()
-            }),
-            StatementKind::CallableHeader => self.callables.get(&statement).map(|callable| {
-                let kind = match callable.kind() {
-                    CallableKind::Entry => CallableKindAttr::Entry,
-                    CallableKind::Function => CallableKindAttr::Function,
-                };
-                PtxCallableOp::build_declaration(
-                    self.ctx,
-                    callable.name(),
-                    kind,
-                    callable.is_extern(),
-                    trim_header(statement_node.text(self.document.source())),
-                )
-                .get_operation()
-            }),
+                        .get_operation()
+                    })
+            }
+            StatementKind::Instruction => {
+                self.document
+                    .instruction_for_statement(statement)
+                    .map(|instruction| {
+                        let prefix =
+                            instruction
+                                .predicate()
+                                .map_or_else(String::new, |predicate| {
+                                    format!(
+                                        "@{}{}",
+                                        if predicate.is_negated() { "!" } else { "" },
+                                        predicate.register()
+                                    )
+                                });
+                        PtxInstructionOp::build(
+                            self.ctx,
+                            &prefix,
+                            instruction.head(),
+                            instruction.operands(),
+                        )
+                        .get_operation()
+                    })
+            }
+            StatementKind::CallableHeader => {
+                self.document
+                    .callable_for_statement(statement)
+                    .map(|callable| {
+                        let kind = match callable.kind() {
+                            CallableKind::Entry => CallableKindAttr::Entry,
+                            CallableKind::Function => CallableKindAttr::Function,
+                        };
+                        PtxCallableOp::build_declaration(
+                            self.ctx,
+                            callable.name(),
+                            kind,
+                            callable.is_extern(),
+                            trim_header(statement_node.text(self.document.source())),
+                        )
+                        .get_operation()
+                    })
+            }
             StatementKind::Label if projected_labels => return,
             StatementKind::Label | StatementKind::Preprocessor | StatementKind::Unknown => None,
         }
@@ -750,10 +745,19 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
             source_span,
             destination,
         );
+        self.source_aliases.extend(
+            directive_labels
+                .into_iter()
+                .map(|label| (SourceNode::Label { label: label.id() }, operation)),
+        );
     }
 
     fn project_labels(&mut self, statement: StatementId, destination: Ptr<BasicBlock>) -> bool {
-        let labels = self.labels.get(&statement).cloned().unwrap_or_default();
+        let labels: Vec<_> = self
+            .document
+            .labels_for_statement(statement)
+            .cloned()
+            .collect();
         for label in &labels {
             let operation = PtxLabelOp::build(self.ctx, label.name()).get_operation();
             self.record_operation(
@@ -875,6 +879,29 @@ L0:
         let callable = Operation::get_op::<PtxCallableOp>(operation, &ctx).unwrap();
         assert!(!callable.is_definition(&ctx));
         assert!(callable.is_external(&ctx));
+    }
+
+    #[test]
+    fn keeps_labeled_directives_structural_and_on_one_statement() {
+        let source = ".version 9.3\n.entry kernel() { targets: .branchtargets L0; L0: ret; }\n";
+        let document = Document::parse(source).unwrap();
+        let table = document
+            .directives()
+            .iter()
+            .find(|directive| directive.name() == ".branchtargets")
+            .unwrap();
+        let label = document
+            .labels_for_statement(table.statement())
+            .next()
+            .unwrap()
+            .id();
+        let mut ctx = Context::new();
+        crate::register(&mut ctx);
+        let projection = Projection::from_document(&mut ctx, document);
+        let operation = projection.operation_for_label(label).unwrap();
+        assert!(Operation::get_op::<PtxDirectiveOp>(operation, &ctx).is_some());
+        let emitted = crate::emit_canonical_module(&ctx, &projection.module()).unwrap();
+        assert!(emitted.contains("targets: .branchtargets L0;"));
     }
 
     #[test]

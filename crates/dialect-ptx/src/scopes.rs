@@ -11,7 +11,9 @@
 //! This prevents neighboring tokens from fusing and preserves line structure.
 
 use crate::registers::{RegisterAlphaError, RegisterAlphaPlan};
-use ptx_syntax::{Document, EditError, EditScript, ScopeId, StatementId, StatementKind};
+use ptx_syntax::{
+    AppliedEdits, Document, EditError, EditScript, ScopeId, StatementId, StatementKind,
+};
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Range;
@@ -42,19 +44,19 @@ impl ScopeFlattenPlan {
             }
             callable_by_scope.insert(scope_id, callable.statement());
         }
-        let directives = document
-            .directives()
-            .iter()
-            .map(|directive| (directive.statement(), directive))
-            .collect::<HashMap<_, _>>();
-        let mut statements_by_scope = vec![Vec::new(); document.scopes().len()];
-        for statement in document.statements() {
-            statements_by_scope[statement.scope().index()].push(statement);
+        let mut owner_by_scope = vec![None; document.scopes().len()];
+        for scope in document.scopes().iter().skip(1) {
+            owner_by_scope[scope.id().index()] =
+                callable_by_scope.get(&scope.id()).copied().or_else(|| {
+                    scope
+                        .parent()
+                        .and_then(|parent| owner_by_scope[parent.index()])
+                });
         }
 
         let mut scopes = Vec::new();
         for scope in document.scopes().iter().skip(1) {
-            let Some(callable) = owning_callable(document, &callable_by_scope, scope.id()) else {
+            let Some(callable) = owner_by_scope[scope.id().index()] else {
                 continue;
             };
             if callable_by_scope.contains_key(&scope.id()) {
@@ -79,15 +81,19 @@ impl ScopeFlattenPlan {
                     scope: scope.id(),
                 });
             };
-            for statement in &statements_by_scope[scope.id().index()] {
+            for statement in document.statements_in_scope(scope.id()) {
                 match statement.kind() {
                     StatementKind::Instruction | StatementKind::Label => {}
                     StatementKind::Directive => {
-                        let name = directives
-                            .get(&statement.id())
+                        let name = document
+                            .directive_for_statement(statement.id())
                             .map(|directive| directive.name())
                             .unwrap_or("");
-                        if name != ".reg" {
+                        if !matches!(
+                            directive_scope_effect(name),
+                            DirectiveScopeEffect::RegisterBinding
+                                | DirectiveScopeEffect::ScopeNeutral
+                        ) {
                             return Err(ScopeFlattenError::UnsupportedDirective {
                                 callable,
                                 scope: scope.id(),
@@ -141,6 +147,32 @@ impl ScopeFlattenPlan {
 
     pub fn apply(&self, source: &str) -> Result<String, EditError> {
         self.edit_script()?.apply(source)
+    }
+
+    pub fn apply_with_map(&self, source: &str) -> Result<AppliedEdits, EditError> {
+        self.edit_script()?.apply_with_map(source)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirectiveScopeEffect {
+    RegisterBinding,
+    ScopeNeutral,
+    ScopeSensitive,
+    Unknown,
+}
+
+fn directive_scope_effect(name: &str) -> DirectiveScopeEffect {
+    match name {
+        ".reg" => DirectiveScopeEffect::RegisterBinding,
+        // These directives affect source/debug or optimization state at their
+        // lexical position; flattening leaves that position unchanged.
+        ".loc" | ".pragma" => DirectiveScopeEffect::ScopeNeutral,
+        // Declarations and indexed-dispatch tables have lexical ownership.
+        ".branchtargets" | ".const" | ".global" | ".local" | ".param" | ".shared" => {
+            DirectiveScopeEffect::ScopeSensitive
+        }
+        _ => DirectiveScopeEffect::Unknown,
     }
 }
 
@@ -247,19 +279,6 @@ impl fmt::Display for ScopeFlattenError {
 
 impl std::error::Error for ScopeFlattenError {}
 
-fn owning_callable(
-    document: &Document<'_>,
-    callable_by_scope: &HashMap<ScopeId, StatementId>,
-    mut scope: ScopeId,
-) -> Option<StatementId> {
-    loop {
-        if let Some(callable) = callable_by_scope.get(&scope) {
-            return Some(*callable);
-        }
-        scope = document.scope(scope)?.parent()?;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,20 +320,33 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_register_directives_in_nested_scopes() {
+    fn preserves_explicitly_scope_neutral_directives() {
         let source = "\
 .version 9.3
 .entry kernel() {
     {
         .pragma \"nounroll\";
+        .loc 1 2 3;
         ret;
     }
 }
 ";
         let document = Document::parse(source).unwrap();
+        let rewritten = ScopeFlattenPlan::analyze(&document)
+            .unwrap()
+            .apply(source)
+            .unwrap();
+        assert!(rewritten.contains(".pragma \"nounroll\";"));
+        assert!(rewritten.contains(".loc 1 2 3;"));
+    }
+
+    #[test]
+    fn rejects_unknown_directives_in_nested_scopes() {
+        let source = ".version 9.3\n.entry kernel() { { .future_scope x; ret; } }";
+        let document = Document::parse(source).unwrap();
         assert!(matches!(
             ScopeFlattenPlan::analyze(&document),
-            Err(ScopeFlattenError::UnsupportedDirective { name, .. }) if name == ".pragma"
+            Err(ScopeFlattenError::UnsupportedDirective { name, .. }) if name == ".future_scope"
         ));
     }
 

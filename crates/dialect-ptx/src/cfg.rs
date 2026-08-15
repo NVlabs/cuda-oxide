@@ -102,6 +102,7 @@ pub struct BasicBlock {
     labels: Vec<LabelId>,
     instructions: Vec<StatementId>,
     scope_segments: Vec<ScopeSegment>,
+    indexed_targets: Vec<BlockId>,
     successors: Vec<Edge>,
     predecessors: Vec<Edge>,
     exit: Option<ExitKind>,
@@ -131,6 +132,14 @@ impl BasicBlock {
 
     pub fn successors(&self) -> &[Edge] {
         &self.successors
+    }
+
+    /// Ordered `brx.idx` table slots, including duplicate destinations.
+    ///
+    /// [`Self::successors`] remains the deduplicated graph adjacency relation;
+    /// this sequence is the authoritative indexed-dispatch relation.
+    pub fn indexed_targets(&self) -> &[BlockId] {
+        &self.indexed_targets
     }
 
     pub fn predecessors(&self) -> &[Edge] {
@@ -406,29 +415,17 @@ fn analyze_callable(
     body_start: usize,
     body_end: usize,
 ) -> Result<CallableControlFlow, CfgError> {
-    let instruction_indices: Vec<usize> = document
-        .instructions()
-        .iter()
-        .enumerate()
-        .filter_map(|(index, instruction)| {
-            let span = instruction.span();
-            (span.start >= body_start && span.end <= body_end).then_some(index)
-        })
-        .collect();
-    if instruction_indices.is_empty() {
+    let instructions: Vec<_> = document.instructions_in(body_start..body_end).collect();
+    if instructions.is_empty() {
         return Err(CfgError::EmptyCallable {
             callable: callable_name.to_string(),
         });
     }
 
-    let positions: HashMap<usize, usize> = instruction_indices
+    let instruction_by_statement: HashMap<StatementId, usize> = instructions
         .iter()
         .enumerate()
-        .map(|(position, instruction)| (*instruction, position))
-        .collect();
-    let instruction_by_statement: HashMap<StatementId, usize> = instruction_indices
-        .iter()
-        .map(|index| (document.instructions()[*index].statement(), *index))
+        .map(|(index, instruction)| (instruction.statement(), index))
         .collect();
     #[derive(Clone, Copy)]
     struct LabelBinding {
@@ -437,10 +434,7 @@ fn analyze_callable(
     }
 
     let mut labels = BTreeMap::<String, LabelBinding>::new();
-    for label in document.labels().iter().filter(|label| {
-        let span = label.span();
-        span.start >= body_start && span.end <= body_end
-    }) {
+    for label in document.labels_in(body_start..body_end) {
         if document
             .statement(label.statement())
             .is_some_and(|statement| statement.kind() == StatementKind::Directive)
@@ -448,9 +442,10 @@ fn analyze_callable(
             continue;
         }
         let label_span = label.span();
-        let Some(instruction) = instruction_indices.iter().copied().find(|instruction| {
-            document.instructions()[*instruction].span().end > label_span.start
-        }) else {
+        let Some(instruction) = instructions
+            .iter()
+            .position(|instruction| instruction.span().end > label_span.start)
+        else {
             continue;
         };
         let binding = LabelBinding {
@@ -471,10 +466,10 @@ fn analyze_callable(
     }
 
     let mut branch_tables = BTreeMap::<String, BranchTable>::new();
-    for directive in document.directives().iter().filter(|directive| {
-        let span = directive.span();
-        span.start >= body_start && span.end <= body_end && directive.name() == ".branchtargets"
-    }) {
+    for directive in document
+        .directives_in(body_start..body_end)
+        .filter(|directive| directive.name() == ".branchtargets")
+    {
         let Some(table) = directive.labels().last() else {
             continue;
         };
@@ -514,12 +509,10 @@ fn analyze_callable(
 
     let mut leaders = BTreeSet::from([0usize]);
     for binding in labels.values() {
-        leaders.insert(positions[&binding.instruction]);
+        leaders.insert(binding.instruction);
     }
-    for (position, instruction) in instruction_indices.iter().copied().enumerate() {
-        if terminator_kind(&document.instructions()[instruction]).is_some()
-            && position + 1 < instruction_indices.len()
-        {
+    for (position, instruction) in instructions.iter().enumerate() {
+        if terminator_kind(instruction).is_some() && position + 1 < instructions.len() {
             leaders.insert(position + 1);
         }
     }
@@ -532,10 +525,10 @@ fn analyze_callable(
             let end = leaders
                 .get(ordinal + 1)
                 .copied()
-                .unwrap_or(instruction_indices.len());
-            let instructions = instruction_indices[start..end]
+                .unwrap_or(instructions.len());
+            let instructions = instructions[start..end]
                 .iter()
-                .map(|index| document.instructions()[*index].statement())
+                .map(|instruction| instruction.statement())
                 .collect::<Vec<_>>();
             let scope_segments = recover_scope_segments(document, &instructions);
             BasicBlock {
@@ -543,26 +536,22 @@ fn analyze_callable(
                 labels: Vec::new(),
                 instructions,
                 scope_segments,
+                indexed_targets: Vec::new(),
                 successors: Vec::new(),
                 predecessors: Vec::new(),
                 exit: None,
             }
         })
         .collect();
-    let block_for_position: Vec<usize> = (0..instruction_indices.len())
+    let block_for_position: Vec<usize> = (0..instructions.len())
         .map(|position| leaders.partition_point(|leader| *leader <= position) - 1)
         .collect();
     let label_blocks: BTreeMap<&str, usize> = labels
         .iter()
-        .map(|(label, binding)| {
-            (
-                label.as_str(),
-                block_for_position[positions[&binding.instruction]],
-            )
-        })
+        .map(|(label, binding)| (label.as_str(), block_for_position[binding.instruction]))
         .collect();
     for binding in labels.values() {
-        let block = block_for_position[positions[&binding.instruction]];
+        let block = block_for_position[binding.instruction];
         blocks[block].labels.push(binding.label);
     }
     for block in &mut blocks {
@@ -581,7 +570,7 @@ fn analyze_callable(
             .last()
             .expect("CFG blocks are non-empty");
         let instruction_index = instruction_by_statement[&instruction_statement];
-        let instruction = &document.instructions()[instruction_index];
+        let instruction = instructions[instruction_index];
         let mut successors = BTreeSet::new();
         match terminator_kind(instruction) {
             Some(TerminatorKind::Branch) => {
@@ -650,6 +639,9 @@ fn analyze_callable(
                         block: BlockId(target_block),
                         kind: EdgeKind::IndexedBranch,
                     });
+                    blocks[block_index]
+                        .indexed_targets
+                        .push(BlockId(target_block));
                 }
                 if instruction.predicate().is_some() {
                     add_fallthrough(
@@ -848,7 +840,7 @@ L1:
 .version 9.0
 .target sm_120a
 .visible .entry kernel() {
-targets: .branchtargets L0, L1;
+targets: .branchtargets L1, L0, L1;
     @%p0 brx.idx %r0, targets;
     bra Done;
 L0:
@@ -880,6 +872,10 @@ Done:
                     kind: EdgeKind::IndexedBranch,
                 },
             ]
+        );
+        assert_eq!(
+            blocks[0].indexed_targets(),
+            [BlockId(3), BlockId(2), BlockId(3)]
         );
     }
 

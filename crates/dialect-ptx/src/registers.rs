@@ -39,27 +39,22 @@ impl RegisterAlphaPlan {
                 ))
             })
             .collect::<Vec<_>>();
-        let callable_by_scope = document
-            .scopes()
-            .iter()
-            .filter_map(|scope| {
-                let mut current = Some(scope.id());
-                while let Some(candidate) = current {
-                    if let Some((index, _)) = callable_scopes
-                        .iter()
-                        .enumerate()
-                        .find(|(_, (_, callable_scope, _))| *callable_scope == candidate)
-                    {
-                        return Some((scope.id(), index));
-                    }
-                    current = document.scope(candidate).and_then(|scope| scope.parent());
-                }
-                None
-            })
-            .collect::<HashMap<_, _>>();
+        let mut callable_roots = vec![None; document.scopes().len()];
+        for (index, (_, scope, _)) in callable_scopes.iter().enumerate() {
+            callable_roots[scope.index()] = Some(index);
+        }
+        let mut callable_by_scope = vec![None; document.scopes().len()];
+        for scope in document.scopes().iter().skip(1) {
+            callable_by_scope[scope.id().index()] =
+                callable_roots[scope.id().index()].or_else(|| {
+                    scope
+                        .parent()
+                        .and_then(|parent| callable_by_scope[parent.index()])
+                });
+        }
         let mut declarations_by_callable = vec![Vec::new(); callable_scopes.len()];
         for declaration in parsed_declarations {
-            if let Some(callable) = callable_by_scope.get(&declaration.scope()).copied() {
+            if let Some(callable) = callable_by_scope[declaration.scope().index()] {
                 declarations_by_callable[callable].push(declaration);
             }
         }

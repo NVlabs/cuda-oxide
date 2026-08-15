@@ -21,7 +21,7 @@ pub mod registers;
 pub mod scopes;
 
 pub use builder::{PtxBodyBuilder, PtxBuilder};
-pub use emitter::{EmitError, emit_module, write_module};
+pub use emitter::{EmitError, emit_canonical_module, write_canonical_module};
 pub use projection::{
     ProjectedBlock, ProjectedCallableControlFlow, ProjectedCfgBlock, ProjectedCfgScopeSegment,
     ProjectedControlFlow, ProjectedNode, Projection, SourceNode,
