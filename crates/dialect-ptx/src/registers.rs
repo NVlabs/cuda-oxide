@@ -87,6 +87,12 @@ impl RegisterAlphaPlan {
 
     pub fn edit_script(&self) -> Result<EditScript, EditError> {
         let mut edits = EditScript::new();
+        self.add_edits(&mut edits)?;
+        Ok(edits)
+    }
+
+    /// Append this plan's source-preserving renames to a larger transaction.
+    pub fn add_edits(&self, edits: &mut EditScript) -> Result<(), EditError> {
         for callable in &self.callables {
             for rename in &callable.renames {
                 edits.replace(rename.declaration_span(), rename.new_name())?;
@@ -95,7 +101,7 @@ impl RegisterAlphaPlan {
                 }
             }
         }
-        Ok(edits)
+        Ok(())
     }
 
     pub fn apply(&self, source: &str) -> Result<String, EditError> {
