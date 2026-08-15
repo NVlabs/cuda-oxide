@@ -256,6 +256,19 @@ impl<'source> Document<'source> {
         &self.callables
     }
 
+    /// Return every callable whose symbol exactly matches `name`.
+    ///
+    /// PTX may contain both a declaration and a definition for a symbol, so
+    /// this deliberately exposes an iterator instead of choosing one match.
+    pub fn callables_named<'document>(
+        &'document self,
+        name: &'document str,
+    ) -> impl Iterator<Item = &'document Callable<'source>> + 'document {
+        self.callables
+            .iter()
+            .filter(move |callable| callable.name() == name)
+    }
+
     pub fn instructions(&self) -> &[Instruction<'source>] {
         &self.instructions
     }
@@ -367,6 +380,30 @@ impl<'source> Callable<'source> {
 
     pub fn is_extern(&self) -> bool {
         self.is_extern
+    }
+
+    /// Original source covering the complete declaration or definition when
+    /// its extent was recovered, otherwise the structural header.
+    pub fn text(&self) -> &'source str {
+        &self.source[self.span.clone()]
+    }
+
+    /// Original source inside a definition's outer braces.
+    pub fn body_text(&self) -> Option<&'source str> {
+        self.body_span
+            .as_ref()
+            .map(|span| &self.source[span.clone()])
+    }
+
+    /// Original source preceding a definition's opening brace.
+    ///
+    /// This includes parameter lists and callable directives such as
+    /// `.maxntid`. Declarations and incomplete definitions return `None`.
+    pub fn definition_header_text(&self) -> Option<&'source str> {
+        self.body_span.as_ref().map(|body| {
+            debug_assert_eq!(self.source.as_bytes()[body.start - 1], b'{');
+            &self.source[self.span.start..body.start - 1]
+        })
     }
 }
 
@@ -992,6 +1029,37 @@ mod tests {
     fn retains_quoted_directive_arguments() {
         let document = Document::parse(".file 1 \"kernel.cu\"\n").unwrap();
         assert_eq!(document.directives()[0].arguments(), "1 \"kernel.cu\"");
+    }
+
+    #[test]
+    fn queries_callable_source_without_reconstructing_syntax() {
+        let source = "\
+.extern .func helper();
+.visible .entry kernel(
+    .param .u64 output
+)
+.maxntid 128, 1, 1
+{
+    ret;
+}
+.extern .func helper();
+";
+        let document = Document::parse(source).unwrap();
+        let helpers = document.callables_named("helper").collect::<Vec<_>>();
+        assert_eq!(helpers.len(), 2);
+
+        let kernel = document.callables_named("kernel").next().unwrap();
+        assert_eq!(
+            kernel.definition_header_text().unwrap(),
+            ".visible .entry kernel(\n    .param .u64 output\n)\n.maxntid 128, 1, 1\n"
+        );
+        assert_eq!(kernel.body_text().unwrap(), "\n    ret;\n");
+        assert_eq!(
+            kernel.text(),
+            ".visible .entry kernel(\n    .param .u64 output\n)\n.maxntid 128, 1, 1\n{\n    ret;\n}"
+        );
+        assert!(helpers[0].definition_header_text().is_none());
+        assert!(helpers[0].body_text().is_none());
     }
 
     #[test]
