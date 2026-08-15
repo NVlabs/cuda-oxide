@@ -99,6 +99,16 @@ pub struct Callable<'source> {
     is_extern: bool,
 }
 
+/// A closed callable definition bound to its parsed document.
+///
+/// Binding the two prevents body-scoped queries from accepting a callable
+/// projected from another document.
+#[derive(Clone, Copy, Debug)]
+pub struct CallableDefinition<'document, 'source> {
+    document: &'document Document<'source>,
+    callable: &'document Callable<'source>,
+}
+
 /// One semicolon-terminated PTX instruction.
 ///
 /// The source text is not normalized. Predicates and same-line labels are
@@ -260,17 +270,53 @@ impl<'source> Document<'source> {
     ///
     /// PTX may contain both a declaration and a definition for a symbol, so
     /// this deliberately exposes an iterator instead of choosing one match.
-    pub fn callables_named<'document>(
+    pub fn callables_named<'document: 'query, 'query>(
         &'document self,
-        name: &'document str,
-    ) -> impl Iterator<Item = &'document Callable<'source>> + 'document {
+        name: &'query str,
+    ) -> impl Iterator<Item = &'document Callable<'source>> + 'query {
         self.callables
             .iter()
             .filter(move |callable| callable.name() == name)
     }
 
+    /// Return every closed callable definition in source order.
+    pub fn definitions(&self) -> impl Iterator<Item = CallableDefinition<'_, 'source>> {
+        self.callables
+            .iter()
+            .filter(|callable| callable.body_span.is_some())
+            .map(|callable| CallableDefinition {
+                document: self,
+                callable,
+            })
+    }
+
+    pub fn definitions_named<'document: 'query, 'query>(
+        &'document self,
+        name: &'query str,
+    ) -> impl Iterator<Item = CallableDefinition<'document, 'source>> + 'query {
+        self.definitions()
+            .filter(move |definition| definition.callable.name() == name)
+    }
+
     pub fn instructions(&self) -> &[Instruction<'source>] {
         &self.instructions
+    }
+
+    /// Return instructions fully contained by `span` in source order.
+    ///
+    /// Instructions are source-ordered, so the query finds its first possible
+    /// result with a binary search and visits only the overlapping window.
+    pub fn instructions_in(
+        &self,
+        span: Range<usize>,
+    ) -> impl Iterator<Item = &Instruction<'source>> {
+        let start = self
+            .instructions
+            .partition_point(|instruction| instruction.span.start < span.start);
+        self.instructions[start..]
+            .iter()
+            .take_while(move |instruction| instruction.span.start < span.end)
+            .filter(move |instruction| instruction.span.end <= span.end)
     }
 }
 
@@ -407,6 +453,42 @@ impl<'source> Callable<'source> {
     }
 }
 
+impl<'document, 'source> CallableDefinition<'document, 'source> {
+    pub fn callable(self) -> &'document Callable<'source> {
+        self.callable
+    }
+
+    pub fn scope(self) -> ScopeId {
+        self.callable
+            .definition_scope()
+            .expect("CallableDefinition always has a scope")
+    }
+
+    pub fn text(self) -> &'source str {
+        self.callable.text()
+    }
+
+    pub fn header_text(self) -> &'source str {
+        self.callable
+            .definition_header_text()
+            .expect("CallableDefinition always has a closed body")
+    }
+
+    pub fn body_text(self) -> &'source str {
+        self.callable
+            .body_text()
+            .expect("CallableDefinition always has a closed body")
+    }
+
+    pub fn instructions(self) -> impl Iterator<Item = &'document Instruction<'source>> + 'document {
+        self.document.instructions_in(
+            self.callable
+                .body_span()
+                .expect("CallableDefinition always has a closed body"),
+        )
+    }
+}
+
 impl<'source> Instruction<'source> {
     pub fn statement(&self) -> StatementId {
         self.statement
@@ -450,6 +532,13 @@ impl<'source> Instruction<'source> {
     /// Exact opcode and ordered modifier spelling.
     pub fn head(&self) -> &'source str {
         &self.source[self.head_span.clone()]
+    }
+
+    /// Instruction opcode without ordered modifier suffixes.
+    pub fn base_opcode(&self) -> &'source str {
+        self.head()
+            .split_once('.')
+            .map_or(self.head(), |(base, _)| base)
     }
 
     /// Top-level operands in source order.
@@ -1060,6 +1149,46 @@ mod tests {
         );
         assert!(helpers[0].definition_header_text().is_none());
         assert!(helpers[0].body_text().is_none());
+
+        let definition = document.definitions_named("kernel").next().unwrap();
+        assert_eq!(definition.callable(), kernel);
+        assert_eq!(definition.scope(), kernel.definition_scope().unwrap());
+        assert_eq!(definition.text(), kernel.text());
+        assert_eq!(
+            definition.header_text(),
+            kernel.definition_header_text().unwrap()
+        );
+        assert_eq!(definition.body_text(), kernel.body_text().unwrap());
+        assert_eq!(
+            definition
+                .instructions()
+                .map(Instruction::base_opcode)
+                .collect::<Vec<_>>(),
+            ["ret"]
+        );
+        assert_eq!(document.definitions_named("helper").count(), 0);
+        assert_eq!(document.definitions().count(), 1);
+    }
+
+    #[test]
+    fn restricts_instruction_queries_to_source_ranges() {
+        let source = ".visible .entry first() { mov.u32 %r1, 1; ret; }\n\
+.visible .entry second() { @!%p1 bra.uni done; done: exit; }\n";
+        let document = Document::parse(source).unwrap();
+        let second = document.callables_named("second").next().unwrap();
+        let instructions = document
+            .instructions_in(second.body_span().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            instructions
+                .iter()
+                .map(|instruction| instruction.head())
+                .collect::<Vec<_>>(),
+            ["bra.uni", "exit"]
+        );
+        assert_eq!(instructions[0].base_opcode(), "bra");
+        assert_eq!(instructions[1].base_opcode(), "exit");
+        assert!(document.instructions_in(10..10).next().is_none());
     }
 
     #[test]
