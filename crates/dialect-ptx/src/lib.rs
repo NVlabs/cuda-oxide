@@ -16,6 +16,7 @@ pub mod cfg;
 pub mod emitter;
 pub mod ops;
 mod projection;
+pub mod registers;
 
 pub use builder::{PtxBodyBuilder, PtxBuilder};
 pub use emitter::{EmitError, emit_module, write_module};
