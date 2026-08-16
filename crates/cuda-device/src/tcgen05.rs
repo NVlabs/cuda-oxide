@@ -581,13 +581,12 @@ impl Tcgen05InstructionDescriptor {
         b_type: Tcgen05F8ElementType,
         accumulator_type: Tcgen05AccumulatorType,
     ) -> Self {
-        let mut raw = 0u32;
-        raw |= (accumulator_type as u32) << 4;
-        raw |= (a_type as u32) << 7;
-        raw |= (b_type as u32) << 10;
-        raw |= ((shape.n >> 3) & 0x3f) << 17;
-        raw |= ((shape.m >> 4) & 0x1f) << 24;
-        Self { raw }
+        Self::builder()
+            .shape(shape)
+            .a_type_f8(a_type)
+            .b_type_f8(b_type)
+            .accumulator_type(accumulator_type)
+            .build()
     }
 
     /// Create descriptor from raw 32-bit value.
@@ -613,10 +612,12 @@ pub struct Tcgen05InstructionDescriptorBuilder {
     sparse: bool,
     // Bits 4-5: dtype
     dtype: Tcgen05AccumulatorType,
-    // Bits 7-9: atype (and btype, typically same)
-    atype: Tcgen05ElementType,
-    // Bits 10-12: btype
-    btype: Tcgen05ElementType,
+    // Bits 7-9: atype format code. The 3-bit code is stored raw because its
+    // meaning depends on the MMA kind: `Tcgen05ElementType` for f16-family
+    // kinds, `Tcgen05F8ElementType` for `.kind::f8f6f4`.
+    atype: u32,
+    // Bits 10-12: btype format code (same domain rules as atype)
+    btype: u32,
     // Bit 13: negate A
     negate_a: bool,
     // Bit 14: negate B
@@ -647,8 +648,8 @@ impl Tcgen05InstructionDescriptorBuilder {
         Self {
             sparse: false,
             dtype: Tcgen05AccumulatorType::F32,
-            atype: Tcgen05ElementType::F16,
-            btype: Tcgen05ElementType::F16,
+            atype: Tcgen05ElementType::F16 as u32,
+            btype: Tcgen05ElementType::F16 as u32,
             negate_a: false,
             negate_b: false,
             transpose_a: false,
@@ -692,22 +693,47 @@ impl Tcgen05InstructionDescriptorBuilder {
     /// Set the element type for both A and B matrices.
     #[inline(always)]
     pub const fn element_type(mut self, ty: Tcgen05ElementType) -> Self {
-        self.atype = ty;
-        self.btype = ty;
+        self.atype = ty as u32;
+        self.btype = ty as u32;
         self
     }
 
     /// Set element type for matrix A only.
     #[inline(always)]
     pub const fn a_type(mut self, ty: Tcgen05ElementType) -> Self {
-        self.atype = ty;
+        self.atype = ty as u32;
         self
     }
 
     /// Set element type for matrix B only.
     #[inline(always)]
     pub const fn b_type(mut self, ty: Tcgen05ElementType) -> Self {
-        self.btype = ty;
+        self.btype = ty as u32;
+        self
+    }
+
+    /// Set the FP8 element type for both A and B matrices.
+    ///
+    /// Only meaningful for `.kind::f8f6f4` MMA; the format code shares the
+    /// atype/btype fields with [`Tcgen05ElementType`].
+    #[inline(always)]
+    pub const fn element_type_f8(mut self, ty: Tcgen05F8ElementType) -> Self {
+        self.atype = ty as u32;
+        self.btype = ty as u32;
+        self
+    }
+
+    /// Set FP8 element type for matrix A only (`.kind::f8f6f4` MMA).
+    #[inline(always)]
+    pub const fn a_type_f8(mut self, ty: Tcgen05F8ElementType) -> Self {
+        self.atype = ty as u32;
+        self
+    }
+
+    /// Set FP8 element type for matrix B only (`.kind::f8f6f4` MMA).
+    #[inline(always)]
+    pub const fn b_type_f8(mut self, ty: Tcgen05F8ElementType) -> Self {
+        self.btype = ty as u32;
         self
     }
 
@@ -790,10 +816,10 @@ impl Tcgen05InstructionDescriptorBuilder {
         // Bit 6: Reserved (0)
 
         // Bits 7-9: atype (3 bits)
-        raw |= (self.atype as u32) << 7;
+        raw |= (self.atype & 0x7) << 7;
 
         // Bits 10-12: btype (3 bits)
-        raw |= (self.btype as u32) << 10;
+        raw |= (self.btype & 0x7) << 10;
 
         // Bit 13: Negate A
         if self.negate_a {
@@ -1464,6 +1490,15 @@ mod tests {
             Tcgen05AccumulatorType::F32,
         );
         assert_eq!(descriptor.raw(), 0x0820_0010);
+
+        // new_f8 delegates to the builder; the F8 setters must land on the
+        // same encoding.
+        let via_builder = Tcgen05InstructionDescriptor::builder()
+            .shape(Tcgen05MmaShape::M128_N128)
+            .element_type_f8(Tcgen05F8ElementType::E4M3)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build();
+        assert_eq!(via_builder.raw(), descriptor.raw());
     }
 
     #[test]
