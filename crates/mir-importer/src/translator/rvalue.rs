@@ -6572,13 +6572,13 @@ fn struct_layout_matches_llvm_natural(
             continue;
         }
         let offset = field_offsets[decl_idx];
-        if offset % align != 0 || offset < end {
+        if !offset.is_multiple_of(align) || offset < end {
             return false;
         }
         end = offset + size;
         max_align = max_align.max(align);
     }
-    total_size >= end && total_size % max_align == 0
+    total_size >= end && total_size.is_multiple_of(max_align)
 }
 
 /// Natural size and alignment of the LLVM storage a dialect type converts to,
