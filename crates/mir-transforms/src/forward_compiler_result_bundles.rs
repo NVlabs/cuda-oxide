@@ -173,8 +173,8 @@ fn analyze_marked_bundle(ctx: &Context, outer: Ptr<Operation>) -> Option<Forward
             continue;
         }
         if operand_index != 0
-            || (!Operation::get_op::<MirFieldAddrOp>(user, ctx).is_some()
-                && !Operation::get_op::<MirArrayElementAddrOp>(user, ctx).is_some())
+            || (Operation::get_op::<MirFieldAddrOp>(user, ctx).is_none()
+                && Operation::get_op::<MirArrayElementAddrOp>(user, ctx).is_none())
         {
             return None;
         }
