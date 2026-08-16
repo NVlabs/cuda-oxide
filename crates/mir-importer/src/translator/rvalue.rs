@@ -10228,7 +10228,94 @@ fn interior_array_to_slice_unsize_info(
         .map(|remaining_len| (slice_elem, remaining_len)))
 }
 
-/// Read the slice length from a fat-pointer constant's metadata word.
+/// Validate the relocation shape of one slice fat pointer stored inside an
+/// allocation.
+///
+/// A slice occupies two pointer-width words. Exactly one relocation must back
+/// the data word at `fat_ptr_offset`; the metadata word is a literal `usize`
+/// and therefore must not overlap another relocation. Sibling relocations that
+/// end exactly at the field start or begin exactly at the field end are fine.
+///
+/// Returns `(metadata_offset, fat_pointer_end)` on success. Generic over the
+/// provenance payload so the boundary rules are unit testable without a rustc
+/// session.
+fn validate_slice_relocation_shape<P>(
+    ptrs: &[(usize, P)],
+    fat_ptr_offset: usize,
+    pointer_width: usize,
+) -> Result<(usize, usize), String> {
+    if pointer_width == 0 {
+        return Err("slice fat pointer has zero-width target pointers".to_string());
+    }
+
+    let metadata_offset = fat_ptr_offset
+        .checked_add(pointer_width)
+        .ok_or_else(|| "slice fat-pointer data-word end overflowed".to_string())?;
+    let fat_pointer_end = metadata_offset
+        .checked_add(pointer_width)
+        .ok_or_else(|| "slice fat-pointer metadata-word end overflowed".to_string())?;
+
+    let anchored = ptrs
+        .iter()
+        .filter(|(offset, _)| *offset == fat_ptr_offset)
+        .count();
+    if anchored != 1 {
+        return Err(format!(
+            "Slice fat pointer at byte {fat_ptr_offset} has {anchored} provenance entries at its \
+             data-word start; expected exactly one"
+        ));
+    }
+
+    let overlapping =
+        relocation_offsets_overlapping_range(ptrs, fat_ptr_offset, fat_pointer_end, pointer_width);
+    if let Some(other_offset) = overlapping
+        .into_iter()
+        .find(|offset| *offset != fat_ptr_offset)
+    {
+        return Err(format!(
+            "Slice fat pointer at byte {fat_ptr_offset} has an additional relocation at byte \
+             {other_offset}; the metadata word must remain literal usize bytes"
+        ));
+    }
+
+    Ok((metadata_offset, fat_pointer_end))
+}
+
+/// Read the slice length from a fat-pointer image stored at an arbitrary
+/// allocation offset.
+fn slice_len_from_alloc_at(
+    alloc: &rustc_public::ty::Allocation,
+    fat_ptr_offset: usize,
+    loc: Location,
+) -> TranslationResult<u64> {
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    let (metadata_offset, fat_pointer_end) =
+        validate_slice_relocation_shape(&alloc.provenance.ptrs, fat_ptr_offset, pointer_width)
+            .map_err(|message| input_error!(loc.clone(), TranslationErr::unsupported(message)))?;
+
+    if fat_pointer_end > alloc.bytes.len() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Slice fat pointer at byte {fat_ptr_offset} needs bytes through \
+                 {fat_pointer_end}, but the allocation is only {} bytes",
+                alloc.bytes.len()
+            ))
+        );
+    }
+
+    alloc
+        .read_partial_uint(metadata_offset..fat_pointer_end)
+        .map(|len| len as u64)
+        .map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "Failed to read slice length metadata at byte {metadata_offset}: {error:?}"
+            )))
+        })
+}
+
+/// Read the slice length from a standalone fat-pointer constant's metadata
+/// word.
 ///
 /// A `&[T]` / `*const [T]` constant is a two-word image: the data word (which
 /// carries the provenance to the static, read by `static_target_from_constant`)
@@ -10246,35 +10333,23 @@ fn slice_len_from_constant(constant: &mir::ConstOperand, loc: Location) -> Trans
     };
 
     let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
-    let Some(&(provenance_offset, _)) = alloc.provenance.ptrs.first() else {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(
-                "static slice unsize constant has no provenance for its data pointer".to_string()
-            )
-        );
-    };
-    if provenance_offset != 0 || alloc.bytes.len() != 2 * pointer_width {
+    let expected_size = pointer_width.checked_mul(2).ok_or_else(|| {
+        input_error_noloc!(TranslationErr::unsupported(
+            "static slice unsize constant pointer width overflowed".to_string()
+        ))
+    })?;
+    if alloc.bytes.len() != expected_size {
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
-                "static slice unsize constant has an unexpected fat-pointer image \
-                 (provenance at byte {}, {} bytes total; expected the data word at 0 \
-                 followed by one usize length word)",
-                provenance_offset,
+                "static slice unsize constant has {} bytes; expected exactly two \
+                 pointer-width words ({expected_size} bytes)",
                 alloc.bytes.len()
             ))
         );
     }
 
-    let len = alloc
-        .read_partial_uint(pointer_width..2 * pointer_width)
-        .map_err(|e| {
-            input_error_noloc!(TranslationErr::unsupported(format!(
-                "Failed to read static slice unsize length metadata: {e:?}"
-            )))
-        })? as u64;
-    Ok(len)
+    slice_len_from_alloc_at(alloc, 0, loc)
 }
 
 /// Materialize a region of a device static as a fat `&[T]` / `*const [T]`.
@@ -10430,8 +10505,8 @@ fn match_thin_pointer_relocation<P: Copy>(
         ));
     }
 
-    // A fat pointer spans two pointer-sized words; reject any additional
-    // provenance that lands inside this thin field's byte range.
+    // A thin pointer occupies one pointer-sized word; reject any additional
+    // provenance that lands inside this field's byte range.
     if let Some(&(interior_pos, _)) = ptrs
         .iter()
         .find(|(pos, _)| *pos > pointer_offset && *pos < field_end)
@@ -10649,6 +10724,95 @@ fn translate_thin_pointer_at_alloc_offset(
     Ok((cast_op.deref(ctx).get_result(0), Some(cast_op)))
 }
 
+/// Materialize a slice fat-pointer field from an aggregate constant allocation.
+///
+/// The data word keeps rustc provenance and may carry a non-zero byte addend
+/// into a device static. The metadata word is decoded independently as the
+/// stored slice length. This deliberately supports only same-element
+/// array-to-slice views over Rust statics, matching the standalone constant
+/// path; anonymous promoted allocations and other DST metadata remain
+/// fail-closed.
+#[allow(clippy::too_many_arguments)]
+fn translate_slice_at_alloc_offset(
+    ctx: &mut Context,
+    alloc: &rustc_public::ty::Allocation,
+    fat_ptr_offset: usize,
+    rust_ty: &rustc_public::ty::Ty,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let Some((pointee_ty, is_mutable)) = get_static_pointer_info(rust_ty) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Aggregate slice constant at byte {fat_ptr_offset} has unexpected Rust type \
+                 {rust_ty:?}; expected a reference or raw pointer to a slice"
+            ))
+        );
+    };
+
+    let len = slice_len_from_alloc_at(alloc, fat_ptr_offset, loc.clone())?;
+    let Some(static_target) = static_target_from_allocation_at(alloc, fat_ptr_offset)? else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Aggregate slice constant at byte {fat_ptr_offset} points at an anonymous or \
+                 unsupported allocation; slice provenance currently requires a Rust device static"
+            ))
+        );
+    };
+
+    let static_ty = static_target.static_def.ty();
+    let slice_region = if static_target.byte_offset == 0 {
+        array_to_slice_unsize_info(&static_ty, &pointee_ty, loc.clone())?
+    } else {
+        interior_array_to_slice_unsize_info(
+            &static_ty,
+            &pointee_ty,
+            static_target.byte_offset,
+            loc.clone(),
+        )?
+    };
+
+    let Some((elem_ty, available_len)) = slice_region else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Aggregate slice constant at byte {fat_ptr_offset} points into device static {} \
+                 at byte addend {}, but its pointee type {pointee_ty:?} is not a supported \
+                 same-element array-to-slice view of static type {static_ty:?}",
+                static_target.static_def.name(),
+                static_target.byte_offset
+            ))
+        );
+    };
+
+    if len > available_len {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Aggregate slice constant at byte {fat_ptr_offset} stores length {len}, which \
+                 exceeds the selected region's remaining length {available_len} in device \
+                 static {}",
+                static_target.static_def.name()
+            ))
+        );
+    }
+
+    translate_static_array_as_slice(
+        ctx,
+        &static_target.static_def,
+        elem_ty,
+        len,
+        is_mutable,
+        static_target.byte_offset,
+        block_ptr,
+        prev_op,
+        loc,
+    )
+}
+
 /// Slice `size` bytes from `alloc` at `offset`, treating uninit as zero.
 fn alloc_slice_bytes_zeroing_uninit(
     alloc: &rustc_public::ty::Allocation,
@@ -10770,8 +10934,9 @@ fn constant_field_byte_size(
 }
 
 /// Decode one typed value from an allocation at an absolute byte offset,
-/// resolving thin-pointer relocations to device statics via
-/// [`translate_thin_pointer_at_alloc_offset`].
+/// preserving supported pointer provenance. Thin pointer fields resolve through
+/// [`translate_thin_pointer_at_alloc_offset`]; slice fields pair the relocated
+/// data word with their literal length metadata.
 fn translate_constant_value_from_alloc(
     ctx: &mut Context,
     alloc: &rustc_public::ty::Allocation,
@@ -10800,14 +10965,30 @@ fn translate_constant_value_from_alloc(
     let is_slice = ty_ptr.deref(ctx).is::<dialect_mir::types::MirSliceType>();
     if is_slice {
         let size = rust_type_layout_size(*rust_ty, loc.clone())?;
-        if alloc_has_provenance_in_range(alloc, absolute_byte_offset, size) {
-            return input_err!(
+        let field_end = absolute_byte_offset.checked_add(size).ok_or_else(|| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "Slice field at byte {absolute_byte_offset} with size {size} overflowed"
+                ))
+            )
+        })?;
+        let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+        let overlaps = relocation_offsets_overlapping_range(
+            &alloc.provenance.ptrs,
+            absolute_byte_offset,
+            field_end,
+            pointer_width,
+        );
+        if !overlaps.is_empty() {
+            return translate_slice_at_alloc_offset(
+                ctx,
+                alloc,
+                absolute_byte_offset,
+                rust_ty,
+                block_ptr,
+                prev_op,
                 loc,
-                TranslationErr::unsupported(
-                    "Aggregate constant contains a fat pointer (slice) with provenance; \
-                     only thin pointers to device statics are supported in aggregate constants"
-                        .to_string()
-                )
             );
         }
         let bytes = alloc_slice_bytes_zeroing_uninit(
@@ -10902,8 +11083,8 @@ fn translate_constant_value_from_alloc(
             loc,
             TranslationErr::unsupported(format!(
                 "Constant field of type {rust_ty:?} at byte offset {absolute_byte_offset} \
-                 overlaps a pointer relocation; only thin pointer fields can carry \
-                 provenance in aggregate constants"
+                 overlaps a pointer relocation; only supported pointer or slice fields can \
+                 carry provenance in aggregate constants"
             ))
         );
     }
@@ -12242,6 +12423,7 @@ mod aggregate_relocation_tests {
         constant_type_contains_pointer, decode_relocation_addend, find_unconsumed_relocation,
         match_thin_pointer_relocation, provenance_starts_in_range,
         relocation_offsets_overlapping_range, validate_array_value_element_type,
+        validate_slice_relocation_shape,
     };
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
@@ -12269,6 +12451,57 @@ mod aggregate_relocation_tests {
         assert!(
             relocation_offsets_overlapping_range(&ptrs, 16, 24, 8).is_empty(),
             "touching a range boundary is not an overlap"
+        );
+    }
+
+    #[test]
+    fn aggregate_slice_relocation_accepts_nonzero_field_offset_with_siblings() {
+        let ptrs = [(0usize, ()), (8, ()), (24, ())];
+        assert_eq!(
+            validate_slice_relocation_shape(&ptrs, 8, 8),
+            Ok((16, 24)),
+            "sibling relocations outside the fat-pointer bytes must not interfere"
+        );
+    }
+
+    #[test]
+    fn aggregate_slice_relocation_rejects_metadata_provenance() {
+        let ptrs = [(8usize, ()), (16, ())];
+        let error = validate_slice_relocation_shape(&ptrs, 8, 8)
+            .expect_err("the metadata word must remain literal usize bytes");
+        assert!(
+            error.contains("additional relocation at byte 16"),
+            "diagnostic must identify metadata provenance: {error}"
+        );
+    }
+
+    #[test]
+    fn aggregate_slice_relocation_requires_data_word_provenance_at_field_start() {
+        let ptrs = [(12usize, ())];
+        let error = validate_slice_relocation_shape(&ptrs, 8, 8)
+            .expect_err("interior provenance cannot stand in for the slice data word");
+        assert!(
+            error.contains("0 provenance entries at its data-word start"),
+            "diagnostic must require an anchored data relocation: {error}"
+        );
+
+        let duplicate = [(8usize, 1u8), (8, 2u8)];
+        let error = validate_slice_relocation_shape(&duplicate, 8, 8)
+            .expect_err("two data-word provenance entries are ambiguous");
+        assert!(
+            error.contains("2 provenance entries at its data-word start"),
+            "diagnostic must count duplicate anchored relocations: {error}"
+        );
+    }
+
+    #[test]
+    fn aggregate_slice_relocation_rejects_left_crossing_pointer_storage() {
+        let ptrs = [(4usize, ()), (8, ())];
+        let error = validate_slice_relocation_shape(&ptrs, 8, 8)
+            .expect_err("a relocation from the preceding bytes must not overlap the slice");
+        assert!(
+            error.contains("additional relocation at byte 4"),
+            "diagnostic must identify the crossing relocation: {error}"
         );
     }
 
