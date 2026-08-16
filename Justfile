@@ -145,9 +145,9 @@ doc-check:
 # `clippy` and `doc-check` already build cuda-bindings, so this recipe needs a
 # CUDA toolkit either way. Machines without even a toolkit get `test`. A driver
 # is no longer required: `test-cuda` shadows the toolkit's libcuda stub itself.
-# `check-guards` covers the status-guard and cargo-deny workflows in full, and
-# `check-intrinsics` the generated-intrinsics job; see their comments for
-# prerequisites. Still CI-only: clippy's per-example pass (one run per example
+# `check-guards` covers the status-guard, naming-guard and cargo-deny workflows
+# in full, and `check-intrinsics` the generated-intrinsics job; see their
+# comments for prerequisites. Still CI-only: clippy's per-example pass (one run per example
 # workspace), examples-compile (needs the CUDA codegen backend), and CodeQL. The
 # book gate has a local mirror too, but `just book` stays out of `check` as the
 # one gate needing a Python virtualenv.
@@ -219,7 +219,7 @@ check-errors:
 # (`cargo install cargo-deny --locked`) and `python3` (most of the scripts drive
 # it). The scripts are invoked via `bash` as CI does, since not all of them
 # carry an exec bit.
-# Run the status-guard and cargo-deny CI jobs (needs cargo-deny, python3)
+# Run the status-guard, naming-guard and cargo-deny CI jobs (needs cargo-deny, python3)
 check-guards:
     bash scripts/check-error-example-status.sh
     bash scripts/check-example-smoketest-contract.sh
