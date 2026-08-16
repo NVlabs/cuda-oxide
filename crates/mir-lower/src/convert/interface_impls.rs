@@ -40,8 +40,9 @@ use dialect_nvvm::ops::{
     AssertFailOp, CvtaGenericToSharedOffsetOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicFenceOp,
     NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, ReadPtxSregClusterIdxOp,
     ReadPtxSregNclusterIdOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
-    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op,
+    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -1096,6 +1097,23 @@ impl MirToLlvmConversion for WgmmaMmaLoopValuesM64N64K16F32Bf16Op {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::wgmma::convert_mma_loop_values(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wgmma::convert_mma_loop_pipeline_values(
             ctx,
             rewriter,
             self.get_operation(),

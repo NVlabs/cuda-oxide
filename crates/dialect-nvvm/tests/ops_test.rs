@@ -38,8 +38,8 @@ use dialect_nvvm::ops::{
     ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
     VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMaxPendingAttr,
     WgmmaMmaGroupM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32Bf16Op,
-    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
+    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
 
 #[test]
@@ -92,6 +92,7 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("wgmma.rs", "WgmmaMmaGroupM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaGroupValuesM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaLoopValuesM64N64K16F32Bf16Op"),
+        ("wgmma.rs", "WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaPipelineValuesM64N64K16F32Bf16Op"),
     ];
     expected.sort_unstable();
@@ -4720,6 +4721,100 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     );
     assert!(
         WgmmaMmaLoopValuesM64N64K16F32Bf16Op::new(wrong_loop_result_type)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let counted_pipeline_group = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 64],
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+    );
+    {
+        let counted_pipeline_ref = counted_pipeline_group.deref(&ctx);
+        assert_eq!(counted_pipeline_ref.get_num_operands(), 73);
+        assert_eq!(counted_pipeline_ref.get_num_results(), 64);
+    }
+    assert!(
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(counted_pipeline_group)
+            .verify(&ctx)
+            .is_ok()
+    );
+
+    let too_few_counted_pipeline_accumulators = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 63],
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+        u64_value,
+    );
+    assert!(
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(too_few_counted_pipeline_accumulators)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let mut wrong_counted_pipeline_control_operands = vec![f32_value; 64];
+    wrong_counted_pipeline_control_operands.extend([
+        u64_value, u64_value, u64_value, u64_value, u64_value, u64_value, u32_value, u64_value,
+        u64_value,
+    ]);
+    let wrong_counted_pipeline_control = Operation::new(
+        &mut ctx,
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 64],
+        wrong_counted_pipeline_control_operands,
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(wrong_counted_pipeline_control)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let mut valid_counted_pipeline_operands = vec![f32_value; 64];
+    valid_counted_pipeline_operands.extend([u64_value; 9]);
+    let wrong_counted_pipeline_result_count = Operation::new(
+        &mut ctx,
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 63],
+        valid_counted_pipeline_operands.clone(),
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(wrong_counted_pipeline_result_count)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let mut wrong_counted_pipeline_result_types = vec![f32_ty.into(); 64];
+    wrong_counted_pipeline_result_types[0] = u32_ty.into();
+    let wrong_counted_pipeline_result_type = Operation::new(
+        &mut ctx,
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::get_concrete_op_info(),
+        wrong_counted_pipeline_result_types,
+        valid_counted_pipeline_operands,
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(wrong_counted_pipeline_result_type)
             .verify(&ctx)
             .is_err()
     );
