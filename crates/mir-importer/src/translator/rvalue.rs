@@ -6441,6 +6441,12 @@ pub(crate) fn emit_promoted_immutable_global(
 /// path. A payload-carrying enum stays out because reading one back still
 /// round-trips the payload through memory: the address walker resolves enum
 /// payload fields for writes, not for reads.
+///
+/// A struct whose recorded rustc layout the natural (non-packed) LLVM struct
+/// cannot honor, canonically `repr(C, packed)`, is also refused: the promoted
+/// global's bytes are rustc's packed image, but the destination local is
+/// storage of the diverged LLVM type, so the copy would land fields at the
+/// wrong bytes. See [`struct_layout_matches_llvm_natural`].
 fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
     use dialect_mir::types::{MirArrayType, MirEnumType, MirStructType, MirTupleType};
 
@@ -6461,7 +6467,10 @@ fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
     }
     if let Some(structure) = obj.downcast_ref::<MirStructType>() {
         let fields = structure.field_types().to_vec();
-        let has_zero_byte_over_alignment = structure.total_size == 0 && structure.abi_align > 1;
+        let field_offsets = structure.field_offsets().to_vec();
+        let mem_to_decl = structure.mem_to_decl.clone();
+        let total_size = structure.total_size;
+        let has_zero_byte_over_alignment = total_size == 0 && structure.abi_align > 1;
         drop(obj);
 
         // A zero-byte `repr(align(N))` struct can raise the alignment of an
@@ -6469,6 +6478,22 @@ fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
         // that established alignment-sensitive path out of immutable-global
         // promotion; ordinary stored structs still recurse through their fields.
         if has_zero_byte_over_alignment {
+            return false;
+        }
+
+        // A `repr(packed)` struct records field offsets the non-packed LLVM
+        // struct the lowering builds cannot reproduce: explicit `[N x i8]`
+        // padding slots can only push a field later, never below its natural
+        // alignment. Copying rustc's packed byte image over storage of that
+        // diverged type would put every later field at the wrong bytes, so
+        // such structs stay on the element-wise fallback.
+        if !struct_layout_matches_llvm_natural(
+            ctx,
+            &fields,
+            &field_offsets,
+            &mem_to_decl,
+            total_size,
+        ) {
             return false;
         }
 
@@ -6489,6 +6514,146 @@ fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
         || obj.is::<MirFP16Type>()
         || obj.is::<FP32Type>()
         || obj.is::<FP64Type>()
+}
+
+/// Whether rustc's recorded struct layout is one the lowering's non-packed
+/// LLVM struct actually reproduces at the byte level.
+///
+/// The lowering places fields at their recorded offsets by inserting explicit
+/// `[N x i8]` padding slots, which can only ADD bytes: a field can never land
+/// below its natural LLVM alignment, and LLVM still rounds the struct's size
+/// up to its natural alignment. So the built type agrees with rustc's byte
+/// image exactly when every stored field's offset is naturally aligned and
+/// non-overlapping in memory order, and `total_size` is a multiple of the
+/// struct's natural alignment. `repr(packed)` breaks the former (a `u32` at
+/// offset 1) and usually the latter (a 5-byte total), and either divergence
+/// makes a byte-image copy land fields at the wrong bytes.
+///
+/// A struct with no recorded layout (`field_offsets` empty or `total_size`
+/// zero) answers `true`: the lowering builds no padded layout to diverge
+/// from, and the promotion path's stored-size agreement check already fails
+/// closed on the unknown size. Any field whose natural size or alignment
+/// cannot be established answers `false`: no verdict means no promotion.
+fn struct_layout_matches_llvm_natural(
+    ctx: &Context,
+    field_types: &[TypeHandle],
+    field_offsets: &[u64],
+    mem_to_decl: &[usize],
+    total_size: u64,
+) -> bool {
+    if field_offsets.is_empty() || total_size == 0 {
+        return true;
+    }
+    if field_offsets.len() != field_types.len() {
+        return false;
+    }
+    // Empty `mem_to_decl` means identity (declaration order = memory order).
+    let identity: Vec<usize>;
+    let memory_order: &[usize] = if mem_to_decl.is_empty() {
+        identity = (0..field_types.len()).collect();
+        &identity
+    } else {
+        mem_to_decl
+    };
+
+    let mut end: u64 = 0;
+    let mut max_align: u64 = 1;
+    for &decl_idx in memory_order {
+        if decl_idx >= field_types.len() {
+            return false;
+        }
+        let Some((size, align)) = llvm_natural_size_align(ctx, field_types[decl_idx]) else {
+            return false;
+        };
+        // Zero-sized fields are stripped from the LLVM struct: no slot, no
+        // bytes, no alignment contribution (over-aligned ZSTs are refused
+        // before this walk runs).
+        if size == 0 {
+            continue;
+        }
+        let offset = field_offsets[decl_idx];
+        if offset % align != 0 || offset < end {
+            return false;
+        }
+        end = offset + size;
+        max_align = max_align.max(align);
+    }
+    total_size >= end && total_size % max_align == 0
+}
+
+/// Natural size and alignment of the LLVM storage a dialect type converts to,
+/// or `None` when the walk cannot establish them.
+///
+/// "Natural" means what LLVM's datalayout assigns the converted type with no
+/// packing: leaves are their own width and self-aligned, arrays inherit their
+/// element's alignment, and aggregates align to their most-aligned stored
+/// field because the padding slots between fields are `[N x i8]` with
+/// alignment one. Aggregates answer with rustc's `total_size` for their size;
+/// that matches the built LLVM type only when their own layout is natural,
+/// which [`struct_layout_matches_llvm_natural`] establishes recursively (via
+/// [`promotable_array_element`]) before the answer is trusted. A field-less
+/// enum stores only its discriminant, so it aligns as that integer does.
+fn llvm_natural_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64, u64)> {
+    use dialect_mir::types::{MirArrayType, MirEnumType, MirStructType, MirTupleType};
+
+    let obj = ty.deref(ctx);
+    if let Some(array) = obj.downcast_ref::<MirArrayType>() {
+        let element_ty = array.element_type();
+        let count = array.size();
+        drop(obj);
+        let (element_size, element_align) = llvm_natural_size_align(ctx, element_ty)?;
+        return Some((element_size.checked_mul(count)?, element_align));
+    }
+    if let Some(tuple) = obj.downcast_ref::<MirTupleType>() {
+        let fields = tuple.get_types().to_vec();
+        let total_size = tuple.total_size();
+        drop(obj);
+        let align = aggregate_natural_align(ctx, &fields)?;
+        return Some((total_size, align));
+    }
+    if let Some(structure) = obj.downcast_ref::<MirStructType>() {
+        let fields = structure.field_types().to_vec();
+        let total_size = structure.total_size;
+        drop(obj);
+        let align = aggregate_natural_align(ctx, &fields)?;
+        return Some((total_size, align));
+    }
+    if let Some(enumeration) = obj.downcast_ref::<MirEnumType>() {
+        let discriminant_ty = enumeration.discriminant_ty;
+        let total_size = enumeration.total_size();
+        drop(obj);
+        let (_, align) = llvm_natural_size_align(ctx, discriminant_ty)?;
+        return Some((total_size, align));
+    }
+    let size = if let Some(integer) = obj.downcast_ref::<IntegerType>() {
+        // `bool` arrives as `i1` and occupies a byte.
+        u64::from(integer.width().div_ceil(8)).max(1)
+    } else if obj.is::<MirFP16Type>() {
+        2
+    } else if obj.is::<FP32Type>() {
+        4
+    } else if obj.is::<FP64Type>() {
+        8
+    } else {
+        return None;
+    };
+    // Every scalar Rust hands this path is self-aligned at a power-of-two
+    // width; anything else has no natural alignment to report.
+    size.is_power_of_two().then_some((size, size))
+}
+
+/// Natural alignment of the LLVM struct built for an aggregate's fields:
+/// the maximum over the stored (non-zero-sized) fields, one when nothing is
+/// stored. `None` when some field's alignment cannot be established.
+fn aggregate_natural_align(ctx: &Context, fields: &[TypeHandle]) -> Option<u64> {
+    let mut align: u64 = 1;
+    for &field in fields {
+        let (field_size, field_align) = llvm_natural_size_align(ctx, field)?;
+        if field_size > 0 {
+            align = align.max(field_align);
+        }
+    }
+    Some(align)
 }
 
 /// Bytes a dialect type occupies, as the converted LLVM storage will lay it out,
@@ -12118,12 +12283,13 @@ mod pointer_array_constant_type_tests {
 
 #[cfg(test)]
 mod promotable_array_element_tests {
-    use super::promotable_array_element;
+    use super::{promotable_array_element, validate_array_value_element_type};
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
     };
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::context::Context;
+    use pliron::location::Location;
     use pliron::r#type::TypeHandle;
 
     /// A field-less enum with a recorded layout, as rustc gives a `#[repr(u32)]`
@@ -12293,6 +12459,71 @@ mod promotable_array_element_tests {
         assert!(
             !promotable_array_element(&ctx, payload_struct_array),
             "a payload-enum leaf must keep its containing struct out of promotion"
+        );
+    }
+
+    #[test]
+    fn a_packed_struct_is_not_promoted_but_keeps_its_fallback() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        // `#[repr(C, packed)] struct Packed { tag: u8, value: u32 }`: rustc
+        // records `value` at offset 1 and a 5-byte total. The non-packed LLVM
+        // struct the lowering builds cannot place an `i32` below offset 4, so
+        // the recorded byte image and the converted type disagree.
+        let packed_struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let packed_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, packed_struct_ty, 4).into();
+        assert!(
+            !promotable_array_element(&ctx, packed_struct_array),
+            "a packed struct's byte image diverges from its LLVM storage, so \
+             promotion must fail closed"
+        );
+        let empty_packed_array: TypeHandle =
+            MirArrayType::get(&mut ctx, packed_struct_ty, 0).into();
+        assert!(
+            promotable_array_element(&ctx, empty_packed_array),
+            "a zero-length array of packed structs has no bytes to diverge"
+        );
+
+        // The element-wise fallback decodes fields at rustc's recorded
+        // offsets, so it stays available to the shapes promotion refuses.
+        assert!(
+            validate_array_value_element_type(&ctx, packed_struct_ty, &Location::Unknown).is_ok(),
+            "the bare-array fallback must still admit the packed struct"
+        );
+
+        // The same fields with rustc's natural layout recorded stay promoted:
+        // the gate keys on divergence, not on layout presence.
+        let natural_struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Natural".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![],
+            vec![0, 4],
+            8,
+            4,
+        )
+        .into();
+        let natural_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, natural_struct_ty, 4).into();
+        assert!(
+            promotable_array_element(&ctx, natural_struct_array),
+            "a naturally laid out struct with full recorded layout stays promotable"
         );
     }
 
