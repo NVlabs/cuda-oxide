@@ -56,7 +56,13 @@ jobs:
           sphinx-build -W --keep-going -b html
           cuda-oxide-book cuda-oxide-book/_build/html
 
-      - uses: actions/upload-pages-artifact@v3
+      # Only `deploy` consumes this, and `deploy` is skipped on pull requests,
+      # so uploading it there produces an artifact nothing can ever read. A PR's
+      # job is to prove `sphinx-build -W` succeeds, which the step above already
+      # did; gate the upload on the same condition `deploy` uses so the two
+      # cannot drift apart.
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v3
         with:
           path: cuda-oxide-book/_build/html
 
