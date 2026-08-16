@@ -47,9 +47,15 @@ guessing an active field: initialized bytes are preserved, uninitialized
 inactive bytes remain `undef`, and the byte image is transmuted into the
 layout-exact union type. This includes direct unions, unions nested in tuple or
 struct constants, runtime-indexed `[U; N]`, and `MaybeUninit<T>` constants.
-Bare arrays whose elements are structs are materialized element-wise
-through the same layout-aware struct decoders; promoting such tables to
-one immutable device global is a tracked follow-up.
+Bare arrays whose elements are recursively promotable structs use the same
+immutable-device-global path as scalar and tuple tables, avoiding a per-thread
+local table copy for read-only uses. Pointer-to-array constants such as
+`const R: &[Struct; N] = &TABLE` use the same promoted global when every struct
+field is recursively promotable and the converted storage size matches rustc's
+layout. Zero-byte over-aligned struct leaves (for example, `repr(align(N))` ZSTs)
+remain on the existing alignment-sensitive value path instead of this promotion
+path. Arrays of packed structs whose element stride diverges from LLVM's natural
+layout remain unsupported as described above.
 Thin pointer fields in array, tuple, and struct **const** values that relocate
 to device statics are materialized via `MirGlobalAllocOp` per field, including
 non-zero byte addends into a static (see `struct_constant_provenance`,

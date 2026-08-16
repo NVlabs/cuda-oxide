@@ -6421,13 +6421,13 @@ pub(crate) fn emit_promoted_immutable_global(
 /// bare-array value admission: an unpromotable bare value can fall back to
 /// element-wise materialization, while a pointer-to-array constant cannot.
 ///
-/// Admits primitive scalars, enums carrying no payload, tuples whose every field
-/// is itself admissible, and nested arrays of any of those. `ty` is the array
-/// type, and nesting is walked so an unsupported leaf cannot hide inside it. A
-/// zero-length array passes for any element type: its
-/// initializer is empty and nothing can ever be read through it, which is what
-/// admits a promoted empty-slice constant such as `&[]` (rustc promotes it to
-/// `&[T; 0]`) regardless of `T`.
+/// Admits primitive scalars, enums carrying no payload, tuples and structs whose
+/// every field is itself admissible, and nested arrays of any of those. `ty` is
+/// the array type, and nesting is walked so an unsupported leaf cannot hide
+/// inside it. A zero-length array passes for any element type: its initializer
+/// is empty and nothing can ever be read through it, which is what admits a
+/// promoted empty-slice constant such as `&[]` (rustc promotes it to `&[T; 0]`)
+/// regardless of `T`.
 ///
 /// Tuples are admitted when every field is itself promotable. That only became
 /// worth doing once a tuple field read stopped going through a copy of the whole
@@ -6436,14 +6436,13 @@ pub(crate) fn emit_promoted_immutable_global(
 /// read addressed in place, the promotion is what removes the depot — the two
 /// only pay off together.
 ///
-/// Structs remain outside immutable-global promotion in this change. Bare
-/// struct arrays have an element-wise fallback, but widening this predicate
-/// would also widen the pointer-to-array form, which is a separate change. A
-/// payload-carrying enum stays out because reading one back still round-trips
-/// the payload through memory: the address walker resolves enum payload fields
-/// for writes, not for reads.
+/// Structs are admitted recursively, so a struct containing a pointer, union,
+/// payload-carrying enum, or any other unsupported leaf remains outside this
+/// path. A payload-carrying enum stays out because reading one back still
+/// round-trips the payload through memory: the address walker resolves enum
+/// payload fields for writes, not for reads.
 fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
-    use dialect_mir::types::{MirArrayType, MirEnumType, MirTupleType};
+    use dialect_mir::types::{MirArrayType, MirEnumType, MirStructType, MirTupleType};
 
     let obj = ty.deref(ctx);
     if let Some(array) = obj.downcast_ref::<MirArrayType>() {
@@ -6456,6 +6455,23 @@ fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
     if let Some(tuple) = obj.downcast_ref::<MirTupleType>() {
         let fields = tuple.get_types().to_vec();
         drop(obj);
+        return fields
+            .into_iter()
+            .all(|field| promotable_array_element(ctx, field));
+    }
+    if let Some(structure) = obj.downcast_ref::<MirStructType>() {
+        let fields = structure.field_types().to_vec();
+        let has_zero_byte_over_alignment = structure.total_size == 0 && structure.abi_align > 1;
+        drop(obj);
+
+        // A zero-byte `repr(align(N))` struct can raise the alignment of an
+        // enclosing tuple without contributing storage to its LLVM shape. Keep
+        // that established alignment-sensitive path out of immutable-global
+        // promotion; ordinary stored structs still recurse through their fields.
+        if has_zero_byte_over_alignment {
+            return false;
+        }
+
         return fields
             .into_iter()
             .all(|field| promotable_array_element(ctx, field));
@@ -6627,7 +6643,7 @@ pub(crate) fn translate_array_constant_into_alloca(
     }
     // Elements whose whole-element read is a single scalar-like load, or whose
     // fields are each addressed in place: primitive scalars, field-less enums,
-    // tuples of those, and nested arrays of any of them.
+    // recursively promotable tuples and structs, and nested arrays of those.
     if !promotable_array_element(ctx, value_ty) {
         return Ok(None);
     }
@@ -6702,7 +6718,7 @@ pub(crate) fn translate_array_constant_into_alloca(
 /// used by the bare array value path's immutable-global optimization. A bare
 /// array that fails this gate can still fall back to element-wise materialization;
 /// a pointer-to-array constant has no such fallback, so failure here is an input
-/// error. Structs therefore remain outside this reference form in this change.
+/// error. Structs pass only when every field is recursively promotable.
 fn validate_ptr_to_array_constant_type(
     ctx: &Context,
     ty: TypeHandle,
@@ -6715,7 +6731,7 @@ fn validate_ptr_to_array_constant_type(
     input_err!(
         loc,
         TranslationErr::unsupported(format!(
-            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalars (integers, f16, f32, f64), field-less enums, tuples of those, or nested arrays of those.",
+            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalars (integers, f16, f32, f64), field-less enums, tuples and structs recursively composed of supported fields, or nested arrays of those.",
             ty.deref(ctx)
         ))
     )
@@ -11933,14 +11949,16 @@ mod tuple_constant_byte_image_tests {
 #[cfg(test)]
 mod pointer_array_constant_type_tests {
     use super::validate_ptr_to_array_constant_type;
-    use dialect_mir::types::{EnumVariant, MirArrayType, MirEnumType, MirStructType, MirTupleType};
+    use dialect_mir::types::{
+        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
+    };
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::context::Context;
     use pliron::location::Location;
     use pliron::r#type::TypeHandle;
 
     #[test]
-    fn pointer_array_constant_boundary_keeps_structs_out_and_promotable_tuples_in() {
+    fn pointer_array_constant_boundary_admits_recursive_promotable_aggregates() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -11963,26 +11981,22 @@ mod pointer_array_constant_type_tests {
         .into();
         let struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 2).into();
         assert!(
-            validate_ptr_to_array_constant_type(&ctx, struct_array, Location::Unknown).is_err(),
-            "pointer-to-array constants must not gain struct element support"
+            validate_ptr_to_array_constant_type(&ctx, struct_array, Location::Unknown).is_ok(),
+            "pointer-to-array constants admit structs whose fields are promotable"
         );
 
         let nested_struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_array, 2).into();
         assert!(
             validate_ptr_to_array_constant_type(&ctx, nested_struct_array, Location::Unknown)
-                .is_err(),
-            "nesting must not hide an unsupported struct leaf"
+                .is_ok(),
+            "nesting preserves a promotable struct leaf"
         );
 
-        // Widening the shared predicate to tuples deliberately widens this form
-        // too: `promotable_array_element` still gates both the value form's
-        // promotion and this reference form, and only bare-value *admission*
-        // is wider now (a struct table falls back to element-wise
-        // materialization, which this form does not have). Nothing here
-        // enumerates fields -- the initializer is rustc's evaluated byte image
-        // and the size-agreement check rejects any layout the dialect
-        // reproduces differently -- so a tuple element travels this path
-        // the same way a scalar does.
+        // The shared predicate gates both bare-value promotion and this
+        // reference form. The initializer is rustc's evaluated byte image and
+        // the size-agreement check rejects any layout the dialect reproduces
+        // differently, so recursive tuples and structs travel this path without
+        // rebuilding fields here.
         let tuple_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![u32_ty]).into();
         let tuple_array: TypeHandle = MirArrayType::get(&mut ctx, tuple_ty, 2).into();
         assert!(
@@ -11990,15 +12004,33 @@ mod pointer_array_constant_type_tests {
             "const R: &[(u32,); N] = &TABLE must pass the same gate the bare table passes"
         );
 
-        // ... and a tuple is only as admissible as its fields, on this path too.
+        // A tuple containing a promotable struct is recursively admissible too.
         let tuple_with_struct_ty: TypeHandle =
             MirTupleType::get(&mut ctx, vec![u32_ty, struct_ty]).into();
         let tuple_with_struct_array: TypeHandle =
             MirArrayType::get(&mut ctx, tuple_with_struct_ty, 2).into();
         assert!(
             validate_ptr_to_array_constant_type(&ctx, tuple_with_struct_array, Location::Unknown)
+                .is_ok(),
+            "a promotable struct field keeps its tuple in the reference form"
+        );
+
+        // A struct is only as promotable as its fields. Pointer-bearing
+        // initializers need relocation/provenance support and must stay out.
+        let pointer_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let pointer_struct_ty: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "PointerBearingElement".into(),
+            vec!["pointer".into()],
+            vec![pointer_ty],
+        )
+        .into();
+        let pointer_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, pointer_struct_ty, 2).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, pointer_struct_array, Location::Unknown)
                 .is_err(),
-            "a struct field must keep its tuple out of the reference form as well"
+            "pointer-bearing structs must remain outside immutable-global promotion"
         );
     }
 
@@ -12087,7 +12119,9 @@ mod pointer_array_constant_type_tests {
 #[cfg(test)]
 mod promotable_array_element_tests {
     use super::promotable_array_element;
-    use dialect_mir::types::{EnumVariant, MirArrayType, MirEnumType, MirStructType, MirTupleType};
+    use dialect_mir::types::{
+        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
+    };
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::context::Context;
     use pliron::r#type::TypeHandle;
@@ -12128,7 +12162,7 @@ mod promotable_array_element_tests {
     }
 
     #[test]
-    fn promotion_admits_scalars_fieldless_enums_and_promotable_tuples() {
+    fn promotion_admits_recursive_promotable_aggregates() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -12157,10 +12191,8 @@ mod promotable_array_element_tests {
             "nested field-less enum arrays stay promotable"
         );
 
-        // Everything below is rejected for cost, not for correctness: reading one
-        // field of these elements out of a local array still copies the whole
-        // array, so a promoted global would be dead weight beside an unchanged
-        // depot.
+        // Payload-carrying enums still use a value path that round-trips their
+        // payload through memory, so they remain outside immutable-global promotion.
         let maybe_ty = payload_enum(&mut ctx, u32_ty);
         let maybe_array: TypeHandle = MirArrayType::get(&mut ctx, maybe_ty, 4).into();
         assert!(
@@ -12190,25 +12222,77 @@ mod promotable_array_element_tests {
         .into();
         let struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 4).into();
         assert!(
-            !promotable_array_element(&ctx, struct_array),
-            "struct elements remain outside immutable-global promotion in this change"
+            promotable_array_element(&ctx, struct_array),
+            "a struct of promotable fields is promotable"
         );
 
-        // A tuple is only as promotable as its fields: a struct field keeps the
-        // whole element out, at any depth.
+        // Recursive aggregates remain promotable when every leaf is promotable.
         let tuple_with_struct: TypeHandle =
             MirTupleType::get(&mut ctx, vec![u32_ty, struct_ty]).into();
         let tuple_with_struct_array: TypeHandle =
             MirArrayType::get(&mut ctx, tuple_with_struct, 4).into();
         assert!(
-            !promotable_array_element(&ctx, tuple_with_struct_array),
-            "a struct field must keep its tuple out"
+            promotable_array_element(&ctx, tuple_with_struct_array),
+            "a promotable struct field keeps its tuple promotable"
         );
-        let nested_excluded: TypeHandle =
+        let nested_struct_arrays: TypeHandle =
             MirArrayType::get(&mut ctx, tuple_with_struct_array, 2).into();
         assert!(
-            !promotable_array_element(&ctx, nested_excluded),
-            "nesting must not hide an excluded leaf"
+            promotable_array_element(&ctx, nested_struct_arrays),
+            "nesting preserves recursive promotability"
+        );
+
+        // A zero-byte over-aligned struct carries an ABI constraint that is not
+        // visible in the lowered storage shape. Preserve the established
+        // alignment-sensitive value path for aggregates containing such a leaf.
+        let over_aligned_zst_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "OverAlignedZst".into(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            0,
+            32,
+        )
+        .into();
+        let tuple_with_over_aligned_zst: TypeHandle =
+            MirTupleType::get(&mut ctx, vec![over_aligned_zst_ty, u32_ty]).into();
+        let over_aligned_zst_array: TypeHandle =
+            MirArrayType::get(&mut ctx, tuple_with_over_aligned_zst, 2).into();
+        assert!(
+            !promotable_array_element(&ctx, over_aligned_zst_array),
+            "a zero-byte over-aligned struct must keep its containing aggregate on the alignment-sensitive path"
+        );
+
+        // Unsupported leaves still poison the whole recursive aggregate.
+        let pointer_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let pointer_struct_ty: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "PointerBearingElement".into(),
+            vec!["pointer".into()],
+            vec![pointer_ty],
+        )
+        .into();
+        let pointer_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, pointer_struct_ty, 4).into();
+        assert!(
+            !promotable_array_element(&ctx, pointer_struct_array),
+            "a pointer leaf must keep its containing struct out of promotion"
+        );
+
+        let struct_with_payload_enum: TypeHandle = MirStructType::get(
+            &mut ctx,
+            "PayloadEnumElement".into(),
+            vec!["value".into()],
+            vec![maybe_ty],
+        )
+        .into();
+        let payload_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, struct_with_payload_enum, 4).into();
+        assert!(
+            !promotable_array_element(&ctx, payload_struct_array),
+            "a payload-enum leaf must keep its containing struct out of promotion"
         );
     }
 
