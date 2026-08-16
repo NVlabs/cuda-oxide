@@ -126,8 +126,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let got_u32 = rmw_u32.cast_elem::<u32>().to_host_vec(&stream)?[0];
     let got_u64 = rmw_u64.cast_elem::<u64>().to_host_vec(&stream)?[0];
     let old_values = old_values.to_host_vec(&stream)?;
-    let mut old_u32 = old_values.iter().map(|&(value, _)| value).collect::<Vec<_>>();
-    let mut old_u64 = old_values.iter().map(|&(_, value)| value).collect::<Vec<_>>();
+    let mut old_u32 = old_values
+        .iter()
+        .map(|&(value, _)| value)
+        .collect::<Vec<_>>();
+    let mut old_u64 = old_values
+        .iter()
+        .map(|&(_, value)| value)
+        .collect::<Vec<_>>();
     old_u32.sort_unstable();
     old_u64.sort_unstable();
 
@@ -150,10 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
-    let cas_u32 =
-        DeviceBuffer::from_host(&stream, &[7_u32])?.cast_elem::<DeviceAtomicU32>();
-    let cas_u64 =
-        DeviceBuffer::from_host(&stream, &[7_u64])?.cast_elem::<DeviceAtomicU64>();
+    let cas_u32 = DeviceBuffer::from_host(&stream, &[7_u32])?.cast_elem::<DeviceAtomicU32>();
+    let cas_u64 = DeviceBuffer::from_host(&stream, &[7_u64])?.cast_elem::<DeviceAtomicU64>();
     let mut observed_u32 = DeviceBuffer::<(u32, u32)>::zeroed(&stream, 1)?;
     let mut observed_u64 = DeviceBuffer::<(u64, u64)>::zeroed(&stream, 1)?;
 
@@ -175,11 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let observed_u64 = observed_u64.to_host_vec(&stream)?[0];
     let final_u32 = cas_u32.cast_elem::<u32>().to_host_vec(&stream)?[0];
     let final_u64 = cas_u64.cast_elem::<u64>().to_host_vec(&stream)?[0];
-    if observed_u32 != (7, 11)
-        || observed_u64 != (7, 11)
-        || final_u32 != 11
-        || final_u64 != 11
-    {
+    if observed_u32 != (7, 11) || observed_u64 != (7, 11) || final_u32 != 11 || final_u64 != 11 {
         return Err(format!(
             "legacy integer CAS mismatch: observed_u32={observed_u32:?}, observed_u64={observed_u64:?}, final_u32={final_u32}, final_u64={final_u64}"
         )
