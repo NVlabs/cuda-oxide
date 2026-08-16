@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io;
@@ -29,6 +30,143 @@ pub struct ToolProvenance {
     pub libdevice_sha256: [u8; 32],
 }
 
+/// Stable identity of the open file descriptor whose contents were hashed.
+///
+/// Named fields keep the parent/child handoff explicit and independently
+/// inspectable. Optional Unix fields are absent on other platforms.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolFileIdentity {
+    /// File length in bytes.
+    pub length: u64,
+    /// Whole seconds in the modification timestamp since the Unix epoch.
+    pub modified_seconds: u64,
+    /// Nanosecond component of the modification timestamp.
+    pub modified_nanoseconds: u32,
+    /// Unix device identifier, when available.
+    pub device: Option<u64>,
+    /// Unix inode number, when available.
+    pub inode: Option<u64>,
+    /// Unix change-time seconds, when available.
+    pub change_time_seconds: Option<i64>,
+    /// Unix change-time nanoseconds, when available.
+    pub change_time_nanoseconds: Option<i64>,
+}
+
+impl ToolFileIdentity {
+    pub(crate) fn capture(file: &File) -> Option<Self> {
+        let metadata = file.metadata().ok()?;
+        let modified = metadata
+            .modified()
+            .ok()?
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()?;
+
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+
+        Some(Self {
+            length: metadata.len(),
+            modified_seconds: modified.as_secs(),
+            modified_nanoseconds: modified.subsec_nanos(),
+            #[cfg(unix)]
+            device: Some(metadata.dev()),
+            #[cfg(not(unix))]
+            device: None,
+            #[cfg(unix)]
+            inode: Some(metadata.ino()),
+            #[cfg(not(unix))]
+            inode: None,
+            #[cfg(unix)]
+            change_time_seconds: Some(metadata.ctime()),
+            #[cfg(not(unix))]
+            change_time_seconds: None,
+            #[cfg(unix)]
+            change_time_nanoseconds: Some(metadata.ctime_nsec()),
+            #[cfg(not(unix))]
+            change_time_nanoseconds: None,
+        })
+    }
+
+    pub(crate) fn matches_file(&self, file: &File) -> bool {
+        Self::capture(file).as_ref() == Some(self)
+    }
+
+    /// Whether every Unix identity field (device, inode, change time) is
+    /// present. Length and modification time alone are too weak to prove the
+    /// descriptor is unchanged, so digest reuse must rehash without them.
+    pub(crate) fn has_unix_identity(&self) -> bool {
+        self.device.is_some()
+            && self.inode.is_some()
+            && self.change_time_seconds.is_some()
+            && self.change_time_nanoseconds.is_some()
+    }
+}
+
+/// A content digest bound to the exact open-file identity that produced it.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedToolProvenance {
+    /// SHA-256 of the complete tool DSO.
+    pub sha256: [u8; 32],
+    /// Identity of the retained descriptor used to compute `sha256`.
+    pub file: ToolFileIdentity,
+}
+
+/// Versioned cargo-oxide to codegen-backend materializer handoff.
+///
+/// The child still opens each CUDA DSO itself. Matching descriptor identities
+/// allow it to reuse the parent's content digest without rereading the tool.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterializerHandshakeV1 {
+    /// Wire-format version; must equal [`Self::VERSION`].
+    pub version: u32,
+    /// Combined semantic provenance used by Cargo's fingerprint.
+    pub provenance_sha256: [u8; 32],
+    /// Exact libNVVM content and retained-file identity.
+    pub libnvvm: PinnedToolProvenance,
+    /// Exact nvJitLink content and retained-file identity.
+    pub nvjitlink: PinnedToolProvenance,
+    /// SHA-256 of the libdevice bytes supplied to libNVVM.
+    pub libdevice_sha256: [u8; 32],
+}
+
+impl MaterializerHandshakeV1 {
+    /// Current handshake wire-format version.
+    pub const VERSION: u32 = 1;
+
+    /// Construct a self-consistent v1 handshake from named inputs.
+    pub fn new(
+        libnvvm: PinnedToolProvenance,
+        nvjitlink: PinnedToolProvenance,
+        libdevice_sha256: [u8; 32],
+    ) -> Self {
+        Self {
+            version: Self::VERSION,
+            provenance_sha256: common_provenance_digest(
+                &libnvvm.sha256,
+                &nvjitlink.sha256,
+                &libdevice_sha256,
+            ),
+            libnvvm,
+            nvjitlink,
+            libdevice_sha256,
+        }
+    }
+
+    /// Whether the version and combined digest agree with all named fields.
+    pub fn has_consistent_provenance(&self) -> bool {
+        self.version == Self::VERSION
+            && self.provenance_sha256
+                == common_provenance_digest(
+                    &self.libnvvm.sha256,
+                    &self.nvjitlink.sha256,
+                    &self.libdevice_sha256,
+                )
+    }
+}
+
 /// Stable identity of the finalizer algorithm itself.
 pub fn recipe_digest() -> [u8; 32] {
     Sha256::digest(RECIPE).into()
@@ -42,9 +180,10 @@ pub(crate) fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
 ///
 /// An unavailable initial digest is allowed for runtime fallback, whose cache
 /// is disabled separately. When an exact digest exists (and therefore may be
-/// part of Cargo's fingerprint or a cache key), the complete retained file is
-/// rehashed immediately before and after the operation. The post-check runs
-/// even when the tool call itself returned an error.
+/// part of Cargo's fingerprint or a cache key), the caller revalidates the
+/// retained descriptor identity before and after the operation. The initial
+/// digest remains bound to that descriptor, and the post-check runs even when
+/// the tool call itself returned an error.
 pub(crate) fn with_revalidated_tool_identity<T>(
     tool: &'static str,
     expected: Option<[u8; 32]>,
@@ -263,6 +402,80 @@ mod tests {
             .finish();
         assert_ne!(left, different_boundaries);
         assert_ne!(left, reversed);
+    }
+
+    fn example_file_identity() -> ToolFileIdentity {
+        ToolFileIdentity {
+            length: 123,
+            modified_seconds: 456,
+            modified_nanoseconds: 789,
+            device: Some(10),
+            inode: Some(11),
+            change_time_seconds: Some(12),
+            change_time_nanoseconds: Some(13),
+        }
+    }
+
+    #[test]
+    fn materializer_handshake_serializes_with_named_fields() {
+        let file = example_file_identity();
+        let handshake = MaterializerHandshakeV1::new(
+            PinnedToolProvenance {
+                sha256: [1; 32],
+                file,
+            },
+            PinnedToolProvenance {
+                sha256: [2; 32],
+                file,
+            },
+            [3; 32],
+        );
+        let json = serde_json::to_string(&handshake).unwrap();
+        for field in [
+            "version",
+            "provenance_sha256",
+            "libnvvm",
+            "nvjitlink",
+            "libdevice_sha256",
+            "sha256",
+            "file",
+            "length",
+            "modified_seconds",
+            "change_time_seconds",
+        ] {
+            assert!(
+                json.contains(&format!("\"{field}\"")),
+                "handshake JSON omitted named field {field}: {json}"
+            );
+        }
+        assert_eq!(
+            serde_json::from_str::<MaterializerHandshakeV1>(&json).unwrap(),
+            handshake
+        );
+        let with_unknown = json.replacen('{', "{\"family.0\":0,", 1);
+        assert!(serde_json::from_str::<MaterializerHandshakeV1>(&with_unknown).is_err());
+    }
+
+    #[test]
+    fn materializer_handshake_rejects_changed_fields_and_versions() {
+        let file = example_file_identity();
+        let mut handshake = MaterializerHandshakeV1::new(
+            PinnedToolProvenance {
+                sha256: [1; 32],
+                file,
+            },
+            PinnedToolProvenance {
+                sha256: [2; 32],
+                file,
+            },
+            [3; 32],
+        );
+        assert!(handshake.has_consistent_provenance());
+        handshake.libnvvm.sha256[0] ^= 1;
+        assert!(!handshake.has_consistent_provenance());
+        handshake.libnvvm.sha256[0] ^= 1;
+        handshake.version += 1;
+        assert!(!handshake.has_consistent_provenance());
     }
 
     #[test]

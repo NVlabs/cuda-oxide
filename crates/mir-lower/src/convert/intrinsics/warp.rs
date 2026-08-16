@@ -175,6 +175,7 @@ pub(crate) fn convert_shuffle_i64(
     let asm_op = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         i64_ty.into(),
         vec![val, lane_or_delta, mask],
         &asm_template,
@@ -374,7 +375,13 @@ pub(crate) fn convert_match_all(
     }
     let (mask, value) = (operands[0], operands[1]);
 
-    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty.into(), i1_ty.into()]);
+    let struct_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![i32_ty.into(), i1_ty.into()],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    );
     let func_ty =
         llvm_types::FuncType::get(ctx, struct_ty.into(), vec![i32_ty.into(), value_ty], false);
 
@@ -414,7 +421,13 @@ pub(crate) fn convert_elect_sync_typed(
         return pliron::input_err_noloc!("elect.sync requires 1 operand [mask]");
     }
 
-    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty.into(), i1_ty.into()]);
+    let struct_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![i32_ty.into(), i1_ty.into()],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    );
     let func_ty = llvm_types::FuncType::get(ctx, struct_ty.into(), vec![i32_ty.into()], false);
     let call = call_intrinsic(
         ctx,
@@ -464,10 +477,17 @@ pub(crate) fn convert_elect_sync_inline(
     // Two register outputs: $0 = leader lane id, $1 = predicate materialized as
     // 0/1; $2 = membermask input. The `.pred p` is scoped to the asm block.
     let asm_template = "{ .reg .pred p; elect.sync $0|p, $2; selp.b32 $1, 1, 0, p; }";
-    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty.into(), i32_ty.into()]);
+    let struct_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![i32_ty.into(), i32_ty.into()],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    );
     let asm_op = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         struct_ty.into(),
         vec![mask],
         asm_template,

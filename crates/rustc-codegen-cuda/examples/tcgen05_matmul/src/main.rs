@@ -24,11 +24,12 @@ use cuda_device::barrier::{
     Barrier, fence_proxy_async_shared_cta, mbarrier_arrive_expect_tx, mbarrier_init,
     mbarrier_inval, mbarrier_try_wait, mbarrier_try_wait_parity,
 };
+use cuda_device::convert::cvt_bf16x2_f32;
 use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
-    cvt_f32x2_bf16x2, stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_commit_shared_cluster,
-    tcgen05_dealloc, tcgen05_ld_16x256b_pure, tcgen05_load_wait, tcgen05_mma_f16,
+    stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_commit_shared_cluster, tcgen05_dealloc,
+    tcgen05_ld_16x256b_pure, tcgen05_load_wait, tcgen05_mma_f16,
 };
 use cuda_device::tma::{TmaDescriptor, cp_async_bulk_tensor_2d_g2s};
 use cuda_device::{DisjointSlice, kernel, thread, warp};
@@ -185,8 +186,8 @@ mod kernels {
                     );
                     tcgen05_load_wait();
 
-                    let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                    let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                    let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                    let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
 
                     let out_row_lo = warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                     let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -194,8 +195,8 @@ mod kernels {
                     );
                     stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                    let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                    let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                    let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                    let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
 
                     let out_row_hi =
                         warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;

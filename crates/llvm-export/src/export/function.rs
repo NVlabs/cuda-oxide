@@ -510,15 +510,16 @@ impl<'a> ModuleExportState<'a> {
         output: &mut String,
     ) -> Result<(), String> {
         let func_name = func.get_symbol_name(self.ctx);
+        let func_name_str: &str = func_name.as_ref();
         // LLVM intrinsics (NVVM and standard, e.g. llvm.fptosi.sat) use dots in IR
         // but Pliron IR identifiers use underscores; convert for export.
-        let fixed_func_name = if func_name.starts_with("llvm_") {
-            decode_intrinsic_identifier(&func_name)
+        let fixed_func_name = if func_name_str.starts_with("llvm_") {
+            decode_intrinsic_identifier(func_name_str)
         } else {
             // Strip cuda_oxide_device_ prefix for clean export names.
             // Internal MIR translation uses prefixed names; we strip at the final
             // export layer so definitions and call targets are renamed consistently.
-            strip_device_prefix(&func_name)
+            strip_device_prefix(func_name_str)
         };
 
         // Check for kernel attribute
@@ -608,7 +609,7 @@ impl<'a> ModuleExportState<'a> {
 
         // Track device function definitions (not declarations) for @llvm.used
         // preservation in standalone device-function compilation.
-        if !is_declaration && !is_kernel && has_device_prefix(&func_name) {
+        if !is_declaration && !is_kernel && has_device_prefix(func_name_str) {
             self.device_functions.push(fixed_func_name.clone());
         }
 

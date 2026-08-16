@@ -61,6 +61,23 @@ pub fn prepare_mir_module(
         &mut analyses,
     )?;
 
+    // Compiler-owned multi-result device operations are temporarily adapted
+    // to Rust aggregate return values by the MIR importer. Prove and remove
+    // that ABI-only boundary before mem2reg so the independent register values
+    // remain SSA all the way into LLVM/PTX lowering.
+    mir_transforms::forward_compiler_result_bundles::forward_compiler_result_bundles(
+        module,
+        ctx,
+        &mut analyses,
+        preparation.verbose,
+    )
+    .map_err(|error| PipelineError::Verification {
+        name: "compiler-result forwarding".to_string(),
+        message: error.disp(ctx).to_string(),
+        operation: None,
+    })?;
+    verify_operation(ctx, module, "module post-compiler-result-forwarding")?;
+
     // A by-value aggregate argument initially lives in a MIR alloca. Read-only
     // field/index projections make that alloca non-promotable even though the
     // original entry-block argument is already an SSA value. Canonicalize the

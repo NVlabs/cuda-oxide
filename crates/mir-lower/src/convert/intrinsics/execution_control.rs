@@ -36,6 +36,7 @@ pub(crate) fn convert_counted_barrier(
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             operands,
             ptx,
@@ -68,7 +69,7 @@ pub(crate) fn convert_grid_dependency(
     }
     let void_ty = llvm_types::VoidType::get(ctx);
     if context::lowering_options(ctx).intrinsic_backend == IntrinsicBackend::LibNvvm {
-        inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], ptx, "");
+        inline_asm_sideeffect(ctx, rewriter, op, void_ty.into(), vec![], ptx, "");
     } else {
         let function_ty = llvm_types::FuncType::get(ctx, void_ty.into(), vec![], false);
         call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, vec![])?;
@@ -98,7 +99,7 @@ pub(crate) fn convert_setmaxnreg(
     let void_ty = llvm_types::VoidType::get(ctx);
     if context::lowering_options(ctx).intrinsic_backend == IntrinsicBackend::LibNvvm {
         let template = format!("setmaxnreg.{direction}.sync.aligned.u32 {register_count};");
-        inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], &template, "");
+        inline_asm_convergent(ctx, rewriter, op, void_ty.into(), vec![], &template, "");
     } else {
         let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
         let function_ty =

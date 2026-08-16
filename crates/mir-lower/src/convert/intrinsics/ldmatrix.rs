@@ -89,6 +89,7 @@ pub(crate) fn convert_generated_ldmatrix<I: LdmatrixInstructionHead>(
         IntrinsicBackend::LibNvvm => lower_with_inline_ptx(
             ctx,
             rewriter,
+            op,
             shared_pointer,
             result_ty,
             register_count,
@@ -137,7 +138,10 @@ fn register_result_type(ctx: &mut Context, register_count: usize) -> TypeHandle 
     } else {
         llvm_types::StructType::get_unnamed(
             ctx,
-            (0..register_count).map(|_| i32_ty.into()).collect(),
+            (
+                (0..register_count).map(|_| i32_ty.into()).collect(),
+                llvm_types::StructLayout::Unpacked,
+            ),
         )
         .into()
     }
@@ -166,6 +170,7 @@ fn lower_with_llvm_intrinsic(
 fn lower_with_inline_ptx(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
     shared_pointer: Value,
     result_ty: TypeHandle,
     register_count: usize,
@@ -191,6 +196,7 @@ fn lower_with_inline_ptx(
     inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         result_ty,
         vec![pointer_address],
         &template,

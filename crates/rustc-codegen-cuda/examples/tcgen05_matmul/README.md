@@ -88,7 +88,7 @@ for tmem_row_block in 0..2 {
         tcgen05_load_wait();
 
         // Convert f32 → bf16 (pack two values)
-        let packed = cvt_f32x2_bf16x2(regs[0], regs[1]);
+        let packed = cvt_bf16x2_f32(regs[0], regs[1]);
 
         // Store via stmatrix (8×8 tiles)
         stmatrix_m8n8_x2(smem_addr, packed_lo, packed_hi);

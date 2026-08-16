@@ -361,7 +361,13 @@ fn convert_checked_binop_with_intrinsic(
     let intrinsic_name = format!("llvm_{op_name}_with_overflow_i{width}");
 
     let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
-    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![lhs_ty, i1_ty.into()]);
+    let struct_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![lhs_ty, i1_ty.into()],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    );
     let func_ty = llvm_types::FuncType::get(ctx, struct_ty.into(), vec![lhs_ty, lhs_ty], false);
 
     let call_op = call_intrinsic(ctx, rewriter, op, &intrinsic_name, func_ty, vec![lhs, rhs])?;

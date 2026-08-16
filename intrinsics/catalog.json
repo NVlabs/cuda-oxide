@@ -11,7 +11,7 @@
   },
   "inputs": {
     "imported_sha256": "7fc84823d448f56192e265a6c057ea72155c84df2b6575b0235199d445db6a2f",
-    "overlay_sha256": "ea8d8e8649fb9202f154636fc496e7231962e12029725a5fdefbafa521af04ac",
+    "overlay_sha256": "f5b8add00a32399864d5211aaa7d84142e5d5cdae0aafac6f24655750a77f108",
     "abi_ledger_sha256": "67c278f17800f63c5db61b57cfaa726ef16cd42b64655ac8ad74fad278337706",
     "evidence_sha256": [
       "cuda-13.3-libnvvm-13.3.33-blackwell-ldmatrix.json:806155f5468d672b6bd969b72d9821155cc6a1c4422eb210ca0fc0a78eb295fb",
@@ -42287,7 +42287,7 @@
         "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0071",
         "public_path": "cuda_intrinsics::convert::cvt_f32x2_bf16x2",
         "compatibility_paths": [
-          "cuda_device::tcgen05::cvt_f32x2_bf16x2"
+          "cuda_device::convert::cvt_bf16x2_f32"
         ]
       },
       "dialect": {

@@ -11,6 +11,61 @@
 include!("generated/convert.rs");
 
 // =============================================================================
+// Scalar conversion and packing helpers
+// =============================================================================
+
+/// Converts `f32` to the raw bits of a `bf16` by truncating the low 16 bits.
+///
+/// This is a bit-level truncation rather than a rounding conversion. In
+/// particular, an `f32` NaN whose payload exists only in the discarded bits
+/// can become a `bf16` infinity. Use [`f32_to_bf16_rne`] when IEEE-style
+/// round-to-nearest-even behavior is required.
+#[must_use]
+#[inline(always)]
+pub fn f32_to_bf16(value: f32) -> u16 {
+    (value.to_bits() >> 16) as u16
+}
+
+/// Converts `f32` to the raw bits of a `bf16` using round-to-nearest-even.
+///
+/// NaNs remain NaNs even when their payload is confined to the low 16 bits of
+/// the `f32` representation.
+#[must_use]
+#[inline(always)]
+pub fn f32_to_bf16_rne(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let exponent = bits & 0x7F80_0000;
+    let mantissa = bits & 0x007F_FFFF;
+    if exponent == 0x7F80_0000 && mantissa != 0 {
+        return ((bits >> 16) as u16) | 0x0040;
+    }
+
+    let retained_lsb = (bits >> 16) & 1;
+    (bits.wrapping_add(0x7FFF + retained_lsb) >> 16) as u16
+}
+
+/// Packs two raw `bf16` bit patterns into a `u32`, low half first.
+#[must_use]
+#[inline(always)]
+pub const fn pack_bf16_pair(lo: u16, hi: u16) -> u32 {
+    (lo as u32) | ((hi as u32) << 16)
+}
+
+/// Packs two raw `f16` bit patterns into a `u32`, low half first.
+#[must_use]
+#[inline(always)]
+pub const fn pack_f16_pair(lo: u16, hi: u16) -> u32 {
+    (lo as u32) | ((hi as u32) << 16)
+}
+
+/// Truncates two `f32` values to `bf16` and packs them low half first.
+#[must_use]
+#[inline(always)]
+pub fn f32_pair_to_packed_bf16(lo: f32, hi: f32) -> u32 {
+    pack_bf16_pair(f32_to_bf16(lo), f32_to_bf16(hi))
+}
+
+// =============================================================================
 // Packed f16x2 unpacking
 // =============================================================================
 //
@@ -71,17 +126,9 @@ pub fn cvt_f32_f16x2_hi(packed: u32) -> f32 {
 
 /// Unpacks a packed `bf16x2` into its two `f32` values, low half first.
 ///
-/// This is the inverse of [`cvt_rz_bf16x2_f32`]. `bf16` shares `f32`'s exponent
+/// This is the inverse of [`cvt_bf16x2_f32`] or [`cvt_rz_bf16x2_f32`]. `bf16` shares `f32`'s exponent
 /// range, so widening is an exact shift into the high half of the mantissa
 /// rather than a conversion.
-///
-/// # Warning
-///
-/// `cuda_device::tcgen05::cvt_f32x2_bf16x2` is a **different function** with
-/// the same identifier and the opposite direction: it packs two `f32` into a
-/// `bf16x2` `u32`. Its name comes from the LLVM `ff2bf16x2` record family,
-/// which is source-first, whereas names in this module are destination-first
-/// (`cvt_<dst>_<src>`).
 #[must_use]
 #[inline(always)]
 pub fn cvt_f32x2_bf16x2(packed: u32) -> (f32, f32) {
@@ -164,6 +211,37 @@ mod tests {
         assert_eq!(hi, -1.0);
         assert_eq!(cvt_f32_bf16x2_lo(packed), 1.0);
         assert_eq!(cvt_f32_bf16x2_hi(packed), -1.0);
+    }
+
+    #[test]
+    fn scalar_bf16_conversion_covers_rounding_and_special_values() {
+        assert_eq!(f32_to_bf16(1.0), 0x3F80);
+        assert_eq!(f32_to_bf16(-0.0), 0x8000);
+        assert_eq!(f32_to_bf16(f32::INFINITY), 0x7F80);
+        assert_eq!(f32_to_bf16(f32::NEG_INFINITY), 0xFF80);
+
+        // Exact tie with an even retained LSB rounds down; an odd one rounds up.
+        assert_eq!(f32_to_bf16_rne(f32::from_bits(0x3F80_8000)), 0x3F80);
+        assert_eq!(f32_to_bf16_rne(f32::from_bits(0x3F81_8000)), 0x3F82);
+        assert_eq!(f32_to_bf16_rne(0.0), 0x0000);
+        assert_eq!(f32_to_bf16_rne(-0.0), 0x8000);
+        assert_eq!(f32_to_bf16_rne(f32::INFINITY), 0x7F80);
+        assert_eq!(f32_to_bf16_rne(f32::NEG_INFINITY), 0xFF80);
+
+        // A payload entirely below the bf16 boundary must not become infinity.
+        let positive_nan = f32_to_bf16_rne(f32::from_bits(0x7F80_0001));
+        let negative_nan = f32_to_bf16_rne(f32::from_bits(0xFF80_0001));
+        assert_eq!(positive_nan & 0x7F80, 0x7F80);
+        assert_ne!(positive_nan & 0x007F, 0);
+        assert_eq!(negative_nan & 0xFF80, 0xFF80);
+        assert_ne!(negative_nan & 0x007F, 0);
+    }
+
+    #[test]
+    fn packing_helpers_keep_the_first_value_in_the_low_half() {
+        assert_eq!(pack_bf16_pair(0x3F80, 0x4000), 0x4000_3F80);
+        assert_eq!(pack_f16_pair(0x3C00, 0x4000), 0x4000_3C00);
+        assert_eq!(f32_pair_to_packed_bf16(1.0, 2.0), 0x4000_3F80);
     }
 
     /// Every f16 bit pattern that is not a NaN must survive the trip,

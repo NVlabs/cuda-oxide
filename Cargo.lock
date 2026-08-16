@@ -353,6 +353,8 @@ version = "0.2.1"
 dependencies = [
  "libnvvm-sys",
  "nvjitlink-sys",
+ "serde",
+ "serde_json",
  "sha2",
  "thiserror",
 ]
@@ -993,8 +995,8 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pliron"
-version = "0.16.0"
-source = "git+https://github.com/pliron-org/pliron?rev=0d3f25df6d0e76b6c6f23d6e17172142b50c715c#0d3f25df6d0e76b6c6f23d6e17172142b50c715c"
+version = "0.17.0"
+source = "git+https://github.com/pliron-org/pliron?rev=8447aa426e2f090dc8b7b9383c5035db7bc70b62#8447aa426e2f090dc8b7b9383c5035db7bc70b62"
 dependencies = [
  "awint",
  "combine",
@@ -1002,6 +1004,7 @@ dependencies = [
  "dyn-clone",
  "hashbrown 0.15.5",
  "hi_sparse_bitset",
+ "indexmap",
  "inventory",
  "linkme",
  "log",
@@ -1011,6 +1014,7 @@ dependencies = [
  "rustc-hash",
  "rustc_apfloat",
  "slotmap",
+ "smallvec",
  "spin",
  "thiserror",
  "utf8-chars",
@@ -1018,11 +1022,12 @@ dependencies = [
 
 [[package]]
 name = "pliron-derive"
-version = "0.16.0"
-source = "git+https://github.com/pliron-org/pliron?rev=0d3f25df6d0e76b6c6f23d6e17172142b50c715c#0d3f25df6d0e76b6c6f23d6e17172142b50c715c"
+version = "0.17.0"
+source = "git+https://github.com/pliron-org/pliron?rev=8447aa426e2f090dc8b7b9383c5035db7bc70b62#8447aa426e2f090dc8b7b9383c5035db7bc70b62"
 dependencies = [
  "combine",
  "convert_case",
+ "indexmap",
  "proc-macro2",
  "quote",
  "rustc-hash",
@@ -1031,8 +1036,8 @@ dependencies = [
 
 [[package]]
 name = "pliron-llvm"
-version = "0.16.0"
-source = "git+https://github.com/pliron-org/pliron?rev=0d3f25df6d0e76b6c6f23d6e17172142b50c715c#0d3f25df6d0e76b6c6f23d6e17172142b50c715c"
+version = "0.17.0"
+source = "git+https://github.com/pliron-org/pliron?rev=8447aa426e2f090dc8b7b9383c5035db7bc70b62#8447aa426e2f090dc8b7b9383c5035db7bc70b62"
 dependencies = [
  "bitflags",
  "log",

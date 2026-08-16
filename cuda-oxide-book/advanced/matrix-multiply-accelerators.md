@@ -271,8 +271,8 @@ memory (for a subsequent TMA store to global), you load from TMEM into
 registers and then use `stmatrix` to write to shared memory:
 
 ```rust
+use cuda_device::convert::cvt_bf16x2_f32;
 use cuda_device::tcgen05::{
-    cvt_f32x2_bf16x2,
     tcgen05_ld_16x256b_pure,
     tcgen05_load_wait,
     stmatrix_m8n8_x2,
@@ -285,8 +285,8 @@ unsafe {
     tcgen05_load_wait();
 
     // Convert four f32 accumulators into two registers of packed bf16 values.
-    let packed0 = cvt_f32x2_bf16x2(regs[0], regs[1]);
-    let packed1 = cvt_f32x2_bf16x2(regs[2], regs[3]);
+    let packed0 = cvt_bf16x2_f32(regs[0], regs[1]);
+    let packed1 = cvt_bf16x2_f32(regs[2], regs[3]);
 
     // Store two 8×8 matrices from registers (warp-collective).
     stmatrix_m8n8_x2(smem_ptr, packed0, packed1);

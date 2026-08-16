@@ -19,7 +19,7 @@ use llvm_export::{
         GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp,
         ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
     },
-    types::{ArrayType, FuncType, HalfType, PointerType, StructType, VoidType},
+    types::{ArrayType, FuncType, HalfType, PointerType, StructLayout, StructType, VoidType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -1850,7 +1850,7 @@ fn initialized_global_exports_static_pointer_relocation() {
 
     // Insert the reference first. Module symbol indexing must make relocation
     // resolution independent of textual global order.
-    let reference_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into()]);
+    let reference_ty = StructType::get_unnamed(&ctx, (vec![i64_ty.into()], StructLayout::Unpacked));
     let reference = GlobalOp::new_with_alignment(
         &mut ctx,
         "reference".try_into().unwrap(),
@@ -1937,7 +1937,10 @@ fn initialized_global_exports_multiple_relocations_and_addends() {
     target_b.set_initializer_hex(&mut ctx, "1011121314151617");
     target_b.get_operation().insert_at_back(module_block, &ctx);
 
-    let table_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into(), i64_ty.into()]);
+    let table_ty = StructType::get_unnamed(
+        &ctx,
+        (vec![i64_ty.into(), i64_ty.into()], StructLayout::Unpacked),
+    );
     let table = GlobalOp::new_with_alignment(
         &mut ctx,
         "reference_table".try_into().unwrap(),
@@ -1987,7 +1990,7 @@ fn initialized_global_relocation_rejects_unknown_target_key() {
     let module = ModuleOp::new(&mut ctx, "unknown_relocation_target".try_into().unwrap());
     let module_block = module_top_block(&mut ctx, &module);
     let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
-    let reference_ty = StructType::get_unnamed(&ctx, vec![i64_ty.into()]);
+    let reference_ty = StructType::get_unnamed(&ctx, (vec![i64_ty.into()], StructLayout::Unpacked));
     let reference = GlobalOp::new_with_alignment(
         &mut ctx,
         "reference".try_into().unwrap(),

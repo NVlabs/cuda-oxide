@@ -96,10 +96,11 @@ fn index_module_symbols(
             }
         } else if let Some(func) = Operation::get_op::<ops::FuncOp>(operation, state.ctx) {
             let raw_name = func.get_symbol_name(state.ctx);
-            let exported_name = if raw_name.starts_with("llvm_") {
-                super::names::decode_intrinsic_identifier(&raw_name)
+            let raw_name_str: &str = raw_name.as_ref();
+            let exported_name = if raw_name_str.starts_with("llvm_") {
+                super::names::decode_intrinsic_identifier(raw_name_str)
             } else {
-                super::names::strip_device_prefix(&raw_name)
+                super::names::strip_device_prefix(raw_name_str)
             };
             let function_type = func.get_type(state.ctx).into();
             if let Some(existing_name) = state
@@ -552,7 +553,7 @@ pub(super) fn export_module_with_externs_impl(
                 let func_name = func.get_symbol_name(ctx);
 
                 // Skip device extern declarations - already emitted in section 2
-                if is_decl && device_extern_names.contains(func_name.as_str()) {
+                if is_decl && device_extern_names.contains(func_name.as_ref()) {
                     continue;
                 }
 

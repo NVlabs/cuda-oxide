@@ -701,7 +701,11 @@ pub(crate) fn build_struct_slot_map(
     }
 
     Ok(StructSlotMap {
-        llvm_struct_ty: llvm_types::StructType::get_unnamed(ctx, llvm_fields).into(),
+        llvm_struct_ty: llvm_types::StructType::get_unnamed(
+            ctx,
+            (llvm_fields, llvm_types::StructLayout::Unpacked),
+        )
+        .into(),
         decl_to_llvm,
         field_llvm_types,
         natural_slot_offsets,
@@ -865,7 +869,11 @@ pub(crate) fn build_union_storage_type(
             storage_fields.push(make_padding_type(ctx, size));
         }
     }
-    let storage: TypeHandle = llvm_types::StructType::get_unnamed(ctx, storage_fields).into();
+    let storage: TypeHandle = llvm_types::StructType::get_unnamed(
+        ctx,
+        (storage_fields, llvm_types::StructLayout::Unpacked),
+    )
+    .into();
     let (llvm_size, llvm_align) = llvm_type_size_align(ctx, storage).ok_or_else(|| {
         anyhow::anyhow!(
             "union `{}` storage has unsupported LLVM layout",
@@ -1225,7 +1233,10 @@ pub(crate) fn llvm_byte_faithful_twin(ctx: &mut Context, ty: TypeHandle) -> Opti
     enum Shape {
         Bool,
         Array(TypeHandle, u64),
-        Struct(Vec<TypeHandle>),
+        Struct {
+            fields: Vec<TypeHandle>,
+            layout: llvm_types::StructLayout,
+        },
         Other,
     }
     let shape = {
@@ -1238,7 +1249,10 @@ pub(crate) fn llvm_byte_faithful_twin(ctx: &mut Context, ty: TypeHandle) -> Opti
         } else if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
             Shape::Array(array.elem_type(), array.size())
         } else if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
-            Shape::Struct(struct_ty.fields().collect())
+            Shape::Struct {
+                fields: struct_ty.fields().collect(),
+                layout: struct_ty.layout(),
+            }
         } else {
             Shape::Other
         }
@@ -1249,12 +1263,12 @@ pub(crate) fn llvm_byte_faithful_twin(ctx: &mut Context, ty: TypeHandle) -> Opti
             let twin = llvm_byte_faithful_twin(ctx, elem)?;
             Some(llvm_types::ArrayType::get(ctx, twin, count).into())
         }
-        Shape::Struct(fields) => {
+        Shape::Struct { fields, layout } => {
             let twins = fields
                 .into_iter()
                 .map(|field| llvm_byte_faithful_twin(ctx, field))
                 .collect::<Option<Vec<_>>>()?;
-            Some(llvm_types::StructType::get_unnamed(ctx, twins).into())
+            Some(llvm_types::StructType::get_unnamed(ctx, (twins, layout)).into())
         }
         Shape::Other => None,
     }
@@ -2076,7 +2090,11 @@ pub(crate) fn build_enum_slot_map(
         .map(|c| c.map(|ci| slot_of_claim[ci]))
         .collect();
     Ok(EnumSlotMap {
-        llvm_struct_ty: llvm_types::StructType::get_unnamed(ctx, llvm_fields).into(),
+        llvm_struct_ty: llvm_types::StructType::get_unnamed(
+            ctx,
+            (llvm_fields, llvm_types::StructLayout::Unpacked),
+        )
+        .into(),
         carrier_slot: carrier_claim.map(|claim| slot_of_claim[claim]),
         carrier_llvm_ty: carrier_ty,
         field_slots,
@@ -2511,7 +2529,14 @@ pub(crate) fn get_type_size(ctx: &Context, ty: TypeHandle) -> u64 {
 pub(crate) fn make_slice_struct(ctx: &mut Context) -> TypeHandle {
     let ptr_ty = llvm_types::PointerType::get_generic(ctx);
     let len_ty = IntegerType::get(ctx, 64, Signedness::Signless);
-    llvm_types::StructType::get_unnamed(ctx, vec![ptr_ty.into(), len_ty.into()]).into()
+    llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![ptr_ty.into(), len_ty.into()],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    )
+    .into()
 }
 
 /// The fat pointer, followed by an index space's runtime layout fields.
@@ -2531,7 +2556,10 @@ pub(crate) fn make_disjoint_slice_struct(
     for space_ty in space_tys {
         fields.push(convert_type(ctx, *space_ty)?);
     }
-    Ok(llvm_types::StructType::get_unnamed(ctx, fields).into())
+    Ok(
+        llvm_types::StructType::get_unnamed(ctx, (fields, llvm_types::StructLayout::Unpacked))
+            .into(),
+    )
 }
 
 #[cfg(test)]
@@ -4284,8 +4312,14 @@ mod tests {
         let i32s = llvm_int(&mut ctx, 32);
         let i64s = llvm_int(&mut ctx, 64);
         let enum_pad3 = pad(&mut ctx, 3);
-        let enum_llvm: TypeHandle =
-            llvm_types::StructType::get_unnamed(&ctx, vec![i8s, enum_pad3, i32s]).into();
+        let enum_llvm: TypeHandle = llvm_types::StructType::get_unnamed(
+            &ctx,
+            (
+                vec![i8s, enum_pad3, i32s],
+                llvm_types::StructLayout::Unpacked,
+            ),
+        )
+        .into();
         assert_eq!(
             struct_fields(&ctx, map.llvm_struct_ty),
             vec![enum_llvm, i64s, i32s, i32s]

@@ -4,10 +4,10 @@
  */
 
 use crate::diagnostics::{KernelResourceUsage, parse_ptxas_resource_usage};
-use crate::nvvm::{loaded_tool_digest, report_changed_tool};
+use crate::nvvm::{loaded_tool_digest_with_expected, report_changed_tool};
 use crate::options::{FinalizationOptions, FinalizerOutput, NamedInput};
 use crate::provenance::{
-    StableDigest, digest_file_handle, linker_provenance_digest, recipe_digest,
+    PinnedToolProvenance, StableDigest, linker_provenance_digest, recipe_digest,
     with_revalidated_tool_identity,
 };
 use crate::validation::is_valid_cubin;
@@ -43,8 +43,23 @@ pub struct LtoLinker {
 impl LtoLinker {
     /// Discover and pin nvJitLink without loading libNVVM or the CUDA Driver.
     pub fn discover() -> Result<Self, FinalizerError> {
+        Self::discover_with_expected(None)
+    }
+
+    pub(crate) fn discover_with_expected(
+        expected: Option<&PinnedToolProvenance>,
+    ) -> Result<Self, FinalizerError> {
         Ok(Self {
-            tool: load_linker_tool()?,
+            tool: load_linker_tool(expected)?,
+        })
+    }
+
+    pub(crate) fn pinned_tool_provenance(&self) -> Option<PinnedToolProvenance> {
+        let sha256 = self.tool.digest?;
+        let file = self.tool.library.loaded_file_if_unchanged()?;
+        Some(PinnedToolProvenance {
+            sha256,
+            file: crate::provenance::ToolFileIdentity::capture(file)?,
         })
     }
 
@@ -255,8 +270,8 @@ impl LtoLinker {
 }
 
 fn current_linker_tool_digest(tool: &LoadedLinkerTool) -> Option<[u8; 32]> {
-    let file = tool.library.loaded_file_if_unchanged()?;
-    digest_file_handle(file).ok()
+    tool.library.loaded_file_if_unchanged()?;
+    tool.digest
 }
 
 fn validate_inputs(inputs: &[NamedInput<'_>]) -> Result<(), FinalizerError> {
@@ -293,7 +308,9 @@ fn logical_ptx(input: NamedInput<'_>) -> Result<&[u8], FinalizerError> {
     Ok(logical)
 }
 
-fn load_linker_tool() -> Result<Arc<LoadedLinkerTool>, FinalizerError> {
+fn load_linker_tool(
+    expected: Option<&PinnedToolProvenance>,
+) -> Result<Arc<LoadedLinkerTool>, FinalizerError> {
     if let Some(loaded) = LINKER_TOOL.get() {
         return Ok(Arc::clone(loaded));
     }
@@ -306,7 +323,8 @@ fn load_linker_tool() -> Result<Arc<LoadedLinkerTool>, FinalizerError> {
     }
 
     let library = LibNvJitLink::load_for_cache()?;
-    let digest = loaded_tool_digest("nvJitLink", library.loaded_file_if_unchanged());
+    let digest =
+        loaded_tool_digest_with_expected("nvJitLink", library.loaded_file_if_unchanged(), expected);
     let digest = if digest.is_some() && library.loaded_file_if_unchanged().is_none() {
         report_changed_tool("nvJitLink");
         None

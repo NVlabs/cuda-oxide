@@ -78,6 +78,20 @@ pub struct VariantIndexAttr(pub u32);
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct UnrollAttr(pub u32);
 
+/// Marks an aggregate that exists only to adapt one compiler-owned
+/// multi-result operation to a Rust aggregate return ABI.
+///
+/// The marker is intentionally attached by the MIR importer, not inferred by
+/// an optimisation pass. That lets the forwarding pass distinguish this
+/// compiler-created boundary from an ordinary user aggregate and fail closed
+/// whenever the exact producer/store/projection shape is not preserved.
+#[pliron_attr(name = "mir.compiler_result_bundle", format = "$0", verifier = "succ")]
+#[derive(PartialEq, Eq, Clone, Debug, Hash)]
+pub struct CompilerResultBundleAttr(pub bool);
+
+/// Operation attribute key carrying [`CompilerResultBundleAttr`].
+pub const COMPILER_RESULT_BUNDLE_ATTR_KEY: &str = "compiler_result_bundle";
+
 /// IEEE 754 binary16 floating-point attribute for Rust MIR `f16` constants.
 #[pliron_attr(name = "mir.fp16_attr", format = "$0", verifier = "succ")]
 #[derive(PartialEq, Clone, Debug)]
@@ -143,5 +157,6 @@ pub fn register(ctx: &mut Context) {
     FieldIndexAttr::register(ctx);
     VariantIndexAttr::register(ctx);
     UnrollAttr::register(ctx);
+    CompilerResultBundleAttr::register(ctx);
     MirFP16Attr::register(ctx);
 }

@@ -23,7 +23,9 @@ pub use link::{LinkReport, LtoLinker};
 pub use nvjitlink_sys::NvJitLinkError;
 pub use nvvm::NvvmCompiler;
 pub use options::{DebugPolicy, FinalizationOptions, FinalizerOutput, NamedInput};
-pub use provenance::{ToolProvenance, recipe_digest};
+pub use provenance::{
+    MaterializerHandshakeV1, PinnedToolProvenance, ToolFileIdentity, ToolProvenance, recipe_digest,
+};
 pub use validation::is_valid_cubin;
 
 use provenance::common_provenance_digest;
@@ -105,6 +107,11 @@ pub enum FinalizerError {
         "the pinned {tool} file changed before or during CUDA artifact finalization; refusing the unverified output"
     )]
     ToolIdentityChanged { tool: &'static str },
+
+    /// A serialized digest hint was internally inconsistent or from another
+    /// protocol version.
+    #[error("invalid materializer provenance handshake")]
+    InvalidMaterializerHandshake,
 }
 
 /// Complete NVVM IR to cubin/PTX finalizer.
@@ -121,6 +128,35 @@ impl Finalizer {
             compiler: NvvmCompiler::discover()?,
             linker: LtoLinker::discover()?,
         })
+    }
+
+    /// Discover tools using a validated parent-process handoff as a digest
+    /// acceleration hint.
+    ///
+    /// Each DSO is opened and its retained-file identity is checked in this
+    /// process. A mismatch falls back to hashing the newly opened file. The
+    /// caller must still compare [`Self::provenance_digest`] with the semantic
+    /// provenance it expected.
+    pub fn discover_with_handshake(
+        handshake: &MaterializerHandshakeV1,
+    ) -> Result<Self, FinalizerError> {
+        if !handshake.has_consistent_provenance() {
+            return Err(FinalizerError::InvalidMaterializerHandshake);
+        }
+        Ok(Self {
+            compiler: NvvmCompiler::discover_with_expected(Some(&handshake.libnvvm))?,
+            linker: LtoLinker::discover_with_expected(Some(&handshake.nvjitlink))?,
+        })
+    }
+
+    /// Export content digests together with the retained descriptors that
+    /// produced them for a child materializer process.
+    pub fn materializer_handshake(&self) -> Option<MaterializerHandshakeV1> {
+        Some(MaterializerHandshakeV1::new(
+            self.compiler.pinned_tool_provenance()?,
+            self.linker.pinned_tool_provenance()?,
+            self.compiler.libdevice_digest(),
+        ))
     }
 
     /// Compile one NVVM IR module and return a validated target-specific cubin.

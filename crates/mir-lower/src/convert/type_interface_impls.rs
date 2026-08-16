@@ -274,18 +274,16 @@ impl MirConvertibleType for llvm_types::StructType {}
 impl MirTypeConversion for llvm_types::StructType {
     fn converter(&self) -> ConvertMirTypeFn {
         |ty, ctx| {
-            let fields: Vec<_> = {
+            let (fields, layout) = {
                 let r = ty.deref(ctx);
-                r.downcast_ref::<llvm_types::StructType>()
-                    .unwrap()
-                    .fields()
-                    .collect()
+                let struct_ty = r.downcast_ref::<llvm_types::StructType>().unwrap();
+                (struct_ty.fields().collect::<Vec<_>>(), struct_ty.layout())
             };
             let llvm_fields: Vec<_> = fields
                 .into_iter()
                 .map(|f| convert_type(ctx, f))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(llvm_types::StructType::get_unnamed(ctx, llvm_fields).into())
+            Ok(llvm_types::StructType::get_unnamed(ctx, (llvm_fields, layout)).into())
         }
     }
 }

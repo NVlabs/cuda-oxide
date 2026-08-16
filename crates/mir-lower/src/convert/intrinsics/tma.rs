@@ -100,6 +100,7 @@ fn convert_g2s_impl(
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             inputs,
             &template,
@@ -143,6 +144,7 @@ fn convert_g2s_impl(
     let sym_name: pliron::identifier::Identifier = intrinsic_name.as_str().try_into().unwrap();
     let callee = CallOpCallable::Direct(sym_name);
     let llvm_call = llvm::CallOp::new(ctx, callee, func_ty, call_args);
+    crate::convert::preserve_location(ctx, op, llvm_call.get_operation());
     rewriter.insert_operation(ctx, llvm_call.get_operation());
     rewriter.erase_operation(ctx, op);
 
@@ -209,6 +211,7 @@ pub(crate) fn convert_s2g(
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             inputs,
             &template,
@@ -241,6 +244,7 @@ pub(crate) fn convert_s2g(
     let sym_name: pliron::identifier::Identifier = intrinsic_name.as_str().try_into().unwrap();
     let callee = CallOpCallable::Direct(sym_name);
     let llvm_call = llvm::CallOp::new(ctx, callee, func_ty, call_args);
+    crate::convert::preserve_location(ctx, op, llvm_call.get_operation());
     rewriter.insert_operation(ctx, llvm_call.get_operation());
     rewriter.erase_operation(ctx, op);
 
@@ -379,6 +383,7 @@ pub(crate) fn convert_reduce_s2g(
             inline_asm_convergent(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 inputs,
                 &template,
@@ -416,6 +421,7 @@ pub(crate) fn convert_prefetch_tensormap(
             inline_asm_sideeffect(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 "prefetch.tensormap [$0];",
@@ -530,6 +536,7 @@ pub(crate) fn convert_prefetch_tile(
             inline_asm_convergent(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 &template,
@@ -589,6 +596,7 @@ pub(crate) fn convert_tensormap_replace(
     inline_asm_sideeffect(
         ctx,
         rewriter,
+        op,
         void_ty.into(),
         operands,
         &template,
@@ -646,6 +654,7 @@ pub(crate) fn convert_tensormap_fence(
             inline_asm_sideeffect(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 &template,
@@ -699,6 +708,7 @@ pub(crate) fn convert_control(
             inline_asm_sideeffect(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 template,

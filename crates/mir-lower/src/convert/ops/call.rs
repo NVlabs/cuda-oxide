@@ -714,6 +714,7 @@ pub fn convert(
         func_type,
         flattened_args,
     );
+    crate::convert::preserve_location(ctx, op, llvm_call.get_operation());
     rewriter.insert_operation(ctx, llvm_call.get_operation());
 
     let is_void = result_type.deref(ctx).is::<llvm_types::VoidType>();
