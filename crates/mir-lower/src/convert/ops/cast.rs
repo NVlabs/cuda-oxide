@@ -131,7 +131,7 @@ pub fn convert(
         }
 
         MirCastKindAttr::IntToFloat => {
-            convert_int_to_float(ctx, rewriter, val, llvm_ty, mir_opd_ty)?
+            convert_int_to_float(ctx, rewriter, op, val, val_ty, llvm_ty, mir_opd_ty)?
         }
 
         MirCastKindAttr::FloatToInt => {
@@ -214,7 +214,9 @@ fn convert_int_to_int(
 fn convert_int_to_float(
     ctx: &mut Context,
     _rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
     val: pliron::value::Value,
+    val_ty: pliron::r#type::TypeHandle,
     llvm_ty: pliron::r#type::TypeHandle,
     mir_opd_ty: pliron::r#type::TypeHandle,
 ) -> Result<Ptr<Operation>> {
@@ -228,6 +230,23 @@ fn convert_int_to_float(
             .signedness()
             == Signedness::Signed
     };
+
+    let int_width = val_ty
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .map(|t| t.width())
+        .ok_or_else(|| {
+            pliron::input_error!(
+                op.deref(ctx).loc(),
+                "IntToFloat: operand type is not an integer"
+            )
+        })?;
+    if int_width > 64 {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "IntToFloat: integer source widths wider than 64 bits are not yet supported on the device"
+        );
+    }
 
     if is_signed {
         Ok(llvm::SIToFPOp::new(ctx, val, llvm_ty).get_operation())
@@ -1544,6 +1563,38 @@ mod tests {
         let module_ptr = lower_single_cast(&mut ctx, i32_ty, f32_ty, MirCastKindAttr::IntToFloat);
 
         assert_cast_lowered_to::<llvm::SIToFPOp>(&ctx, module_ptr, "llvm.sitofp");
+    }
+
+    #[test]
+    fn int_to_float_rejects_integer_source_wider_than_64_bits() {
+        let mut ctx = make_ctx();
+        let i128_ty = int_ty(&mut ctx, 128, Signedness::Signed);
+        let f64_ty: TypeHandle = FP64Type::get(&ctx).into();
+
+        let module = build_single_cast(&mut ctx, i128_ty, f64_ty, MirCastKindAttr::IntToFloat);
+        let error = crate::lower_mir_to_llvm(&mut ctx, module).expect_err(
+            "i128 -> f64 cast must be rejected before an unsupported soft-float helper is emitted",
+        );
+        assert!(
+            error.to_string().contains("wider than 64 bits"),
+            "unexpected diagnostic: {error}"
+        );
+    }
+
+    #[test]
+    fn int_to_float_rejects_unsigned_integer_source_wider_than_64_bits() {
+        let mut ctx = make_ctx();
+        let u128_ty = int_ty(&mut ctx, 128, Signedness::Unsigned);
+        let f64_ty: TypeHandle = FP64Type::get(&ctx).into();
+
+        let module = build_single_cast(&mut ctx, u128_ty, f64_ty, MirCastKindAttr::IntToFloat);
+        let error = crate::lower_mir_to_llvm(&mut ctx, module).expect_err(
+            "u128 -> f64 cast must be rejected before an unsupported soft-float helper is emitted",
+        );
+        assert!(
+            error.to_string().contains("wider than 64 bits"),
+            "unexpected diagnostic: {error}"
+        );
     }
 
     #[test]
