@@ -53,10 +53,13 @@ one immutable device global is a tracked follow-up.
 Thin pointer fields in array, tuple, and struct **const** values that relocate
 to device statics are materialized via `MirGlobalAllocOp` per field, including
 non-zero byte addends into a static (see `struct_constant_provenance`,
-`tuple_constant_provenance`, `tuple_array_provenance`). Pointer relocations
-inside union constants, fat pointers, enum constants with relocations,
-pointer-to-array union constants (`&[U; N]`), and device-global *initializer*
-relocations remain rejected.
+`tuple_constant_provenance`, `tuple_array_provenance`). Thin-pointer-only
+union constants preserve the same relocation provenance, including non-zero
+addends, by reconstructing one typed pointer carrier instead of transmuting
+placeholder bytes. Pointer/integer overlapping unions, fat or nested pointer
+storage in unions, over-aligned/padded pointer unions, enum constants with
+unsupported relocations, pointer-to-array union constants (`&[U; N]`), and
+device-global *initializer* relocations remain rejected.
 
 Enum constants with direct thin-reference payloads preserve relocations to
 device statics, including non-zero byte addends. This includes niche-encoded

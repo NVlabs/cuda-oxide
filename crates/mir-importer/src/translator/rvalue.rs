@@ -7650,9 +7650,9 @@ fn constant_storage_size(ctx: &Context, ty_ptr: TypeHandle) -> Option<usize> {
 
 /// Whether a constant-storage type contains a pointer-bearing leaf.
 ///
-/// Initialized union constants are currently materialized through a raw byte
-/// image. That is only sound for pointer-free storage: pointer provenance
-/// cannot be reconstructed from bytes once rustc's active-field identity is gone.
+/// Raw-byte constant materialization is only sound when this returns false.
+/// Provenance-aware aggregate paths use the same predicate to decide whether
+/// they need typed reconstruction instead.
 fn constant_type_contains_pointer(ctx: &Context, ty: TypeHandle) -> bool {
     let ty_ref = ty.deref(ctx);
     if ty_ref.is::<dialect_mir::types::MirPtrType>()
@@ -7684,8 +7684,99 @@ fn constant_type_contains_pointer(ctx: &Context, ty: TypeHandle) -> bool {
         .any(|child| constant_type_contains_pointer(ctx, child))
 }
 
-/// Verify that rustc and the MIR union agree on the exact stored size and that
-/// this byte-materialization path is pointer-free.
+/// Physical representation strategy for an initialized union constant.
+///
+/// rustc does not retain the source-level active field in an evaluated union
+/// allocation. Pointer-free unions can therefore use the exact byte image,
+/// while a provenance-bearing union is only reconstructible without guessing
+/// an active field when every non-ZST alternative is the same class of thin
+/// pointer storage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnionConstantStorageKind {
+    ByteImage,
+    ThinPointer {
+        field_index: usize,
+        field_ty: TypeHandle,
+    },
+}
+
+fn classify_union_constant_storage(
+    ctx: &Context,
+    union_ty: TypeHandle,
+) -> Result<UnionConstantStorageKind, String> {
+    let (name, field_types) = {
+        let ty_ref = union_ty.deref(ctx);
+        let union_ty = ty_ref
+            .downcast_ref::<dialect_mir::types::MirUnionType>()
+            .ok_or_else(|| {
+                "classify_union_constant_storage called on non-union type".to_string()
+            })?;
+        (union_ty.name().to_string(), union_ty.field_types().to_vec())
+    };
+
+    if !field_types
+        .iter()
+        .copied()
+        .any(|field| constant_type_contains_pointer(ctx, field))
+    {
+        return Ok(UnionConstantStorageKind::ByteImage);
+    }
+
+    let mut carrier: Option<(usize, TypeHandle, u32)> = None;
+    for (field_index, field_ty) in field_types.into_iter().enumerate() {
+        if types::is_zst_type(ctx, field_ty) {
+            continue;
+        }
+
+        let address_space = {
+            let field_ref = field_ty.deref(ctx);
+            field_ref
+                .downcast_ref::<dialect_mir::types::MirPtrType>()
+                .map(|ptr| ptr.address_space)
+        };
+
+        let Some(address_space) = address_space else {
+            if constant_type_contains_pointer(ctx, field_ty) {
+                return Err(format!(
+                    "Initialized union constant `{name}` contains pointer-bearing field \
+                     {field_index} that is not a thin pointer; fat or nested pointer storage \
+                     in union constants is not supported"
+                ));
+            }
+            return Err(format!(
+                "Initialized union constant `{name}` overlaps thin-pointer storage with \
+                 non-pointer field {field_index}; pointer/integer union constants cannot \
+                 preserve both provenance and exact integer bits"
+            ));
+        };
+
+        match carrier {
+            None => carrier = Some((field_index, field_ty, address_space)),
+            Some((_, _, carrier_address_space)) if carrier_address_space == address_space => {}
+            Some((_, _, carrier_address_space)) => {
+                return Err(format!(
+                    "Initialized union constant `{name}` mixes pointer address spaces \
+                     {carrier_address_space} and {address_space}; one union carrier cannot \
+                     preserve both representations"
+                ));
+            }
+        }
+    }
+
+    let Some((field_index, field_ty, _)) = carrier else {
+        return Err(format!(
+            "Initialized union constant `{name}` is pointer-bearing but has no non-ZST \
+             thin-pointer field"
+        ));
+    };
+
+    Ok(UnionConstantStorageKind::ThinPointer {
+        field_index,
+        field_ty,
+    })
+}
+
+/// Verify that rustc and the MIR union agree on the exact stored size.
 fn union_constant_storage_size(
     ctx: &Context,
     rust_ty: &rustc_public::ty::Ty,
@@ -7693,7 +7784,7 @@ fn union_constant_storage_size(
     loc: &Location,
 ) -> TranslationResult<usize> {
     let rust_size = rust_type_layout_size(*rust_ty, loc.clone())?;
-    let (name, mir_size, field_types) = {
+    let (name, mir_size) = {
         let ty_ref = union_ty.deref(ctx);
         let union_ty = ty_ref
             .downcast_ref::<dialect_mir::types::MirUnionType>()
@@ -7709,24 +7800,8 @@ fn union_constant_storage_size(
                 union_ty.total_size()
             )))
         })?;
-        (
-            union_ty.name().to_string(),
-            size,
-            union_ty.field_types().to_vec(),
-        )
+        (union_ty.name().to_string(), size)
     };
-
-    if field_types
-        .into_iter()
-        .any(|field| constant_type_contains_pointer(ctx, field))
-    {
-        return input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(format!(
-                "Initialized union constant `{name}` contains pointer-bearing storage; pointer-bearing union constants are not yet supported"
-            ))
-        );
-    }
 
     if rust_size != mir_size {
         return input_err!(
@@ -7742,10 +7817,10 @@ fn union_constant_storage_size(
 /// Materialize a non-ZST union constant without guessing an active field.
 ///
 /// rustc constant evaluation gives us the physical storage image and its
-/// initialization mask, but not a source-level active-field identity. Rebuilding
-/// the union through `mir.insert_field` would therefore invent semantics. Build
-/// the exact byte image instead, keep uninitialized bytes as typed `undef`, then
-/// transmute the byte array into the already layout-exact `MirUnionType`.
+/// initialization mask, but not a source-level active-field identity. Pointer-free
+/// unions therefore keep the exact byte image. Pointer-only unions use a typed
+/// carrier selected from representation-compatible fields so relocation provenance
+/// survives without claiming which source field initialized the allocation.
 fn translate_union_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -7773,12 +7848,13 @@ fn translate_union_constant(
     translate_union_constant_from_alloc(ctx, alloc, 0, rust_ty, union_ty, block_ptr, prev_op, loc)
 }
 
-/// Materialize one union value from an allocation while preserving its init mask.
+/// Materialize one union value from an allocation while preserving its storage semantics.
 ///
-/// Pointer provenance is deliberately out of scope here. The bytes under a
-/// relocation are an addend, not literal storage, so treating them as ordinary
-/// initialized bytes would silently discard provenance. Reject any relocation
-/// whose pointer word overlaps the union.
+/// Pointer-free unions retain the existing byte-image path and exact initialization
+/// mask. A union whose every non-ZST alternative is a compatible thin pointer
+/// instead uses one typed pointer carrier so rustc relocation provenance never
+/// becomes integer bytes. Pointer/integer overlap, fat pointers, nested pointer
+/// aggregates, and ambiguous relocation layouts remain fail-closed.
 #[allow(clippy::too_many_arguments)]
 fn translate_union_constant_from_alloc(
     ctx: &mut Context,
@@ -7820,23 +7896,109 @@ fn translate_union_constant_from_alloc(
         end,
         pointer_width,
     );
-    if !relocations.is_empty() {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "Initialized union constant has pointer relocation(s) overlapping byte offset(s) {relocations:?}; pointer-bearing union constants are not yet supported"
-            ))
-        );
-    }
 
-    translate_union_constant_from_storage(
-        ctx,
-        union_ty,
-        &alloc.bytes[base_offset..end],
-        block_ptr,
-        prev_op,
-        loc,
-    )
+    let storage_kind = classify_union_constant_storage(ctx, union_ty)
+        .map_err(|message| input_error!(loc.clone(), TranslationErr::unsupported(message)))?;
+
+    match storage_kind {
+        UnionConstantStorageKind::ByteImage => {
+            if !relocations.is_empty() {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Pointer-free union constant has relocation(s) overlapping byte offset(s) \
+                         {relocations:?}; the union type does not contain storage that can \
+                         preserve that provenance"
+                    ))
+                );
+            }
+
+            translate_union_constant_from_storage(
+                ctx,
+                union_ty,
+                &alloc.bytes[base_offset..end],
+                block_ptr,
+                prev_op,
+                loc,
+            )
+        }
+        UnionConstantStorageKind::ThinPointer {
+            field_index,
+            field_ty,
+        } => {
+            if size != pointer_width {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Thin-pointer union constant has size {size}, but the target pointer width \
+                         is {pointer_width}; over-aligned or padded pointer-union constants are \
+                         not yet supported because their non-pointer bytes would need a separate \
+                         initialization-mask representation"
+                    ))
+                );
+            }
+
+            if relocations.iter().any(|offset| *offset != base_offset) || relocations.len() > 1 {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "Thin-pointer union constant expects at most one relocation anchored at \
+                         byte {base_offset}, found overlapping relocation start(s) {relocations:?}"
+                    ))
+                );
+            }
+
+            let pointer_end = base_offset + pointer_width;
+            if alloc.bytes[base_offset..pointer_end]
+                .iter()
+                .any(|byte| byte.is_none())
+            {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "Thin-pointer union constant contains uninitialized bytes in its pointer \
+                         carrier; partially initialized pointer storage cannot be reconstructed"
+                            .to_string()
+                    )
+                );
+            }
+
+            let (pointer, current_prev_op) = translate_thin_pointer_at_alloc_offset(
+                ctx,
+                alloc,
+                base_offset,
+                field_ty,
+                block_ptr,
+                prev_op,
+                loc.clone(),
+            )?;
+
+            let undef_op = MirUndefOp::new(ctx, union_ty).get_operation();
+            undef_op.deref_mut(ctx).set_loc(loc.clone());
+            match current_prev_op {
+                Some(prev) => undef_op.insert_after(ctx, prev),
+                None => undef_op.insert_at_front(block_ptr, ctx),
+            }
+            let undef_value = undef_op.deref(ctx).get_result(0);
+
+            let insert_op = Operation::new(
+                ctx,
+                MirInsertFieldOp::get_concrete_op_info(),
+                vec![union_ty],
+                vec![undef_value, pointer],
+                vec![],
+                0,
+            );
+            insert_op.deref_mut(ctx).set_loc(loc);
+            MirInsertFieldOp::new(insert_op).set_attr_insert_index(
+                ctx,
+                dialect_mir::attributes::FieldIndexAttr(field_index as u32),
+            );
+            insert_op.insert_after(ctx, undef_op);
+
+            Ok((insert_op.deref(ctx).get_result(0), Some(insert_op)))
+        }
+    }
 }
 
 /// Build `[u8; size]` with one SSA value per physical byte and transmute it to
@@ -12239,9 +12401,10 @@ mod promotable_array_element_tests {
 #[cfg(test)]
 mod aggregate_relocation_tests {
     use super::{
-        constant_type_contains_pointer, decode_relocation_addend, find_unconsumed_relocation,
-        match_thin_pointer_relocation, provenance_starts_in_range,
-        relocation_offsets_overlapping_range, validate_array_value_element_type,
+        UnionConstantStorageKind, classify_union_constant_storage, constant_type_contains_pointer,
+        decode_relocation_addend, find_unconsumed_relocation, match_thin_pointer_relocation,
+        provenance_starts_in_range, relocation_offsets_overlapping_range,
+        validate_array_value_element_type,
     };
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
@@ -12462,8 +12625,38 @@ mod aggregate_relocation_tests {
         );
 
         let pointer_field_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let u8_pointer_field_ty: TypeHandle =
+            MirPtrType::get_generic(&mut ctx, u8_ty, false).into();
+        let pointer_only_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "PointerOnly".into(),
+            vec!["word".into(), "bytes".into()],
+            vec![pointer_field_ty, u8_pointer_field_ty],
+            8,
+            8,
+        )
+        .into();
+        assert!(
+            constant_type_contains_pointer(&ctx, pointer_only_union_ty),
+            "pointer-only union constants must use typed reconstruction"
+        );
+        assert_eq!(
+            classify_union_constant_storage(&ctx, pointer_only_union_ty),
+            Ok(UnionConstantStorageKind::ThinPointer {
+                field_index: 0,
+                field_ty: pointer_field_ty,
+            }),
+            "compatible thin-pointer alternatives can share one provenance-bearing carrier"
+        );
+
+        assert!(
+            validate_array_value_element_type(&ctx, pointer_only_union_ty, &Location::Unknown)
+                .is_ok(),
+            "bare arrays of pointer-only unions must reach the provenance-aware union decoder"
+        );
+
         let u64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
-        let pointer_union_ty: TypeHandle = MirUnionType::get(
+        let pointer_integer_union_ty: TypeHandle = MirUnionType::get(
             &mut ctx,
             "PointerBits".into(),
             vec!["ptr".into(), "bits".into()],
@@ -12472,9 +12665,28 @@ mod aggregate_relocation_tests {
             8,
         )
         .into();
+        let pointer_integer_error = classify_union_constant_storage(&ctx, pointer_integer_union_ty)
+            .expect_err("pointer/integer overlap must remain fail-closed");
         assert!(
-            constant_type_contains_pointer(&ctx, pointer_union_ty),
-            "pointer-bearing union constants must stay outside raw-byte materialization"
+            pointer_integer_error.contains("pointer/integer union constants"),
+            "diagnostic must explain the provenance-vs-bits conflict: {pointer_integer_error}"
+        );
+
+        let slice_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, u32_ty).into();
+        let fat_pointer_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "FatPointer".into(),
+            vec!["slice".into(), "ptr".into()],
+            vec![slice_ty, pointer_field_ty],
+            16,
+            8,
+        )
+        .into();
+        let fat_pointer_error = classify_union_constant_storage(&ctx, fat_pointer_union_ty)
+            .expect_err("fat-pointer union storage must remain fail-closed");
+        assert!(
+            fat_pointer_error.contains("not a thin pointer"),
+            "diagnostic must identify unsupported fat/nested storage: {fat_pointer_error}"
         );
 
         let struct_ty: TypeHandle = MirStructType::get(
