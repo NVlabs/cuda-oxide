@@ -97,15 +97,15 @@ fn convert_g2s_impl(
 
         let (template, constraints) = g2s_inline_asm(dims, multicast, cta_group);
 
-        let lowered = inline_asm_convergent(
+        inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             inputs,
             &template,
             &constraints,
         );
-        crate::convert::preserve_location(ctx, op, lowered);
         rewriter.erase_operation(ctx, op);
         return Ok(());
     }
@@ -208,15 +208,15 @@ pub(crate) fn convert_s2g(
         let mut inputs = vec![src_casted, operands[1]];
         inputs.extend(operands[2..].iter().copied());
         let (template, constraints) = s2g_inline_asm(dims);
-        let lowered = inline_asm_convergent(
+        inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             inputs,
             &template,
             &constraints,
         );
-        crate::convert::preserve_location(ctx, op, lowered);
         rewriter.erase_operation(ctx, op);
         return Ok(());
     }
@@ -380,15 +380,15 @@ pub(crate) fn convert_reduce_s2g(
             let mut inputs = vec![src_casted, operands[1]];
             inputs.extend(operands[2..].iter().copied());
 
-            let lowered = inline_asm_convergent(
+            inline_asm_convergent(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 inputs,
                 &template,
                 &constraints,
             );
-            crate::convert::preserve_location(ctx, op, lowered);
         }
     }
 
@@ -418,15 +418,15 @@ pub(crate) fn convert_prefetch_tensormap(
             call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, operands)?;
         }
         IntrinsicBackend::LibNvvm => {
-            let lowered = inline_asm_sideeffect(
+            inline_asm_sideeffect(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 "prefetch.tensormap [$0];",
                 "l,~{memory}",
             );
-            crate::convert::preserve_location(ctx, op, lowered);
         }
     }
     rewriter.erase_operation(ctx, op);
@@ -533,15 +533,15 @@ pub(crate) fn convert_prefetch_tile(
                 constraints.push("l");
             }
             constraints.push("~{memory}");
-            let lowered = inline_asm_convergent(
+            inline_asm_convergent(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 &template,
                 &constraints.join(","),
             );
-            crate::convert::preserve_location(ctx, op, lowered);
         }
     }
     rewriter.erase_operation(ctx, op);
@@ -593,15 +593,15 @@ pub(crate) fn convert_tensormap_replace(
         "r"
     });
     constraints.push("~{memory}");
-    let lowered = inline_asm_sideeffect(
+    inline_asm_sideeffect(
         ctx,
         rewriter,
+        op,
         void_ty.into(),
         operands,
         &template,
         &constraints.join(","),
     );
-    crate::convert::preserve_location(ctx, op, lowered);
     rewriter.erase_operation(ctx, op);
     Ok(())
 }
@@ -651,15 +651,15 @@ pub(crate) fn convert_tensormap_fence(
             } else {
                 format!("fence.proxy.tensormap::generic.release.{scope};")
             };
-            let lowered = inline_asm_sideeffect(
+            inline_asm_sideeffect(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 &template,
                 if acquire { "l,~{memory}" } else { "~{memory}" },
             );
-            crate::convert::preserve_location(ctx, op, lowered);
         }
     }
     rewriter.erase_operation(ctx, op);
@@ -705,15 +705,15 @@ pub(crate) fn convert_control(
                 "wait_group_read" => ("cp.async.bulk.wait_group.read $0;", "n,~{memory}"),
                 _ => unreachable!("operation was validated"),
             };
-            let lowered = inline_asm_sideeffect(
+            inline_asm_sideeffect(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 template,
                 constraints,
             );
-            crate::convert::preserve_location(ctx, op, lowered);
         }
     }
     rewriter.erase_operation(ctx, op);

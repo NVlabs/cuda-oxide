@@ -175,6 +175,7 @@ pub(crate) fn convert_shuffle_i64(
     let asm_op = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         i64_ty.into(),
         vec![val, lane_or_delta, mask],
         &asm_template,
@@ -468,6 +469,7 @@ pub(crate) fn convert_elect_sync_inline(
     let asm_op = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         struct_ty.into(),
         vec![mask],
         asm_template,

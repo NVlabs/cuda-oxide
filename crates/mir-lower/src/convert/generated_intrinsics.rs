@@ -289,15 +289,15 @@ fn convert_generated_tcgen05_void(
         );
     }
     let void_ty = llvm_types::VoidType::get(ctx);
-    let inline_asm = inline_asm_convergent(
+    inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         void_ty.into(),
         operands,
         template,
         constraints,
     );
-    crate::convert::preserve_location(ctx, op, inline_asm);
     rewriter.erase_operation(ctx, op);
     Ok(())
 }
@@ -329,8 +329,15 @@ fn convert_generated_tcgen05_load(
         FP32Type::get(ctx).into()
     };
     if count == 1 {
-        let inline_asm =
-            inline_asm_convergent(ctx, rewriter, scalar_ty, operands, template, constraints);
+        let inline_asm = inline_asm_convergent(
+            ctx,
+            rewriter,
+            op,
+            scalar_ty,
+            operands,
+            template,
+            constraints,
+        );
         let result = inline_asm.deref(ctx).get_result(0);
         rewriter.replace_operation_with_values(ctx, op, vec![result]);
         return Ok(());
@@ -340,6 +347,7 @@ fn convert_generated_tcgen05_load(
     let inline_asm = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         result_ty.into(),
         operands,
         template,
@@ -408,6 +416,7 @@ fn convert_generated_stmatrix(
             inline_asm_convergent(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 operands,
                 &template,
@@ -1357,6 +1366,7 @@ impl MirToLlvmConversion for ActiveMaskOp {
                 let inline_asm = inline_asm_convergent(
                     ctx,
                     rewriter,
+                    op,
                     i32_ty.into(),
                     vec![],
                     "activemask.b32 $0;",
@@ -1817,6 +1827,7 @@ impl MirToLlvmConversion for MovmatrixTransB16Op {
         let asm = inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             result_ty.into(),
             operands,
             "movmatrix.sync.aligned.m8n8.trans.b16 $0, $1;",
@@ -7946,7 +7957,15 @@ impl MirToLlvmConversion for ClusterBarrierOp {
                 call_intrinsic(ctx, rewriter, op, recipe.0, function_ty, vec![])?;
             }
             IntrinsicBackend::LibNvvm => {
-                inline_asm_convergent(ctx, rewriter, void_ty.into(), vec![], recipe.1, "~{memory}");
+                inline_asm_convergent(
+                    ctx,
+                    rewriter,
+                    op,
+                    void_ty.into(),
+                    vec![],
+                    recipe.1,
+                    "~{memory}",
+                );
             }
         }
         rewriter.erase_operation(ctx, op);
@@ -7988,6 +8007,7 @@ impl MirToLlvmConversion for ClusterSyncOp {
                 inline_asm_convergent(
                     ctx,
                     rewriter,
+                    op,
                     void_ty.into(),
                     vec![],
                     "barrier.cluster.arrive.aligned; barrier.cluster.wait.aligned;",
@@ -8032,7 +8052,15 @@ fn convert_generated_wgmma_control(
             } else {
                 "~{memory}"
             };
-            inline_asm_convergent(ctx, rewriter, void_ty.into(), operands, ptx, constraints);
+            inline_asm_convergent(
+                ctx,
+                rewriter,
+                op,
+                void_ty.into(),
+                operands,
+                ptx,
+                constraints,
+            );
         }
     }
     rewriter.erase_operation(ctx, op);
@@ -9700,6 +9728,7 @@ impl MirToLlvmConversion for DsmemReadU32Op {
         let asm = inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             i32_ty.into(),
             vec![shared_pointer, rank],
             "{ .reg .u64 %mapped; mapa.shared::cluster.u64 %mapped, $1, $2; ld.shared::cluster.u32 $0, [%mapped]; }",
@@ -9732,6 +9761,7 @@ impl MirToLlvmConversion for MapaSharedClusterOp {
         let asm = inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             i64_ty.into(),
             vec![shared_pointer, rank],
             "mapa.shared::cluster.u64 $0, $1, $2;",
@@ -9766,6 +9796,7 @@ impl MirToLlvmConversion for FenceMbarrierInitReleaseClusterOp {
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             operands,
             "fence.mbarrier_init.release.cluster;",
@@ -9796,6 +9827,7 @@ impl MirToLlvmConversion for FenceProxyAsyncGenericAcquireSharedClusterClusterOp
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             operands,
             "fence.proxy.async::generic.acquire.sync_restrict::shared::cluster.cluster;",
@@ -9826,6 +9858,7 @@ impl MirToLlvmConversion for FenceProxyAsyncGenericReleaseSharedCtaClusterOp {
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             operands,
             "fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster;",
@@ -9856,6 +9889,7 @@ impl MirToLlvmConversion for FenceProxyAsyncSharedCtaOp {
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             operands,
             "fence.proxy.async.shared::cta;",
@@ -9886,6 +9920,7 @@ impl MirToLlvmConversion for MbarrierArriveClusterOp {
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             operands,
             "mbarrier.arrive.release.cluster.shared::cluster.b64 _, [$0];",
@@ -9917,6 +9952,7 @@ impl MirToLlvmConversion for MbarrierArriveExpectTxSharedOp {
         let asm = inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             result_ty.into(),
             operands,
             "mbarrier.arrive.expect_tx.release.cta.shared::cta.b64 $0, [$1], $2;",
@@ -9948,6 +9984,7 @@ impl MirToLlvmConversion for MbarrierArriveExpectTxClusterOp {
         let asm = inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             result_ty.into(),
             operands,
             "mbarrier.arrive.expect_tx.relaxed.cluster.shared::cta.b64 $0, [$1], $2;",
@@ -9979,6 +10016,7 @@ impl MirToLlvmConversion for MbarrierTryWaitSharedOp {
         let asm = inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             result_ty.into(),
             operands,
             "{ .reg .pred %p0; mbarrier.try_wait.shared.b64 %p0, [$1], $2; selp.b32 $0, 1, 0, %p0; }",
@@ -10015,6 +10053,7 @@ impl MirToLlvmConversion for MbarrierTryWaitParitySharedOp {
         let asm = inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             result_ty.into(),
             operands,
             "{ .reg .pred %p0; mbarrier.try_wait.parity.shared::cta.b64 %p0, [$1], $2; selp.b32 $0, 1, 0, %p0; }",
@@ -10051,6 +10090,7 @@ impl MirToLlvmConversion for MbarrierTryWaitParityClusterOp {
         let asm = inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             result_ty.into(),
             operands,
             "{ .reg .pred %p0; mbarrier.try_wait.parity.acquire.cluster.shared::cta.b64 %p0, [$1], $2; selp.b32 $0, 1, 0, %p0; }",
@@ -10086,6 +10126,7 @@ impl MirToLlvmConversion for NanosleepOp {
         inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             void_ty.into(),
             operands,
             "nanosleep.u32 $0;",
@@ -17198,7 +17239,7 @@ impl MirToLlvmConversion for BreakpointOp {
     ) -> Result<()> {
         let op = self.get_operation();
         let void_ty = llvm_types::VoidType::get(ctx);
-        inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], "brkpt;", "");
+        inline_asm_sideeffect(ctx, rewriter, op, void_ty.into(), vec![], "brkpt;", "");
         rewriter.erase_operation(ctx, op);
         Ok(())
     }
@@ -17221,7 +17262,7 @@ impl MirToLlvmConversion for PmEventOp {
             );
         };
         let template = format!("pmevent {event_id};");
-        inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], &template, "");
+        inline_asm_sideeffect(ctx, rewriter, op, void_ty.into(), vec![], &template, "");
         rewriter.erase_operation(ctx, op);
         Ok(())
     }
@@ -17237,7 +17278,7 @@ impl MirToLlvmConversion for TrapOp {
     ) -> Result<()> {
         let op = self.get_operation();
         let void_ty = llvm_types::VoidType::get(ctx);
-        inline_asm_sideeffect(ctx, rewriter, void_ty.into(), vec![], "trap;", "");
+        inline_asm_sideeffect(ctx, rewriter, op, void_ty.into(), vec![], "trap;", "");
         rewriter.erase_operation(ctx, op);
         Ok(())
     }
@@ -17272,6 +17313,7 @@ impl MirToLlvmConversion for Barrier0Op {
                 inline_asm_convergent(
                     ctx,
                     rewriter,
+                    op,
                     void_ty.into(),
                     vec![],
                     "bar.sync 0;",

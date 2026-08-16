@@ -147,9 +147,13 @@ pub fn call_intrinsic(
 }
 
 /// Create an inline assembly operation with the convergent attribute.
+///
+/// `current_op` is the MIR op being converted; its source location is copied
+/// onto the inline asm op so line info survives lowering.
 pub fn inline_asm_convergent(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
+    current_op: Ptr<Operation>,
     result_ty: pliron::r#type::TypeHandle,
     inputs: Vec<Value>,
     asm_template: &str,
@@ -163,6 +167,7 @@ pub fn inline_asm_convergent(
         constraints,
         AsmKind::Convergent,
     );
+    crate::convert::preserve_location(ctx, current_op, inline_asm.get_operation());
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     inline_asm.get_operation()
 }
@@ -173,9 +178,13 @@ pub fn inline_asm_convergent(
 /// (e.g., `cp.async` copies). Unlike `inline_asm_convergent`, the emitted asm
 /// is marked `sideeffect` only, allowing LLVM to move or duplicate it across
 /// divergent control flow when legal.
+///
+/// `current_op` is the MIR op being converted; its source location is copied
+/// onto the inline asm op so line info survives lowering.
 pub fn inline_asm_sideeffect(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
+    current_op: Ptr<Operation>,
     result_ty: pliron::r#type::TypeHandle,
     inputs: Vec<Value>,
     asm_template: &str,
@@ -189,6 +198,7 @@ pub fn inline_asm_sideeffect(
         constraints,
         AsmKind::SideEffect,
     );
+    crate::convert::preserve_location(ctx, current_op, inline_asm.get_operation());
     rewriter.insert_operation(ctx, inline_asm.get_operation());
     inline_asm.get_operation()
 }
@@ -293,6 +303,7 @@ mod tests {
                     inline_asm_convergent(
                         ctx,
                         rewriter,
+                        op,
                         void_ty.into(),
                         vec![],
                         "bar.sync 0;",
@@ -307,6 +318,7 @@ mod tests {
                     inline_asm_sideeffect(
                         ctx,
                         rewriter,
+                        op,
                         void_ty.into(),
                         vec![dst, value],
                         "st.global.u32 [$0], $1;",
@@ -363,7 +375,7 @@ mod tests {
         (module_ptr, entry)
     }
 
-    fn append_trigger(ctx: &mut Context, block: Ptr<BasicBlock>) {
+    fn append_trigger(ctx: &mut Context, block: Ptr<BasicBlock>) -> Ptr<Operation> {
         let trigger = Operation::new(
             ctx,
             mir::MirStorageLiveOp::get_concrete_op_info(),
@@ -373,6 +385,7 @@ mod tests {
             0,
         );
         trigger.insert_at_back(block, ctx);
+        trigger
     }
 
     fn run_helper_action(
@@ -626,6 +639,28 @@ mod tests {
             asm.get_attr_inline_asm_convergent(&ctx)
                 .is_some_and(|b| bool::from((*b).clone()))
         );
+    }
+
+    #[test]
+    fn inline_asm_convergent_copies_the_source_op_location() {
+        use pliron::location::{Located, Location};
+
+        let mut ctx = make_ctx();
+        let (module_ptr, entry) = build_test_func(&mut ctx, vec![]);
+        let trigger = append_trigger(&mut ctx, entry);
+        let expected = Location::Named {
+            name: "source-intrinsic".to_string(),
+            child_loc: Box::new(Location::Unknown),
+        };
+        trigger.deref_mut(&mut ctx).set_loc(expected.clone());
+
+        assert!(
+            run_helper_action(&mut ctx, module_ptr, HelperAction::InlineAsmConvergent).is_none()
+        );
+
+        let asms = find_body_ops::<llvm::InlineAsmOp>(&ctx, module_ptr);
+        assert_eq!(asms.len(), 1);
+        assert_eq!(asms[0].get_operation().deref(&ctx).loc(), expected);
     }
 
     #[test]

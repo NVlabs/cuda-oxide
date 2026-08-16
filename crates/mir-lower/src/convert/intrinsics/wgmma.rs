@@ -50,6 +50,7 @@ pub(crate) fn convert_make_smem_desc(
     let asm_op = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         i64_ty.into(),
         vec![ptr_casted],
         asm_template,
@@ -244,6 +245,7 @@ pub(crate) fn convert_mma_group(
     inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         VoidType::get(ctx).into(),
         operands,
         &template,
@@ -294,7 +296,15 @@ pub(crate) fn convert_mma_group_values(
         llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); VALUE_ACCUMULATOR_COUNT])
             .into();
 
-    let asm_op = inline_asm_convergent(ctx, rewriter, struct_ty, operands, &template, &constraints);
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        op,
+        struct_ty,
+        operands,
+        &template,
+        &constraints,
+    );
 
     let aggregate = asm_op.deref(ctx).get_result(0);
 
@@ -350,7 +360,15 @@ pub(crate) fn convert_mma_loop_values(
         llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); VALUE_ACCUMULATOR_COUNT])
             .into();
 
-    let asm_op = inline_asm_convergent(ctx, rewriter, struct_ty, operands, &template, &constraints);
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        op,
+        struct_ty,
+        operands,
+        &template,
+        &constraints,
+    );
     let aggregate = asm_op.deref(ctx).get_result(0);
 
     let mut extracted_values = Vec::with_capacity(VALUE_ACCUMULATOR_COUNT);
@@ -423,7 +441,15 @@ pub(crate) fn convert_mma_pipeline_values(
     let struct_ty: TypeHandle =
         llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); result_count]).into();
 
-    let asm_op = inline_asm_convergent(ctx, rewriter, struct_ty, operands, &template, &constraints);
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        op,
+        struct_ty,
+        operands,
+        &template,
+        &constraints,
+    );
     let aggregate = asm_op.deref(ctx).get_result(0);
 
     let mut extracted_values = Vec::with_capacity(result_count);

@@ -103,6 +103,7 @@ fn convert_generated_mma(
     let inline_asm = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         result_type.into(),
         operands,
         template,
