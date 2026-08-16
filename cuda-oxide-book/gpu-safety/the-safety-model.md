@@ -490,8 +490,12 @@ from a raw pointer requires the caller to guarantee that the pointer is
 valid and properly aligned:
 
 ```rust
-let atom = unsafe { DeviceAtomicU32::new(ptr) };
-atom.fetch_add(1, Ordering::Relaxed);  // safe call
+use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32};
+
+// `from_ptr` is the unsafe constructor: it reinterprets existing memory.
+// `DeviceAtomicU32::new(value)` is the safe one, for an owned static.
+let atom = unsafe { DeviceAtomicU32::from_ptr(ptr) };
+atom.fetch_add(1, AtomicOrdering::Relaxed);  // safe call
 ```
 
 ### Unchecked slice access
