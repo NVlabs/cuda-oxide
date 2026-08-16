@@ -14,9 +14,10 @@ pub(super) fn needs_nvvm_annotations(
     state: &ModuleExportState,
     emit_all_annotations: bool,
 ) -> bool {
-    let has_special_kernels =
-        !state.cluster_kernels.is_empty() || !state.launch_bounds_kernels.is_empty();
-    has_special_kernels || (emit_all_annotations && !state.all_kernels.is_empty())
+    let has_required_annotations = !state.cluster_kernels.is_empty()
+        || !state.launch_bounds_kernels.is_empty()
+        || !state.function_abi_alignments.is_empty();
+    has_required_annotations || (emit_all_annotations && !state.all_kernels.is_empty())
 }
 
 /// Emit `!nvvm.annotations` metadata nodes for kernels.
@@ -57,6 +58,24 @@ pub(super) fn emit_nvvm_annotations(
             writeln!(output, ", !\"kernel\", i32 1}}").unwrap();
             metadata_refs.push(format!("!{}", md_id));
         }
+    }
+
+    // Emit non-natural ABI alignments for direct aggregate arguments and
+    // returns. NVVM encodes position in the high 16 bits (0 = return,
+    // arguments start at 1) and byte alignment in the low 16 bits.
+    let function_abi_alignments: Vec<_> = state
+        .function_abi_alignments
+        .iter()
+        .map(|entry| (entry.name.clone(), entry.position, entry.alignment))
+        .collect();
+
+    for (name, position, alignment) in function_abi_alignments {
+        let encoded = (u32::from(position) << 16) | u32::from(alignment);
+        let md_id = state.alloc_metadata_id();
+        write!(output, "!{md_id} = !{{").unwrap();
+        emit_function_reference(output, state, &name)?;
+        writeln!(output, ", !\"align\", i32 {encoded}}}").unwrap();
+        metadata_refs.push(format!("!{}", md_id));
     }
 
     // Emit cluster config annotations
@@ -157,7 +176,8 @@ mod tests {
     use super::*;
     use crate::export::config::DebugKind;
     use crate::export::state::{
-        KernelBlockGeometry, KernelClusterConfig, KernelInfo, KernelLaunchBounds, ModuleExportState,
+        FunctionAbiAlignment, KernelBlockGeometry, KernelClusterConfig, KernelInfo,
+        KernelLaunchBounds, ModuleExportState,
     };
     use pliron::context::Context;
 
@@ -221,6 +241,37 @@ mod tests {
             )
         );
         assert_eq!(state.next_metadata_id(), 8);
+    }
+
+    #[test]
+    fn non_natural_function_abi_alignment_emits_nvvm_align_property() {
+        let ctx = Context::new();
+        let mut state = test_state(&ctx);
+        state.function_abi_alignments.push(FunctionAbiAlignment {
+            name: "packed_param".into(),
+            position: 1,
+            alignment: 2,
+        });
+        state.function_abi_alignments.push(FunctionAbiAlignment {
+            name: "packed_return".into(),
+            position: 0,
+            alignment: 2,
+        });
+
+        assert!(needs_nvvm_annotations(&state, false));
+
+        let mut output = String::new();
+        emit_nvvm_annotations(&mut output, &mut state, false).unwrap();
+
+        assert_eq!(
+            output,
+            concat!(
+                "!0 = !{ptr @packed_param, !\"align\", i32 65538}\n",
+                "!1 = !{ptr @packed_return, !\"align\", i32 2}\n",
+                "!nvvm.annotations = !{!0, !1}\n",
+            )
+        );
+        assert_eq!(state.next_metadata_id(), 2);
     }
 
     #[test]

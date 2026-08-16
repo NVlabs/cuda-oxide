@@ -30,7 +30,7 @@
 use crate::context::{DynamicSmemAlignmentMap, SharedGlobalsMap};
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_function_type, convert_type, is_kernel_func,
-    is_zero_sized_type, transparent_scalar_field,
+    is_zero_sized_type, llvm_type_size_align, mir_type_abi_align, transparent_scalar_field,
 };
 
 use dialect_mir::ops::MirFuncOp;
@@ -55,6 +55,8 @@ use pliron::{
 use rustc_hash::{FxHashMap, FxHashSet};
 
 const DYNAMIC_SHARED_ALIGNMENT_ATTR: &str = "dynamic_shared_alignment";
+const KERNEL_PARAM_ABI_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_kernel_param_abi_align_";
+const RETURN_ABI_ALIGN_ATTR: &str = "cuda_oxide_return_abi_align";
 
 // ============================================================================
 // Dynamic shared-memory contract propagation
@@ -253,13 +255,22 @@ pub fn convert_func(
     }
     let llvm_func_type =
         convert_function_type(ctx, func_type, is_kernel).map_err(anyhow_to_pliron)?;
+    let kernel_param_alignments = if is_kernel {
+        kernel_param_abi_alignments(ctx, func_type, llvm_func_type).map_err(anyhow_to_pliron)?
+    } else {
+        Vec::new()
+    };
+    let return_abi_alignment =
+        function_return_abi_alignment(ctx, func_type, llvm_func_type).map_err(anyhow_to_pliron)?;
 
     let llvm_func = llvm::FuncOp::new(ctx, name, llvm_func_type);
     llvm::copy_debug_source_scope_map(ctx, op, llvm_func.get_operation());
 
     if is_kernel {
         propagate_kernel_attrs(ctx, op, &llvm_func, &kernel_key);
+        propagate_kernel_param_abi_alignments(ctx, &llvm_func, &kernel_param_alignments);
     }
+    propagate_return_abi_alignment(ctx, &llvm_func, return_abi_alignment);
 
     propagate_alwaysinline_attr(ctx, op, &llvm_func);
 
@@ -360,6 +371,183 @@ fn propagate_kernel_attrs(
             .attributes
             .set(key, attr);
     }
+}
+
+/// Compute language ABI alignments that LLVM's structural parameter types lose.
+///
+/// Kernel aggregates are passed directly in `.param` space. A packed LLVM
+/// struct has natural alignment one even when Rust's `repr(packed(N))` ABI
+/// requires a larger power-of-two alignment. Preserve only the cases where
+/// rustc's ABI alignment is stricter than LLVM's natural alignment; the LLVM
+/// exporter renders these markers as NVVM `!nvvm.annotations` `"align"`
+/// properties, which preserve the contract in both modern NVPTX and libNVVM.
+fn kernel_param_abi_alignments(
+    ctx: &mut Context,
+    mir_func_type: pliron::r#type::TypedHandle<pliron::builtin::types::FunctionType>,
+    llvm_func_type: pliron::r#type::TypedHandle<llvm_export::types::FuncType>,
+) -> std::result::Result<Vec<(usize, u64)>, anyhow::Error> {
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+
+    let mir_args = {
+        let func_ref = mir_func_type.deref(ctx);
+        func_ref.arg_types().to_vec()
+    };
+    let llvm_args = {
+        let func_ref = llvm_func_type.deref(ctx);
+        func_ref.arg_types().to_vec()
+    };
+
+    let mut result = Vec::new();
+    let mut llvm_arg_index = 0usize;
+
+    for mir_ty in mir_args {
+        match classify_argument_type(ctx, mir_ty, true)? {
+            ReconstructKind::Slice { space_fields } => {
+                llvm_arg_index = llvm_arg_index
+                    .checked_add(2 + space_fields)
+                    .ok_or_else(|| anyhow::anyhow!("kernel parameter index overflow"))?;
+            }
+            ReconstructKind::TransparentScalar | ReconstructKind::None => {
+                let llvm_ty = *llvm_args.get(llvm_arg_index).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "kernel parameter alignment mapping ran past LLVM argument {}",
+                        llvm_arg_index
+                    )
+                })?;
+
+                if let (Some(rust_align), Some((_, llvm_align))) = (
+                    mir_type_abi_align(ctx, mir_ty),
+                    llvm_type_size_align(ctx, llvm_ty),
+                ) && rust_align > llvm_align
+                {
+                    if !rust_align.is_power_of_two() {
+                        return Err(anyhow::anyhow!(
+                            "kernel parameter {} has non-power-of-two Rust ABI alignment {}",
+                            llvm_arg_index,
+                            rust_align
+                        ));
+                    }
+                    result.push((llvm_arg_index, rust_align));
+                }
+
+                llvm_arg_index += 1;
+            }
+            ReconstructKind::Zst => {}
+            ReconstructKind::Struct(_) => {
+                return Err(anyhow::anyhow!(
+                    "kernel parameter unexpectedly used the internal flattened struct ABI"
+                ));
+            }
+        }
+    }
+
+    if llvm_arg_index != llvm_args.len() {
+        return Err(anyhow::anyhow!(
+            "kernel parameter alignment mapping consumed {} LLVM arguments, expected {}",
+            llvm_arg_index,
+            llvm_args.len()
+        ));
+    }
+
+    Ok(result)
+}
+
+/// Compute a non-natural ABI alignment for a direct aggregate return value.
+///
+/// NVVM encodes return alignment with argument position zero in the same
+/// `"align"` global property used for direct by-value aggregate parameters.
+/// Internal device functions can return packed aggregates even though their
+/// struct parameters use the private flattened ABI, so return alignment is
+/// tracked for every lowered function rather than kernels alone.
+fn function_return_abi_alignment(
+    ctx: &mut Context,
+    mir_func_type: pliron::r#type::TypedHandle<pliron::builtin::types::FunctionType>,
+    llvm_func_type: pliron::r#type::TypedHandle<llvm_export::types::FuncType>,
+) -> std::result::Result<Option<u64>, anyhow::Error> {
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+
+    let mir_result = {
+        let func_ref = mir_func_type.deref(ctx);
+        func_ref.res_types().first().copied()
+    };
+    let Some(mir_result) = mir_result else {
+        return Ok(None);
+    };
+
+    let llvm_result = {
+        let func_ref = llvm_func_type.deref(ctx);
+        func_ref.result_type()
+    };
+    let Some(rust_align) = mir_type_abi_align(ctx, mir_result) else {
+        return Ok(None);
+    };
+    let Some((_, llvm_align)) = llvm_type_size_align(ctx, llvm_result) else {
+        return Ok(None);
+    };
+    if rust_align <= llvm_align {
+        return Ok(None);
+    }
+    if !rust_align.is_power_of_two() {
+        return Err(anyhow::anyhow!(
+            "function return has non-power-of-two Rust ABI alignment {}",
+            rust_align
+        ));
+    }
+    Ok(Some(rust_align))
+}
+
+fn propagate_kernel_param_abi_alignments(
+    ctx: &mut Context,
+    llvm_func: &llvm::FuncOp,
+    alignments: &[(usize, u64)],
+) {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZero;
+
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let width = NonZero::new(64).expect("64 is non-zero");
+
+    for &(index, alignment) in alignments {
+        let key: pliron::identifier::Identifier =
+            format!("{KERNEL_PARAM_ABI_ALIGN_ATTR_PREFIX}{index}")
+                .as_str()
+                .try_into()
+                .expect("kernel parameter alignment attribute name is valid");
+        let value = APInt::from_u64(alignment, width);
+        llvm_func
+            .get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(key, IntegerAttr::new(u64_ty, value));
+    }
+}
+
+fn propagate_return_abi_alignment(
+    ctx: &mut Context,
+    llvm_func: &llvm::FuncOp,
+    alignment: Option<u64>,
+) {
+    let Some(alignment) = alignment else {
+        return;
+    };
+
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZero;
+
+    let key: pliron::identifier::Identifier = RETURN_ABI_ALIGN_ATTR
+        .try_into()
+        .expect("return ABI alignment attribute name is valid");
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let value = APInt::from_u64(alignment, NonZero::new(64).expect("64 is non-zero"));
+    llvm_func
+        .get_operation()
+        .deref_mut(ctx)
+        .attributes
+        .set(key, IntegerAttr::new(u64_ty, value));
 }
 
 /// Propagate the `alwaysinline` attribute from MIR func to LLVM func.
@@ -862,7 +1050,7 @@ mod dynamic_shared_contract_tests {
 mod transparent_scalar_abi_tests {
     use super::*;
     use dialect_mir::types::StructAbiKind;
-    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::builtin::types::{FunctionType, IntegerType, Signedness};
 
     fn make_ctx() -> Context {
         let mut ctx = Context::new();
@@ -945,6 +1133,107 @@ mod transparent_scalar_abi_tests {
             classify_argument_type(&mut ctx, wrapper, true).unwrap(),
             ReconstructKind::None
         ));
+    }
+
+    #[test]
+    fn packed_kernel_struct_stays_by_value_and_internal_path_reconstructs_fields() {
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let value = u32_ty(&mut ctx);
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed".into(),
+            vec!["tag".into(), "value".into()],
+            vec![tag, value],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+
+        assert!(matches!(
+            classify_argument_type(&mut ctx, packed, true).unwrap(),
+            ReconstructKind::None
+        ));
+        assert!(matches!(
+            classify_argument_type(&mut ctx, packed, false).unwrap(),
+            ReconstructKind::Struct(2)
+        ));
+
+        let llvm_ty = convert_type(&mut ctx, packed).expect("packed struct must lower");
+        let llvm_ty_ref = llvm_ty.deref(&ctx);
+        let llvm_struct = llvm_ty_ref
+            .downcast_ref::<llvm_export::types::StructType>()
+            .expect("packed MIR struct must lower to an LLVM struct");
+        assert_eq!(
+            llvm_struct.layout(),
+            llvm_export::types::StructLayout::Packed
+        );
+    }
+
+    #[test]
+    fn packed_two_kernel_param_carries_rust_abi_alignment_override() {
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let value = u32_ty(&mut ctx);
+        let packed1: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed1".into(),
+            vec!["tag".into(), "value".into()],
+            vec![tag, value],
+            vec![0, 1],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let packed2: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed2".into(),
+            vec!["tag".into(), "value".into()],
+            vec![tag, value],
+            vec![0, 1],
+            vec![0, 2],
+            6,
+            2,
+        )
+        .into();
+        let mir_func_type = FunctionType::get(&ctx, vec![packed1, packed2], vec![]);
+        let llvm_func_type = convert_function_type(&mut ctx, mir_func_type, true)
+            .expect("packed kernel parameters must lower");
+
+        let alignments = kernel_param_abi_alignments(&mut ctx, mir_func_type, llvm_func_type)
+            .expect("kernel parameter alignments must map");
+
+        assert_eq!(alignments, vec![(1, 2)]);
+    }
+
+    #[test]
+    fn packed_two_return_carries_rust_abi_alignment_override() {
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let value = u32_ty(&mut ctx);
+        let packed2: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed2".into(),
+            vec!["tag".into(), "value".into()],
+            vec![tag, value],
+            vec![0, 1],
+            vec![0, 2],
+            6,
+            2,
+        )
+        .into();
+        let mir_func_type = FunctionType::get(&ctx, vec![], vec![packed2]);
+        let llvm_func_type = convert_function_type(&mut ctx, mir_func_type, false)
+            .expect("packed return must lower");
+
+        assert_eq!(
+            function_return_abi_alignment(&mut ctx, mir_func_type, llvm_func_type)
+                .expect("return alignment must map"),
+            Some(2)
+        );
     }
 
     #[test]

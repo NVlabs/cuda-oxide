@@ -50,7 +50,8 @@
 
 use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
 use crate::convert::types::{
-    StructLayoutInfo, build_struct_slot_map, convert_type, get_type_size, mir_type_abi_align,
+    StructLayoutInfo, build_struct_slot_map, convert_type, get_type_size,
+    llvm_packed_struct_contains_pointer_in_address_space, mir_type_abi_align,
     validate_initialized_global_layout, validate_relocated_initialized_global_layout,
 };
 use crate::helpers;
@@ -106,12 +107,14 @@ pub(crate) fn convert_store(
         }
     };
 
-    // A whole-value store of a layout-divergent (repr(packed)) struct would
-    // write the natural LLVM image: fields at natural offsets, natural total
-    // size. Both disagree with rustc's layout for the bytes behind `ptr`, so
-    // refuse rather than corrupt. Same rule as `convert_load` and
-    // `convert_construct_struct`.
-    fail_on_divergent_aggregate(ctx, value_mir_type(ctx, operands_info, val), "storing")?;
+    // Packed whole-value stores are byte-faithful now that divergent rustc
+    // layouts lower to LLVM packed structs. Keep the target-dependent AS3 case
+    // fail-closed because its physical pointer width is selected only later.
+    fail_on_target_dependent_packed_aggregate(
+        ctx,
+        value_mir_type(ctx, operands_info, val),
+        "storing",
+    )?;
 
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
     if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
@@ -177,26 +180,48 @@ fn value_mir_type(ctx: &Context, operands_info: &OperandsInfo, value: Value) -> 
         .unwrap_or(current)
 }
 
-/// Refuse a whole-value move of a struct whose rustc layout the natural LLVM
-/// struct type cannot express (`StructSlotMap::layout_diverges`, i.e.
-/// repr(packed)). Field ADDRESSES for such structs use rustc's byte offsets,
-/// so a natural-layout value image would silently read or write the wrong
-/// bytes; `verb` names the operation for the diagnostic.
-fn fail_on_divergent_aggregate(ctx: &mut Context, ty: TypeHandle, verb: &str) -> Result<()> {
-    let layout = {
-        let ty_ref = ty.deref(ctx);
-        match ty_ref.downcast_ref::<MirStructType>() {
-            Some(s) => StructLayoutInfo::of_struct(s),
-            None => return Ok(()),
+/// Refuse only packed by-value images whose physical bytes depend on the
+/// selected NVPTX mode.
+///
+/// Shared-memory pointers are 32-bit in modern NVVM p3:32 but 64-bit in the
+/// PTX/legacy layouts. Lowering runs before that target mode is selected, so a
+/// packed aggregate containing AS3 cannot safely be loaded or stored as one
+/// physical value. Pointer-free packed aggregates and packed aggregates whose
+/// pointers use target-stable address spaces are allowed.
+fn fail_on_target_dependent_packed_aggregate(
+    ctx: &mut Context,
+    ty: TypeHandle,
+    verb: &str,
+) -> Result<()> {
+    let llvm_ty = {
+        let layout = {
+            let ty_ref = ty.deref(ctx);
+            ty_ref
+                .downcast_ref::<MirStructType>()
+                .map(StructLayoutInfo::of_struct)
+        };
+        if let Some(layout) = layout {
+            let map = build_struct_slot_map(ctx, &layout).map_err(anyhow_to_pliron)?;
+            if !map.by_value_layout_faithful {
+                return pliron::input_err_noloc!(
+                    "{} a struct whose rustc layout cannot be represented by an LLVM \
+                     struct value is not supported",
+                    verb
+                );
+            }
+            map.llvm_struct_ty
+        } else {
+            convert_type(ctx, ty).map_err(anyhow_to_pliron)?
         }
     };
-    let map = build_struct_slot_map(ctx, &layout).map_err(anyhow_to_pliron)?;
-    if map.layout_diverges {
+    if llvm_packed_struct_contains_pointer_in_address_space(
+        ctx,
+        llvm_ty,
+        llvm_export::types::address_space::SHARED,
+    ) {
         return pliron::input_err_noloc!(
-            "{} a struct whose rustc layout diverges from the natural LLVM layout \
-             (repr(packed)) by value is not supported; keep the value behind a \
-             pointer and access fields with addr_of! plus \
-             read_unaligned/write_unaligned",
+            "{} a packed aggregate containing a shared-memory pointer by value is \
+             target-mode dependent and is not yet supported",
             verb
         );
     }
@@ -446,12 +471,10 @@ pub(crate) fn convert_load(
     let ptr = op.deref(ctx).get_operand(0);
     let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
 
-    // A whole-value load of a layout-divergent (repr(packed)) struct would
-    // read the natural LLVM image: fields at natural offsets, natural total
-    // size. Both disagree with rustc's layout of the bytes behind `ptr`, so
-    // refuse rather than fabricate. Same rule as `convert_store` and
-    // `convert_construct_struct`.
-    fail_on_divergent_aggregate(ctx, result_ty, "loading")?;
+    // Packed whole-value loads are byte-faithful now that divergent rustc
+    // layouts lower to LLVM packed structs. Keep only the target-dependent AS3
+    // physical-image case fail-closed.
+    fail_on_target_dependent_packed_aggregate(ctx, result_ty, "loading")?;
 
     let llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
 
@@ -1664,12 +1687,10 @@ mod tests {
         );
     }
 
-    /// A `#[repr(C, packed)]`-style layout the natural LLVM struct cannot
-    /// express: field addresses use rustc's byte offsets, so a whole-value
-    /// load of the natural image would read different bytes. It must fail to
-    /// lower, not fabricate a value.
+    /// Whole-value loads of pointer-free packed structs use the packed LLVM
+    /// representation, preserving rustc's byte size and field offsets.
     #[test]
-    fn packed_struct_whole_value_load_fails_closed() {
+    fn packed_struct_whole_value_load_uses_packed_layout() {
         let mut ctx = make_ctx();
         let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
         let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
@@ -1700,18 +1721,75 @@ mod tests {
         load_op.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
-        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
-            .expect_err("whole-value load of a packed struct must fail to lower");
-        assert!(
-            format!("{err:?}").contains("diverges from the natural LLVM layout"),
-            "the refusal must name the layout divergence: {err:?}"
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect("whole-value load of a pointer-free packed struct must lower");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let load = find_first::<llvm::LoadOp>(&ctx, &body).expect("expected packed llvm.load");
+        let result_ty = load
+            .get_operation()
+            .deref(&ctx)
+            .get_result(0)
+            .get_type(&ctx);
+        let result_ty_ref = result_ty.deref(&ctx);
+        let struct_ty = result_ty_ref
+            .downcast_ref::<StructType>()
+            .expect("packed load result must be an LLVM struct");
+        assert_eq!(struct_ty.layout(), StructLayout::Packed);
+        assert_eq!(
+            crate::convert::types::llvm_type_size_align(&ctx, result_ty),
+            Some((5, 1))
+        );
+        assert_eq!(
+            llvm_export::ops::op_alignment(&ctx, load.get_operation()),
+            Some(1)
         );
     }
 
-    /// The store-side twin of the test above: a whole-value store would write
-    /// the natural image (wrong offsets, wrong size) over rustc-layout bytes.
     #[test]
-    fn packed_struct_whole_value_store_fails_closed() {
+    fn packed_struct_whole_value_load_with_shared_pointer_fails_closed() {
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedShared".into(),
+            vec!["tag".into(), "ptr".into()],
+            vec![u8_ty, shared_ty],
+            vec![0, 1],
+            vec![0, 1],
+            9,
+            1,
+        )
+        .into();
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, packed_ty, false);
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty.into()], vec![]);
+        let ptr_val = block.deref(&ctx).get_argument(0);
+        let load_op = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![packed_ty],
+            vec![ptr_val],
+            vec![],
+            0,
+        );
+        load_op.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("packed whole-value load containing AS3 must remain fail-closed");
+        assert!(
+            format!("{err:?}").contains("target-mode dependent"),
+            "the refusal must identify the target-dependent packed AS3 image: {err:?}"
+        );
+    }
+
+    /// Whole-value stores use the same packed representation as construction
+    /// and loads, while preserving the MIR aggregate's proved ABI alignment.
+    #[test]
+    fn packed_struct_whole_value_store_uses_packed_layout() {
         let mut ctx = make_ctx();
         let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
         let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
@@ -1743,11 +1821,28 @@ mod tests {
         store_op.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
-        let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
-            .expect_err("whole-value store of a packed struct must fail to lower");
-        assert!(
-            format!("{err:?}").contains("diverges from the natural LLVM layout"),
-            "the refusal must name the layout divergence: {err:?}"
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect("whole-value store of a pointer-free packed struct must lower");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let store = find_first::<llvm::StoreOp>(&ctx, &body).expect("expected packed llvm.store");
+        let value_ty = store
+            .get_operation()
+            .deref(&ctx)
+            .get_operand(0)
+            .get_type(&ctx);
+        let value_ty_ref = value_ty.deref(&ctx);
+        let struct_ty = value_ty_ref
+            .downcast_ref::<StructType>()
+            .expect("packed store value must be an LLVM struct");
+        assert_eq!(struct_ty.layout(), StructLayout::Packed);
+        assert_eq!(
+            crate::convert::types::llvm_type_size_align(&ctx, value_ty),
+            Some((5, 1))
+        );
+        assert_eq!(
+            llvm_export::ops::op_alignment(&ctx, store.get_operation()),
+            Some(1)
         );
     }
 

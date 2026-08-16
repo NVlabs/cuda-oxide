@@ -291,6 +291,52 @@ pub(crate) fn transparent_scalar_llvm_type(
     }
 }
 
+/// Convert a type that crosses a function boundary as one LLVM value.
+///
+/// A struct with a natural-layout divergence is legal by value only when
+/// [`build_struct_slot_map`] proved that a sequential packed LLVM struct
+/// reproduces rustc's offsets and size. This keeps overlapping/union-like
+/// legacy struct models fail-closed while allowing real `repr(packed)` values.
+/// Packed values containing shared-memory pointers remain target-dependent
+/// because AS3 pointer width differs between modern NVVM and PTX/legacy modes.
+fn convert_by_value_abi_type(
+    ctx: &mut Context,
+    mir_ty: TypeHandle,
+    role: &str,
+) -> Result<TypeHandle, anyhow::Error> {
+    let layout = {
+        let ty_ref = mir_ty.deref(ctx);
+        ty_ref
+            .downcast_ref::<MirStructType>()
+            .map(StructLayoutInfo::of_struct)
+    };
+    let llvm_ty = if let Some(layout) = layout {
+        let map = build_struct_slot_map(ctx, &layout)?;
+        if !map.by_value_layout_faithful {
+            return Err(anyhow::anyhow!(
+                "{} has a rustc struct layout that cannot be represented by an LLVM struct value",
+                role
+            ));
+        }
+        map.llvm_struct_ty
+    } else {
+        convert_type(ctx, mir_ty)?
+    };
+
+    if llvm_packed_struct_contains_pointer_in_address_space(
+        ctx,
+        llvm_ty,
+        llvm_types::address_space::SHARED,
+    ) {
+        return Err(anyhow::anyhow!(
+            "{} contains a packed aggregate with a target-dependent shared-memory pointer",
+            role
+        ));
+    }
+
+    Ok(llvm_ty)
+}
+
 /// Convert a MIR function type to an LLVM function type.
 ///
 /// This handles the ABI-level transformations required for GPU kernels.
@@ -453,7 +499,11 @@ pub fn convert_function_type(
                 // Flatten in MEMORY ORDER to match struct layout
                 for mem_idx in 0..field_types.len() {
                     let decl_idx = mem_to_decl[mem_idx];
-                    let converted = convert_type(ctx, field_types[decl_idx])?;
+                    let converted = convert_by_value_abi_type(
+                        ctx,
+                        field_types[decl_idx],
+                        "by-value function argument",
+                    )?;
                     // Skip ZST fields - NVPTX can't handle empty params
                     if !is_zero_sized_type(ctx, converted) {
                         inputs.push(converted);
@@ -464,7 +514,7 @@ pub fn convert_function_type(
                 inputs.push(transparent_scalar_llvm_type(ctx, struct_ty)?);
             }
             FlattenKind::None => {
-                let converted = convert_type(ctx, t)?;
+                let converted = convert_by_value_abi_type(ctx, t, "by-value function argument")?;
                 // Skip ZST args - NVPTX can't handle empty params
                 if !is_zero_sized_type(ctx, converted) {
                     inputs.push(converted);
@@ -477,7 +527,7 @@ pub fn convert_function_type(
     let ret_ty = if results_ptr.is_empty() {
         llvm_types::VoidType::get(ctx).into()
     } else {
-        let ty = convert_type(ctx, results_ptr[0])?;
+        let ty = convert_by_value_abi_type(ctx, results_ptr[0], "by-value function return")?;
         // Check if zero-sized (empty struct or struct with only ZST fields)
         // Note: convert_type already strips ZST fields, so we just check for empty
         if is_zero_sized_type(ctx, ty) {
@@ -561,14 +611,19 @@ pub(crate) struct StructSlotMap {
     /// `llvm_struct_ty`, padding slots included; `None` when some field type
     /// cannot be sized ([`llvm_type_size_align`] declined).
     pub natural_slot_offsets: Option<Vec<u64>>,
-    /// True when the natural LLVM struct layout cannot honor rustc's recorded
-    /// layout: some field's natural slot offset differs from rustc's byte
-    /// offset, or the natural struct size differs from rustc's total size.
-    /// `repr(packed)` is the canonical case. Address-path consumers fall back
-    /// to byte offsets from the aggregate pointer; value-path consumers
-    /// (construct, whole-value load/store) must fail closed, because an SSA
-    /// value of the natural struct type places fields at the wrong bytes.
+    /// True when rustc's recorded byte layout cannot be represented by a
+    /// naturally laid-out LLVM struct: some field's natural slot offset differs
+    /// from rustc's byte offset, or the natural struct size differs from
+    /// rustc's total size. `repr(packed)` is the canonical case. Address-path
+    /// consumers retain this signal and the natural offsets so the #859
+    /// byte-GEP fallback stays stable for packed field projections.
     pub layout_diverges: bool,
+    /// True when the selected LLVM struct representation reproduces rustc's
+    /// recorded field offsets and total size for by-value movement. Natural
+    /// layouts are faithful when they do not diverge; divergent layouts are
+    /// faithful only when a sequential LLVM packed struct can express them.
+    /// Overlapping/union-like legacy struct models therefore remain false.
+    pub by_value_layout_faithful: bool,
 }
 
 /// Lower a struct/tuple layout to its LLVM struct type and slot map.
@@ -700,16 +755,58 @@ pub(crate) fn build_struct_slot_map(
         }
     }
 
+    // A packed LLVM struct is sequential with alignment 1. That faithfully
+    // represents repr(packed) only when the sequential packed offsets and
+    // final byte count exactly match rustc's metadata. A divergent layout can
+    // also be an old union-like/overlapping model; selecting Packed for such a
+    // shape would merely turn one incorrect sequential layout into another.
+    let packed_walk = if layout_diverges && has_explicit_layout {
+        let mut offsets = Vec::with_capacity(llvm_fields.len());
+        let mut end = 0u64;
+        let mut sizeable = true;
+        for &field in &llvm_fields {
+            offsets.push(end);
+            let Some((field_size, _)) = llvm_type_size_align(ctx, field) else {
+                sizeable = false;
+                break;
+            };
+            let Some(next) = end.checked_add(field_size) else {
+                sizeable = false;
+                break;
+            };
+            end = next;
+        }
+        sizeable.then_some((offsets, end))
+    } else {
+        None
+    };
+    let packed_representable = packed_walk.as_ref().is_some_and(|(offsets, end)| {
+        *end == layout.total_size
+            && decl_to_llvm
+                .iter()
+                .enumerate()
+                .all(|(decl_idx, slot)| match slot {
+                    Some(slot) => offsets[*slot as usize] == layout.field_offsets[decl_idx],
+                    None => true,
+                })
+    });
+
+    let struct_layout = if packed_representable {
+        llvm_types::StructLayout::Packed
+    } else {
+        llvm_types::StructLayout::Unpacked
+    };
+    let llvm_struct_ty: TypeHandle =
+        llvm_types::StructType::get_unnamed(ctx, (llvm_fields, struct_layout)).into();
+    let by_value_layout_faithful = !layout_diverges || packed_representable;
+
     Ok(StructSlotMap {
-        llvm_struct_ty: llvm_types::StructType::get_unnamed(
-            ctx,
-            (llvm_fields, llvm_types::StructLayout::Unpacked),
-        )
-        .into(),
+        llvm_struct_ty,
         decl_to_llvm,
         field_llvm_types,
         natural_slot_offsets,
         layout_diverges,
+        by_value_layout_faithful,
     })
 }
 
@@ -1189,6 +1286,53 @@ pub(crate) fn llvm_type_contains_pointer_in_address_space(
         return struct_ty
             .fields()
             .any(|field| llvm_type_contains_pointer_in_address_space(ctx, field, address_space));
+    }
+    false
+}
+
+/// Whether a physical by-value image contains a packed struct whose bytes
+/// include a pointer in `address_space`.
+///
+/// Direct pointers in an unpacked aggregate do not trigger this predicate:
+/// their ABI can preserve address-space semantics without observing the
+/// pointer's raw storage width. A pointer nested anywhere under an LLVM packed
+/// struct does trigger it because whole-value construction/load/store/ABI
+/// traffic observes that packed physical image. This distinction keeps normal
+/// AS3 aggregate handling intact while rejecting the target-dependent packed
+/// case (modern NVVM p3:32 versus 64-bit PTX/legacy).
+pub(crate) fn llvm_packed_struct_contains_pointer_in_address_space(
+    ctx: &Context,
+    ty: TypeHandle,
+    address_space: u32,
+) -> bool {
+    let ty_ref = ty.deref(ctx);
+    if let Some(array) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
+        return llvm_packed_struct_contains_pointer_in_address_space(
+            ctx,
+            array.elem_type(),
+            address_space,
+        );
+    }
+    if let Some(vector) = ty_ref.downcast_ref::<llvm_types::VectorType>() {
+        return llvm_packed_struct_contains_pointer_in_address_space(
+            ctx,
+            vector.elem_type(),
+            address_space,
+        );
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
+        let fields: Vec<_> = struct_ty.fields().collect();
+        if struct_ty.layout() == llvm_types::StructLayout::Packed
+            && fields
+                .iter()
+                .copied()
+                .any(|field| llvm_type_contains_pointer_in_address_space(ctx, field, address_space))
+        {
+            return true;
+        }
+        return fields.into_iter().any(|field| {
+            llvm_packed_struct_contains_pointer_in_address_space(ctx, field, address_space)
+        });
     }
     false
 }
@@ -2246,13 +2390,12 @@ pub(crate) fn validate_initialized_global_layout(
 
 /// Validate an initialized global that carries pointer relocations.
 ///
-/// Ordinary initialized globals require the semantic LLVM aggregate to match
-/// rustc byte-for-byte. Relocated globals use a separate segmented physical
-/// carrier, so a top-level `repr(packed)` struct may legitimately diverge from
-/// the semantic LLVM struct as long as rustc's field ranges are explicit,
-/// non-overlapping, in-bounds, and every nested field remains independently
-/// representable. Whole-value moves of the divergent struct stay rejected by
-/// the existing `repr(packed)` value-path guards.
+/// Ordinary initialized globals keep their existing conservative semantic
+/// layout validator. Relocated globals use a separate segmented physical
+/// carrier, so a top-level `repr(packed)` struct may use that relocation path
+/// as long as rustc's field ranges are explicit, non-overlapping, in-bounds,
+/// and every nested field remains independently representable. Runtime
+/// by-value packed support does not broaden initialized-global policy here.
 pub(crate) fn validate_relocated_initialized_global_layout(
     ctx: &mut Context,
     mir_ty: TypeHandle,
@@ -4352,6 +4495,61 @@ mod tests {
     }
 
     #[test]
+    fn slot_map_uses_packed_layout_when_natural_offsets_diverge() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let value = mir_uint(&mut ctx, 32);
+        let layout = StructLayoutInfo {
+            field_types: vec![tag, value],
+            mem_to_decl: vec![0, 1],
+            field_offsets: vec![0, 1],
+            total_size: 5,
+        };
+
+        let map = build_struct_slot_map(&mut ctx, &layout).unwrap();
+
+        assert!(map.layout_diverges);
+        assert_eq!(map.decl_to_llvm, vec![Some(0), Some(1)]);
+        let llvm_struct_ty_ref = map.llvm_struct_ty.deref(&ctx);
+        let struct_ty = llvm_struct_ty_ref
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("slot map must produce an LLVM struct");
+        assert_eq!(struct_ty.layout(), llvm_types::StructLayout::Packed);
+        assert_eq!(llvm_type_size_align(&ctx, map.llvm_struct_ty), Some((5, 1)));
+    }
+
+    #[test]
+    fn slot_map_packed_two_keeps_explicit_padding_slot() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let value = mir_uint(&mut ctx, 32);
+        let layout = StructLayoutInfo {
+            field_types: vec![tag, value],
+            mem_to_decl: vec![0, 1],
+            field_offsets: vec![0, 2],
+            total_size: 6,
+        };
+
+        let map = build_struct_slot_map(&mut ctx, &layout).unwrap();
+
+        assert!(map.layout_diverges);
+        assert_eq!(map.decl_to_llvm, vec![Some(0), Some(2)]);
+        let i8s = llvm_int(&mut ctx, 8);
+        let i32s = llvm_int(&mut ctx, 32);
+        let pad1 = pad(&mut ctx, 1);
+        assert_eq!(
+            struct_fields(&ctx, map.llvm_struct_ty),
+            vec![i8s, pad1, i32s]
+        );
+        let llvm_struct_ty_ref = map.llvm_struct_ty.deref(&ctx);
+        let struct_ty = llvm_struct_ty_ref
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("slot map must produce an LLVM struct");
+        assert_eq!(struct_ty.layout(), llvm_types::StructLayout::Packed);
+        assert_eq!(llvm_type_size_align(&ctx, map.llvm_struct_ty), Some((6, 1)));
+    }
+
+    #[test]
     fn slot_map_reorder_plus_padding() {
         let mut ctx = make_ctx();
         // struct { a: u8 @ 8, b: u64 @ 0 }, memory order [b, a], size 16:
@@ -4500,6 +4698,40 @@ mod tests {
         assert_eq!(fields.len(), 3, "exactly one (trailing) pad slot");
         let pad7 = pad(&mut ctx, 7);
         assert_eq!(fields[2], pad7);
+    }
+
+    #[test]
+    fn packed_shared_pointer_predicate_ignores_unpacked_direct_pointer() {
+        let ctx = make_ctx();
+        let shared: TypeHandle =
+            llvm_types::PointerType::get(&ctx, llvm_types::address_space::SHARED).into();
+        let unpacked: TypeHandle = llvm_types::StructType::get_unnamed(
+            &ctx,
+            (vec![shared], llvm_types::StructLayout::Unpacked),
+        )
+        .into();
+        assert!(
+            !llvm_packed_struct_contains_pointer_in_address_space(
+                &ctx,
+                unpacked,
+                llvm_types::address_space::SHARED,
+            ),
+            "a direct AS3 pointer in an unpacked aggregate is not a packed physical-image hazard"
+        );
+
+        let packed: TypeHandle = llvm_types::StructType::get_unnamed(
+            &ctx,
+            (vec![shared], llvm_types::StructLayout::Packed),
+        )
+        .into();
+        assert!(
+            llvm_packed_struct_contains_pointer_in_address_space(
+                &ctx,
+                packed,
+                llvm_types::address_space::SHARED,
+            ),
+            "an AS3 pointer under a packed struct must be rejected by by-value paths"
+        );
     }
 
     #[test]

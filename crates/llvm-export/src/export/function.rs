@@ -40,8 +40,8 @@ use super::{
     literals::{format_float_literal, format_half_literal},
     names::{decode_intrinsic_identifier, has_device_prefix, strip_device_prefix},
     state::{
-        KernelBlockGeometry, KernelClusterConfig, KernelInfo, KernelLaunchBounds,
-        ModuleExportState, PredecessorMap,
+        FunctionAbiAlignment, KernelBlockGeometry, KernelClusterConfig, KernelInfo,
+        KernelLaunchBounds, ModuleExportState, PredecessorMap,
     },
 };
 
@@ -602,6 +602,68 @@ impl<'a> ModuleExportState<'a> {
         }
 
         self.function_types.insert(fixed_func_name.clone(), ft);
+
+        // MIR lowering records source-language ABI alignments only when the
+        // direct LLVM aggregate type is naturally under-aligned. NVVM represents
+        // these contracts with the function-level `"align"` property rather than
+        // an ordinary LLVM parameter attribute. The low 16 bits are the byte
+        // alignment; the high 16 bits are the position (0 = return, arguments
+        // start at 1).
+        let read_abi_alignment = |key: &str| -> Result<Option<u16>, String> {
+            let key_id: pliron::identifier::Identifier = key
+                .try_into()
+                .map_err(|_| format!("invalid ABI alignment attribute name `{key}`"))?;
+            let Some(attribute) = attrs.get::<IntegerAttr>(&key_id) else {
+                return Ok(None);
+            };
+            let value = attribute.value();
+            if value.bw() > 64 {
+                return Err(format!(
+                    "ABI alignment attribute `{key}` is wider than 64 bits"
+                ));
+            }
+            let alignment = value.to_u64();
+            if alignment == 0 || !alignment.is_power_of_two() {
+                return Err(format!(
+                    "ABI alignment attribute `{key}` must be a non-zero power of two, found {alignment}"
+                ));
+            }
+            let alignment = u16::try_from(alignment).map_err(|_| {
+                format!(
+                    "ABI alignment attribute `{key}` exceeds NVVM's 16-bit alignment field: {alignment}"
+                )
+            })?;
+            Ok(Some(alignment))
+        };
+
+        let mut abi_alignments = Vec::new();
+        if let Some(alignment) = read_abi_alignment("cuda_oxide_return_abi_align")? {
+            abi_alignments.push(FunctionAbiAlignment {
+                name: fixed_func_name.clone(),
+                position: 0,
+                alignment,
+            });
+        }
+
+        if is_kernel {
+            for index in 0..func_ty.arg_types().len() {
+                let key = format!("cuda_oxide_kernel_param_abi_align_{index}");
+                let Some(alignment) = read_abi_alignment(&key)? else {
+                    continue;
+                };
+                let position = u16::try_from(index + 1).map_err(|_| {
+                    format!(
+                        "kernel `@{fixed_func_name}` parameter index {index} exceeds NVVM's 16-bit position field"
+                    )
+                })?;
+                abi_alignments.push(FunctionAbiAlignment {
+                    name: fixed_func_name.clone(),
+                    position,
+                    alignment,
+                });
+            }
+        }
+        self.function_abi_alignments.extend(abi_alignments);
 
         // Track every kernel as an external root. Backends independently decide
         // whether to emit annotations for all of them.

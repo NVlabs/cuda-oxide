@@ -40,8 +40,8 @@ use crate::convert::enum_payload_storage::{coerce_enum_payload_value, enum_paylo
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
     build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
-    llvm_type_contains_i1, llvm_type_size_align, make_slice_struct, mir_element_stride,
-    mir_type_abi_align,
+    llvm_packed_struct_contains_pointer_in_address_space, llvm_type_contains_i1,
+    llvm_type_size_align, make_slice_struct, mir_element_stride, mir_type_abi_align,
 };
 use dialect_mir::ops::{
     MirConstantOp, MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp,
@@ -451,18 +451,28 @@ pub(crate) fn convert_construct_struct(
 
     let map = build_struct_slot_map(ctx, &layout).map_err(anyhow_to_pliron)?;
 
-    // An SSA value of the natural LLVM struct type places fields at natural
-    // offsets, but field addresses for this struct use rustc's tighter
-    // (repr(packed)) offsets. Mixing the two silently reads and writes the
-    // wrong bytes, so refuse the by-value form instead. By-value packed
-    // aggregates need packed LLVM struct types (a pliron-llvm addition)
-    // before this can be lowered faithfully.
-    if map.layout_diverges {
+    // A divergent rustc layout is constructible by value only when the slot
+    // map proved that a sequential LLVM packed struct reproduces every byte.
+    // Overlapping/union-like legacy struct models remain unrepresentable.
+    if !map.by_value_layout_faithful {
         return pliron::input_err_noloc!(
-            "constructing a struct whose rustc layout diverges from the natural \
-             LLVM layout (repr(packed)) by value is not supported; keep the value \
-             behind a pointer and access fields with addr_of! plus \
-             read_unaligned/write_unaligned"
+            "constructing a struct whose rustc layout cannot be represented by an LLVM \
+             struct value is not supported; keep the value behind a pointer and access \
+             fields through their byte-accurate address path"
+        );
+    }
+
+    // Shared pointers are the one target-dependent packed exception: their
+    // physical width is 32 bits in modern NVVM p3:32 but 64 bits in PTX/legacy
+    // mode, and lowering runs before that target mode is selected.
+    if llvm_packed_struct_contains_pointer_in_address_space(
+        ctx,
+        map.llvm_struct_ty,
+        llvm_types::address_space::SHARED,
+    ) {
+        return pliron::input_err_noloc!(
+            "constructing a packed aggregate containing a shared-memory pointer by value is \
+             target-mode dependent and is not yet supported"
         );
     }
 
@@ -1815,12 +1825,12 @@ pub(crate) fn convert_field_addr(
 
     let rustc_offset = layout.field_offsets.get(field_index).copied();
 
-    // A typed LLVM struct GEP is sound only when LLVM places the selected slot
-    // at the same byte offset rustc recorded. `build_struct_slot_map` inserts
-    // explicit gaps, but its final LLVM struct is naturally aligned, so LLVM
-    // can still insert implicit padding before an under-aligned field. Packed
-    // layouts are the canonical example. Address such fields from the original
-    // aggregate pointer in byte units instead.
+    // Preserve the #859 address-path contract independently of the value
+    // representation. `build_struct_slot_map` retains the offsets the same
+    // fields would have under natural LLVM layout; when those differ from
+    // rustc's recorded offsets, keep using the original aggregate pointer plus
+    // a byte GEP. The semantic value type may now be an LLVM packed struct, but
+    // changing this established field-address path is outside this change.
     if let Some(expected_offset) = rustc_offset {
         let actual_offset = map
             .natural_slot_offsets
@@ -1833,7 +1843,7 @@ pub(crate) fn convert_field_addr(
                     field_index
                 )
             })?;
-        if actual_offset != expected_offset {
+        if map.layout_diverges && actual_offset != expected_offset {
             let field_ptr = byte_offset_gep(ctx, rewriter, ptr_operand, expected_offset);
             let gep = field_ptr
                 .defining_op()
@@ -1950,13 +1960,11 @@ pub(crate) fn convert_array_element_addr(
 
     let llvm_array_ty = convert_type(ctx, pointee_ty).map_err(anyhow_to_pliron)?;
 
-    // The typed GEP below strides by the natural size of the converted
-    // element type. rustc strides by the element's stored size, and the two
-    // differ for repr(packed) elements (a 5-byte packed struct converts to a
-    // natural 8-byte LLVM struct), so every element past index 0 would be
-    // addressed at the wrong byte. Refuse rather than miscompile; rustc-
-    // stride byte addressing is the follow-up, alongside by-value packed
-    // support.
+    // The typed GEP below strides by the allocation size of the converted
+    // element type. For packed Rust elements this is now the LLVM packed-struct
+    // size, so it matches rustc's stored stride. Keep the comparison as a
+    // fail-closed backstop for any future element representation whose LLVM
+    // allocation size still differs from rustc's stride.
     {
         let element_ty = {
             let pointee_ref = pointee_ty.deref(ctx);
@@ -1967,16 +1975,16 @@ pub(crate) fn convert_array_element_addr(
         };
         let rustc_stride = mir_element_stride(ctx, element_ty);
         let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
-        let natural_size = llvm_type_size_align(ctx, llvm_element_ty).map(|(size, _)| size);
-        if let (Some(stride), Some(natural)) = (rustc_stride, natural_size)
-            && stride != natural
+        let llvm_size = llvm_type_size_align(ctx, llvm_element_ty).map(|(size, _)| size);
+        if let (Some(stride), Some(llvm_size)) = (rustc_stride, llvm_size)
+            && stride != llvm_size
         {
             return pliron::input_err_noloc!(
-                "addressing elements of an array whose element layout diverges from \
-                 the natural LLVM layout (repr(packed)) is not supported: rustc \
-                 strides by {} bytes but the LLVM element type occupies {}",
+                "addressing elements of an array whose LLVM allocation size differs from \
+                 rustc's stored stride is not supported: rustc strides by {} bytes but \
+                 the LLVM element type occupies {}",
                 stride,
-                natural
+                llvm_size
             );
         }
     }
@@ -2822,13 +2830,11 @@ mod tests {
         assert_byte_addressed_field(&ctx, module, 5, 1);
     }
 
-    /// A by-value packed struct cannot be an SSA value of the natural LLVM
-    /// struct type: construction would place `value` at natural byte 4 while
-    /// every field address for the same struct uses rustc's byte 1, and the
-    /// mix silently reads and writes the wrong bytes. Construction fails
-    /// closed instead.
+    /// A by-value packed struct is represented by an LLVM packed struct, so
+    /// construction can use the ordinary insertvalue chain without changing
+    /// rustc's field offsets or total byte size.
     #[test]
-    fn packed_struct_construction_by_value_fails_closed() {
+    fn packed_struct_construction_by_value_uses_packed_layout() {
         use dialect_mir::ops::MirConstructStructOp;
 
         let mut ctx = make_ctx();
@@ -2862,21 +2868,77 @@ mod tests {
         construct.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
+        crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect("constructing a pointer-free packed struct by value must lower");
+
+        let body = kernel_blocks(&ctx, module);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![1]],
+            "packed construction must keep declaration fields in their packed LLVM slots"
+        );
+        let result_ty = inserts
+            .last()
+            .expect("packed construction must emit insertvalue")
+            .get_operation()
+            .deref(&ctx)
+            .get_result(0)
+            .get_type(&ctx);
+        let result_ty_ref = result_ty.deref(&ctx);
+        let struct_ty = result_ty_ref
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("packed construction result must be an LLVM struct");
+        assert_eq!(struct_ty.layout(), llvm_types::StructLayout::Packed);
+        assert_eq!(llvm_type_size_align(&ctx, result_ty), Some((5, 1)));
+    }
+
+    #[test]
+    fn packed_struct_construction_with_shared_pointer_fails_closed() {
+        use dialect_mir::ops::MirConstructStructOp;
+
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedShared".into(),
+            vec!["tag".into(), "ptr".into()],
+            vec![u8_ty, shared_ty],
+            vec![0, 1],
+            vec![0, 1],
+            9,
+            1,
+        )
+        .into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![u8_ty, shared_ty], vec![]);
+        let tag = block.deref(&ctx).get_argument(0);
+        let ptr = block.deref(&ctx).get_argument(1);
+        let construct = Operation::new(
+            &mut ctx,
+            MirConstructStructOp::get_concrete_op_info(),
+            vec![packed_ty],
+            vec![tag, ptr],
+            vec![],
+            0,
+        );
+        construct.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
         let err = crate::lower_mir_to_llvm(&mut ctx, module)
-            .expect_err("constructing a packed struct by value must fail to lower");
+            .expect_err("packed construction containing AS3 must remain fail-closed");
         assert!(
-            format!("{err:?}").contains("diverges from the natural LLVM layout"),
-            "the refusal must name the layout divergence: {err:?}"
+            format!("{err:?}").contains("target-mode dependent"),
+            "the refusal must identify the target-dependent packed AS3 image: {err:?}"
         );
     }
 
-    /// Element addressing strides by the natural size of the converted
-    /// element type (8 for this packed struct), while rustc strides by the
-    /// stored size (5), so every element past index 0 would land at the wrong
-    /// byte. Until rustc-stride byte addressing lands, `[Packed; N]` element
-    /// addressing fails closed.
+    /// Packed LLVM element types carry the same allocation size as rustc, so
+    /// typed array GEPs now stride by the correct packed byte count.
     #[test]
-    fn packed_array_element_addressing_fails_closed() {
+    fn packed_array_element_addressing_uses_packed_stride() {
         use dialect_mir::ops::MirArrayElementAddrOp;
 
         let mut ctx = make_ctx();
@@ -2914,11 +2976,13 @@ mod tests {
         elem_addr.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
-        let err = crate::lower_mir_to_llvm(&mut ctx, module)
-            .expect_err("element addressing over packed elements must fail to lower");
-        assert!(
-            format!("{err:?}").contains("element layout diverges"),
-            "the refusal must name the stride divergence: {err:?}"
+        crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect("packed element addressing must use the packed LLVM stride");
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::GetElementPtrOp>(&ctx, &body),
+            1,
+            "packed array element addressing should lower to one typed GEP"
         );
     }
 

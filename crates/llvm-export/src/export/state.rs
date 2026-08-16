@@ -60,6 +60,17 @@ pub(super) struct KernelInfo {
     pub(super) name: String,
 }
 
+/// One direct aggregate argument/return whose source ABI alignment exceeds
+/// the natural alignment representable by its LLVM type.
+///
+/// NVVM's `align` function property numbers the return as position 0 and
+/// arguments from 1.
+pub(super) struct FunctionAbiAlignment {
+    pub(super) name: String,
+    pub(super) position: u16,
+    pub(super) alignment: u16,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct GlobalSymbolInfo {
     pub(super) value_type: TypeHandle,
@@ -84,6 +95,9 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) launch_bounds_kernels: Vec<KernelLaunchBounds>,
     /// Track ALL kernels (for backends that require annotations for every kernel)
     pub(super) all_kernels: Vec<KernelInfo>,
+    /// Direct aggregate argument/return alignments that LLVM structural types
+    /// cannot encode and NVVM therefore requires as `"align"` annotations.
+    pub(super) function_abi_alignments: Vec<FunctionAbiAlignment>,
     /// Whether to print `ptx_kernel` on kernel definitions.
     pub(super) emit_ptx_kernel_keyword: bool,
     /// Track device function names for @llvm.used (standalone device fn compilation)
@@ -179,6 +193,7 @@ impl<'a> ModuleExportState<'a> {
             cluster_kernels: Vec::new(),
             launch_bounds_kernels: Vec::new(),
             all_kernels: Vec::new(),
+            function_abi_alignments: Vec::new(),
             emit_ptx_kernel_keyword,
             device_functions: Vec::new(),
             public_globals: Vec::new(),
