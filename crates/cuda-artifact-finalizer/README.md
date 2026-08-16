@@ -18,6 +18,12 @@ to a retained-file identity, so child processes can avoid rereading large CUDA
 DSOs while the content-derived combined digest remains Cargo's semantic
 fingerprint. Identity mismatches fall back to hashing the newly opened file.
 
+`cargo-oxide` caches the handshake it discovers at
+`.oxide-artifacts/materializer-handshake/v1.json` under the workspace root, so
+subsequent builds skip rehashing the CUDA DSOs. The cache is self-validating:
+a stale or corrupt file is ignored and rediscovered, and deleting it simply
+forces a full rehash on the next build.
+
 Consumers:
 
 - `cargo-oxide` and `rustc-codegen-cuda`, for build-time materialization;

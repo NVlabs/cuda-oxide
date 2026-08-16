@@ -234,6 +234,7 @@ pub(crate) fn loaded_tool_digest_with_expected(
     expected: Option<&PinnedToolProvenance>,
 ) -> Option<[u8; 32]> {
     expected
+        .filter(|expected| expected.file.has_unix_identity())
         .filter(|expected| file.is_some_and(|file| expected.file.matches_file(file)))
         .map(|expected| expected.sha256)
         .or_else(|| loaded_tool_digest(label, file))
@@ -381,6 +382,18 @@ entry:
         assert_eq!(
             loaded_tool_digest_with_expected("test", Some(&other_file), Some(&expected)),
             Some(digest_bytes(b"different tool bytes with another length"))
+        );
+
+        // Without the Unix identity fields (non-Unix producer), length and
+        // modification time alone must not be trusted: always rehash.
+        let mut weak = expected;
+        weak.file.device = None;
+        weak.file.inode = None;
+        weak.file.change_time_seconds = None;
+        weak.file.change_time_nanoseconds = None;
+        assert_eq!(
+            loaded_tool_digest_with_expected("test", Some(&expected_file), Some(&weak)),
+            Some(digest_bytes(b"expected tool bytes"))
         );
 
         std::fs::remove_dir_all(directory).unwrap();

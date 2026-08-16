@@ -91,6 +91,16 @@ impl ToolFileIdentity {
     pub(crate) fn matches_file(&self, file: &File) -> bool {
         Self::capture(file).as_ref() == Some(self)
     }
+
+    /// Whether every Unix identity field (device, inode, change time) is
+    /// present. Length and modification time alone are too weak to prove the
+    /// descriptor is unchanged, so digest reuse must rehash without them.
+    pub(crate) fn has_unix_identity(&self) -> bool {
+        self.device.is_some()
+            && self.inode.is_some()
+            && self.change_time_seconds.is_some()
+            && self.change_time_nanoseconds.is_some()
+    }
 }
 
 /// A content digest bound to the exact open-file identity that produced it.
