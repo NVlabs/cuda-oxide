@@ -187,6 +187,10 @@ pub fn all_outputs(
         );
     }
     outputs.insert(
+        "crates/cuda-device/src/generated/f32x2.rs".into(),
+        render_compat_packed_alu(catalog, catalog_sha256, PackedAluFormat::F32x2),
+    );
+    outputs.insert(
         "crates/cuda-device/src/generated/convert.rs".into(),
         render_compat_packed_conversion(
             catalog,
@@ -654,21 +658,27 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
             ),
             "packed_alu" => ensure!(
                 record.packed_alu.as_ref().is_some_and(|packed| {
-                    let (module, must_use) = match packed.format {
-                        PackedAluFormat::Bf16x2 => ("bf16x2", false),
-                        PackedAluFormat::F16x2 => ("f16x2", true),
-                    };
+                    let (module, must_use, rust_type, dialect_type, adapter) =
+                        packed_alu_format_shape(packed.format);
                     record.rust.module == module
                         && record.rust.must_use == must_use
-                        && packed.adapter == PackedAluAdapter::DirectPackedU32
+                        && packed.adapter == adapter
+                        && record
+                            .rust
+                            .arguments
+                            .iter()
+                            .all(|argument| argument == rust_type)
+                        && record.rust.result == rust_type
+                        && record
+                            .dialect
+                            .operands
+                            .iter()
+                            .all(|operand| operand == dialect_type)
+                        && record.dialect.results == [dialect_type]
                 })
                     && (1..=3).contains(&record.rust.arguments.len())
-                    && record.rust.arguments.iter().all(|argument| argument == "u32")
-                    && record.rust.result == "u32"
                     && record.rust.safe
                     && record.dialect.operands.len() == record.rust.arguments.len()
-                    && record.dialect.operands.iter().all(|operand| operand == "i32")
-                    && record.dialect.results == ["i32"]
                     && record.lowering == "generated_packed_alu_inline_ptx",
                 "{} is outside the closed generated packed-ALU recipe",
                 record.id
@@ -1946,6 +1956,60 @@ fn packed_alus(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic>
         .intrinsics
         .iter()
         .filter(|record| record.family == "packed_alu")
+}
+
+fn packed_alu_format_shape(
+    format: PackedAluFormat,
+) -> (
+    &'static str,
+    bool,
+    &'static str,
+    &'static str,
+    PackedAluAdapter,
+) {
+    match format {
+        PackedAluFormat::Bf16x2 => (
+            "bf16x2",
+            false,
+            "u32",
+            "i32",
+            PackedAluAdapter::DirectPackedU32,
+        ),
+        PackedAluFormat::F16x2 => (
+            "f16x2",
+            true,
+            "u32",
+            "i32",
+            PackedAluAdapter::DirectPackedU32,
+        ),
+        PackedAluFormat::F32x2 => (
+            "f32x2",
+            true,
+            "u64",
+            "i64",
+            PackedAluAdapter::DirectPackedU64,
+        ),
+    }
+}
+
+fn packed_alu_width(record: &CatalogIntrinsic) -> u32 {
+    match record
+        .packed_alu
+        .as_ref()
+        .expect("packed-ALU record")
+        .adapter
+    {
+        PackedAluAdapter::DirectPackedU32 => 32,
+        PackedAluAdapter::DirectPackedU64 => 64,
+    }
+}
+
+fn packed_alu_register_constraint(record: &CatalogIntrinsic) -> &'static str {
+    match packed_alu_width(record) {
+        32 => "r",
+        64 => "l",
+        _ => unreachable!("closed packed-ALU carrier width"),
+    }
 }
 
 fn packed_conversions(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -3708,6 +3772,30 @@ fn packed_alu_ptx_mnemonic(record: &CatalogIntrinsic) -> &'static str {
         }
         (PackedAluFormat::F16x2, PackedAluOperation::Abs, PackedAluAdapter::DirectPackedU32) => {
             "abs.f16x2"
+        }
+        (PackedAluFormat::F32x2, PackedAluOperation::Add, PackedAluAdapter::DirectPackedU64) => {
+            "add.rn.f32x2"
+        }
+        (PackedAluFormat::F32x2, PackedAluOperation::AddFtz, PackedAluAdapter::DirectPackedU64) => {
+            "add.rn.ftz.f32x2"
+        }
+        (PackedAluFormat::F32x2, PackedAluOperation::Sub, PackedAluAdapter::DirectPackedU64) => {
+            "sub.rn.f32x2"
+        }
+        (PackedAluFormat::F32x2, PackedAluOperation::SubFtz, PackedAluAdapter::DirectPackedU64) => {
+            "sub.rn.ftz.f32x2"
+        }
+        (PackedAluFormat::F32x2, PackedAluOperation::Mul, PackedAluAdapter::DirectPackedU64) => {
+            "mul.rn.f32x2"
+        }
+        (PackedAluFormat::F32x2, PackedAluOperation::MulFtz, PackedAluAdapter::DirectPackedU64) => {
+            "mul.rn.ftz.f32x2"
+        }
+        (PackedAluFormat::F32x2, PackedAluOperation::Fma, PackedAluAdapter::DirectPackedU64) => {
+            "fma.rn.f32x2"
+        }
+        (PackedAluFormat::F32x2, PackedAluOperation::FmaFtz, PackedAluAdapter::DirectPackedU64) => {
+            "fma.rn.ftz.f32x2"
         }
         // bf16x2 has no NVPTX selection pattern for the ftz and sat fma forms;
         // `packed_alu_recipe` rejects those pairs before a record can exist.
@@ -7057,10 +7145,7 @@ fn render_dialect_integer_minmax(catalog: &CatalogFile, hash: &str) -> String {
 
 fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAluFormat) -> String {
     let mut output = rust_header(catalog, hash);
-    let module = match format {
-        PackedAluFormat::Bf16x2 => "bf16x2",
-        PackedAluFormat::F16x2 => "f16x2",
-    };
+    let (module, _, _, _, _) = packed_alu_format_shape(format);
     writeln!(
         output,
         "// Included inside `cuda_device::{module}` to keep existing paths stable.\n"
@@ -7095,7 +7180,12 @@ fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAlu
             output.push_str("#[must_use]\n");
         }
         output.push_str("#[inline(never)]\n");
-        writeln!(output, "pub fn {}({arguments}) -> u32 {{", record.rust.name).unwrap();
+        writeln!(
+            output,
+            "pub fn {}({arguments}) -> {} {{",
+            record.rust.name, record.rust.result
+        )
+        .unwrap();
         if record.rust.arguments.len() == 1 {
             writeln!(output, "    let _ = {values};").unwrap();
         } else {
@@ -9754,10 +9844,11 @@ pub(super) fn register(ctx: &mut Context) {
 fn render_dialect_packed_alu(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Structural operations for generated packed floating-point arithmetic.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
+        "//! Structural operations for generated packed floating-point arithmetic.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_integer_width(\n    ctx: &Context,\n    ty: pliron::r#type::TypeHandle,\n    width: u32,\n) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == width)\n}\n\n",
     );
     for record in packed_alus(catalog) {
         let arity = record.rust.arguments.len();
+        let width = packed_alu_width(record);
         let parameters = (0..arity)
             .map(|index| format!("arg{index}: Value"))
             .collect::<Vec<_>>()
@@ -9783,20 +9874,20 @@ fn render_dialect_packed_alu(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
-            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, {parameters}) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![{operands}],\n            vec![],\n            0,\n        )\n    }}\n}}"
+            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, {parameters}) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, {width}, Signedness::Unsigned);\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![{operands}],\n            vec![],\n            0,\n        )\n    }}\n}}"
         )
         .unwrap();
         writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
-            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != {arity} || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !(0..{arity}).all(|index| is_i32(ctx, op.get_operand(index).get_type(ctx)))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != {arity} || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !(0..{arity}).all(|index| is_integer_width(ctx, op.get_operand(index).get_type(ctx), {width}))\n            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), {width})\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
             format!(
                 "{} requires exactly {arity} operands and one result",
                 record.dialect.op_name
             ),
             format!(
-                "{} operands and result must be 32-bit integers",
-                record.dialect.op_name
+                "{} operands and result must be {width}-bit integers",
+                record.dialect.op_name,
             ),
         )
         .unwrap();
@@ -15970,10 +16061,7 @@ fn convert_generated_tcgen05_load(
         output.push_str("    }\n}\n\n");
     }
     for record in packed_alus(catalog) {
-        debug_assert_eq!(
-            record.packed_alu.as_ref().unwrap().adapter,
-            PackedAluAdapter::DirectPackedU32
-        );
+        let width = packed_alu_width(record);
         writeln!(
             output,
             "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
@@ -15985,8 +16073,8 @@ fn convert_generated_tcgen05_load(
         );
         writeln!(
             output,
-            "        convert_generated_packed_alu(ctx, rewriter, self.get_operation(), {:?})",
-            packed_alu_ptx_mnemonic(record)
+            "        convert_generated_packed_alu(ctx, rewriter, self.get_operation(), {:?}, {width})",
+            packed_alu_ptx_mnemonic(record),
         )
         .unwrap();
         output.push_str("    }\n}\n\n");
@@ -18938,30 +19026,38 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         output.push_str("  ret i32 %result\n}\n");
     } else if record.packed_alu.is_some() {
         let arity = record.rust.arguments.len();
+        let width = packed_alu_width(record);
+        let llvm_type = format!("i{width}");
+        let register_constraint = packed_alu_register_constraint(record);
         let parameters = (0..arity)
-            .map(|index| format!("i32 %arg{index}"))
+            .map(|index| format!("{llvm_type} %arg{index}"))
             .collect::<Vec<_>>()
             .join(", ");
         let arguments = (0..arity)
-            .map(|index| format!("i32 %arg{index}"))
+            .map(|index| format!("{llvm_type} %arg{index}"))
             .collect::<Vec<_>>()
             .join(", ");
         let operands = (0..=arity)
             .map(|index| format!("${index}"))
             .collect::<Vec<_>>()
             .join(", ");
-        let constraints = std::iter::once("=r")
-            .chain(std::iter::repeat_n("r", arity))
+        let constraints = std::iter::once(format!("={register_constraint}"))
+            .chain(std::iter::repeat_n(register_constraint.to_owned(), arity))
             .collect::<Vec<_>>()
             .join(",");
-        writeln!(output, "define i32 @probe_{}({parameters}) {{", record.id).unwrap();
         writeln!(
             output,
-            "  %result = call i32 asm \"{} {operands};\", \"{constraints}\"({arguments})",
+            "define {llvm_type} @probe_{}({parameters}) {{",
+            record.id
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "  %result = call {llvm_type} asm \"{} {operands};\", \"{constraints}\"({arguments})",
             packed_alu_ptx_mnemonic(record)
         )
         .unwrap();
-        output.push_str("  ret i32 %result\n}\n");
+        writeln!(output, "  ret {llvm_type} %result\n}}").unwrap();
     } else if record.packed_conversion.is_some() {
         let result_ty = packed_conversion_dialect_type(record);
         if packed_conversion_typed_llvm_name(record).is_some() {
@@ -19886,10 +19982,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str("\n## Packed-ALU contracts\n\n");
     for record in packed_alus(catalog) {
         let packed = record.packed_alu.as_ref().unwrap();
-        let format = match packed.format {
-            PackedAluFormat::Bf16x2 => "bf16x2",
-            PackedAluFormat::F16x2 => "f16x2",
-        };
+        let (format, _, carrier, _, _) = packed_alu_format_shape(packed.format);
         let backend_floors = record
             .backend_lowerings
             .iter()
@@ -19908,7 +20001,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             .join("; ");
         writeln!(
             output,
-            "- `{}` carries one packed `{format}` value in a `u32` and lowers to one pure `{}` instruction. The native instruction starts at PTX {} / `sm_{}`; cuda-oxide admits it from {}. Backend profile floors: {backend_floors}.",
+            "- `{}` carries one packed `{format}` value in a `{carrier}` and lowers to one pure `{}` instruction. The native instruction starts at PTX {} / `sm_{}`; cuda-oxide admits it from {}. Backend profile floors: {backend_floors}.",
             record.id,
             packed_alu_ptx_mnemonic(record),
             record.target.minimum_ptx,
@@ -20995,7 +21088,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(packed_alus(&catalog).count(), 22);
+        assert_eq!(packed_alus(&catalog).count(), 30);
         assert_eq!(packed_conversions(&catalog).count(), 18);
 
         let dialect = render_dialect_packed_alu(&catalog, "test-hash");
@@ -21018,6 +21111,14 @@ mod tests {
             "MaxF16x2Op",
             "NegF16x2Op",
             "AbsF16x2Op",
+            "AddF32x2Op",
+            "AddFtzF32x2Op",
+            "SubF32x2Op",
+            "SubFtzF32x2Op",
+            "MulF32x2Op",
+            "MulFtzF32x2Op",
+            "FmaF32x2Op",
+            "FmaFtzF32x2Op",
         ] {
             assert!(dialect.contains(&format!("pub struct {op}")));
             assert!(dialect.contains(&format!("{op}::register(ctx)")));
@@ -21077,7 +21178,21 @@ mod tests {
             "abs.f16x2",
         ] {
             assert!(lowering.contains(&format!(
-                "convert_generated_packed_alu(ctx, rewriter, self.get_operation(), \"{mnemonic}\")"
+                "convert_generated_packed_alu(ctx, rewriter, self.get_operation(), \"{mnemonic}\", 32)"
+            )));
+        }
+        for mnemonic in [
+            "add.rn.f32x2",
+            "add.rn.ftz.f32x2",
+            "sub.rn.f32x2",
+            "sub.rn.ftz.f32x2",
+            "mul.rn.f32x2",
+            "mul.rn.ftz.f32x2",
+            "fma.rn.f32x2",
+            "fma.rn.ftz.f32x2",
+        ] {
+            assert!(lowering.contains(&format!(
+                "convert_generated_packed_alu(ctx, rewriter, self.get_operation(), \"{mnemonic}\", 64)"
             )));
         }
         for mnemonic in [
@@ -21111,8 +21226,12 @@ mod tests {
 
         for record in packed_alus(&catalog) {
             let probe = render_probe(&catalog, record, "test-hash");
-            let constraints = std::iter::once("=r")
-                .chain(std::iter::repeat_n("r", record.rust.arguments.len()))
+            let register = packed_alu_register_constraint(record);
+            let constraints = std::iter::once(format!("={register}"))
+                .chain(std::iter::repeat_n(
+                    register.to_owned(),
+                    record.rust.arguments.len(),
+                ))
                 .collect::<Vec<_>>()
                 .join(",");
             assert!(probe.contains(&format!("\", \"{constraints}\"")));
@@ -21157,6 +21276,8 @@ mod tests {
         assert!(raw.contains("pub fn i0085(_arg0: f32, _arg1: f32) -> u32"));
         assert!(raw.contains("pub fn i0259(_arg0: f32, _arg1: f32) -> u16"));
         assert!(raw.contains("pub fn i0262(_arg0: f32, _arg1: f32) -> u16"));
+        assert!(raw.contains("pub fn i0995(_arg0: u64, _arg1: u64) -> u64"));
+        assert!(raw.contains("pub fn i1002(_arg0: u64, _arg1: u64, _arg2: u64) -> u64"));
         assert!(!raw.contains("#[must_use]\n#[inline(never)]\npub fn i0062"));
         let f16_raw = raw.find("pub fn i0072").unwrap();
         assert!(raw[..f16_raw].ends_with("#[must_use]\n#[inline(never)]\n"));
@@ -21171,6 +21292,12 @@ mod tests {
         let f16_compat = compatibility.find("pub fn fma_f16x2").unwrap();
         assert!(compatibility[..f16_compat].ends_with("#[must_use]\n#[inline(never)]\n"));
         assert!(!compatibility.contains("fma_bf16x2"));
+        let compatibility = render_compat_packed_alu(&catalog, "test-hash", PackedAluFormat::F32x2);
+        assert!(compatibility.contains("pub fn add_f32x2(arg0: u64, arg1: u64) -> u64"));
+        assert!(
+            compatibility.contains("pub fn fma_ftz_f32x2(arg0: u64, arg1: u64, arg2: u64) -> u64")
+        );
+        assert!(!compatibility.contains("fma_f16x2"));
         let reference = render_reference(&catalog, "test-hash");
         assert!(reference.contains("`fma_f16x2` carries one packed `f16x2` value in a `u32`"));
         assert!(reference.contains(
@@ -21188,6 +21315,7 @@ mod tests {
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
         assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/bf16x2.rs")));
         assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/f16x2.rs")));
+        assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/f32x2.rs")));
         assert!(outputs.contains_key(&PathBuf::from(
             "crates/cuda-device/src/generated/convert.rs"
         )));
@@ -22515,7 +22643,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 994);
+        assert_eq!(catalog.intrinsics.len(), 1002);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 154);
         let generated_records = records

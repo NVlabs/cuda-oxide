@@ -11,9 +11,10 @@
   },
   "inputs": {
     "imported_sha256": "7fc84823d448f56192e265a6c057ea72155c84df2b6575b0235199d445db6a2f",
-    "overlay_sha256": "03d9fd2e6013511a59105ee8ff586ae521c3248485b62735e0149b6f6f6ad147",
-    "abi_ledger_sha256": "7eefd144549cddccffa0529c4f519033f348f001bdca2a4ffbd0eaf9574774f7",
+    "overlay_sha256": "2f78b03c0a1cb8b4ffb615021ebd2d9dce3e80eb13b74430fe75bed5b318a2ae",
+    "abi_ledger_sha256": "10e8733dd334778881bcd82aff44658ff5b483531312ab51376964c66c897244",
     "evidence_sha256": [
+      "cuda-12.9-libnvvm-12.9.86-f32x2.json:bc5bb505677989affa9ac1044da772b4eb349700dc65e16f09fffffa1f5c493e",
       "cuda-13.3-libnvvm-13.3.33-blackwell-ldmatrix.json:806155f5468d672b6bd969b72d9821155cc6a1c4422eb210ca0fc0a78eb295fb",
       "cuda-13.3-libnvvm-13.3.33-clc.json:0a3e049a8b606276302acf6d2f3dd1d41b632b04dd72799a7def8ebbec414752",
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
@@ -80,6 +81,7 @@
       "rust-llvm-22.1.2-1cb4e383-elect.json:42323b89102e76bc816ba694ae0a9a07dc3957289fb8debed6887097556c3c7f",
       "rust-llvm-22.1.2-1cb4e383-execution-control.json:e39a53adecc39282a8f0d98e995dc15dce3097bfefa328fc7a8321a0c3052b8c",
       "rust-llvm-22.1.2-1cb4e383-extended-minmax.json:4429a02bbf14abf8fe8d3b6be28dbbb6f2142e84aefea52f15cb514b1bb8df93",
+      "rust-llvm-22.1.2-1cb4e383-f32x2.json:69567be54898fd4faf23aaf59ca01ab07ec529dae8b884cb1cbdf7f5ef82f712",
       "rust-llvm-22.1.2-1cb4e383-integer-minmax.json:e07bc847365cd71d0d20502f225508d48e2de47866c865f09b696caf984a97e3",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-basic.json:007a052e92f15a8c28fdc0a80dfd6dc9a5350725654a972193b2de1013102520",
       "rust-llvm-22.1.2-1cb4e383-mbarrier-extended.json:120f506b5f7e3419120c4cac99e3a8761ee2a9745c71abb3ba82c5df6952c829",
@@ -1214,6 +1216,421 @@
         ]
       },
       "summary": "Adds two packed f16x2 values."
+    },
+    {
+      "id": "add_f32x2",
+      "operation_key": "packed.alu.f32x2.add",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "add.rn.f32x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0995",
+        "module": "f32x2",
+        "name": "add_f32x2",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u64",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0995",
+        "public_path": "cuda_intrinsics::f32x2::add_f32x2",
+        "compatibility_paths": [
+          "cuda_device::f32x2::add_f32x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "AddF32x2Op",
+        "op_name": "nvvm.add_f32x2",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.3.1 Floating Point Instructions: add",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-add"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight per-operation pure inline-PTX modules using one u64 carrier per f32x2 value",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 retained all eight exact add/sub/mul/fma .f32x2 instructions, including every .ftz form, with =l/l constraints. SHA-256 over the ordered intrinsic-ID/source-hash manifest is a04546b877e8f07b55c5dc11a6a5071651b53bbd15077a43083e59f3e267853a; the corresponding PTX-hash manifest is cb56147f343b2dc89724f6e0cce42826b32589d0e620d5df71725d214619cd6d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight LLVM-produced PTX 8.6 modules assembled independently for sm_100",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 ptxas accepted every module and produced valid CUDA ELF cubins. SHA-256 over the ordered intrinsic-ID/cubin-hash manifest is bf1c99f3a81819e7c21fbd79d53da0e7e4045efe25792110d3334a8c37e056bf.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "983b0e9283855979f42cebfd80d43f9b6e786eb84f03f7570bf941c4d3a3c461"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+          "sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+          "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": "50998a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100",
+                "ptx88"
+              ],
+              "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx88"
+              ],
+              "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "f32x2",
+        "native_minimum_sm": 100,
+        "operation": "add",
+        "adapter": "direct_packed_u64"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "add",
+        "modifiers": [
+          "rn",
+          "f32x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Adds corresponding lanes of two packed f32x2 values."
+    },
+    {
+      "id": "add_ftz_f32x2",
+      "operation_key": "packed.alu.f32x2.add.ftz",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "add.rn.ftz.f32x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0996",
+        "module": "f32x2",
+        "name": "add_ftz_f32x2",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u64",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0996",
+        "public_path": "cuda_intrinsics::f32x2::add_ftz_f32x2",
+        "compatibility_paths": [
+          "cuda_device::f32x2::add_ftz_f32x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "AddFtzF32x2Op",
+        "op_name": "nvvm.add_ftz_f32x2",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.3.1 Floating Point Instructions: add",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-add"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight per-operation pure inline-PTX modules using one u64 carrier per f32x2 value",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 retained all eight exact add/sub/mul/fma .f32x2 instructions, including every .ftz form, with =l/l constraints. SHA-256 over the ordered intrinsic-ID/source-hash manifest is a04546b877e8f07b55c5dc11a6a5071651b53bbd15077a43083e59f3e267853a; the corresponding PTX-hash manifest is cb56147f343b2dc89724f6e0cce42826b32589d0e620d5df71725d214619cd6d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight LLVM-produced PTX 8.6 modules assembled independently for sm_100",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 ptxas accepted every module and produced valid CUDA ELF cubins. SHA-256 over the ordered intrinsic-ID/cubin-hash manifest is bf1c99f3a81819e7c21fbd79d53da0e7e4045efe25792110d3334a8c37e056bf.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "983b0e9283855979f42cebfd80d43f9b6e786eb84f03f7570bf941c4d3a3c461"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+          "sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+          "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": "50998a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100",
+                "ptx88"
+              ],
+              "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx88"
+              ],
+              "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "f32x2",
+        "native_minimum_sm": 100,
+        "operation": "add_ftz",
+        "adapter": "direct_packed_u64"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "add",
+        "modifiers": [
+          "rn",
+          "ftz",
+          "f32x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Adds corresponding packed f32x2 lanes and flushes subnormal inputs and results to sign-preserving zero."
     },
     {
       "id": "add_rm_f32",
@@ -58684,6 +59101,218 @@
       "summary": "Computes a packed f16x2 fused multiply-add."
     },
     {
+      "id": "fma_f32x2",
+      "operation_key": "packed.alu.f32x2.fma",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "fma.rn.f32x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i1001",
+        "module": "f32x2",
+        "name": "fma_f32x2",
+        "arguments": [
+          "u64",
+          "u64",
+          "u64"
+        ],
+        "result": "u64",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1001",
+        "public_path": "cuda_intrinsics::f32x2::fma_f32x2",
+        "compatibility_paths": [
+          "cuda_device::f32x2::fma_f32x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "FmaF32x2Op",
+        "op_name": "nvvm.fma_f32x2",
+        "operands": [
+          "i64",
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.3.4 Floating Point Instructions: fma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-fma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight per-operation pure inline-PTX modules using one u64 carrier per f32x2 value",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 retained all eight exact add/sub/mul/fma .f32x2 instructions, including every .ftz form, with =l/l constraints. SHA-256 over the ordered intrinsic-ID/source-hash manifest is a04546b877e8f07b55c5dc11a6a5071651b53bbd15077a43083e59f3e267853a; the corresponding PTX-hash manifest is cb56147f343b2dc89724f6e0cce42826b32589d0e620d5df71725d214619cd6d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight LLVM-produced PTX 8.6 modules assembled independently for sm_100",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 ptxas accepted every module and produced valid CUDA ELF cubins. SHA-256 over the ordered intrinsic-ID/cubin-hash manifest is bf1c99f3a81819e7c21fbd79d53da0e7e4045efe25792110d3334a8c37e056bf.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "983b0e9283855979f42cebfd80d43f9b6e786eb84f03f7570bf941c4d3a3c461"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+          "sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+          "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": "50998a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100",
+                "ptx88"
+              ],
+              "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx88"
+              ],
+              "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "f32x2",
+        "native_minimum_sm": 100,
+        "operation": "fma",
+        "adapter": "direct_packed_u64"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "f32x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Computes a fused multiply-add in corresponding packed f32x2 lanes."
+    },
+    {
       "id": "fma_ftz_f16x2",
       "operation_key": "packed.alu.f16x2.fma.ftz",
       "family": "packed_alu",
@@ -58938,6 +59567,219 @@
         ]
       },
       "summary": "Computes a packed f16x2 fused multiply-add, flushing subnormals to zero."
+    },
+    {
+      "id": "fma_ftz_f32x2",
+      "operation_key": "packed.alu.f32x2.fma.ftz",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "fma.rn.ftz.f32x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i1002",
+        "module": "f32x2",
+        "name": "fma_ftz_f32x2",
+        "arguments": [
+          "u64",
+          "u64",
+          "u64"
+        ],
+        "result": "u64",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1002",
+        "public_path": "cuda_intrinsics::f32x2::fma_ftz_f32x2",
+        "compatibility_paths": [
+          "cuda_device::f32x2::fma_ftz_f32x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "FmaFtzF32x2Op",
+        "op_name": "nvvm.fma_ftz_f32x2",
+        "operands": [
+          "i64",
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.3.4 Floating Point Instructions: fma",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-fma"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight per-operation pure inline-PTX modules using one u64 carrier per f32x2 value",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 retained all eight exact add/sub/mul/fma .f32x2 instructions, including every .ftz form, with =l/l constraints. SHA-256 over the ordered intrinsic-ID/source-hash manifest is a04546b877e8f07b55c5dc11a6a5071651b53bbd15077a43083e59f3e267853a; the corresponding PTX-hash manifest is cb56147f343b2dc89724f6e0cce42826b32589d0e620d5df71725d214619cd6d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight LLVM-produced PTX 8.6 modules assembled independently for sm_100",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 ptxas accepted every module and produced valid CUDA ELF cubins. SHA-256 over the ordered intrinsic-ID/cubin-hash manifest is bf1c99f3a81819e7c21fbd79d53da0e7e4045efe25792110d3334a8c37e056bf.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "983b0e9283855979f42cebfd80d43f9b6e786eb84f03f7570bf941c4d3a3c461"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+          "sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+          "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": "50998a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100",
+                "ptx88"
+              ],
+              "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx88"
+              ],
+              "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "f32x2",
+        "native_minimum_sm": 100,
+        "operation": "fma_ftz",
+        "adapter": "direct_packed_u64"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "fma",
+        "modifiers": [
+          "rn",
+          "ftz",
+          "f32x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Computes a packed f32x2 fused multiply-add and flushes subnormal inputs and results to sign-preserving zero."
     },
     {
       "id": "fma_ftz_relu_f16x2",
@@ -219292,6 +220134,421 @@
       "summary": "Multiplies two packed f16x2 values."
     },
     {
+      "id": "mul_f32x2",
+      "operation_key": "packed.alu.f32x2.mul",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mul.rn.f32x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0999",
+        "module": "f32x2",
+        "name": "mul_f32x2",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u64",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0999",
+        "public_path": "cuda_intrinsics::f32x2::mul_f32x2",
+        "compatibility_paths": [
+          "cuda_device::f32x2::mul_f32x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "MulF32x2Op",
+        "op_name": "nvvm.mul_f32x2",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.3.3 Floating Point Instructions: mul",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-mul"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight per-operation pure inline-PTX modules using one u64 carrier per f32x2 value",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 retained all eight exact add/sub/mul/fma .f32x2 instructions, including every .ftz form, with =l/l constraints. SHA-256 over the ordered intrinsic-ID/source-hash manifest is a04546b877e8f07b55c5dc11a6a5071651b53bbd15077a43083e59f3e267853a; the corresponding PTX-hash manifest is cb56147f343b2dc89724f6e0cce42826b32589d0e620d5df71725d214619cd6d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight LLVM-produced PTX 8.6 modules assembled independently for sm_100",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 ptxas accepted every module and produced valid CUDA ELF cubins. SHA-256 over the ordered intrinsic-ID/cubin-hash manifest is bf1c99f3a81819e7c21fbd79d53da0e7e4045efe25792110d3334a8c37e056bf.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "983b0e9283855979f42cebfd80d43f9b6e786eb84f03f7570bf941c4d3a3c461"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+          "sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+          "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": "50998a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100",
+                "ptx88"
+              ],
+              "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx88"
+              ],
+              "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "f32x2",
+        "native_minimum_sm": 100,
+        "operation": "mul",
+        "adapter": "direct_packed_u64"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mul",
+        "modifiers": [
+          "rn",
+          "f32x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Multiplies corresponding lanes of two packed f32x2 values."
+    },
+    {
+      "id": "mul_ftz_f32x2",
+      "operation_key": "packed.alu.f32x2.mul.ftz",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "mul.rn.ftz.f32x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i1000",
+        "module": "f32x2",
+        "name": "mul_ftz_f32x2",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u64",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1000",
+        "public_path": "cuda_intrinsics::f32x2::mul_ftz_f32x2",
+        "compatibility_paths": [
+          "cuda_device::f32x2::mul_ftz_f32x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "MulFtzF32x2Op",
+        "op_name": "nvvm.mul_ftz_f32x2",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.3.3 Floating Point Instructions: mul",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-mul"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight per-operation pure inline-PTX modules using one u64 carrier per f32x2 value",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 retained all eight exact add/sub/mul/fma .f32x2 instructions, including every .ftz form, with =l/l constraints. SHA-256 over the ordered intrinsic-ID/source-hash manifest is a04546b877e8f07b55c5dc11a6a5071651b53bbd15077a43083e59f3e267853a; the corresponding PTX-hash manifest is cb56147f343b2dc89724f6e0cce42826b32589d0e620d5df71725d214619cd6d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight LLVM-produced PTX 8.6 modules assembled independently for sm_100",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 ptxas accepted every module and produced valid CUDA ELF cubins. SHA-256 over the ordered intrinsic-ID/cubin-hash manifest is bf1c99f3a81819e7c21fbd79d53da0e7e4045efe25792110d3334a8c37e056bf.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "983b0e9283855979f42cebfd80d43f9b6e786eb84f03f7570bf941c4d3a3c461"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+          "sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+          "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": "50998a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100",
+                "ptx88"
+              ],
+              "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx88"
+              ],
+              "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "f32x2",
+        "native_minimum_sm": 100,
+        "operation": "mul_ftz",
+        "adapter": "direct_packed_u64"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "mul",
+        "modifiers": [
+          "rn",
+          "ftz",
+          "f32x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Multiplies corresponding packed f32x2 lanes and flushes subnormal inputs and results to sign-preserving zero."
+    },
+    {
       "id": "mul_rm_f32",
       "operation_key": "scalar.arithmetic.mul.rm.f32",
       "family": "scalar_arithmetic",
@@ -241463,6 +242720,421 @@
         ]
       },
       "summary": "Subtracts two packed f16x2 values."
+    },
+    {
+      "id": "sub_f32x2",
+      "operation_key": "packed.alu.f32x2.sub",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "sub.rn.f32x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0997",
+        "module": "f32x2",
+        "name": "sub_f32x2",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u64",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0997",
+        "public_path": "cuda_intrinsics::f32x2::sub_f32x2",
+        "compatibility_paths": [
+          "cuda_device::f32x2::sub_f32x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "SubF32x2Op",
+        "op_name": "nvvm.sub_f32x2",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.3.2 Floating Point Instructions: sub",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sub"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight per-operation pure inline-PTX modules using one u64 carrier per f32x2 value",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 retained all eight exact add/sub/mul/fma .f32x2 instructions, including every .ftz form, with =l/l constraints. SHA-256 over the ordered intrinsic-ID/source-hash manifest is a04546b877e8f07b55c5dc11a6a5071651b53bbd15077a43083e59f3e267853a; the corresponding PTX-hash manifest is cb56147f343b2dc89724f6e0cce42826b32589d0e620d5df71725d214619cd6d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight LLVM-produced PTX 8.6 modules assembled independently for sm_100",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 ptxas accepted every module and produced valid CUDA ELF cubins. SHA-256 over the ordered intrinsic-ID/cubin-hash manifest is bf1c99f3a81819e7c21fbd79d53da0e7e4045efe25792110d3334a8c37e056bf.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "983b0e9283855979f42cebfd80d43f9b6e786eb84f03f7570bf941c4d3a3c461"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+          "sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+          "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": "50998a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100",
+                "ptx88"
+              ],
+              "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx88"
+              ],
+              "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "f32x2",
+        "native_minimum_sm": 100,
+        "operation": "sub",
+        "adapter": "direct_packed_u64"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "sub",
+        "modifiers": [
+          "rn",
+          "f32x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Subtracts corresponding lanes of two packed f32x2 values."
+    },
+    {
+      "id": "sub_ftz_f32x2",
+      "operation_key": "packed.alu.f32x2.sub.ftz",
+      "family": "packed_alu",
+      "source": {
+        "kind": "ptx_native",
+        "instruction": "sub.rn.ftz.f32x2"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i0998",
+        "module": "f32x2",
+        "name": "sub_ftz_f32x2",
+        "arguments": [
+          "u64",
+          "u64"
+        ],
+        "result": "u64",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i0998",
+        "public_path": "cuda_intrinsics::f32x2::sub_ftz_f32x2",
+        "compatibility_paths": [
+          "cuda_device::f32x2::sub_ftz_f32x2"
+        ]
+      },
+      "dialect": {
+        "op_type": "SubFtzF32x2Op",
+        "op_name": "nvvm.sub_ftz_f32x2",
+        "operands": [
+          "i64",
+          "i64"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "8.6",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 100
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.3.2 Floating Point Instructions: sub",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sub"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_100",
+        "ptx_feature": "+ptx86"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight per-operation pure inline-PTX modules using one u64 carrier per f32x2 value",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 retained all eight exact add/sub/mul/fma .f32x2 instructions, including every .ftz form, with =l/l constraints. SHA-256 over the ordered intrinsic-ID/source-hash manifest is a04546b877e8f07b55c5dc11a6a5071651b53bbd15077a43083e59f3e267853a; the corresponding PTX-hash manifest is cb56147f343b2dc89724f6e0cce42826b32589d0e620d5df71725d214619cd6d.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx86"
+              ],
+              "representation": "eight LLVM-produced PTX 8.6 modules assembled independently for sm_100",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 ptxas accepted every module and produced valid CUDA ELF cubins. SHA-256 over the ordered intrinsic-ID/cubin-hash manifest is bf1c99f3a81819e7c21fbd79d53da0e7e4045efe25792110d3334a8c37e056bf.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "983b0e9283855979f42cebfd80d43f9b6e786eb84f03f7570bf941c4d3a3c461"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+          "target": {
+            "minimum_ptx": "8.6",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 100
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+          "sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+          "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": "50998a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_100",
+                "ptx88"
+              ],
+              "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_100",
+                "ptx88"
+              ],
+              "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+            }
+          ]
+        }
+      ],
+      "packed_alu": {
+        "format": "f32x2",
+        "native_minimum_sm": 100,
+        "operation": "sub_ftz",
+        "adapter": "direct_packed_u64"
+      },
+      "lowering": "generated_packed_alu_inline_ptx",
+      "expected_ptx": {
+        "mnemonic": "sub",
+        "modifiers": [
+          "rn",
+          "ftz",
+          "f32x2"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Subtracts corresponding packed f32x2 lanes and flushes subnormal inputs and results to sign-preserving zero."
     },
     {
       "id": "sync_mask",

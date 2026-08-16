@@ -6,6 +6,10 @@
 #![feature(f16)]
 #![no_std]
 
+// Proc-macro expansions use the public crate path so the same expansion works
+// both here and in downstream device crates.
+extern crate self as cuda_device;
+
 pub use cuda_macros::{
     cluster_launch, constant, convergent, cooperative_launch, cuda_module, device, gpu_printf,
     kernel, launch_bounds, launch_contract, ptx_asm, pure, readonly,
@@ -30,6 +34,7 @@ pub mod disjoint;
 pub mod dotprod;
 pub mod f16;
 pub mod f16x2;
+pub mod f32x2;
 pub mod fence;
 pub mod float;
 pub mod grid;

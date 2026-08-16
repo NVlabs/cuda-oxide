@@ -1,0 +1,275 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-12.9-libnvvm-12.9.86-f32x2",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA 12.9 libNVVM package V12.9.86; NVVM 20.0.0",
+  "backend_sha256": "7915b9e3eaed7f686774ee82f99cfacebaefcd00296f44bdb979e57d363a7ca8",
+  "artifact_path": "/usr/local/cuda-12.9/nvvm/lib64/libnvvm.so.4",
+  "build_id_prefix": "50998a",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "llvm_arguments": [],
+    "llvm_results": [],
+    "concrete_llvm_arguments": [],
+    "concrete_llvm_results": [],
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_100",
+    "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "f32x2_inline_compute100",
+      "coverage_count": 8,
+      "stages": [
+        {
+          "targets": ["compute_100", "ptx88"],
+          "representation": "one modern NVVM IR 2.0 module containing all eight pure inline-PTX f32x2 forms with =l/l constraints",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9 libNVVM accepted the 1,794-byte module (SHA-256 3bb81df41493fd8254071078d5423dcdf5bbcdea542b46a77cf14d4d62081620), produced 3,060-byte LTOIR (SHA-256 623cfd620ace08aa14f84559fe9297b89f032ebac8eee747c38f3f499469e02a), and nvJitLink emitted 1,558-byte PTX 8.8 (SHA-256 8920b773f314dd4a60cdc620d168dd2acd0c6ee453a8f231ec1303f62665355f) retaining every exact instruction."
+        },
+        {
+          "targets": ["sm_100", "ptx88"],
+          "representation": "the combined eight-form LTOIR linked to one sm_100 cubin",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 12.9 nvJitLink produced a valid 6,008-byte CUDA ELF cubin (SHA-256 dc9e6034e77cb3fa6d4046a4b6bf5aa5e2b0d804bf7884638b093cd804e2caff). nvdisasm contains the expected FADD2, FMUL2, FFMA2 and .FTZ forms; subtraction appears as FADD2 with a negated source.",
+          "tool_path": "/usr/local/cuda-12.9/lib64/libnvJitLink.so.12.9.86",
+          "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+          "tool_sha256": "02d3acb5fe598dd20f0fca3cc03734ad164037a22747a01900561a42d0b8448f"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [{"name": "id", "values": ["add_f32x2"]}],
+      "product_count": 1,
+      "fixtures": ["f32x2_inline_compute100"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "add.rn.f32x2"},
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["rn", "f32x2"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["add_ftz_f32x2"]}],
+      "product_count": 1,
+      "fixtures": ["f32x2_inline_compute100"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "add.rn.ftz.f32x2"},
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "add",
+          "modifiers": ["rn", "ftz", "f32x2"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["fma_f32x2"]}],
+      "product_count": 1,
+      "fixtures": ["f32x2_inline_compute100"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "fma.rn.f32x2"},
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "fma",
+          "modifiers": ["rn", "f32x2"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        }
+      }
+    },
+    {
+      "axes": [{"name": "id", "values": ["fma_ftz_f32x2"]}],
+      "product_count": 1,
+      "fixtures": ["f32x2_inline_compute100"],
+      "template": {
+        "id": "${id}",
+        "source": {"kind": "ptx_native", "instruction": "fma.rn.ftz.f32x2"},
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "fma",
+          "modifiers": ["rn", "ftz", "f32x2"],
+          "operands": [{"kind": "register"}, {"kind": "register"}, {"kind": "register"}, {"kind": "register"}]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "sub_f32x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "f32x2_inline_compute100"
+      ],
+      "template": {
+        "id": "${id}",
+        "source": {
+          "kind": "ptx_native",
+          "instruction": "sub.rn.f32x2"
+        },
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "sub",
+          "modifiers": [
+            "rn",
+            "f32x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "sub_ftz_f32x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "f32x2_inline_compute100"
+      ],
+      "template": {
+        "id": "${id}",
+        "source": {
+          "kind": "ptx_native",
+          "instruction": "sub.rn.ftz.f32x2"
+        },
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "sub",
+          "modifiers": [
+            "rn",
+            "ftz",
+            "f32x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "mul_f32x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "f32x2_inline_compute100"
+      ],
+      "template": {
+        "id": "${id}",
+        "source": {
+          "kind": "ptx_native",
+          "instruction": "mul.rn.f32x2"
+        },
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "mul",
+          "modifiers": [
+            "rn",
+            "f32x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "mul_ftz_f32x2"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "f32x2_inline_compute100"
+      ],
+      "template": {
+        "id": "${id}",
+        "source": {
+          "kind": "ptx_native",
+          "instruction": "mul.rn.ftz.f32x2"
+        },
+        "llvm_symbol": null,
+        "expected_ptx": {
+          "mnemonic": "mul",
+          "modifiers": [
+            "rn",
+            "ftz",
+            "f32x2"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

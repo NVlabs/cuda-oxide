@@ -6928,3 +6928,59 @@ status = "active"
 catalog_id = "max_relu_s16x2"
 operation_key = "integer.minmax.s16x2.max.relu"
 raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0995"
+status = "active"
+catalog_id = "add_f32x2"
+operation_key = "packed.alu.f32x2.add"
+raw_rust_signature = { safe = true, arguments = ["u64", "u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i0996"
+status = "active"
+catalog_id = "add_ftz_f32x2"
+operation_key = "packed.alu.f32x2.add.ftz"
+raw_rust_signature = { safe = true, arguments = ["u64", "u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i0997"
+status = "active"
+catalog_id = "sub_f32x2"
+operation_key = "packed.alu.f32x2.sub"
+raw_rust_signature = { safe = true, arguments = ["u64", "u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i0998"
+status = "active"
+catalog_id = "sub_ftz_f32x2"
+operation_key = "packed.alu.f32x2.sub.ftz"
+raw_rust_signature = { safe = true, arguments = ["u64", "u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i0999"
+status = "active"
+catalog_id = "mul_f32x2"
+operation_key = "packed.alu.f32x2.mul"
+raw_rust_signature = { safe = true, arguments = ["u64", "u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i1000"
+status = "active"
+catalog_id = "mul_ftz_f32x2"
+operation_key = "packed.alu.f32x2.mul.ftz"
+raw_rust_signature = { safe = true, arguments = ["u64", "u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i1001"
+status = "active"
+catalog_id = "fma_f32x2"
+operation_key = "packed.alu.f32x2.fma"
+raw_rust_signature = { safe = true, arguments = ["u64", "u64", "u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i1002"
+status = "active"
+catalog_id = "fma_ftz_f32x2"
+operation_key = "packed.alu.f32x2.fma.ftz"
+raw_rust_signature = { safe = true, arguments = ["u64", "u64", "u64"], result = "u64" }

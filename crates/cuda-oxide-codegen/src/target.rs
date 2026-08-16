@@ -131,6 +131,15 @@ fn contains_sm90_features(contents: &str) -> bool {
         || contains_multimem_features(contents)
 }
 
+/// Native two-lane f32 arithmetic requires PTX 8.6 and sm_100+.
+///
+/// Match the instruction family rather than cuda-oxide's currently emitted
+/// spelling. External LLVM IR can contain any valid rounding/FTZ modifier
+/// combination and must receive the same target floor.
+fn contains_f32x2_features(contents: &str) -> bool {
+    contains_instruction_family_modifier(contents, &["add", "sub", "mul", "fma"], "f32x2")
+}
+
 /// Native packed bf16 atomic add was added in PTX 7.8 for sm_90.
 fn contains_packed_bf16_atomic_features(contents: &str) -> bool {
     contains_instruction_mnemonic(contents, "atom.global.add.noftz.bf16x2")
@@ -332,6 +341,48 @@ fn contains_instruction_mnemonic(contents: &str, mnemonic: &str) -> bool {
             following.chars().next().is_some_and(char::is_whitespace)
                 || escapes.iter().any(|escape| following.starts_with(escape));
         begins_at_instruction_boundary && ends_at_instruction_boundary
+    })
+}
+
+fn contains_instruction_family_modifier(
+    contents: &str,
+    operations: &[&str],
+    required_modifier: &str,
+) -> bool {
+    const ESCAPED_WHITESPACE: [&str; 5] = ["\\09", "\\0A", "\\0B", "\\0C", "\\0D"];
+    operations.iter().any(|operation| {
+        contents.match_indices(operation).any(|(index, _)| {
+            let preceding = &contents[..index];
+            let following = &contents[index + operation.len()..];
+            let begins_at_instruction_boundary = preceding.is_empty()
+                || preceding.chars().next_back().is_some_and(|ch| {
+                    ch.is_whitespace() || matches!(ch, '"' | ';' | ':' | '{' | '}')
+                })
+                || ESCAPED_WHITESPACE
+                    .iter()
+                    .any(|escape| preceding.ends_with(escape))
+                || preceding.ends_with("*/");
+            if !begins_at_instruction_boundary || !following.starts_with('.') {
+                return false;
+            }
+
+            let token_end = following
+                .char_indices()
+                .find_map(|(offset, ch)| {
+                    (ch.is_whitespace() || matches!(ch, '"' | ';')).then_some(offset)
+                })
+                .into_iter()
+                .chain(
+                    ESCAPED_WHITESPACE
+                        .iter()
+                        .filter_map(|escape| following.find(escape)),
+                )
+                .min()
+                .unwrap_or(following.len());
+            following[..token_end]
+                .split('.')
+                .any(|modifier| modifier == required_modifier)
+        })
     })
 }
 
@@ -1061,7 +1112,9 @@ pub fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
             DetectedFeatures::Ldmatrix,
         ),
         (
-            contains_tma_sm100_features(contents) || contains_clc_features(contents),
+            contains_tma_sm100_features(contents)
+                || contains_clc_features(contents)
+                || contains_f32x2_features(contents),
             DetectedFeatures::Sm100,
         ),
         (
@@ -1139,6 +1192,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_fence_acquire_release_features(contents)
         || contains_multimem_features(contents)
         || contains_redux_f32_features(contents)
+        || contains_f32x2_features(contents)
     {
         ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx86);
     }
@@ -2817,6 +2871,35 @@ mod tests {
                 detect_features_in_llvm_text(near_miss),
                 DetectedFeatures::Basic
             );
+        }
+    }
+
+    #[test]
+    fn f32x2_family_detection_requires_sm100_and_ptx86() {
+        for mnemonic in [
+            "add.f32x2 $0, $1, $2;",
+            "add.rz.f32x2 $0, $1, $2;",
+            "sub.rm.f32x2 $0, $1, $2;",
+            "mul.rp.ftz.f32x2 $0, $1, $2;",
+            "fma.rn.f32x2 $0, $1, $2, $3;",
+            "fma.rz.ftz.f32x2\\09$0, $1, $2, $3;",
+        ] {
+            assert!(contains_f32x2_features(mnemonic));
+            let requirements = detect_module_requirements_in_llvm_text(mnemonic);
+            assert_eq!(requirements.features, DetectedFeatures::Sm100);
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86);
+            assert!(!arch_satisfies("sm_90", requirements.features));
+            assert!(arch_satisfies("sm_100", requirements.features));
+            assert!(arch_satisfies("sm_120", requirements.features));
+        }
+
+        for near_miss in [
+            "add.rn.f32x2x $0, $1, $2;",
+            "fmax.rn.f32x2 $0, $1, $2;",
+            "myadd.rn.f32x2 $0, $1, $2;",
+            "add.rn.f32 $0, $1, $2;",
+        ] {
+            assert!(!contains_f32x2_features(near_miss));
         }
     }
 

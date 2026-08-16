@@ -14924,8 +14924,149 @@ fn packed_alu_recipe(
 ) -> Option<PackedAluRecipe> {
     match format {
         PackedAluFormat::Bf16x2 => packed_bf16x2_alu_recipe(operation),
-        PackedAluFormat::F16x2 => Some(packed_f16x2_alu_recipe(operation)),
+        PackedAluFormat::F16x2 => packed_f16x2_alu_recipe(operation),
+        PackedAluFormat::F32x2 => packed_f32x2_alu_recipe(operation),
     }
+}
+
+fn packed_f32x2_alu_recipe(operation: PackedAluOperation) -> Option<PackedAluRecipe> {
+    let (
+        id,
+        abi_id,
+        operation_key,
+        rust_name,
+        dialect_op_type,
+        dialect_op_name,
+        arity,
+        head,
+        modifiers,
+        section,
+        url,
+    ) = match operation {
+        PackedAluOperation::Add => (
+            "add_f32x2",
+            "i0995",
+            "packed.alu.f32x2.add",
+            "add_f32x2",
+            "AddF32x2Op",
+            "nvvm.add_f32x2",
+            2,
+            "add.rn.f32x2",
+            &["rn", "f32x2"][..],
+            "9.7.3.1 Floating Point Instructions: add",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-add",
+        ),
+        PackedAluOperation::AddFtz => (
+            "add_ftz_f32x2",
+            "i0996",
+            "packed.alu.f32x2.add.ftz",
+            "add_ftz_f32x2",
+            "AddFtzF32x2Op",
+            "nvvm.add_ftz_f32x2",
+            2,
+            "add.rn.ftz.f32x2",
+            &["rn", "ftz", "f32x2"][..],
+            "9.7.3.1 Floating Point Instructions: add",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-add",
+        ),
+        PackedAluOperation::Sub => (
+            "sub_f32x2",
+            "i0997",
+            "packed.alu.f32x2.sub",
+            "sub_f32x2",
+            "SubF32x2Op",
+            "nvvm.sub_f32x2",
+            2,
+            "sub.rn.f32x2",
+            &["rn", "f32x2"][..],
+            "9.7.3.2 Floating Point Instructions: sub",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sub",
+        ),
+        PackedAluOperation::SubFtz => (
+            "sub_ftz_f32x2",
+            "i0998",
+            "packed.alu.f32x2.sub.ftz",
+            "sub_ftz_f32x2",
+            "SubFtzF32x2Op",
+            "nvvm.sub_ftz_f32x2",
+            2,
+            "sub.rn.ftz.f32x2",
+            &["rn", "ftz", "f32x2"][..],
+            "9.7.3.2 Floating Point Instructions: sub",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sub",
+        ),
+        PackedAluOperation::Mul => (
+            "mul_f32x2",
+            "i0999",
+            "packed.alu.f32x2.mul",
+            "mul_f32x2",
+            "MulF32x2Op",
+            "nvvm.mul_f32x2",
+            2,
+            "mul.rn.f32x2",
+            &["rn", "f32x2"][..],
+            "9.7.3.3 Floating Point Instructions: mul",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-mul",
+        ),
+        PackedAluOperation::MulFtz => (
+            "mul_ftz_f32x2",
+            "i1000",
+            "packed.alu.f32x2.mul.ftz",
+            "mul_ftz_f32x2",
+            "MulFtzF32x2Op",
+            "nvvm.mul_ftz_f32x2",
+            2,
+            "mul.rn.ftz.f32x2",
+            &["rn", "ftz", "f32x2"][..],
+            "9.7.3.3 Floating Point Instructions: mul",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-mul",
+        ),
+        PackedAluOperation::Fma => (
+            "fma_f32x2",
+            "i1001",
+            "packed.alu.f32x2.fma",
+            "fma_f32x2",
+            "FmaF32x2Op",
+            "nvvm.fma_f32x2",
+            3,
+            "fma.rn.f32x2",
+            &["rn", "f32x2"][..],
+            "9.7.3.4 Floating Point Instructions: fma",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-fma",
+        ),
+        PackedAluOperation::FmaFtz => (
+            "fma_ftz_f32x2",
+            "i1002",
+            "packed.alu.f32x2.fma.ftz",
+            "fma_ftz_f32x2",
+            "FmaFtzF32x2Op",
+            "nvvm.fma_ftz_f32x2",
+            3,
+            "fma.rn.ftz.f32x2",
+            &["rn", "ftz", "f32x2"][..],
+            "9.7.3.4 Floating Point Instructions: fma",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-fma",
+        ),
+        _ => return None,
+    };
+    Some(PackedAluRecipe {
+        id,
+        abi_id,
+        operation_key,
+        rust_name,
+        dialect_op_type,
+        dialect_op_name,
+        arity,
+        must_use: true,
+        ptx_mnemonic: head,
+        modifiers,
+        native_minimum_sm: 100,
+        minimum_ptx: "8.6",
+        minimum_sm: "sm_100",
+        ptx_isa_section: section,
+        ptx_isa_url: url,
+        source: PackedAluRecipeSource::PtxNative,
+    })
 }
 
 fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> Option<PackedAluRecipe> {
@@ -15148,7 +15289,8 @@ fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> Option<PackedAluRe
                 selection_asm: "abs.bf16x2 \t$dst, $src0;",
             },
         },
-        // The ftz and sat fma forms do not exist for bf16x2 in the PTX ISA at
+        // The f32x2-only operation keys are outside this admission. The ftz
+        // and sat fma forms also do not exist for bf16x2 in the PTX ISA at
         // all: ptxas rejects hand-written `fma.rn.ftz.bf16x2` with
         // "Illegal modifier '.ftz' for instruction 'fma'", and accepts
         // `fma.rn.relu.bf16x2` beside it. LLVM declares the intrinsics anyway,
@@ -15156,17 +15298,20 @@ fn packed_bf16x2_alu_recipe(operation: PackedAluOperation) -> Option<PackedAluRe
         // intrinsic %llvm.nvvm.fma.rn.ftz.bf16x2"), but the assembler is the
         // authority here. Reject them rather than admit a recipe that has no
         // instruction to lower to.
-        PackedAluOperation::FmaFtz
+        PackedAluOperation::AddFtz
+        | PackedAluOperation::SubFtz
+        | PackedAluOperation::MulFtz
+        | PackedAluOperation::FmaFtz
         | PackedAluOperation::FmaSat
         | PackedAluOperation::FmaFtzSat
         | PackedAluOperation::FmaFtzRelu => return None,
     })
 }
 
-fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
+fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> Option<PackedAluRecipe> {
     const PURE: &[&str] = &["IntrNoMem", "IntrSpeculatable"];
     const COMMUTATIVE_PURE: &[&str] = &["Commutative", "IntrNoMem", "IntrSpeculatable"];
-    match operation {
+    Some(match operation {
         PackedAluOperation::Fma => PackedAluRecipe {
             id: "fma_f16x2",
             abi_id: "i0072",
@@ -15482,7 +15627,13 @@ fn packed_f16x2_alu_recipe(operation: PackedAluOperation) -> PackedAluRecipe {
                 selection_asm: "abs.f16x2 \t$dst, $src0;",
             },
         },
-    }
+        // These operations were added for the f32x2 admission. Keeping them
+        // outside the f16x2 recipe avoids silently expanding this PR's scope,
+        // even where a similarly spelled PTX form may exist.
+        PackedAluOperation::AddFtz | PackedAluOperation::SubFtz | PackedAluOperation::MulFtz => {
+            return None;
+        }
+    })
 }
 
 /// Per-backend PTX and SM floors, which can sit above the recipe's own floor.
@@ -15550,19 +15701,20 @@ fn validate_packed_alu_policy(
         .packed_alu
         .as_ref()
         .with_context(|| format!("{} has no closed packed-ALU contract", policy.id))?;
+    let recipe = packed_alu_recipe(packed.format, packed.operation)
+        .with_context(|| format!("{} is outside the closed packed-ALU recipe", policy.id))?;
+    let (rust_module, rust_type, dialect_type, expected_adapter) = match packed.format {
+        PackedAluFormat::Bf16x2 => ("bf16x2", "u32", "i32", PackedAluAdapter::DirectPackedU32),
+        PackedAluFormat::F16x2 => ("f16x2", "u32", "i32", PackedAluAdapter::DirectPackedU32),
+        PackedAluFormat::F32x2 => ("f32x2", "u64", "i64", PackedAluAdapter::DirectPackedU64),
+    };
     ensure!(
-        packed.adapter == PackedAluAdapter::DirectPackedU32,
+        packed.adapter == expected_adapter,
         "{} requests an unsupported packed-ALU adapter",
         policy.id
     );
-    let recipe = packed_alu_recipe(packed.format, packed.operation)
-        .with_context(|| format!("{} is outside the closed packed-ALU recipe", policy.id))?;
-    let rust_module = match packed.format {
-        PackedAluFormat::Bf16x2 => "bf16x2",
-        PackedAluFormat::F16x2 => "f16x2",
-    };
-    let rust_arguments = vec!["u32"; recipe.arity];
-    let dialect_operands = vec!["i32"; recipe.arity];
+    let rust_arguments = vec![rust_type; recipe.arity];
+    let dialect_operands = vec![dialect_type; recipe.arity];
     ensure!(
         policy.id == recipe.id
             && policy.abi_id == recipe.abi_id
@@ -15574,7 +15726,7 @@ fn validate_packed_alu_policy(
         policy.rust_module == rust_module
             && policy.rust_name == recipe.rust_name
             && policy.rust_arguments == rust_arguments
-            && policy.rust_result == "u32"
+            && policy.rust_result == rust_type
             && policy.safe
             && policy.must_use == recipe.must_use
             && policy
@@ -15592,7 +15744,7 @@ fn validate_packed_alu_policy(
         policy.dialect_op_type == recipe.dialect_op_type
             && policy.dialect_op_name == recipe.dialect_op_name
             && policy.dialect_operands == dialect_operands
-            && policy.dialect_results == ["i32"]
+            && policy.dialect_results == [dialect_type]
             && policy.lowering == "generated_packed_alu_inline_ptx",
         "{} is outside the closed packed-ALU dialect and lowering recipe",
         policy.id
@@ -15604,7 +15756,7 @@ fn validate_packed_alu_policy(
             && policy.execution_scope == "thread"
             && policy.minimum_ptx == recipe.minimum_ptx
             && policy.minimum_sm.as_deref() == Some(recipe.minimum_sm)
-            && policy.ptx_result == "u32"
+            && policy.ptx_result == rust_type
             && policy.targets == "all"
             && packed.native_minimum_sm == recipe.native_minimum_sm,
         "{} packed-ALU effects, carrier, or target floor disagree",
@@ -30121,9 +30273,10 @@ mod tests {
         operation: PackedAluOperation,
     ) -> OverlayIntrinsic {
         let recipe = packed_alu_recipe(format, operation).expect("test recipe pair");
-        let rust_module = match format {
-            PackedAluFormat::Bf16x2 => "bf16x2",
-            PackedAluFormat::F16x2 => "f16x2",
+        let (rust_module, rust_type, dialect_type, adapter) = match format {
+            PackedAluFormat::Bf16x2 => ("bf16x2", "u32", "i32", PackedAluAdapter::DirectPackedU32),
+            PackedAluFormat::F16x2 => ("f16x2", "u32", "i32", PackedAluAdapter::DirectPackedU32),
+            PackedAluFormat::F32x2 => ("f32x2", "u64", "i64", PackedAluAdapter::DirectPackedU64),
         };
         let mut record = policy();
         record.id = recipe.id.into();
@@ -30159,8 +30312,8 @@ mod tests {
         }
         record.rust_module = rust_module.into();
         record.rust_name = recipe.rust_name.into();
-        record.rust_arguments = vec!["u32".into(); recipe.arity];
-        record.rust_result = "u32".into();
+        record.rust_arguments = vec![rust_type.into(); recipe.arity];
+        record.rust_result = rust_type.into();
         record.safe = true;
         record.must_use = recipe.must_use;
         record.safe_allowlist_reason = Some("the operation has no caller obligations".into());
@@ -30169,15 +30322,15 @@ mod tests {
             vec![format!("cuda_device::{rust_module}::{}", recipe.rust_name)];
         record.dialect_op_type = recipe.dialect_op_type.into();
         record.dialect_op_name = recipe.dialect_op_name.into();
-        record.dialect_operands = vec!["i32".into(); recipe.arity];
-        record.dialect_results = vec!["i32".into()];
+        record.dialect_operands = vec![dialect_type.into(); recipe.arity];
+        record.dialect_results = vec![dialect_type.into()];
         record.pure = true;
         record.memory = "none".into();
         record.convergent = false;
         record.execution_scope = "thread".into();
         record.minimum_ptx = recipe.minimum_ptx.into();
         record.minimum_sm = Some(recipe.minimum_sm.into());
-        record.ptx_result = "u32".into();
+        record.ptx_result = rust_type.into();
         record.ptx_isa_section = recipe.ptx_isa_section.into();
         record.ptx_isa_url = recipe.ptx_isa_url.into();
         record.lowering = "generated_packed_alu_inline_ptx".into();
@@ -30200,7 +30353,7 @@ mod tests {
             format,
             native_minimum_sm: recipe.native_minimum_sm,
             operation,
-            adapter: PackedAluAdapter::DirectPackedU32,
+            adapter,
         });
         record.expected_ptx = InstructionPattern::new(
             recipe.ptx_mnemonic.split('.').next().unwrap(),
@@ -31148,7 +31301,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 64);
-        assert_eq!(overlay.intrinsics.len(), 994);
+        assert_eq!(overlay.intrinsics.len(), 1002);
         assert_eq!(
             overlay
                 .intrinsics
@@ -31195,7 +31348,7 @@ mod tests {
                 .iter()
                 .filter(|record| record.family == "packed_alu")
                 .count(),
-            22
+            30
         );
         assert_eq!(
             overlay
@@ -40706,7 +40859,7 @@ scope = "system"
             .iter()
             .filter(|record| record.family == "packed_alu")
             .collect();
-        assert_eq!(packed.len(), 22);
+        assert_eq!(packed.len(), 30);
         for policy in packed {
             let source = resolve_policy_source(policy).unwrap();
             let declaration = policy

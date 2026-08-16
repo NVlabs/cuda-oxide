@@ -907,3 +907,315 @@ backend_lowerings = [
 packed_alu = { format = "f16x2", native_minimum_sm = 80, operation = "fma_ftz_relu", adapter = "direct_packed_u32" }
 expected_ptx = { mnemonic = "fma", modifiers = ["rn", "ftz", "relu", "f16x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }, { kind = "register" }] }
 summary = "Computes a packed f16x2 fused multiply-add, flushing subnormals to zero and applying ReLU."
+
+[[intrinsic]]
+id = "add_f32x2"
+abi_id = "i0995"
+operation_key = "packed.alu.f32x2.add"
+family = "packed_alu"
+source = { kind = "ptx_native", instruction = "add.rn.f32x2" }
+rust_module = "f32x2"
+rust_name = "add_f32x2"
+rust_arguments = ["u64", "u64"]
+rust_result = "u64"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f32x2::add_f32x2"
+compatibility_rust_paths = ["cuda_device::f32x2::add_f32x2"]
+dialect_op_type = "AddF32x2Op"
+dialect_op_name = "nvvm.add_f32x2"
+dialect_operands = ["i64", "i64"]
+dialect_results = ["i64"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "8.6"
+minimum_sm = "sm_100"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.3.1 Floating Point Instructions: add"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-add"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-f32x2", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+]
+packed_alu = { format = "f32x2", native_minimum_sm = 100, operation = "add", adapter = "direct_packed_u64" }
+expected_ptx = { mnemonic = "add", modifiers = ["rn", "f32x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Adds corresponding lanes of two packed f32x2 values."
+
+[[intrinsic]]
+id = "add_ftz_f32x2"
+abi_id = "i0996"
+operation_key = "packed.alu.f32x2.add.ftz"
+family = "packed_alu"
+source = { kind = "ptx_native", instruction = "add.rn.ftz.f32x2" }
+rust_module = "f32x2"
+rust_name = "add_ftz_f32x2"
+rust_arguments = ["u64", "u64"]
+rust_result = "u64"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f32x2::add_ftz_f32x2"
+compatibility_rust_paths = ["cuda_device::f32x2::add_ftz_f32x2"]
+dialect_op_type = "AddFtzF32x2Op"
+dialect_op_name = "nvvm.add_ftz_f32x2"
+dialect_operands = ["i64", "i64"]
+dialect_results = ["i64"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "8.6"
+minimum_sm = "sm_100"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.3.1 Floating Point Instructions: add"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-add"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-f32x2", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+]
+packed_alu = { format = "f32x2", native_minimum_sm = 100, operation = "add_ftz", adapter = "direct_packed_u64" }
+expected_ptx = { mnemonic = "add", modifiers = ["rn", "ftz", "f32x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Adds corresponding packed f32x2 lanes and flushes subnormal inputs and results to sign-preserving zero."
+
+[[intrinsic]]
+id = "sub_f32x2"
+abi_id = "i0997"
+operation_key = "packed.alu.f32x2.sub"
+family = "packed_alu"
+source = { kind = "ptx_native", instruction = "sub.rn.f32x2" }
+rust_module = "f32x2"
+rust_name = "sub_f32x2"
+rust_arguments = ["u64", "u64"]
+rust_result = "u64"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f32x2::sub_f32x2"
+compatibility_rust_paths = ["cuda_device::f32x2::sub_f32x2"]
+dialect_op_type = "SubF32x2Op"
+dialect_op_name = "nvvm.sub_f32x2"
+dialect_operands = ["i64", "i64"]
+dialect_results = ["i64"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "8.6"
+minimum_sm = "sm_100"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.3.2 Floating Point Instructions: sub"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sub"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-f32x2", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+]
+packed_alu = { format = "f32x2", native_minimum_sm = 100, operation = "sub", adapter = "direct_packed_u64" }
+expected_ptx = { mnemonic = "sub", modifiers = ["rn", "f32x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Subtracts corresponding lanes of two packed f32x2 values."
+
+[[intrinsic]]
+id = "sub_ftz_f32x2"
+abi_id = "i0998"
+operation_key = "packed.alu.f32x2.sub.ftz"
+family = "packed_alu"
+source = { kind = "ptx_native", instruction = "sub.rn.ftz.f32x2" }
+rust_module = "f32x2"
+rust_name = "sub_ftz_f32x2"
+rust_arguments = ["u64", "u64"]
+rust_result = "u64"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f32x2::sub_ftz_f32x2"
+compatibility_rust_paths = ["cuda_device::f32x2::sub_ftz_f32x2"]
+dialect_op_type = "SubFtzF32x2Op"
+dialect_op_name = "nvvm.sub_ftz_f32x2"
+dialect_operands = ["i64", "i64"]
+dialect_results = ["i64"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "8.6"
+minimum_sm = "sm_100"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.3.2 Floating Point Instructions: sub"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sub"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-f32x2", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+]
+packed_alu = { format = "f32x2", native_minimum_sm = 100, operation = "sub_ftz", adapter = "direct_packed_u64" }
+expected_ptx = { mnemonic = "sub", modifiers = ["rn", "ftz", "f32x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Subtracts corresponding packed f32x2 lanes and flushes subnormal inputs and results to sign-preserving zero."
+
+[[intrinsic]]
+id = "mul_f32x2"
+abi_id = "i0999"
+operation_key = "packed.alu.f32x2.mul"
+family = "packed_alu"
+source = { kind = "ptx_native", instruction = "mul.rn.f32x2" }
+rust_module = "f32x2"
+rust_name = "mul_f32x2"
+rust_arguments = ["u64", "u64"]
+rust_result = "u64"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f32x2::mul_f32x2"
+compatibility_rust_paths = ["cuda_device::f32x2::mul_f32x2"]
+dialect_op_type = "MulF32x2Op"
+dialect_op_name = "nvvm.mul_f32x2"
+dialect_operands = ["i64", "i64"]
+dialect_results = ["i64"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "8.6"
+minimum_sm = "sm_100"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.3.3 Floating Point Instructions: mul"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-mul"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-f32x2", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+]
+packed_alu = { format = "f32x2", native_minimum_sm = 100, operation = "mul", adapter = "direct_packed_u64" }
+expected_ptx = { mnemonic = "mul", modifiers = ["rn", "f32x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Multiplies corresponding lanes of two packed f32x2 values."
+
+[[intrinsic]]
+id = "mul_ftz_f32x2"
+abi_id = "i1000"
+operation_key = "packed.alu.f32x2.mul.ftz"
+family = "packed_alu"
+source = { kind = "ptx_native", instruction = "mul.rn.ftz.f32x2" }
+rust_module = "f32x2"
+rust_name = "mul_ftz_f32x2"
+rust_arguments = ["u64", "u64"]
+rust_result = "u64"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f32x2::mul_ftz_f32x2"
+compatibility_rust_paths = ["cuda_device::f32x2::mul_ftz_f32x2"]
+dialect_op_type = "MulFtzF32x2Op"
+dialect_op_name = "nvvm.mul_ftz_f32x2"
+dialect_operands = ["i64", "i64"]
+dialect_results = ["i64"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "8.6"
+minimum_sm = "sm_100"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.3.3 Floating Point Instructions: mul"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-mul"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-f32x2", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+]
+packed_alu = { format = "f32x2", native_minimum_sm = 100, operation = "mul_ftz", adapter = "direct_packed_u64" }
+expected_ptx = { mnemonic = "mul", modifiers = ["rn", "ftz", "f32x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Multiplies corresponding packed f32x2 lanes and flushes subnormal inputs and results to sign-preserving zero."
+
+[[intrinsic]]
+id = "fma_f32x2"
+abi_id = "i1001"
+operation_key = "packed.alu.f32x2.fma"
+family = "packed_alu"
+source = { kind = "ptx_native", instruction = "fma.rn.f32x2" }
+rust_module = "f32x2"
+rust_name = "fma_f32x2"
+rust_arguments = ["u64", "u64", "u64"]
+rust_result = "u64"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f32x2::fma_f32x2"
+compatibility_rust_paths = ["cuda_device::f32x2::fma_f32x2"]
+dialect_op_type = "FmaF32x2Op"
+dialect_op_name = "nvvm.fma_f32x2"
+dialect_operands = ["i64", "i64", "i64"]
+dialect_results = ["i64"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "8.6"
+minimum_sm = "sm_100"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.3.4 Floating Point Instructions: fma"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-fma"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-f32x2", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+]
+packed_alu = { format = "f32x2", native_minimum_sm = 100, operation = "fma", adapter = "direct_packed_u64" }
+expected_ptx = { mnemonic = "fma", modifiers = ["rn", "f32x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Computes a fused multiply-add in corresponding packed f32x2 lanes."
+
+[[intrinsic]]
+id = "fma_ftz_f32x2"
+abi_id = "i1002"
+operation_key = "packed.alu.f32x2.fma.ftz"
+family = "packed_alu"
+source = { kind = "ptx_native", instruction = "fma.rn.ftz.f32x2" }
+rust_module = "f32x2"
+rust_name = "fma_ftz_f32x2"
+rust_arguments = ["u64", "u64", "u64"]
+rust_result = "u64"
+safe = true
+must_use = true
+safe_allowlist_reason = "Packed arithmetic has no memory, pointer, synchronization, or participation preconditions."
+public_rust_path = "cuda_intrinsics::f32x2::fma_ftz_f32x2"
+compatibility_rust_paths = ["cuda_device::f32x2::fma_ftz_f32x2"]
+dialect_op_type = "FmaFtzF32x2Op"
+dialect_op_name = "nvvm.fma_ftz_f32x2"
+dialect_operands = ["i64", "i64", "i64"]
+dialect_results = ["i64"]
+pure = true
+memory = "none"
+convergent = false
+execution_scope = "thread"
+minimum_ptx = "8.6"
+minimum_sm = "sm_100"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.3.4 Floating Point Instructions: fma"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-fma"
+lowering = "generated_packed_alu_inline_ptx"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "inline_ptx", evidence_profile = "rust-llvm-22.1.2-1cb4e383", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-f32x2", minimum_ptx = "8.6", minimum_sm = "sm_100" },
+]
+packed_alu = { format = "f32x2", native_minimum_sm = 100, operation = "fma_ftz", adapter = "direct_packed_u64" }
+expected_ptx = { mnemonic = "fma", modifiers = ["rn", "ftz", "f32x2"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Computes a packed f32x2 fused multiply-add and flushes subnormal inputs and results to sign-preserving zero."

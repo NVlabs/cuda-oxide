@@ -2657,6 +2657,7 @@ pub struct PackedAlu {
 pub enum PackedAluFormat {
     Bf16x2,
     F16x2,
+    F32x2,
 }
 
 /// Closed identity and carrier contract for extended integer min/max ops.
@@ -2694,8 +2695,11 @@ pub enum IntegerMinMaxOperation {
 #[serde(rename_all = "snake_case")]
 pub enum PackedAluOperation {
     Add,
+    AddFtz,
     Sub,
+    SubFtz,
     Mul,
+    MulFtz,
     Fma,
     FmaFtz,
     FmaSat,
@@ -2712,6 +2716,7 @@ pub enum PackedAluOperation {
 #[serde(rename_all = "snake_case")]
 pub enum PackedAluAdapter {
     DirectPackedU32,
+    DirectPackedU64,
 }
 
 /// Closed contract for scalar floating-point arithmetic.

@@ -22,12 +22,26 @@ pub(crate) fn convert_generated_packed_alu(
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     ptx_mnemonic: &str,
+    width: u32,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let register_constraint = match width {
+        32 => "r",
+        64 => "l",
+        width => {
+            return pliron::input_err_noloc!(
+                "generated packed ALU operation requires a 32- or 64-bit carrier, got {width}"
+            );
+        }
+    };
     let constraints = match operands.len() {
-        1 => "=r,r",
-        2 => "=r,r,r",
-        3 => "=r,r,r,r",
+        1..=3 => std::iter::once(format!("={register_constraint}"))
+            .chain(std::iter::repeat_n(
+                register_constraint.to_owned(),
+                operands.len(),
+            ))
+            .collect::<Vec<_>>()
+            .join(","),
         count => {
             return pliron::input_err_noloc!(
                 "generated packed ALU operation requires 1 to 3 operands, got {count}"
@@ -38,13 +52,13 @@ pub(crate) fn convert_generated_packed_alu(
         .map(|index| format!("${index}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let result_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let result_ty = IntegerType::get(ctx, width, Signedness::Signless);
     let inline_asm = llvm::InlineAsmOp::build(
         ctx,
         result_ty.into(),
         operands,
         &format!("{ptx_mnemonic} {operand_list};"),
-        constraints,
+        &constraints,
         AsmKind::Pure,
     );
     let asm_op = inline_asm.get_operation();
