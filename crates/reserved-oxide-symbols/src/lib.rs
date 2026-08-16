@@ -66,6 +66,11 @@ pub const MATERIALIZE_CUBIN_ENV: &str = "CUDA_OXIDE_MATERIALIZE_CUBIN";
 /// again by the codegen backend before materialization.
 pub const MATERIALIZER_PROVENANCE_ENV: &str = "CUDA_OXIDE_INTERNAL_MATERIALIZER_PROVENANCE";
 
+/// Versioned descriptor-identity handoff accompanying
+/// [`MATERIALIZER_PROVENANCE_ENV`]. This is an acceleration hint; generated
+/// code remains keyed by the content-derived provenance digest.
+pub const MATERIALIZER_HANDSHAKE_ENV: &str = "CUDA_OXIDE_INTERNAL_MATERIALIZER_HANDSHAKE";
+
 /// Optional comma-separated filter selecting crates that may own device code.
 pub const DEVICE_CODEGEN_CRATE_ENV: &str = "CUDA_OXIDE_DEVICE_CODEGEN_CRATE";
 

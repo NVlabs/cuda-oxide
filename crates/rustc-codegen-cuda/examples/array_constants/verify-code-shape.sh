@@ -22,6 +22,19 @@ require_shape() {
     fi
 }
 
+require_shape_count() {
+    local description="$1"
+    local expected="$2"
+    local pattern="$3"
+    local actual
+
+    actual="$(grep -Ec "${pattern}" "${llvm_ir}" || true)"
+    if [[ "${actual}" -ne "${expected}" ]]; then
+        echo "error: expected ${expected} ${description} in ${llvm_ir}, found ${actual}" >&2
+        exit 1
+    fi
+}
+
 symbol_body() {
     local artifact="$1"
     local format="$2"
@@ -96,16 +109,46 @@ require_shape \
 # struct constants. `PaddedStruct` is `#[repr(C)] { u8, u32 }`, so the lowered
 # element contains an explicit three-byte padding slot before the u32.
 padded_struct_symbol='array_constants__kernels__padded_struct_array_value'
+padded_struct_ref_symbol='array_constants__kernels__padded_struct_ref_value'
+padded_struct_initializer='addrspace\(1\) constant \[16 x i8\] c"\\A5\\00\\00\\00\\44\\33\\22\\11\\5A\\00\\00\\00\\CC\\BB\\AA\\99"'
 require_symbol_shape "${llvm_ir}" llvm "${padded_struct_symbol}" \
     "padded bare-struct array storage" \
     'alloca \[2 x \{ i8, \[3 x i8\], i32 \}\]'
+require_shape \
+    "padded struct array immutable-global byte image" \
+    "${padded_struct_initializer}"
+require_symbol_shape "${llvm_ir}" llvm "${padded_struct_symbol}" \
+    "padded struct array filled from a read-only global" \
+    'llvm\.memcpy\.p0\.p1\.i64\(ptr %[A-Za-z0-9_.]+, ptr addrspace\(1\) @'
+reject_symbol_shape "${llvm_ir}" llvm "${padded_struct_ref_symbol}" \
+    "local padded struct table copy in pointer-to-array path" \
+    'alloca \[2 x \{ i8, \[3 x i8\], i32 \}\]'
+require_shape_count \
+    "padded struct immutable-global initializer" \
+    1 \
+    "${padded_struct_initializer}"
 
 # Recursive aggregate decoding must preserve the inner struct's padding while
 # placing the following u64 at its `#[repr(C)]` offset.
 nested_struct_symbol='array_constants__kernels__nested_struct_array_value'
+nested_struct_ref_symbol='array_constants__kernels__nested_struct_ref_value'
+nested_struct_initializer='addrspace\(1\) constant \[32 x i8\] c"\\33\\00\\00\\00\\04\\03\\02\\01\\18\\17\\16\\15\\14\\13\\12\\11\\CC\\00\\00\\00\\A4\\A3\\A2\\A1\\88\\87\\86\\85\\84\\83\\82\\81"'
 require_symbol_shape "${llvm_ir}" llvm "${nested_struct_symbol}" \
     "nested bare-struct array storage" \
     'alloca \[2 x \{ \{ i8, \[3 x i8\], i32 \}, i64 \}\]'
+require_shape \
+    "nested struct array immutable-global byte image" \
+    "${nested_struct_initializer}"
+require_symbol_shape "${llvm_ir}" llvm "${nested_struct_symbol}" \
+    "nested struct array filled from a read-only global" \
+    'llvm\.memcpy\.p0\.p1\.i64\(ptr %[A-Za-z0-9_.]+, ptr addrspace\(1\) @'
+reject_symbol_shape "${llvm_ir}" llvm "${nested_struct_ref_symbol}" \
+    "local nested struct table copy in pointer-to-array path" \
+    'alloca \[2 x \{ \{ i8, \[3 x i8\], i32 \}, i64 \}\]'
+require_shape_count \
+    "nested struct immutable-global initializer" \
+    1 \
+    "${nested_struct_initializer}"
 
 # The standalone over-aligned ZST struct array has no data bytes to pin in LLVM
 # IR. Runtime coverage in `array_constants` checks that indexing it still

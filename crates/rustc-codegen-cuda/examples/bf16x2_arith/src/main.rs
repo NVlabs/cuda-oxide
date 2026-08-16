@@ -8,7 +8,7 @@ use cuda_device::bf16x2::{
     abs_bf16x2, add_bf16x2, fma_relu_bf16x2, max_bf16x2, min_bf16x2, mul_bf16x2, neg_bf16x2,
     sub_bf16x2,
 };
-use cuda_device::tcgen05::cvt_f32x2_bf16x2;
+use cuda_device::convert::cvt_bf16x2_f32;
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
@@ -24,10 +24,10 @@ mod kernels {
         let idx = thread::index_1d();
         if let Some(row) = out.get_mut(idx) {
             // Pack known f32 pairs into bf16x2.
-            let a = cvt_f32x2_bf16x2(2.0, 4.0);
-            let b = cvt_f32x2_bf16x2(3.0, 5.0);
-            let neg_one = cvt_f32x2_bf16x2(-1.0, -1.0);
-            let zero = cvt_f32x2_bf16x2(0.0, 0.0);
+            let a = cvt_bf16x2_f32(2.0, 4.0);
+            let b = cvt_bf16x2_f32(3.0, 5.0);
+            let neg_one = cvt_bf16x2_f32(-1.0, -1.0);
+            let zero = cvt_bf16x2_f32(0.0, 0.0);
 
             // One thread owns one complete result row, so every write remains
             // within the element selected by its typed ThreadIndex witness.

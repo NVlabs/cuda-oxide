@@ -17,7 +17,7 @@
 //! - bare arrays of padded and nested struct constants,
 //! - bare arrays of over-aligned zero-sized struct constants,
 //! - direct padded tuple constants,
-//! - pointer-to-array constants (`&[T; N]`), which predate bare-array support,
+//! - pointer-to-array constants (`&[T; N]`), including padded and nested structs,
 //! - tuple arrays containing pointers to device statics,
 //! - tuple-array pointer relocations with non-zero static addends,
 //! - initialized union constants, including `[U; N]` runtime indexing,
@@ -82,6 +82,7 @@ const PADDED_STRUCT_TABLE: [PaddedStruct; 2] = [
         value: 0x99aa_bbcc,
     },
 ];
+const PADDED_STRUCT_REF: &[PaddedStruct; 2] = &PADDED_STRUCT_TABLE;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -106,6 +107,7 @@ const NESTED_STRUCT_TABLE: [NestedStruct; 2] = [
         wide: 0x8182_8384_8586_8788,
     },
 ];
+const NESTED_STRUCT_REF: &[NestedStruct; 2] = &NESTED_STRUCT_TABLE;
 
 #[derive(Clone, Copy)]
 #[repr(align(32))]
@@ -287,6 +289,26 @@ mod kernels {
     }
 
     #[inline(never)]
+    fn padded_struct_ref_value(i: usize) -> u32 {
+        let idx = i & 1;
+        (PADDED_STRUCT_REF[idx].tag as u32)
+            .wrapping_mul(257)
+            .wrapping_add(PADDED_STRUCT_REF[idx].value)
+    }
+
+    #[inline(never)]
+    fn nested_struct_ref_value(i: usize) -> u32 {
+        let idx = i & 1;
+        (NESTED_STRUCT_REF[idx].inner.tag as u32)
+            .wrapping_mul(257)
+            .wrapping_add(NESTED_STRUCT_REF[idx].inner.value)
+            .wrapping_mul(257)
+            .wrapping_add(NESTED_STRUCT_REF[idx].wide as u32)
+            .wrapping_mul(257)
+            .wrapping_add((NESTED_STRUCT_REF[idx].wide >> 32) as u32)
+    }
+
+    #[inline(never)]
     fn zst_struct_array_value(i: usize) -> u32 {
         let value = ZST_STRUCT_TABLE[i & 1];
         ((&value as *const ZstStruct as usize) & 31) as u32
@@ -417,6 +439,8 @@ mod kernels {
             let overaligned_zst = overaligned_zst_tuple_array_value(i);
             let padded_struct = padded_struct_array_value(i);
             let nested_struct = nested_struct_array_value(i);
+            let padded_struct_ref = padded_struct_ref_value(i);
+            let nested_struct_ref = nested_struct_ref_value(i);
             let zst_struct = zst_struct_array_value(i);
 
             *slot = nested
@@ -440,6 +464,10 @@ mod kernels {
                 .wrapping_add(padded_struct)
                 .wrapping_mul(257)
                 .wrapping_add(nested_struct)
+                .wrapping_mul(257)
+                .wrapping_add(padded_struct_ref)
+                .wrapping_mul(257)
+                .wrapping_add(nested_struct_ref)
                 .wrapping_mul(257)
                 .wrapping_add(zst_struct);
         }
@@ -527,6 +555,9 @@ fn expected_u32(i: usize) -> u32 {
         .wrapping_mul(257)
         .wrapping_add((nested_value.wide >> 32) as u32);
 
+    let padded_struct_ref = padded_struct;
+    let nested_struct_ref = nested_struct;
+
     let zst_value = ZST_STRUCT_TABLE[i & 1];
     let zst_struct = ((&zst_value as *const ZstStruct as usize) & 31) as u32;
 
@@ -551,6 +582,10 @@ fn expected_u32(i: usize) -> u32 {
         .wrapping_add(padded_struct)
         .wrapping_mul(257)
         .wrapping_add(nested_struct)
+        .wrapping_mul(257)
+        .wrapping_add(padded_struct_ref)
+        .wrapping_mul(257)
+        .wrapping_add(nested_struct_ref)
         .wrapping_mul(257)
         .wrapping_add(zst_struct)
 }
@@ -627,7 +662,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if failures == 0 {
         println!(
-            "array_constants: PASS ({N} threads; primitive, enum, initialized union/MaybeUninit, pointer-union provenance, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, padded/nested/ZST struct, pointer-to-array, and tuple-array static-pointer constants)"
+            "array_constants: PASS ({N} threads; primitive, enum, initialized union/MaybeUninit, pointer-union provenance, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, padded/nested/ZST struct, pointer-to-array including struct references, and tuple-array static-pointer constants)"
         );
         Ok(())
     } else {

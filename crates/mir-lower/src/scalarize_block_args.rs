@@ -381,10 +381,16 @@ mod tests {
         let mut ctx = make_ctx();
         let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
-        let inner_ty: TypeHandle =
-            llvm_types::StructType::get_unnamed(&ctx, vec![i64_ty, i32_ty]).into();
-        let agg_ty: TypeHandle =
-            llvm_types::StructType::get_unnamed(&ctx, vec![i32_ty, inner_ty]).into();
+        let inner_ty: TypeHandle = llvm_types::StructType::get_unnamed(
+            &ctx,
+            (vec![i64_ty, i32_ty], llvm_types::StructLayout::Unpacked),
+        )
+        .into();
+        let agg_ty: TypeHandle = llvm_types::StructType::get_unnamed(
+            &ctx,
+            (vec![i32_ty, inner_ty], llvm_types::StructLayout::Unpacked),
+        )
+        .into();
 
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i32_ty, i64_ty], vec![]);
         let scalar_a = entry.deref(&ctx).get_argument(0);
@@ -466,8 +472,11 @@ mod tests {
         let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
         let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
-        let agg_ty: TypeHandle =
-            llvm_types::StructType::get_unnamed(&ctx, vec![i32_ty, i64_ty]).into();
+        let agg_ty: TypeHandle = llvm_types::StructType::get_unnamed(
+            &ctx,
+            (vec![i32_ty, i64_ty], llvm_types::StructLayout::Unpacked),
+        )
+        .into();
 
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty, i32_ty, i64_ty], vec![]);
         let cond = entry.deref(&ctx).get_argument(0);

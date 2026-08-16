@@ -99,10 +99,17 @@ fn convert_generated_mma(
         GeneratedMmaResultType::F64 => FP64Type::get(ctx).into(),
         GeneratedMmaResultType::I32 => IntegerType::get(ctx, 32, Signedness::Signless).into(),
     };
-    let result_type = llvm_types::StructType::get_unnamed(ctx, vec![scalar_type; result_count]);
+    let result_type = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![scalar_type; result_count],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    );
     let inline_asm = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         result_type.into(),
         operands,
         template,

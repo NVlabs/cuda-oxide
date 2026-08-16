@@ -50,6 +50,7 @@ pub(crate) fn convert_make_smem_desc(
     let asm_op = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         i64_ty.into(),
         vec![ptr_casted],
         asm_template,
@@ -244,6 +245,7 @@ pub(crate) fn convert_mma_group(
     inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         VoidType::get(ctx).into(),
         operands,
         &template,
@@ -290,11 +292,24 @@ pub(crate) fn convert_mma_group_values(
     let constraints = value_group_constraints(descriptor_count);
 
     let f32_ty = FP32Type::get(ctx);
-    let struct_ty: TypeHandle =
-        llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); VALUE_ACCUMULATOR_COUNT])
-            .into();
+    let struct_ty: TypeHandle = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![f32_ty.into(); VALUE_ACCUMULATOR_COUNT],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    )
+    .into();
 
-    let asm_op = inline_asm_convergent(ctx, rewriter, struct_ty, operands, &template, &constraints);
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        op,
+        struct_ty,
+        operands,
+        &template,
+        &constraints,
+    );
 
     let aggregate = asm_op.deref(ctx).get_result(0);
 
@@ -346,11 +361,24 @@ pub(crate) fn convert_mma_loop_values(
     let constraints = counted_loop_constraints();
 
     let f32_ty = FP32Type::get(ctx);
-    let struct_ty: TypeHandle =
-        llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); VALUE_ACCUMULATOR_COUNT])
-            .into();
+    let struct_ty: TypeHandle = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![f32_ty.into(); VALUE_ACCUMULATOR_COUNT],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    )
+    .into();
 
-    let asm_op = inline_asm_convergent(ctx, rewriter, struct_ty, operands, &template, &constraints);
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        op,
+        struct_ty,
+        operands,
+        &template,
+        &constraints,
+    );
     let aggregate = asm_op.deref(ctx).get_result(0);
 
     let mut extracted_values = Vec::with_capacity(VALUE_ACCUMULATOR_COUNT);
@@ -420,10 +448,24 @@ pub(crate) fn convert_mma_pipeline_values(
     let template = pipeline_template(slot_count, group_count, max_pending_groups);
     let constraints = pipeline_constraints(result_count, descriptor_count);
     let f32_ty = FP32Type::get(ctx);
-    let struct_ty: TypeHandle =
-        llvm_types::StructType::get_unnamed(ctx, vec![f32_ty.into(); result_count]).into();
+    let struct_ty: TypeHandle = llvm_types::StructType::get_unnamed(
+        ctx,
+        (
+            vec![f32_ty.into(); result_count],
+            llvm_types::StructLayout::Unpacked,
+        ),
+    )
+    .into();
 
-    let asm_op = inline_asm_convergent(ctx, rewriter, struct_ty, operands, &template, &constraints);
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        op,
+        struct_ty,
+        operands,
+        &template,
+        &constraints,
+    );
     let aggregate = asm_op.deref(ctx).get_result(0);
 
     let mut extracted_values = Vec::with_capacity(result_count);

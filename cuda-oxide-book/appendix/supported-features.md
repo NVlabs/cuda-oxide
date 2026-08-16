@@ -47,25 +47,36 @@ guessing an active field: initialized bytes are preserved, uninitialized
 inactive bytes remain `undef`, and the byte image is transmuted into the
 layout-exact union type. This includes direct unions, unions nested in tuple or
 struct constants, runtime-indexed `[U; N]`, and `MaybeUninit<T>` constants.
-Bare arrays whose elements are structs are materialized element-wise
-through the same layout-aware struct decoders; promoting such tables to
-one immutable device global is a tracked follow-up.
+Bare arrays whose elements are recursively promotable structs use the same
+immutable-device-global path as scalar and tuple tables, avoiding a per-thread
+local table copy for read-only uses. Pointer-to-array constants such as
+`const R: &[Struct; N] = &TABLE` use the same promoted global when every struct
+field is recursively promotable and the converted storage size matches rustc's
+layout. Zero-byte over-aligned struct leaves (for example, `repr(align(N))` ZSTs)
+remain on the existing alignment-sensitive value path instead of this promotion
+path. Arrays of packed structs whose element stride diverges from LLVM's natural
+layout remain unsupported as described above.
 Thin pointer fields in array, tuple, and struct **const** values that relocate
 to device statics are materialized via `MirGlobalAllocOp` per field, including
 non-zero byte addends into a static (see `struct_constant_provenance`,
-`tuple_constant_provenance`, `tuple_array_provenance`). Thin-pointer-only
+`tuple_constant_provenance`, `tuple_array_provenance`). Slice fat-pointer fields
+in aggregate constants are also supported when their data pointer relocates to
+a device static and the pointee is a same-element array-to-slice view. Their
+literal `usize` length metadata is decoded independently, including non-zero
+static byte addends and nested aggregate field offsets. Thin-pointer-only
 union constants preserve the same relocation provenance, including non-zero
 addends, by reconstructing one typed pointer carrier instead of transmuting
 placeholder bytes. Pointer/integer overlapping unions, fat or nested pointer
-storage in unions, over-aligned/padded pointer unions, enum constants with
-unsupported relocations, pointer-to-array union constants (`&[U; N]`), and
-device-global *initializer* relocations remain rejected.
+storage in unions, over-aligned/padded pointer unions, unsupported fat-pointer
+metadata, pointer-to-array union constants (`&[U; N]`), and pointer
+relocations in device-global union initializers remain rejected.
 
-Enum constants with direct thin-reference payloads preserve relocations to
-device statics, including non-zero byte addends. This includes niche-encoded
-`Option<&T>` and direct-tagged enum layouts. Anonymous promoted allocations and
-pointer relocations nested inside array, tuple, struct, or enum payload fields
-remain unsupported.
+Enum constants preserve payload relocations to device statics, including
+non-zero byte addends. This includes niche-encoded `Option<&T>` and
+direct-tagged enum layouts, both for direct thin-reference payloads and for
+pointers nested inside tuple, struct, or array payload fields. Anonymous
+promoted allocations remain unsupported, as does a relocation-carrying enum
+constant nested inside another constant's field.
 
 ## Compiler: Closures
 

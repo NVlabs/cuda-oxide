@@ -15,7 +15,7 @@ use pliron::{
     r#type::TypeHandle,
 };
 
-use crate::types::{FuncType, HalfType, PointerType, StructType, VoidType};
+use crate::types::{FuncType, HalfType, PointerType, StructLayout, StructType, VoidType};
 
 use super::state::ModuleExportState;
 
@@ -81,6 +81,15 @@ impl<'a> ModuleExportState<'a> {
         } else if ty_ref.is::<FP64Type>() {
             write!(output, "double").unwrap();
         } else if let Some(struct_ty) = ty_ref.downcast_ref::<StructType>() {
+            // Fail closed on packed structs: `<{ ... }>` printing is not
+            // implemented yet, and silently emitting the unpacked spelling
+            // would change the in-memory layout LLVM computes.
+            if struct_ty.layout() == StructLayout::Packed {
+                return Err(format!(
+                    "cannot export packed struct type `{}`: packed struct printing is not implemented",
+                    ty_ref.disp(self.ctx)
+                ));
+            }
             write!(output, "{{ ").unwrap();
             for (i, elem_ty) in struct_ty.fields().enumerate() {
                 if i > 0 {
@@ -215,5 +224,37 @@ impl<'a> ModuleExportState<'a> {
             // Conservative fallback for pointers and unknown types.
             8
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pliron::{
+        builtin::types::{IntegerType, Signedness},
+        context::Context,
+        r#type::TypeHandle,
+    };
+
+    use crate::export::{config::DebugKind, state::ModuleExportState};
+    use crate::types::{StructLayout, StructType};
+
+    #[test]
+    fn packed_struct_export_fails_closed() {
+        // Packed struct printing (`<{ ... }>`) is not implemented; exporting
+        // one must be a loud error, never the unpacked `{ ... }` spelling.
+        let ctx = Context::new();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let packed: TypeHandle =
+            StructType::get_unnamed(&ctx, (vec![i32_ty], StructLayout::Packed)).into();
+        let state = ModuleExportState::new(&ctx, false, DebugKind::Off, None);
+
+        let mut output = String::new();
+        let err = state
+            .export_type(packed, &mut output)
+            .expect_err("packed struct export must fail");
+        assert!(
+            err.contains("packed struct printing is not implemented"),
+            "unexpected error message: {err}"
+        );
     }
 }

@@ -59,7 +59,7 @@ use llvm_export::attributes::IntegerOverflowFlagsAttr;
 use llvm_export::op_interfaces::IntBinArithOpWithOverflowFlag;
 use llvm_export::ops as llvm;
 use llvm_export::ops::GlobalOpExt;
-use llvm_export::types::{ArrayType, FuncType, StructType, VoidType};
+use llvm_export::types::{ArrayType, FuncType, StructLayout, StructType, VoidType};
 use pliron::attribute::AttrObj;
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::CallOpCallable;
@@ -135,6 +135,7 @@ pub(crate) fn convert_store(
     if let Some(align) = align {
         llvm_export::ops::set_op_alignment(ctx, llvm_store.get_operation(), align as u32);
     }
+    crate::convert::preserve_location(ctx, op, llvm_store.get_operation());
     rewriter.insert_operation(ctx, llvm_store.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
@@ -402,6 +403,7 @@ fn convert_mem_transfer(
         func_ty,
         vec![dst, src, bytes, volatile_val],
     );
+    crate::convert::preserve_location(ctx, op, call.get_operation());
     rewriter.insert_operation(ctx, call.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
@@ -1111,7 +1113,7 @@ fn relocated_initializer_storage_type(
         fields.push(ArrayType::get(ctx, i8_ty.into(), byte_count - cursor).into());
     }
 
-    let storage: TypeHandle = StructType::get_unnamed(ctx, fields).into();
+    let storage: TypeHandle = StructType::get_unnamed(ctx, (fields, StructLayout::Unpacked)).into();
     let lowered_size = get_type_size(ctx, storage);
     if lowered_size != byte_count {
         anyhow::bail!(

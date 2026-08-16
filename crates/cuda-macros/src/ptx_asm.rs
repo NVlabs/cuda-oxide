@@ -12,7 +12,11 @@ use syn::{
 };
 
 const MAX_PTX_ASM_INPUTS: usize = 16;
-const MAX_PTX_ASM_OUTPUTS: usize = 16;
+// Blackwell tensor-memory loads expose up to 64 scalar destination registers
+// in one indivisible PTX instruction. Keeping the public inline-PTX surface at
+// 16 forces those results through an aggregate-return shim and defeats register
+// promotion, so admit the hardware's complete output pack.
+const MAX_PTX_ASM_OUTPUTS: usize = 64;
 const REGISTER_ONLY_OPTION: &str = "register_only";
 const MAY_DIVERGE_OPTION: &str = "may_diverge";
 const REGISTER_ONLY_MAY_DIVERGE_OPTIONS: &str = "register_only,may_diverge";
@@ -723,21 +727,29 @@ mod tests {
     }
 
     #[test]
+    fn accepts_maximum_output_pack() {
+        let outputs = (0..64)
+            .map(|index| format!("out(\"=r\") value_{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let input: PtxAsmInput = syn::parse_str(&format!("\"nop;\", {outputs}")).unwrap();
+
+        build_ptx_asm(input)
+            .expect("64 outputs must build: Blackwell tensor-memory loads need the full pack");
+    }
+
+    #[test]
     fn rejects_too_many_outputs() {
-        let input: PtxAsmInput = syn::parse_str(
-            r#""nop;",
-            out("=r") a, out("=r") b, out("=r") c, out("=r") d,
-            out("=r") e, out("=r") f, out("=r") g, out("=r") h,
-            out("=r") i, out("=r") j, out("=r") k, out("=r") l,
-            out("=r") m, out("=r") n, out("=r") o, out("=r") p,
-            out("=r") q"#,
-        )
-        .unwrap();
+        let outputs = (0..65)
+            .map(|index| format!("out(\"=r\") value_{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let input: PtxAsmInput = syn::parse_str(&format!("\"nop;\", {outputs}")).unwrap();
 
         let err = build_ptx_asm(input).unwrap_err();
 
         assert!(
-            err.to_string().contains("at most 16 output operands"),
+            err.to_string().contains("at most 64 output operands"),
             "unexpected error: {err}"
         );
     }

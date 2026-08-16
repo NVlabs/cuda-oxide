@@ -48,9 +48,11 @@ const NNEG_ATTR: &str = "llvm_nneg_flag";
 /// Rewrite a lowered LLVM module to the LLVM 7 subset used by legacy NVVM IR.
 ///
 /// Floating-point atomic add is rewritten to the NVVM intrinsic accepted by
-/// LLVM 7. Other atomic and fence operations that cuda-oxide has not yet
-/// legalized return an error instead of being emitted with unverified
-/// semantics.
+/// LLVM 7. Integer `atomicrmw` and `cmpxchg` operations are preserved when
+/// their type, address space, ordering, and synchronization scope are exactly
+/// representable by the supported legacy NVVM dialect. Other atomic and fence
+/// operations return an error instead of being emitted with weakened or
+/// unverified semantics.
 pub(crate) fn legalize_for_legacy_nvvm(
     ctx: &mut Context,
     module: Ptr<Operation>,
@@ -66,6 +68,8 @@ pub(crate) fn legalize_for_legacy_nvvm(
         reject_nonportable_f16_types(ctx, op)?;
         reject_unsupported_op(ctx, op)?;
         validate_rewrite_candidate(ctx, op)?;
+        validate_integer_atomic_rmw(ctx, op)?;
+        validate_integer_cmpxchg(ctx, op)?;
         if let Some(intrinsic) = validate_float_atomic_add(ctx, op, capability)? {
             float_atomic_adds.push((op, intrinsic));
         }
@@ -75,11 +79,10 @@ pub(crate) fn legalize_for_legacy_nvvm(
     for op in ops {
         remove_nneg(ctx, op);
 
-        if Operation::get_op::<llvm::AtomicRmwOp>(op, ctx).is_some() {
-            let intrinsic = float_atomic_adds
-                .iter()
-                .find_map(|(candidate, intrinsic)| (*candidate == op).then_some(intrinsic))
-                .expect("every accepted atomic RMW was validated as floating-point add");
+        if let Some(intrinsic) = float_atomic_adds
+            .iter()
+            .find_map(|(candidate, intrinsic)| (*candidate == op).then_some(intrinsic))
+        {
             rewrite_float_atomic_add(ctx, op, intrinsic)?;
             continue;
         }
@@ -174,7 +177,7 @@ pub(crate) fn legalize_nvvm_bit_intrinsics(
         let CallOpCallable::Direct(callee) = call.callee(ctx) else {
             continue;
         };
-        if legacy_bit_rewrite(&callee.to_string()).is_some() {
+        if legacy_bit_rewrite(callee.as_ref()).is_some() {
             return pliron::input_err!(
                 op.deref(ctx).loc(),
                 "NVVM bit-intrinsic legalization left unsupported call @{callee} behind"
@@ -280,11 +283,18 @@ fn reject_unsupported_op(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
                 Some(AtomicRmwKindAttr::FAdd) => None,
                 _ => Some("floating-point atomic read-modify-write operations other than add"),
             }
+        } else if scalar_integer_width(ctx, value_ty).is_some() {
+            None
         } else {
-            Some("atomic read-modify-write operations")
+            Some("atomic read-modify-write operations with non-scalar-integer operands")
         }
     } else if Operation::get_op::<llvm::AtomicCmpxchgOp>(op, ctx).is_some() {
-        Some("atomic compare-exchange operations")
+        let value_ty = op.deref(ctx).get_operand(1).get_type(ctx);
+        if scalar_integer_width(ctx, value_ty).is_some() {
+            None
+        } else {
+            Some("atomic compare-exchange operations with non-scalar-integer operands")
+        }
     } else if Operation::get_op::<llvm::FenceOp>(op, ctx).is_some() {
         Some("LLVM fences")
     } else if Operation::get_op::<llvm::DebugValueOp>(op, ctx).is_some() {
@@ -297,6 +307,182 @@ fn reject_unsupported_op(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
         return pliron::input_err!(
             op.deref(ctx).loc(),
             "cuda-oxide has not yet legalized {reason} for legacy NVVM IR; use ordinary PTX output or a Blackwell NVVM target"
+        );
+    }
+    Ok(())
+}
+
+fn atomic_pointer_address_space(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    ptr: Value,
+    operation: &str,
+) -> Result<u32> {
+    ptr.get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<llvm_types::PointerType>()
+        .map(llvm_types::PointerType::address_space)
+        .ok_or_else(|| {
+            pliron::input_error!(
+                op.deref(ctx).loc(),
+                "legacy NVVM {operation} requires a pointer operand"
+            )
+        })
+}
+
+/// Validate integer `atomicrmw` operations that legacy LLVM 7 NVVM accepts
+/// natively. Strong Rust orderings are split into surrounding fences during
+/// MIR lowering, so the LLVM `atomicrmw` that reaches this pass must itself be
+/// monotonic.
+fn validate_integer_atomic_rmw(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
+    let Some(rmw) = Operation::get_op::<llvm::AtomicRmwOp>(op, ctx) else {
+        return Ok(());
+    };
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let (ptr, value) = (operands[0], operands[1]);
+    let value_ty = value.get_type(ctx);
+    if float_width(ctx, value_ty).is_some() {
+        return Ok(());
+    }
+
+    let width = scalar_integer_width(ctx, value_ty).ok_or_else(|| {
+        pliron::input_error!(
+            op.deref(ctx).loc(),
+            "legacy NVVM integer atomic RMW requires a scalar integer value"
+        )
+    })?;
+    if !matches!(width, 32 | 64) {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM integer atomic RMW supports only i32 and i64, not i{width}"
+        );
+    }
+
+    match rmw.get_attr_llvm_rmw_kind(ctx).as_deref() {
+        Some(
+            AtomicRmwKindAttr::Xchg
+            | AtomicRmwKindAttr::Add
+            | AtomicRmwKindAttr::Sub
+            | AtomicRmwKindAttr::And
+            | AtomicRmwKindAttr::Or
+            | AtomicRmwKindAttr::Xor
+            | AtomicRmwKindAttr::Max
+            | AtomicRmwKindAttr::Min
+            | AtomicRmwKindAttr::UMax
+            | AtomicRmwKindAttr::UMin,
+        ) => {}
+        Some(_) => {
+            return pliron::input_err!(
+                op.deref(ctx).loc(),
+                "legacy NVVM integer atomic RMW does not support this operation kind"
+            );
+        }
+        None => {
+            return pliron::input_err!(
+                op.deref(ctx).loc(),
+                "legacy NVVM integer atomic RMW is missing its operation kind"
+            );
+        }
+    }
+
+    if rmw.get_attr_llvm_rmw_ordering(ctx).as_deref() != Some(&AtomicOrderingAttr::Monotonic) {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM integer atomic RMW requires monotonic ordering after fence splitting"
+        );
+    }
+    let syncscope = rmw
+        .get_attr_llvm_rmw_syncscope(ctx)
+        .map(|scope| String::from((*scope).clone()));
+    if syncscope.as_deref() != Some("device") {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM integer atomic RMW requires device synchronization scope"
+        );
+    }
+
+    let address_space = atomic_pointer_address_space(ctx, op, ptr, "integer atomic RMW")?;
+    if !matches!(address_space, 0 | 1 | 3) {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM integer atomic RMW does not support address space {address_space}"
+        );
+    }
+    Ok(())
+}
+
+/// Validate integer compare-exchange operations that legacy LLVM 7 NVVM can
+/// preserve without weakening Rust semantics.
+///
+/// Legacy libNVVM accepts success and failure orderings syntactically but
+/// honors neither: an ordered `cmpxchg` lowers to a bare `atom.cas` with no
+/// ordering qualifier and no surrounding fences, which PTX treats as relaxed.
+/// Only monotonic/Relaxed orderings are admitted here.
+fn validate_integer_cmpxchg(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
+    let Some(cas) = Operation::get_op::<llvm::AtomicCmpxchgOp>(op, ctx) else {
+        return Ok(());
+    };
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    let (ptr, compare, new_value) = (operands[0], operands[1], operands[2]);
+    let value_ty = compare.get_type(ctx);
+    let width = scalar_integer_width(ctx, value_ty).ok_or_else(|| {
+        pliron::input_error!(
+            op.deref(ctx).loc(),
+            "legacy NVVM compare-exchange requires a scalar integer value"
+        )
+    })?;
+    if !matches!(width, 32 | 64) {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM compare-exchange supports only i32 and i64, not i{width}"
+        );
+    }
+    if new_value.get_type(ctx) != value_ty {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM compare-exchange compare and replacement values must have the same type"
+        );
+    }
+
+    match cas.get_attr_llvm_cas_success_ordering(ctx).as_deref() {
+        Some(AtomicOrderingAttr::Monotonic) => {}
+        Some(_) => {
+            return pliron::input_err!(
+                op.deref(ctx).loc(),
+                "legacy NVVM compare-exchange requires monotonic success ordering because libNVVM lowers ordered cmpxchg to an unordered atom.cas"
+            );
+        }
+        None => {
+            return pliron::input_err!(
+                op.deref(ctx).loc(),
+                "legacy NVVM compare-exchange is missing its success ordering"
+            );
+        }
+    }
+
+    if cas.get_attr_llvm_cas_failure_ordering(ctx).as_deref()
+        != Some(&AtomicOrderingAttr::Monotonic)
+    {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM compare-exchange requires monotonic failure ordering because libNVVM does not preserve stronger failure orderings"
+        );
+    }
+    let syncscope = cas
+        .get_attr_llvm_cas_syncscope(ctx)
+        .map(|scope| String::from((*scope).clone()));
+    if syncscope.as_deref() != Some("device") {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM compare-exchange requires device synchronization scope"
+        );
+    }
+
+    let address_space = atomic_pointer_address_space(ctx, op, ptr, "compare-exchange")?;
+    if !matches!(address_space, 0 | 1 | 3) {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM compare-exchange does not support address space {address_space}"
         );
     }
     Ok(())
@@ -1186,7 +1372,10 @@ fn rewrite_shuffle(ctx: &mut Context, op: Ptr<Operation>, name: &str) -> Result<
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
     let i1_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty, i1_ty]);
+    let struct_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (vec![i32_ty, i1_ty], llvm_types::StructLayout::Unpacked),
+    );
     let func_ty = llvm_types::FuncType::get(
         ctx,
         struct_ty.into(),
@@ -1269,7 +1458,10 @@ fn rewrite_vote(ctx: &mut Context, op: Ptr<Operation>, name: &str) -> Result<()>
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
     let i1_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-    let struct_ty = llvm_types::StructType::get_unnamed(ctx, vec![i32_ty, i1_ty]);
+    let struct_ty = llvm_types::StructType::get_unnamed(
+        ctx,
+        (vec![i32_ty, i1_ty], llvm_types::StructLayout::Unpacked),
+    );
     let func_ty =
         llvm_types::FuncType::get(ctx, struct_ty.into(), vec![i32_ty, i32_ty, i1_ty], false);
     let parent_block = op.deref(ctx).get_parent_block().ok_or_else(|| {
@@ -1388,6 +1580,8 @@ fn verify_legacy_subset(ctx: &Context, module: Ptr<Operation>) -> Result<()> {
     collect_ops(ctx, module, &mut ops);
     for op in ops {
         reject_unsupported_op(ctx, op)?;
+        validate_integer_atomic_rmw(ctx, op)?;
+        validate_integer_cmpxchg(ctx, op)?;
         if Operation::get_op::<llvm::FNegOp>(op, ctx).is_some() {
             return pliron::input_err!(
                 op.deref(ctx).loc(),
@@ -1931,6 +2125,74 @@ mod tests {
         func
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn integer_atomic_rmw_function(
+        ctx: &mut Context,
+        module: &ModuleOp,
+        name: &str,
+        address_space: u32,
+        width: u32,
+        kind: AtomicRmwKindAttr,
+        ordering: AtomicOrderingAttr,
+        scope: Option<String>,
+    ) -> llvm::FuncOp {
+        let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
+        let value_ty: TypeHandle = IntegerType::get(ctx, width, Signedness::Signless).into();
+        let (func, entry) = function(ctx, module, name, value_ty, vec![ptr_ty, value_ty]);
+        let ptr = entry.deref(ctx).get_argument(0);
+        let value = entry.deref(ctx).get_argument(1);
+        let rmw = llvm::AtomicRmwOp::new(ctx, ptr, value, kind, ordering, scope);
+        rmw.get_operation().insert_at_back(entry, ctx);
+        let result = rmw.get_operation().deref(ctx).get_result(0);
+        llvm::ReturnOp::new(ctx, Some(result))
+            .get_operation()
+            .insert_at_back(entry, ctx);
+        func
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn integer_cmpxchg_function(
+        ctx: &mut Context,
+        module: &ModuleOp,
+        name: &str,
+        address_space: u32,
+        width: u32,
+        success_ordering: AtomicOrderingAttr,
+        failure_ordering: AtomicOrderingAttr,
+        scope: Option<String>,
+    ) -> llvm::FuncOp {
+        let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
+        let value_ty: TypeHandle = IntegerType::get(ctx, width, Signedness::Signless).into();
+        let (func, entry) = function(
+            ctx,
+            module,
+            name,
+            value_ty,
+            vec![ptr_ty, value_ty, value_ty],
+        );
+        let ptr = entry.deref(ctx).get_argument(0);
+        let compare = entry.deref(ctx).get_argument(1);
+        let new_value = entry.deref(ctx).get_argument(2);
+        let cas = llvm::AtomicCmpxchgOp::new(
+            ctx,
+            ptr,
+            compare,
+            new_value,
+            success_ordering,
+            failure_ordering,
+            scope,
+        );
+        cas.get_operation().insert_at_back(entry, ctx);
+        let aggregate = cas.get_operation().deref(ctx).get_result(0);
+        let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![0]).unwrap();
+        extract.get_operation().insert_at_back(entry, ctx);
+        let old_value = extract.get_operation().deref(ctx).get_result(0);
+        llvm::ReturnOp::new(ctx, Some(old_value))
+            .get_operation()
+            .insert_at_back(entry, ctx);
+        func
+    }
+
     #[test]
     fn legacy_float_atomic_add_uses_nvvm_intrinsics_for_supported_types_and_spaces() {
         let mut ctx = Context::new();
@@ -2322,43 +2584,394 @@ mod tests {
     }
 
     #[test]
-    fn legacy_integer_atomic_rmw_remains_explicitly_unsupported() {
+    fn legacy_integer_atomic_rmw_is_preserved_for_supported_llvm7_forms() {
         let mut ctx = Context::new();
-        let module = ModuleOp::new(&mut ctx, "integer_atomic".try_into().unwrap());
-        let ptr_ty: TypeHandle = PointerType::get(&ctx, 1).into();
-        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
-        let (_func, entry) = function(
+        let module = ModuleOp::new(&mut ctx, "integer_atomic_rmw".try_into().unwrap());
+
+        for width in [32, 64] {
+            for address_space in [0, 1, 3] {
+                integer_atomic_rmw_function(
+                    &mut ctx,
+                    &module,
+                    &format!("rmw_i{width}_p{address_space}"),
+                    address_space,
+                    width,
+                    AtomicRmwKindAttr::Add,
+                    AtomicOrderingAttr::Monotonic,
+                    Some("device".to_string()),
+                );
+            }
+        }
+
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
+        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+
+        let mut ops = Vec::new();
+        collect_ops(&ctx, module.get_operation(), &mut ops);
+        assert_eq!(
+            ops.iter()
+                .filter(|op| Operation::get_op::<llvm::AtomicRmwOp>(**op, &ctx).is_some())
+                .count(),
+            6,
+            "supported integer atomicrmw operations must remain native LLVM operations"
+        );
+
+        let ir = export_module_to_string_with_config(
+            &ctx,
+            &module,
+            &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+        )
+        .expect("supported integer atomicrmw exports as LLVM 7 NVVM IR");
+        for scalar in ["i32", "i64"] {
+            for address_space in [0, 1, 3] {
+                let pointer = if address_space == 0 {
+                    format!("{scalar}*")
+                } else {
+                    format!("{scalar} addrspace({address_space})*")
+                };
+                let prefix = format!("atomicrmw add {pointer} ");
+                assert!(
+                    ir.contains(&prefix),
+                    "missing typed legacy atomicrmw beginning `{prefix}`:\n{ir}"
+                );
+            }
+        }
+        assert!(
+            ir.contains("syncscope(\"device\") monotonic"),
+            "legacy integer atomicrmw must keep device scope and monotonic ordering:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn legacy_integer_atomic_rmw_accepts_the_supported_operation_set() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "integer_atomic_kinds".try_into().unwrap());
+        for (index, kind) in [
+            AtomicRmwKindAttr::Xchg,
+            AtomicRmwKindAttr::Add,
+            AtomicRmwKindAttr::Sub,
+            AtomicRmwKindAttr::And,
+            AtomicRmwKindAttr::Or,
+            AtomicRmwKindAttr::Xor,
+            AtomicRmwKindAttr::Max,
+            AtomicRmwKindAttr::Min,
+            AtomicRmwKindAttr::UMax,
+            AtomicRmwKindAttr::UMin,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            integer_atomic_rmw_function(
+                &mut ctx,
+                &module,
+                &format!("rmw_kind_{index}"),
+                1,
+                32,
+                kind,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+            );
+        }
+
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
+        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+        let mut ops = Vec::new();
+        collect_ops(&ctx, module.get_operation(), &mut ops);
+        assert_eq!(
+            ops.iter()
+                .filter(|op| Operation::get_op::<llvm::AtomicRmwOp>(**op, &ctx).is_some())
+                .count(),
+            10
+        );
+    }
+
+    #[test]
+    fn legacy_integer_cmpxchg_is_preserved_for_supported_llvm7_forms() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "integer_cmpxchg".try_into().unwrap());
+
+        for width in [32, 64] {
+            for address_space in [0, 1, 3] {
+                integer_cmpxchg_function(
+                    &mut ctx,
+                    &module,
+                    &format!("cas_i{width}_p{address_space}"),
+                    address_space,
+                    width,
+                    AtomicOrderingAttr::Monotonic,
+                    AtomicOrderingAttr::Monotonic,
+                    Some("device".to_string()),
+                );
+            }
+        }
+
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
+        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+
+        let mut ops = Vec::new();
+        collect_ops(&ctx, module.get_operation(), &mut ops);
+        assert_eq!(
+            ops.iter()
+                .filter(|op| Operation::get_op::<llvm::AtomicCmpxchgOp>(**op, &ctx).is_some())
+                .count(),
+            6,
+            "supported cmpxchg operations must remain native LLVM operations"
+        );
+        assert_eq!(
+            ops.iter()
+                .filter(|op| Operation::get_op::<llvm::ExtractValueOp>(**op, &ctx).is_some())
+                .count(),
+            6,
+            "cmpxchg old-value extraction must remain intact"
+        );
+
+        let ir = export_module_to_string_with_config(
+            &ctx,
+            &module,
+            &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+        )
+        .expect("supported cmpxchg exports as LLVM 7 NVVM IR");
+        for scalar in ["i32", "i64"] {
+            for address_space in [0, 1, 3] {
+                let pointer = if address_space == 0 {
+                    format!("{scalar}*")
+                } else {
+                    format!("{scalar} addrspace({address_space})*")
+                };
+                let prefix = format!("cmpxchg {pointer} ");
+                assert!(
+                    ir.contains(&prefix),
+                    "missing typed legacy cmpxchg beginning `{prefix}`:\n{ir}"
+                );
+            }
+        }
+        assert!(
+            ir.contains("syncscope(\"device\") monotonic monotonic"),
+            "legacy cmpxchg must retain monotonic success and failure ordering:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn legacy_integer_atomic_rmw_rejects_unrepresentable_forms() {
+        for (width, address_space, ordering, scope, kind, expected) in [
+            (
+                16,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                AtomicRmwKindAttr::Add,
+                "only i32 and i64",
+            ),
+            (
+                128,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                AtomicRmwKindAttr::Add,
+                "only i32 and i64",
+            ),
+            (
+                32,
+                7,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                AtomicRmwKindAttr::Add,
+                "address space 7",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Acquire,
+                Some("device".to_string()),
+                AtomicRmwKindAttr::Add,
+                "monotonic ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                Some("block".to_string()),
+                AtomicRmwKindAttr::Add,
+                "device synchronization scope",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                AtomicRmwKindAttr::Nand,
+                "does not support this operation kind",
+            ),
+        ] {
+            let mut ctx = Context::new();
+            let module = ModuleOp::new(&mut ctx, "invalid_integer_rmw".try_into().unwrap());
+            integer_atomic_rmw_function(
+                &mut ctx,
+                &module,
+                "rmw",
+                address_space,
+                width,
+                kind,
+                ordering,
+                scope,
+            );
+            let before = module.get_operation().deref(&ctx).disp(&ctx).to_string();
+            let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
+            let after = module.get_operation().deref(&ctx).disp(&ctx).to_string();
+            assert!(error.disp(&ctx).to_string().contains(expected), "{error}");
+            assert_eq!(
+                before, after,
+                "failed validation must not mutate the module"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_integer_cmpxchg_rejects_unrepresentable_forms() {
+        for (width, address_space, success, failure, scope, expected) in [
+            (
+                16,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "only i32 and i64",
+            ),
+            (
+                128,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "only i32 and i64",
+            ),
+            (
+                32,
+                7,
+                AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "address space 7",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Acquire,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "monotonic success ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Release,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "monotonic success ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::AcqRel,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "monotonic success ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::SeqCst,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "monotonic success ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::Acquire,
+                Some("device".to_string()),
+                "monotonic failure ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::SeqCst,
+                Some("device".to_string()),
+                "monotonic failure ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::Monotonic,
+                Some("block".to_string()),
+                "device synchronization scope",
+            ),
+        ] {
+            let mut ctx = Context::new();
+            let module = ModuleOp::new(&mut ctx, "invalid_integer_cas".try_into().unwrap());
+            integer_cmpxchg_function(
+                &mut ctx,
+                &module,
+                "cas",
+                address_space,
+                width,
+                success,
+                failure,
+                scope,
+            );
+            let before = module.get_operation().deref(&ctx).disp(&ctx).to_string();
+            let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
+            let after = module.get_operation().deref(&ctx).disp(&ctx).to_string();
+            assert!(error.disp(&ctx).to_string().contains(expected), "{error}");
+            assert_eq!(
+                before, after,
+                "failed validation must not mutate the module"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_integer_cmpxchg_leaves_an_earlier_valid_rmw_untouched() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "integer_atomic_transaction".try_into().unwrap());
+        integer_atomic_rmw_function(
             &mut ctx,
             &module,
-            "integer_add",
-            i32_ty,
-            vec![ptr_ty, i32_ty],
-        );
-        let ptr = entry.deref(&ctx).get_argument(0);
-        let value = entry.deref(&ctx).get_argument(1);
-        let rmw = llvm::AtomicRmwOp::new(
-            &mut ctx,
-            ptr,
-            value,
+            "valid_rmw",
+            1,
+            32,
             AtomicRmwKindAttr::Add,
             AtomicOrderingAttr::Monotonic,
             Some("device".to_string()),
         );
-        rmw.get_operation().insert_at_back(entry, &ctx);
-        let result = rmw.get_operation().deref(&ctx).get_result(0);
-        llvm::ReturnOp::new(&mut ctx, Some(result))
-            .get_operation()
-            .insert_at_back(entry, &ctx);
+        integer_cmpxchg_function(
+            &mut ctx,
+            &module,
+            "invalid_cas",
+            1,
+            32,
+            AtomicOrderingAttr::Monotonic,
+            AtomicOrderingAttr::Acquire,
+            Some("device".to_string()),
+        );
 
+        let before = module.get_operation().deref(&ctx).disp(&ctx).to_string();
         let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
         assert!(
             error
                 .disp(&ctx)
                 .to_string()
-                .contains("atomic read-modify-write operations"),
+                .contains("monotonic failure ordering"),
             "{error}"
         );
-        assert!(Operation::get_op::<llvm::AtomicRmwOp>(rmw.get_operation(), &ctx).is_some());
+        let after = module.get_operation().deref(&ctx).disp(&ctx).to_string();
+        assert_eq!(
+            before, after,
+            "validation failure must not mutate an earlier valid integer atomic"
+        );
     }
 
     #[test]

@@ -47,6 +47,7 @@ pub(crate) fn convert_generated_cp_async_copy(
         IntrinsicBackend::LibNvvm => lower_copy_with_inline_ptx(
             ctx,
             rewriter,
+            op,
             operands,
             cache_policy,
             copy_size,
@@ -90,7 +91,7 @@ pub(crate) fn convert_generated_cp_async_control(
             lower_control_with_llvm_intrinsic(ctx, rewriter, op, operands, typed_intrinsic_name)?;
         }
         IntrinsicBackend::LibNvvm => {
-            lower_control_with_inline_ptx(ctx, rewriter, operands, operation);
+            lower_control_with_inline_ptx(ctx, rewriter, op, operands, operation);
         }
     }
 
@@ -165,6 +166,7 @@ pub(crate) fn convert_generated_cp_async_mbarrier(
             inline_asm_convergent(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 vec![barrier],
                 template,
@@ -260,6 +262,7 @@ fn lower_copy_with_llvm_intrinsic(
 fn lower_copy_with_inline_ptx(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
     operands: Vec<Value>,
     cache_policy: &str,
     copy_size: u32,
@@ -296,6 +299,7 @@ fn lower_copy_with_inline_ptx(
     inline_asm_sideeffect(
         ctx,
         rewriter,
+        op,
         void_ty.into(),
         inputs,
         &format!(
@@ -372,6 +376,7 @@ fn lower_control_with_llvm_intrinsic(
 fn lower_control_with_inline_ptx(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
     operands: Vec<Value>,
     operation: &str,
 ) {
@@ -385,6 +390,7 @@ fn lower_control_with_inline_ptx(
     inline_asm_sideeffect(
         ctx,
         rewriter,
+        op,
         void_ty.into(),
         operands,
         template,

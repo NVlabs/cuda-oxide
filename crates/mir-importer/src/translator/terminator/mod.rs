@@ -1357,7 +1357,7 @@ fn translate_call(
     helpers::emit_function_call(
         ctx,
         body,
-        &legal_name,
+        legal_name.as_ref(),
         args,
         destination,
         return_type,

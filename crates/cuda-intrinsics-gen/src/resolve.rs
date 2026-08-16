@@ -17004,7 +17004,7 @@ fn packed_conversion_recipe_f32x2(
             abi_id: "i0071",
             operation_key: "packed.convert.f32x2.bf16x2.nearest_even",
             rust_name: "cvt_f32x2_bf16x2",
-            compatibility_path: "cuda_device::tcgen05::cvt_f32x2_bf16x2",
+            compatibility_path: "cuda_device::convert::cvt_bf16x2_f32",
             dialect_op_type: "CvtF32x2Bf16x2Op",
             dialect_op_name: "nvvm.cvt_f32x2_bf16x2",
             source_record: "int_nvvm_ff2bf16x2_rn",
@@ -40552,7 +40552,7 @@ scope = "system"
 
         let mut wrong_compatibility = valid.clone();
         wrong_compatibility.compatibility_rust_paths =
-            vec!["cuda_device::convert::cvt_f32x2_bf16x2".into()];
+            vec!["cuda_device::tcgen05::cvt_f32x2_bf16x2".into()];
         reject(&wrong_compatibility, &declaration, "conversion API");
 
         let mut wrong_result = valid.clone();
