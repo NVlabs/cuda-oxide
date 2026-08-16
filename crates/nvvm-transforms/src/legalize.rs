@@ -650,8 +650,10 @@ fn rewrite_scoped_integer_atomic_rmw(ctx: &mut Context, rewrite: &IntegerRmwRewr
 
 /// Validate integer compare-exchange operations for the legacy NVVM path.
 ///
-/// Device scope plus monotonic failure ordering remains native LLVM, as in
-/// lane 81A. Block/system scope or a stronger failure ordering is rewritten to
+/// Device scope plus monotonic failure ordering remains a native LLVM
+/// `cmpxchg`, matching the bare-atomicrmw/cmpxchg subset the legacy LLVM 7
+/// dialect handles directly. Block/system scope or a stronger failure
+/// ordering is rewritten to
 /// scoped inline PTX because legacy libNVVM accepts the LLVM failure-ordering
 /// field but ignores it.
 fn validate_integer_cmpxchg(

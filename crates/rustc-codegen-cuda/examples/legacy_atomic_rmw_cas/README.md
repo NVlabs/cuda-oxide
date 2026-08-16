@@ -3,8 +3,10 @@
 Regression coverage for integer atomic read-modify-write and compare-exchange
 operations on the legacy LLVM 7 NVVM path.
 
-The fixture covers both the native LLVM subset introduced by lane 81A and the
-scoped/strong-failure PTX rewrites added by lane 81B:
+The fixture covers both lanes of the legacy legalizer: the native LLVM subset
+(device-scope, monotonic-failure integer RMW/CAS kept as bare
+`atomicrmw`/`cmpxchg`) and the scoped-PTX rewrite lane (block/system scopes
+and strong failure orderings lowered to inline `atom.{sem}.{scope}` PTX):
 
 - `DeviceAtomicU32` and `DeviceAtomicU64` native legacy RMW/CAS coverage;
 - `BlockAtomicU32` / `BlockAtomicU64` and `SystemAtomicU32` /
