@@ -63,7 +63,7 @@
 
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_function_type, convert_type, is_kernel_func,
-    is_zero_sized_type,
+    is_zero_sized_type, transparent_scalar_abi_info,
 };
 use crate::helpers;
 use dialect_mir::ops::{MirCallOp, MirFuncOp};
@@ -639,6 +639,7 @@ pub fn convert(
     };
 
     let mut zst_replacement_type = None;
+    let mut transparent_result_abi = None;
     let result_type = if let Some(mir_ty) = mir_result_ty_ptr {
         // Only the empty tuple `()` is the unit type. `is::<MirTupleType>()`
         // also matches `(T, U, ...)`, so we have to peek at the field count.
@@ -648,7 +649,20 @@ pub fn convert(
             .deref(ctx)
             .downcast_ref::<MirTupleType>()
             .is_some_and(|t| t.get_types().is_empty());
-        let converted = convert_type(ctx, mir_ty).map_err(anyhow_to_pliron)?;
+        let is_transparent_scalar = {
+            let ty_ref = mir_ty.deref(ctx);
+            ty_ref
+                .downcast_ref::<MirStructType>()
+                .is_some_and(MirStructType::is_transparent_scalar)
+        };
+        let converted = if is_transparent_scalar {
+            let abi = transparent_scalar_abi_info(ctx, mir_ty).map_err(anyhow_to_pliron)?;
+            let scalar_ty = abi.scalar_ty;
+            transparent_result_abi = Some(abi);
+            scalar_ty
+        } else {
+            convert_type(ctx, mir_ty).map_err(anyhow_to_pliron)?
+        };
         if is_unit || is_zero_sized_type(ctx, converted) {
             // NVPTX cannot carry a ZST in a function signature, so the call
             // itself returns void. Keep the converted ZST type so any MIR uses
@@ -718,7 +732,27 @@ pub fn convert(
 
     let is_void = result_type.deref(ctx).is::<llvm_types::VoidType>();
     if has_result && !is_void && llvm_call.get_operation().deref(ctx).get_num_results() > 0 {
-        rewriter.replace_operation(ctx, op, llvm_call.get_operation());
+        if let Some(abi) = transparent_result_abi {
+            // The ABI call returns only the underlying scalar, but MIR users
+            // still operate on the ordinary converted wrapper aggregate.
+            // Rebuild nested transparent layers from inner to outer so the
+            // replacement result has exactly the MIR op's converted type.
+            let mut value = llvm_call.get_operation().deref(ctx).get_result(0);
+            let mut replacement = llvm_call.get_operation();
+            for layer in abi.layers.iter().rev() {
+                let undef = llvm::UndefOp::new(ctx, layer.llvm_struct_ty);
+                rewriter.insert_operation(ctx, undef.get_operation());
+                let aggregate = undef.get_operation().deref(ctx).get_result(0);
+                let insert =
+                    llvm::InsertValueOp::new(ctx, aggregate, value, vec![layer.field_slot]);
+                rewriter.insert_operation(ctx, insert.get_operation());
+                value = insert.get_operation().deref(ctx).get_result(0);
+                replacement = insert.get_operation();
+            }
+            rewriter.replace_operation(ctx, op, replacement);
+        } else {
+            rewriter.replace_operation(ctx, op, llvm_call.get_operation());
+        }
     } else if op.deref(ctx).has_use()
         && let Some(zst_type) = zst_replacement_type
     {

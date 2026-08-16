@@ -219,16 +219,17 @@ pub fn convert_type(ctx: &mut Context, ty: TypeHandle) -> Result<TypeHandle, any
     ))
 }
 
-/// Return the single non-ZST field of a rustc-proven transparent scalar struct.
+/// Return the declaration index and type of the single non-ZST field of a
+/// rustc-proven transparent scalar struct.
 ///
 /// The importer marks the outer ABI from rustc rather than inferring it from
 /// source field count. We still validate the MIR shape here so malformed or
 /// hand-written dialect input cannot turn an arbitrary aggregate into a scalar
-/// kernel parameter.
-pub(crate) fn transparent_scalar_field(
+/// ABI value.
+fn transparent_scalar_field_with_index(
     ctx: &mut Context,
     struct_ty: TypeHandle,
-) -> Result<TypeHandle, anyhow::Error> {
+) -> Result<(usize, TypeHandle), anyhow::Error> {
     let (name, field_types, mem_to_decl, is_transparent_scalar) = {
         let ty_ref = struct_ty.deref(ctx);
         let s = ty_ref
@@ -256,7 +257,7 @@ pub(crate) fn transparent_scalar_field(
         if is_zero_sized_type(ctx, converted) {
             continue;
         }
-        if scalar_field.replace(field_ty).is_some() {
+        if scalar_field.replace((decl_idx, field_ty)).is_some() {
             return Err(anyhow::anyhow!(
                 "transparent scalar struct `{}` has more than one non-ZST field",
                 name
@@ -268,7 +269,90 @@ pub(crate) fn transparent_scalar_field(
         .ok_or_else(|| anyhow::anyhow!("transparent scalar struct `{}` has no non-ZST field", name))
 }
 
-/// LLVM parameter type for a rustc-proven transparent scalar struct.
+/// Return the single non-ZST field of a rustc-proven transparent scalar struct.
+pub(crate) fn transparent_scalar_field(
+    ctx: &mut Context,
+    struct_ty: TypeHandle,
+) -> Result<TypeHandle, anyhow::Error> {
+    Ok(transparent_scalar_field_with_index(ctx, struct_ty)?.1)
+}
+
+/// One aggregate layer traversed when a transparent scalar wrapper crosses an
+/// ABI boundary. `field_slot` is the LLVM struct slot containing the next
+/// nested wrapper or the final scalar.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TransparentScalarLayer {
+    pub llvm_struct_ty: TypeHandle,
+    pub field_slot: u32,
+}
+
+/// Complete ABI projection for a rustc-proven transparent scalar wrapper.
+///
+/// `layers` are ordered outermost to innermost. A return lowers by extracting
+/// those slots in order; a call result is rebuilt by inserting the scalar into
+/// the same layers in reverse order.
+#[derive(Clone, Debug)]
+pub(crate) struct TransparentScalarAbiInfo {
+    pub scalar_ty: TypeHandle,
+    pub layers: Vec<TransparentScalarLayer>,
+}
+
+/// Build the scalar ABI projection, including the exact LLVM slot used at every
+/// wrapper layer.
+///
+/// Slot indices come from [`build_struct_slot_map`], so ZST markers, explicit
+/// padding, and rustc memory order cannot make the return/call paths disagree
+/// with ordinary aggregate conversion.
+pub(crate) fn transparent_scalar_abi_info(
+    ctx: &mut Context,
+    struct_ty: TypeHandle,
+) -> Result<TransparentScalarAbiInfo, anyhow::Error> {
+    let mut current = struct_ty;
+    let mut layers = Vec::new();
+
+    loop {
+        let (decl_idx, field_ty) = transparent_scalar_field_with_index(ctx, current)?;
+        let layout = {
+            let ty_ref = current.deref(ctx);
+            let s = ty_ref.downcast_ref::<MirStructType>().ok_or_else(|| {
+                anyhow::anyhow!("transparent scalar ABI requires a MirStructType")
+            })?;
+            StructLayoutInfo::of_struct(s)
+        };
+        let map = build_struct_slot_map(ctx, &layout)?;
+        let field_slot = map.decl_to_llvm[decl_idx].ok_or_else(|| {
+            anyhow::anyhow!(
+                "transparent scalar field {} unexpectedly lowered as a ZST",
+                decl_idx
+            )
+        })?;
+        layers.push(TransparentScalarLayer {
+            llvm_struct_ty: map.llvm_struct_ty,
+            field_slot,
+        });
+
+        let nested_transparent = {
+            let field_ref = field_ty.deref(ctx);
+            field_ref
+                .downcast_ref::<MirStructType>()
+                .is_some_and(MirStructType::is_transparent_scalar)
+        };
+        if nested_transparent {
+            current = field_ty;
+            continue;
+        }
+
+        let scalar_ty = convert_type(ctx, field_ty)?;
+        if is_zero_sized_type(ctx, scalar_ty) {
+            return Err(anyhow::anyhow!(
+                "transparent scalar ABI resolved to a zero-sized field"
+            ));
+        }
+        return Ok(TransparentScalarAbiInfo { scalar_ty, layers });
+    }
+}
+
+/// LLVM ABI type for a rustc-proven transparent scalar struct.
 ///
 /// Transparent wrappers can nest (`Outer(Inner(u32))`). rustc still reports
 /// the outer ADT as one scalar, so recurse through transparent scalar fields
@@ -277,18 +361,7 @@ pub(crate) fn transparent_scalar_llvm_type(
     ctx: &mut Context,
     struct_ty: TypeHandle,
 ) -> Result<TypeHandle, anyhow::Error> {
-    let field_ty = transparent_scalar_field(ctx, struct_ty)?;
-    let nested_transparent = {
-        let field_ref = field_ty.deref(ctx);
-        field_ref
-            .downcast_ref::<MirStructType>()
-            .is_some_and(MirStructType::is_transparent_scalar)
-    };
-    if nested_transparent {
-        transparent_scalar_llvm_type(ctx, field_ty)
-    } else {
-        convert_type(ctx, field_ty)
-    }
+    Ok(transparent_scalar_abi_info(ctx, struct_ty)?.scalar_ty)
 }
 
 /// Convert a MIR function type to an LLVM function type.
@@ -332,6 +405,7 @@ pub(crate) fn transparent_scalar_llvm_type(
 ///
 /// - Empty tuple `()` becomes `void`
 /// - Empty struct `struct {}` becomes `void`
+/// - Rustc-proven `repr(transparent)` scalar ADTs return the underlying scalar
 /// - Other types are converted normally
 ///
 /// # Arguments
@@ -473,13 +547,25 @@ pub fn convert_function_type(
         }
     }
 
-    // Convert return type, treating empty tuple/struct as void
+    // Convert return type. A rustc-proven transparent scalar wrapper uses
+    // the underlying scalar at the function ABI boundary, while its body
+    // continues to use the ordinary converted aggregate representation.
     let ret_ty = if results_ptr.is_empty() {
         llvm_types::VoidType::get(ctx).into()
     } else {
-        let ty = convert_type(ctx, results_ptr[0])?;
-        // Check if zero-sized (empty struct or struct with only ZST fields)
-        // Note: convert_type already strips ZST fields, so we just check for empty
+        let mir_ret_ty = results_ptr[0];
+        let is_transparent_scalar = {
+            let ty_ref = mir_ret_ty.deref(ctx);
+            ty_ref
+                .downcast_ref::<MirStructType>()
+                .is_some_and(MirStructType::is_transparent_scalar)
+        };
+        let ty = if is_transparent_scalar {
+            transparent_scalar_llvm_type(ctx, mir_ret_ty)?
+        } else {
+            convert_type(ctx, mir_ret_ty)?
+        };
+        // Check if zero-sized (empty struct or struct with only ZST fields).
         if is_zero_sized_type(ctx, ty) {
             llvm_types::VoidType::get(ctx).into()
         } else {
@@ -2543,7 +2629,7 @@ mod tests {
     use super::*;
     use dialect_mir::types::{
         EnumEncoding, EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType,
-        MirTupleType, MirUnionType,
+        MirTupleType, MirUnionType, StructAbiKind,
     };
 
     fn make_ctx() -> Context {
@@ -2579,6 +2665,93 @@ mod tests {
             .expect("expected an LLVM struct type")
             .fields()
             .collect()
+    }
+
+    fn transparent_u32(ctx: &mut Context, name: &str) -> TypeHandle {
+        let u32_ty = mir_uint(ctx, 32);
+        MirStructType::get_with_full_layout_and_abi(
+            ctx,
+            name.into(),
+            vec!["value".into()],
+            vec![u32_ty],
+            vec![0],
+            vec![0],
+            4,
+            4,
+            StructAbiKind::TransparentScalar,
+        )
+        .into()
+    }
+
+    #[test]
+    fn transparent_scalar_return_type_uses_underlying_scalar() {
+        let mut ctx = make_ctx();
+        let wrapper = transparent_u32(&mut ctx, "Scalar");
+        let func_ty = FunctionType::get(&ctx, vec![], vec![wrapper]);
+
+        let lowered = convert_function_type(&mut ctx, func_ty, false).unwrap();
+        let result_ty = lowered.deref(&ctx).result_type();
+        let result_ty_ref = result_ty.deref(&ctx);
+        let integer = result_ty_ref
+            .downcast_ref::<IntegerType>()
+            .expect("transparent u32 return must lower to an integer");
+        assert_eq!(integer.width(), 32);
+    }
+
+    #[test]
+    fn nested_transparent_scalar_abi_records_each_rebuild_layer() {
+        let mut ctx = make_ctx();
+        let inner = transparent_u32(&mut ctx, "Inner");
+        let outer: TypeHandle = MirStructType::get_with_full_layout_and_abi(
+            &mut ctx,
+            "Outer".into(),
+            vec!["inner".into()],
+            vec![inner],
+            vec![0],
+            vec![0],
+            4,
+            4,
+            StructAbiKind::TransparentScalar,
+        )
+        .into();
+
+        let info = transparent_scalar_abi_info(&mut ctx, outer).unwrap();
+        let scalar_ty_ref = info.scalar_ty.deref(&ctx);
+        let integer = scalar_ty_ref
+            .downcast_ref::<IntegerType>()
+            .expect("nested transparent wrapper must resolve to u32");
+        assert_eq!(integer.width(), 32);
+        assert_eq!(info.layers.len(), 2);
+        assert_eq!(info.layers[0].field_slot, 0);
+        assert_eq!(info.layers[1].field_slot, 0);
+    }
+
+    #[test]
+    fn ordinary_one_field_return_remains_aggregate() {
+        let mut ctx = make_ctx();
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let ordinary: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Ordinary".into(),
+            vec!["value".into()],
+            vec![u32_ty],
+            vec![0],
+            vec![0],
+            4,
+            4,
+        )
+        .into();
+        let func_ty = FunctionType::get(&ctx, vec![], vec![ordinary]);
+
+        let lowered = convert_function_type(&mut ctx, func_ty, false).unwrap();
+        assert!(
+            lowered
+                .deref(&ctx)
+                .result_type()
+                .deref(&ctx)
+                .is::<llvm_types::StructType>(),
+            "ordinary one-field structs must not be scalarized"
+        );
     }
 
     #[test]

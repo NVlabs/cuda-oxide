@@ -3,16 +3,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Kernel-boundary ABI regression coverage for `#[repr(transparent)]` scalar ADTs.
+//! Kernel-boundary and device-return ABI regression coverage for
+//! `#[repr(transparent)]` scalar ADTs.
 //!
-//! The device entry must expose the underlying scalar/pointer parameter rather
-//! than an aggregate `.param .b8[...]`. An ordinary one-field struct is kept as
-//! the negative control and must remain aggregate at the kernel boundary.
+//! Kernel entries must expose the underlying scalar/pointer parameter rather
+//! than an aggregate `.param .b8[...]`. Device helper returns must likewise use
+//! the underlying scalar ABI while callers reconstruct the Rust wrapper value.
+//! An ordinary one-field struct is kept as the negative control on both paths.
 
 use core::marker::PhantomData;
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{Uniform, cuda_module, kernel};
+use cuda_device::{Uniform, cuda_module, device, kernel};
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
@@ -36,6 +38,36 @@ pub struct Outer(pub Inner);
 
 #[derive(Clone, Copy)]
 pub struct Ordinary(pub u32);
+
+#[inline(never)]
+#[device]
+pub fn return_scalar(value: u32) -> Scalar {
+    Scalar(value)
+}
+
+#[inline(never)]
+#[device]
+pub fn return_pointer(value: *const u32) -> Pointer {
+    Pointer(value)
+}
+
+#[inline(never)]
+#[device]
+pub fn return_marked(value: u32) -> Marked {
+    Marked(value, PhantomData)
+}
+
+#[inline(never)]
+#[device]
+pub fn return_nested(value: u32) -> Outer {
+    Outer(Inner(value))
+}
+
+#[inline(never)]
+#[device]
+pub fn return_ordinary(value: u32) -> Ordinary {
+    Ordinary(value)
+}
 
 #[cuda_module]
 mod kernels {
@@ -77,6 +109,42 @@ mod kernels {
         // SAFETY: the host launch passes one writable u32 in `out`.
         unsafe { out.write(value.0) };
     }
+
+    #[kernel]
+    pub unsafe fn scalar_return(value: u32, out: *mut u32) {
+        let wrapped = return_scalar(value);
+        // SAFETY: the host launch passes one writable u32 in `out`.
+        unsafe { out.write(wrapped.0) };
+    }
+
+    #[kernel]
+    pub unsafe fn pointer_return(value: *const u32, out: *mut u32) {
+        let wrapped = return_pointer(value);
+        // SAFETY: the host launch keeps `value` readable and `out` writable
+        // through synchronization.
+        unsafe { out.write(wrapped.0.read()) };
+    }
+
+    #[kernel]
+    pub unsafe fn marked_return(value: u32, out: *mut u32) {
+        let wrapped = return_marked(value);
+        // SAFETY: the host launch passes one writable u32 in `out`.
+        unsafe { out.write(wrapped.0) };
+    }
+
+    #[kernel]
+    pub unsafe fn nested_return(value: u32, out: *mut u32) {
+        let wrapped = return_nested(value);
+        // SAFETY: the host launch passes one writable u32 in `out`.
+        unsafe { out.write(wrapped.0.0) };
+    }
+
+    #[kernel]
+    pub unsafe fn ordinary_return(value: u32, out: *mut u32) {
+        let wrapped = return_ordinary(value);
+        // SAFETY: the host launch passes one writable u32 in `out`.
+        unsafe { out.write(wrapped.0) };
+    }
 }
 
 fn entry_header<'a>(ptx: &'a str, name: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
@@ -111,6 +179,38 @@ fn require_scalar_header(
     Ok(())
 }
 
+fn require_llvm_return_shape(
+    llvm_ir: &str,
+    name_fragment: &str,
+    return_tokens: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let header = llvm_ir
+        .lines()
+        .find(|line| line.trim_start().starts_with("define ") && line.contains(name_fragment))
+        .ok_or_else(|| format!("missing LLVM definition containing `{name_fragment}`"))?;
+    if !return_tokens.iter().any(|token| header.contains(token)) {
+        return Err(format!(
+            "device helper `{name_fragment}` does not expose any expected return token {:?}:\n{header}",
+            return_tokens
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn verify_generated_llvm_ir() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("repr_transparent_abi.ll");
+    let llvm_ir = std::fs::read_to_string(&path)?;
+
+    require_llvm_return_shape(&llvm_ir, "return_scalar", &["i32 @"])?;
+    require_llvm_return_shape(&llvm_ir, "return_pointer", &["ptr @", "* @"])?;
+    require_llvm_return_shape(&llvm_ir, "return_marked", &["i32 @"])?;
+    require_llvm_return_shape(&llvm_ir, "return_nested", &["i32 @"])?;
+    require_llvm_return_shape(&llvm_ir, "return_ordinary", &["{ i32 } @"])?;
+
+    Ok(())
+}
+
 fn verify_generated_ptx() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("repr_transparent_abi.ptx");
     let ptx = std::fs::read_to_string(&path)?;
@@ -134,11 +234,13 @@ fn verify_generated_ptx() -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|arg| arg == "--verify-ptx") {
+        verify_generated_llvm_ir()?;
         verify_generated_ptx()?;
-        println!("repr_transparent_abi: PASS (PTX parameter shapes)");
+        println!("repr_transparent_abi: PASS (LLVM return ABI and PTX parameter shapes)");
         return Ok(());
     }
 
+    verify_generated_llvm_ir()?;
     verify_generated_ptx()?;
 
     let context = CudaContext::new(0)?;
@@ -157,9 +259,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nested_out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
     let uniform_out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
     let ordinary_out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
+    let scalar_return_out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
+    let pointer_return_out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
+    let marked_return_out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
+    let nested_return_out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
+    let ordinary_return_out = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
 
     // SAFETY: every kernel launches one thread. Each output buffer owns one
-    // writable u32, and `input` owns the readable u32 used by `pointer`.
+    // writable u32, and `input` owns the readable u32 used by pointer tests.
     unsafe {
         module.scalar(
             &stream,
@@ -199,6 +306,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ordinary(37),
             ordinary_out.cu_deviceptr() as *mut u32,
         )?;
+
+        module.scalar_return(
+            &stream,
+            config,
+            41u32,
+            scalar_return_out.cu_deviceptr() as *mut u32,
+        )?;
+        module.pointer_return(
+            &stream,
+            config,
+            input.cu_deviceptr() as *const u32,
+            pointer_return_out.cu_deviceptr() as *mut u32,
+        )?;
+        module.marked_return(
+            &stream,
+            config,
+            43u32,
+            marked_return_out.cu_deviceptr() as *mut u32,
+        )?;
+        module.nested_return(
+            &stream,
+            config,
+            47u32,
+            nested_return_out.cu_deviceptr() as *mut u32,
+        )?;
+        module.ordinary_return(
+            &stream,
+            config,
+            53u32,
+            ordinary_return_out.cu_deviceptr() as *mut u32,
+        )?;
     }
 
     assert_eq!(scalar_out.to_host_vec(&stream)?, [11]);
@@ -207,7 +345,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(nested_out.to_host_vec(&stream)?, [29]);
     assert_eq!(uniform_out.to_host_vec(&stream)?, [31]);
     assert_eq!(ordinary_out.to_host_vec(&stream)?, [37]);
+    assert_eq!(scalar_return_out.to_host_vec(&stream)?, [41]);
+    assert_eq!(pointer_return_out.to_host_vec(&stream)?, [17]);
+    assert_eq!(marked_return_out.to_host_vec(&stream)?, [43]);
+    assert_eq!(nested_return_out.to_host_vec(&stream)?, [47]);
+    assert_eq!(ordinary_return_out.to_host_vec(&stream)?, [53]);
 
-    println!("repr_transparent_abi: PASS (runtime values and PTX parameter shapes)");
+    println!(
+        "repr_transparent_abi: PASS (kernel parameters, device returns, and runtime values)"
+    );
     Ok(())
 }
