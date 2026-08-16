@@ -15,10 +15,10 @@ use llvm_export::{
     ops::{
         AddrSpaceCastOp, AddressOfOp, AllocaOp, BitcastOp, BrOp, CallOp, CondBrOp, ConstantOp,
         DebugEnumDiscriminant, DebugEnumVariant, DebugLocalTypeKind, DebugLocalVariableInfo,
-        DebugSourcePosition, DebugSourceScope, DebugSourceScopeLocation, DebugSourceScopeMap,
-        DebugValueOp, FuncOp, GepIndex, GetElementPtrOp, GlobalInitializerRelocation, GlobalOp,
-        GlobalOpExt, InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp, UndefOp,
-        encode_global_initializer_relocations,
+        DebugProjectedVariableInfo, DebugSourcePosition, DebugSourceScope,
+        DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueOp, FuncOp, GepIndex,
+        GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp,
+        ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
     },
     types::{ArrayType, FuncType, HalfType, PointerType, StructLayout, StructType, VoidType},
 };
@@ -3948,4 +3948,121 @@ fn kernel_keeps_host_addressable_pointer_parameters_and_device_functions_keep_sh
         ir.contains("define void @device_shared(ptr addrspace(3) %v0)"),
         "{ir}"
     );
+}
+
+#[test]
+fn full_debug_metadata_emits_static_projected_dbg_declares() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "projected_debug".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.into(), vec![], false);
+    let func = FuncOp::new(
+        &mut ctx,
+        "projected_debug_kernel".try_into().unwrap(),
+        func_ty,
+    );
+    let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/projected.rs", 10, 1);
+    func.get_operation().deref_mut(&ctx).set_loc(func_loc);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
+    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one_value = one.get_operation().deref(&ctx).get_result(0);
+    one.get_operation().insert_at_back(entry, &ctx);
+
+    let storage_ty = ArrayType::get(&ctx, i32_ty.into(), 8);
+    let alloca = AllocaOp::new(&mut ctx, storage_ty.into(), one_value);
+    llvm_export::ops::set_debug_projected_variables(
+        &mut ctx,
+        alloca.get_operation(),
+        &[
+            DebugProjectedVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name: "field_value".to_string(),
+                    argument_index: None,
+                    ty: DebugLocalTypeKind::Basic {
+                        name: "u32".to_string(),
+                        size_bits: 32,
+                        encoding: "DW_ATE_unsigned",
+                    },
+                },
+                offset_bytes: 8,
+                source_scope: None,
+                declaration: Some(DebugSourcePosition {
+                    file: PathBuf::from("/tmp/cuda-oxide/tests/projected.rs"),
+                    line: 11,
+                    column: 9,
+                }),
+            },
+            DebugProjectedVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name: "tuple_value".to_string(),
+                    argument_index: None,
+                    ty: DebugLocalTypeKind::Basic {
+                        name: "u64".to_string(),
+                        size_bits: 64,
+                        encoding: "DW_ATE_unsigned",
+                    },
+                },
+                offset_bytes: 16,
+                source_scope: None,
+                declaration: Some(DebugSourcePosition {
+                    file: PathBuf::from("/tmp/cuda-oxide/tests/projected.rs"),
+                    line: 12,
+                    column: 9,
+                }),
+            },
+            DebugProjectedVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name: "array_value".to_string(),
+                    argument_index: None,
+                    ty: DebugLocalTypeKind::Basic {
+                        name: "u32".to_string(),
+                        size_bits: 32,
+                        encoding: "DW_ATE_unsigned",
+                    },
+                },
+                offset_bytes: 24,
+                source_scope: None,
+                declaration: Some(DebugSourcePosition {
+                    file: PathBuf::from("/tmp/cuda-oxide/tests/projected.rs"),
+                    line: 13,
+                    column: 9,
+                }),
+            },
+        ],
+    );
+    alloca.get_operation().insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = DebugConfig {
+        inner: PtxExportConfig,
+        debug_kind: DebugKind::Full,
+    };
+    let ir = export_module_to_string_with_config(&ctx, &module, &config)
+        .expect("projected debug export succeeds");
+
+    assert_eq!(
+        ir.matches("call void @llvm.dbg.declare").count(),
+        3,
+        "each projected source variable should get its own dbg.declare:\n{ir}"
+    );
+    for name in ["field_value", "tuple_value", "array_value"] {
+        assert!(
+            ir.contains(&format!("!DILocalVariable(name: \"{name}\"")),
+            "missing projected variable {name}:\n{ir}"
+        );
+    }
+    for offset in [8u64, 16, 24] {
+        assert!(
+            ir.contains(&format!("!DIExpression(DW_OP_plus_uconst, {offset})")),
+            "missing static projection offset {offset}:\n{ir}"
+        );
+    }
 }

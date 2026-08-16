@@ -21,7 +21,9 @@ use pliron::{
     uniqued_any,
 };
 
-use crate::ops::{DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourcePosition};
+use crate::ops::{
+    DebugLocalTypeKind, DebugLocalVariableInfo, DebugProjectedVariableInfo, DebugSourcePosition,
+};
 
 use super::state::{ModuleExportState, ResolvedDebugScope};
 
@@ -163,21 +165,63 @@ impl<'a> ModuleExportState<'a> {
         op: pliron::context::Ptr<pliron::operation::Operation>,
         info: &DebugLocalVariableInfo,
     ) -> Option<(usize, usize)> {
+        let source_scope = crate::ops::debug_local_source_scope(self.ctx, op);
+        let declaration = crate::ops::debug_local_declaration_location(self.ctx, op);
+        self.debug_local_variable_for_source(scope, loc, info, source_scope, declaration)
+    }
+
+    pub(super) fn debug_projected_variable_for_scope(
+        &mut self,
+        scope: usize,
+        loc: &Location,
+        projected: &DebugProjectedVariableInfo,
+    ) -> Option<(usize, usize)> {
+        let declaration = projected.declaration.as_ref().map(|declaration| {
+            (
+                declaration.file.clone(),
+                SourcePosition {
+                    line: declaration.line,
+                    column: declaration.column,
+                },
+            )
+        });
+        self.debug_local_variable_for_source(
+            scope,
+            loc,
+            &projected.variable,
+            projected.source_scope,
+            declaration,
+        )
+    }
+
+    fn debug_local_variable_for_source(
+        &mut self,
+        scope: usize,
+        loc: &Location,
+        info: &DebugLocalVariableInfo,
+        source_scope: Option<u32>,
+        declaration: Option<(PathBuf, SourcePosition)>,
+    ) -> Option<(usize, usize)> {
         if !self.debug_kind.variables_enabled() {
             return None;
         }
 
-        let (path, pos) = crate::ops::debug_local_declaration_location(self.ctx, op)
-            .or_else(|| self.local_variable_position_from_location(loc))?;
+        let (path, pos) =
+            declaration.or_else(|| self.local_variable_position_from_location(loc))?;
         let file_id = self.ensure_debug_file(&path);
-        let resolved_scope = crate::ops::debug_local_source_scope(self.ctx, op)
+        let resolved_scope = source_scope
             .and_then(|source_scope| self.resolve_debug_source_scope(scope, source_scope))
             .unwrap_or_else(|| ResolvedDebugScope {
                 scope: self.debug_scope_for_file(scope, &path).unwrap_or(scope),
                 inlined_at: None,
             });
         let variable_scope = resolved_scope.scope;
-        let location_id = self.debug_location_for_resolved_scope(resolved_scope, loc)?;
+        let location_id = self
+            .debug_location_for_resolved_scope(resolved_scope, loc)
+            .or_else(|| {
+                let location_scope = self.debug_scope_for_file(resolved_scope.scope, &path)?;
+                self.ensure_debug_location(location_scope, pos, resolved_scope.inlined_at)
+            })?;
         let key = (variable_scope, path, pos.line, info.clone());
         if let Some(var_id) = self.debug_local_variables.get(&key).copied() {
             return Some((var_id, location_id));

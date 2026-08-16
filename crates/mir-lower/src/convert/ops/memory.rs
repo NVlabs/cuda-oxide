@@ -207,6 +207,10 @@ fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op:
     if let Some(info) = llvm_export::ops::debug_local_variable(ctx, mir_op) {
         llvm_export::ops::set_debug_local_variable(ctx, llvm_op, info);
     }
+    let projected = llvm_export::ops::debug_projected_variables(ctx, mir_op);
+    if !projected.is_empty() {
+        llvm_export::ops::set_debug_projected_variables(ctx, llvm_op, &projected);
+    }
     if let Some(scope) = llvm_export::ops::debug_local_source_scope(ctx, mir_op) {
         llvm_export::ops::set_debug_local_source_scope(ctx, llvm_op, scope);
     }

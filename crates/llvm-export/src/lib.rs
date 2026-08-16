@@ -813,6 +813,20 @@ pub mod ops {
         pub ty: DebugLocalTypeKind,
     }
 
+    /// A source variable whose storage is a statically-known projection of a MIR local.
+    ///
+    /// `offset_bytes` is measured from the base local's alloca. The textual LLVM
+    /// exporter turns it into `DIExpression(DW_OP_plus_uconst, offset_bytes)`.
+    /// Dynamic indices, dereferences, slices, and enum downcasts are intentionally
+    /// not represented by this first projection-debug slice.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    pub struct DebugProjectedVariableInfo {
+        pub variable: DebugLocalVariableInfo,
+        pub offset_bytes: u64,
+        pub source_scope: Option<u32>,
+        pub declaration: Option<DebugSourcePosition>,
+    }
+
     /// A source position small enough to carry through cuda-oxide attrs.
     #[derive(Clone, Debug, Eq, Hash, PartialEq)]
     pub struct DebugSourcePosition {
@@ -864,6 +878,7 @@ pub mod ops {
     const DEBUG_LOCAL_DECL_LINE_KEY: &str = "cuda_oxide_debug_local_decl_line";
     const DEBUG_LOCAL_DECL_COLUMN_KEY: &str = "cuda_oxide_debug_local_decl_column";
     const DEBUG_LOCAL_SCOPE_KEY: &str = "cuda_oxide_debug_local_scope";
+    const DEBUG_PROJECTED_COUNT_KEY: &str = "cuda_oxide_debug_projected_count";
     const DEBUG_SOURCE_SCOPE_COUNT_KEY: &str = "cuda_oxide_debug_scope_count";
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
@@ -961,6 +976,132 @@ pub mod ops {
             argument_index,
             ty,
         })
+    }
+
+    /// Attach every source variable described by a static projection of this slot.
+    pub fn set_debug_projected_variables(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        projected: &[DebugProjectedVariableInfo],
+    ) {
+        set_string_attr(
+            ctx,
+            op,
+            DEBUG_PROJECTED_COUNT_KEY,
+            projected.len().to_string(),
+        );
+
+        for (index, info) in projected.iter().enumerate() {
+            set_string_attr(
+                ctx,
+                op,
+                &debug_projected_key(index, "name"),
+                info.variable.name.clone(),
+            );
+            if let Some(argument_index) = info.variable.argument_index {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_projected_key(index, "arg"),
+                    argument_index.to_string(),
+                );
+            }
+
+            let mut encoded = String::new();
+            serialize_debug_type(&info.variable.ty, &mut encoded);
+            set_string_attr(ctx, op, &debug_projected_key(index, "type"), encoded);
+            set_string_attr(
+                ctx,
+                op,
+                &debug_projected_key(index, "offset"),
+                info.offset_bytes.to_string(),
+            );
+            if let Some(source_scope) = info.source_scope {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_projected_key(index, "scope"),
+                    source_scope.to_string(),
+                );
+            }
+            if let Some(declaration) = &info.declaration {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_projected_key(index, "file"),
+                    declaration.file.to_string_lossy().into_owned(),
+                );
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_projected_key(index, "line"),
+                    declaration.line.to_string(),
+                );
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_projected_key(index, "column"),
+                    declaration.column.to_string(),
+                );
+            }
+        }
+    }
+
+    /// Read the static-projection source variables attached to a local slot.
+    ///
+    /// Malformed entries are skipped individually. The count is capped so a bad
+    /// internal attribute cannot turn export into an unbounded scan.
+    pub fn debug_projected_variables(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Vec<DebugProjectedVariableInfo> {
+        let count = get_string_attr(ctx, op, DEBUG_PROJECTED_COUNT_KEY)
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0);
+        if count > 1024 {
+            return Vec::new();
+        }
+
+        let mut projected = Vec::with_capacity(count);
+        for index in 0..count {
+            let Some(name) = get_string_attr(ctx, op, &debug_projected_key(index, "name")) else {
+                continue;
+            };
+            let argument_index = get_string_attr(ctx, op, &debug_projected_key(index, "arg"))
+                .and_then(|arg| arg.parse::<u16>().ok());
+            let Some(encoded) = get_string_attr(ctx, op, &debug_projected_key(index, "type"))
+            else {
+                continue;
+            };
+            let mut pos = 0;
+            let Some(ty) = deserialize_debug_type(encoded.as_bytes(), &mut pos) else {
+                continue;
+            };
+            if pos != encoded.len() {
+                continue;
+            }
+            let Some(offset_bytes) =
+                get_string_attr(ctx, op, &debug_projected_key(index, "offset"))
+                    .and_then(|offset| offset.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            let source_scope = get_string_attr(ctx, op, &debug_projected_key(index, "scope"))
+                .and_then(|scope| scope.parse::<u32>().ok());
+            let declaration = debug_projected_declaration(ctx, op, index);
+
+            projected.push(DebugProjectedVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name,
+                    argument_index,
+                    ty,
+                },
+                offset_bytes,
+                source_scope,
+                declaration,
+            });
+        }
+        projected
     }
 
     /// Rust-local provenance for the post-optimization local-memory diagnostic.
@@ -1284,6 +1425,32 @@ pub mod ops {
             return None;
         }
 
+        Some(DebugSourcePosition { file, line, column })
+    }
+
+    fn debug_projected_key(index: usize, field: &str) -> String {
+        format!("cuda_oxide_debug_projected_{index}_{field}")
+    }
+
+    fn debug_projected_declaration(
+        ctx: &Context,
+        op: Ptr<Operation>,
+        index: usize,
+    ) -> Option<DebugSourcePosition> {
+        let file = PathBuf::from(get_string_attr(
+            ctx,
+            op,
+            &debug_projected_key(index, "file"),
+        )?);
+        let line = get_string_attr(ctx, op, &debug_projected_key(index, "line"))?
+            .parse()
+            .ok()?;
+        let column = get_string_attr(ctx, op, &debug_projected_key(index, "column"))?
+            .parse()
+            .ok()?;
+        if line <= 0 || column <= 0 {
+            return None;
+        }
         Some(DebugSourcePosition { file, line, column })
     }
 

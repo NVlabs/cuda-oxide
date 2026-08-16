@@ -29,7 +29,8 @@ use dialect_mir::types::address_space;
 use llvm_export::export::DebugKind;
 use llvm_export::ops::{
     DebugEnumDiscriminant, DebugEnumVariant, DebugLocalTypeKind, DebugLocalVariableInfo,
-    DebugSourceScopeMap, DebugTypeMember, LocalMemoryProvenanceAttr,
+    DebugProjectedVariableInfo, DebugSourcePosition, DebugSourceScopeMap, DebugTypeMember,
+    LocalMemoryProvenanceAttr,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
@@ -564,56 +565,148 @@ struct LocalDebugInfo {
     source_scope: u32,
 }
 
-/// Build the full-debug variable map for whole MIR locals.
+#[derive(Default)]
+struct CollectedDebugLocals {
+    whole: FxHashMap<mir::Local, LocalDebugInfo>,
+    projected: FxHashMap<mir::Local, Vec<DebugProjectedVariableInfo>>,
+}
+
+/// Build full-debug bindings for whole locals and statically-addressable projections.
 ///
-/// The cargo-oxide full-debug path disables MIR optimization, so closure
-/// environments stay as aggregate locals instead of being split into SROA
-/// fragments. Composite debug records are intentionally skipped here; closure
-/// locals use the normal whole-local path and are described by
-/// `debug_type_for_ty`.
-fn collect_debug_locals(
-    ctx: &mut Context,
-    body: &mir::Body,
-) -> FxHashMap<mir::Local, LocalDebugInfo> {
-    let mut locals = FxHashMap::default();
+/// Whole-local records keep the existing path. A `VarDebugInfoContents::Place`
+/// with only `Field` and forward `ConstantIndex` elements is instead attached
+/// to the base local together with its rustc-layout byte offset. Dereferences,
+/// dynamic indices, slices, enum downcasts, opaque casts, and composite fragments
+/// stay unsupported here and are skipped rather than approximated.
+fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLocals {
+    let mut collected = CollectedDebugLocals::default();
 
     for info in &body.var_debug_info {
         if info.composite.is_some() {
             continue;
         }
-
-        let Some(local) = info.local() else {
-            continue;
-        };
-        let local_idx: usize = local;
-        if local_idx == 0 {
-            continue;
-        }
-
-        let Some(decl) = body.local_decl(local) else {
-            continue;
-        };
-        let Some(ty) = debug_type_for_ty(&decl.ty) else {
-            continue;
-        };
-
         let name = info.name.to_string();
         if name.is_empty() {
             continue;
         }
 
-        locals.entry(local).or_insert_with(|| LocalDebugInfo {
-            variable: DebugLocalVariableInfo {
-                name,
-                argument_index: info.argument_index,
-                ty,
-            },
-            loc: span_to_location(ctx, info.source_info.span),
-            source_scope: info.source_info.scope,
-        });
+        let mir::VarDebugInfoContents::Place(place) = &info.value else {
+            continue;
+        };
+        let local = place.local;
+        let local_idx: usize = local;
+        if local_idx == 0 {
+            continue;
+        }
+
+        if place.projection.is_empty() {
+            let Some(decl) = body.local_decl(local) else {
+                continue;
+            };
+            let Some(ty) = debug_type_for_ty(&decl.ty) else {
+                continue;
+            };
+
+            collected
+                .whole
+                .entry(local)
+                .or_insert_with(|| LocalDebugInfo {
+                    variable: DebugLocalVariableInfo {
+                        name,
+                        argument_index: info.argument_index,
+                        ty,
+                    },
+                    loc: span_to_location(ctx, info.source_info.span),
+                    source_scope: info.source_info.scope,
+                });
+            continue;
+        }
+
+        let Some((offset_bytes, projected_ty)) = static_debug_projection(body, place) else {
+            continue;
+        };
+        let Some(ty) = debug_type_for_ty(&projected_ty) else {
+            continue;
+        };
+
+        // rustc treats projected argument bindings as local variables rather
+        // than formal argument variables; only whole-place arguments receive
+        // a DWARF argument index.
+        collected
+            .projected
+            .entry(local)
+            .or_default()
+            .push(DebugProjectedVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name,
+                    argument_index: None,
+                    ty,
+                },
+                offset_bytes,
+                source_scope: Some(info.source_info.scope),
+                declaration: debug_source_position(info.source_info.span),
+            });
     }
 
-    locals
+    collected
+}
+
+/// Resolve the byte offset and final type of a projection that never leaves
+/// the base local's storage object.
+fn static_debug_projection(body: &mir::Body, place: &mir::Place) -> Option<(u64, Ty)> {
+    let mut current_ty = body.local_decl(place.local)?.ty;
+    let mut offset_bytes = 0u64;
+
+    for elem in &place.projection {
+        match elem {
+            mir::ProjectionElem::Field(field_idx, field_ty) => {
+                let layout = current_ty.layout().ok()?;
+                let shape = layout.shape();
+                let rustc_public::abi::FieldsShape::Arbitrary { offsets } = &shape.fields else {
+                    return None;
+                };
+                let field_offset = offsets.get(*field_idx)?.bytes() as u64;
+                offset_bytes = offset_bytes.checked_add(field_offset)?;
+                current_ty = *field_ty;
+            }
+            mir::ProjectionElem::ConstantIndex {
+                offset,
+                min_length: _,
+                from_end: false,
+            } => {
+                let layout = current_ty.layout().ok()?;
+                let shape = layout.shape();
+                let rustc_public::abi::FieldsShape::Array { stride, count } = &shape.fields else {
+                    return None;
+                };
+                if *offset >= *count {
+                    return None;
+                }
+                let element_offset = (stride.bytes() as u64).checked_mul(*offset)?;
+                offset_bytes = offset_bytes.checked_add(element_offset)?;
+                let TyKind::RigidTy(RigidTy::Array(element, _)) = current_ty.kind() else {
+                    return None;
+                };
+                current_ty = element;
+            }
+            _ => return None,
+        }
+    }
+
+    Some((offset_bytes, current_ty))
+}
+
+fn debug_source_position(span: rustc_public::ty::Span) -> Option<DebugSourcePosition> {
+    let file = span.get_filename();
+    let lines = span.get_lines();
+    if file.is_empty() || lines.start_line == 0 || lines.start_col == 0 {
+        return None;
+    }
+    Some(DebugSourcePosition {
+        file: std::path::PathBuf::from(file),
+        line: lines.start_line as i32,
+        column: lines.start_col as i32,
+    })
 }
 
 /// Source-level names for MIR locals, independent of the selected debug tier.
@@ -1245,7 +1338,7 @@ fn emit_entry_allocas(
     let debug_locals = if debug_kind.variables_enabled() {
         collect_debug_locals(ctx, body)
     } else {
-        FxHashMap::default()
+        CollectedDebugLocals::default()
     };
     let local_source_names = collect_local_source_names(body);
 
@@ -1305,7 +1398,7 @@ fn emit_entry_allocas(
             );
         }
 
-        if let Some(info) = debug_locals.get(&local) {
+        if let Some(info) = debug_locals.whole.get(&local) {
             llvm_export::ops::set_debug_local_variable(ctx, op, info.variable.clone());
             if debug_source_scopes
                 .is_some_and(|map| map.scopes.iter().any(|scope| scope.id == info.source_scope))
@@ -1313,6 +1406,9 @@ fn emit_entry_allocas(
                 llvm_export::ops::set_debug_local_source_scope(ctx, op, info.source_scope);
             }
             op.deref_mut(ctx).set_loc(info.loc.clone());
+        }
+        if let Some(projected) = debug_locals.projected.get(&local) {
+            llvm_export::ops::set_debug_projected_variables(ctx, op, projected);
         }
         prev_op = Some(op);
         value_map.set_slot(local, slot);

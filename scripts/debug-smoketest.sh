@@ -12,9 +12,10 @@
 # metadata in the emitted IR.
 #
 # For compiler_features, dedicated debugger passes additionally validate
-# closure-environment and Rust-enum DWARF. The closure pass checks that both
-# captures are inspectable; the enum pass checks direct-tag and niche-layout
-# values after they have been initialized.
+# closure-environment, Rust-enum, and static-projection DWARF. The closure
+# pass checks that both captures are inspectable; the enum pass checks direct-tag
+# and niche-layout values; the projection pass checks struct/tuple fields and a
+# fixed-array constant index.
 #
 # This complements scripts/smoketest.sh (which validates the compile pipeline)
 # by validating debugger *consumption* of the DWARF we emit.
@@ -70,7 +71,8 @@ export LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/lib/x86_64-linux-gnu:${LD_LIB
 GDB_LOG="$(mktemp)"
 CLOSURE_GDB_LOG="$(mktemp)"
 ENUM_GDB_LOG="$(mktemp)"
-trap 'rm -f "$GDB_LOG" "$CLOSURE_GDB_LOG" "$ENUM_GDB_LOG"' EXIT
+PROJECTION_GDB_LOG="$(mktemp)"
+trap 'rm -f "$GDB_LOG" "$CLOSURE_GDB_LOG" "$ENUM_GDB_LOG" "$PROJECTION_GDB_LOG"' EXIT
 
 # Run from the example dir: the host binary resolves its embedded device
 # artifact relative to the working directory.
@@ -169,11 +171,45 @@ if [ "$EXAMPLE" = "compiler_features" ]; then
         grep -qF '<No data fields>' "$ENUM_GDB_LOG" && { echo "debug-smoketest: FAIL (enum value resolved without an active variant payload)"; fail=1; }
         grep -qiE "INVALID_PTX|JIT compilation failed|No device code" "$ENUM_GDB_LOG" && { echo "debug-smoketest: FAIL (enum-debug PTX did not load under cuda-gdb)"; fail=1; }
     fi
+
+    PROJECTION_MARKER="CUDA_OXIDE_DEBUG_PROJECTION_BREAKPOINT"
+    PROJECTION_LINE="$(grep -nF "$PROJECTION_MARKER" "$DEBUG_SOURCE" | head -1 | cut -d: -f1)"
+
+    if [ -z "$PROJECTION_LINE" ]; then
+        echo "debug-smoketest: FAIL (projection debug breakpoint marker not found)"
+        fail=1
+    else
+        ( cd "$EXAMPLE_DIR" && timeout 300 "$CUDA_GDB" --batch \
+            -ex 'set pagination off' \
+            -ex 'set breakpoint pending on' \
+            -ex "break $DEBUG_SOURCE:$PROJECTION_LINE" \
+            -ex 'run' \
+            -ex 'frame 0' \
+            -ex 'ptype projected_field' \
+            -ex 'print projected_field' \
+            -ex 'ptype projected_tuple' \
+            -ex 'print projected_tuple' \
+            -ex 'ptype projected_array' \
+            -ex 'print projected_array' \
+            -ex 'backtrace' \
+            -ex 'kill' \
+            "./target/release/$EXAMPLE" ) >"$PROJECTION_GDB_LOG" 2>&1
+
+        echo "----- cuda-gdb projection output (tail) -----"
+        tail -35 "$PROJECTION_GDB_LOG"
+        echo "---------------------------------------------"
+
+        grep -qiE "CUDA thread hit .*Breakpoint" "$PROJECTION_GDB_LOG" || { echo "debug-smoketest: FAIL (projection source breakpoint did not hit)"; fail=1; }
+        grep -qE '\$[0-9]+ = 18([[:space:]]|$)' "$PROJECTION_GDB_LOG" || { echo "debug-smoketest: FAIL (struct.field projection is not inspectable)"; fail=1; }
+        grep -qE '\$[0-9]+ = 4294967329([[:space:]]|$)' "$PROJECTION_GDB_LOG" || { echo "debug-smoketest: FAIL (tuple.1 projection is not inspectable)"; fail=1; }
+        grep -qE '\$[0-9]+ = 37([[:space:]]|$)' "$PROJECTION_GDB_LOG" || { echo "debug-smoketest: FAIL (array constant-index projection is not inspectable)"; fail=1; }
+        grep -qiE "INVALID_PTX|JIT compilation failed|No device code" "$PROJECTION_GDB_LOG" && { echo "debug-smoketest: FAIL (projection-debug PTX did not load under cuda-gdb)"; fail=1; }
+    fi
 fi
 
 if [ "$fail" -eq 0 ]; then
     if [ "$EXAMPLE" = "compiler_features" ]; then
-        echo "debug-smoketest: PASS (source debugging + closure environments + Rust enums verified on $ARCH)"
+        echo "debug-smoketest: PASS (source debugging + closure environments + Rust enums + static projections verified on $ARCH)"
     else
         echo "debug-smoketest: PASS (source debugging + info args/locals verified on $ARCH)"
     fi

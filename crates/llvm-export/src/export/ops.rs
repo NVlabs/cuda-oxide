@@ -827,6 +827,14 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
+    fn debug_expression_for_static_offset(offset_bytes: u64) -> String {
+        if offset_bytes == 0 {
+            "!DIExpression()".to_string()
+        } else {
+            format!("!DIExpression(DW_OP_plus_uconst, {offset_bytes})")
+        }
+    }
+
     fn emit_debug_declare_for_alloca(
         &mut self,
         op: &ops::AllocaOp,
@@ -842,27 +850,42 @@ impl<'a> ModuleExportState<'a> {
         let Some(scope) = debug_scope else {
             return Ok(());
         };
-        let Some(info) = crate::ops::debug_local_variable(self.ctx, op.get_operation()) else {
-            return Ok(());
-        };
-        let Some((var_id, loc_id)) =
-            self.debug_local_variable_for_scope(scope, loc, op.get_operation(), &info)
-        else {
-            return Ok(());
-        };
-
         let alloca_result = op.get_operation().deref(self.ctx).get_result(0);
         let alloca_name = value_names
             .get(&alloca_result)
             .ok_or_else(|| "Missing alloca result name for debug declare".to_string())?;
 
-        writeln!(
-            output,
-            "  call void @llvm.dbg.declare(metadata ptr {alloca_name}, metadata !{var_id}, metadata !DIExpression()), !dbg !{loc_id}"
-        )
-        .unwrap();
-        self.debug_declare_used = true;
+        let mut emitted = false;
+        if let Some(info) = crate::ops::debug_local_variable(self.ctx, op.get_operation())
+            && let Some((var_id, loc_id)) =
+                self.debug_local_variable_for_scope(scope, loc, op.get_operation(), &info)
+        {
+            writeln!(
+                output,
+                "  call void @llvm.dbg.declare(metadata ptr {alloca_name}, metadata !{var_id}, metadata !DIExpression()), !dbg !{loc_id}"
+            )
+            .unwrap();
+            emitted = true;
+        }
 
+        for projected in crate::ops::debug_projected_variables(self.ctx, op.get_operation()) {
+            let Some((var_id, loc_id)) =
+                self.debug_projected_variable_for_scope(scope, loc, &projected)
+            else {
+                continue;
+            };
+            let expression = Self::debug_expression_for_static_offset(projected.offset_bytes);
+            writeln!(
+                output,
+                "  call void @llvm.dbg.declare(metadata ptr {alloca_name}, metadata !{var_id}, metadata {expression}), !dbg !{loc_id}"
+            )
+            .unwrap();
+            emitted = true;
+        }
+
+        if emitted {
+            self.debug_declare_used = true;
+        }
         Ok(())
     }
 

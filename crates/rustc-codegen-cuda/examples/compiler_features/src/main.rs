@@ -37,6 +37,13 @@ mod kernels {
         Wide(u64) = 9,
     }
 
+    /// Aggregate used to force a non-zero `Field` debug projection.
+    #[repr(C)]
+    struct DebugProjectionStruct {
+        prefix: u8,
+        projected_field: u64,
+    }
+
     /// Test multi-way match on u32
     #[kernel]
     pub fn test_multiway_match_u32(val: u32, mut out: DisjointSlice<u32>) {
@@ -108,6 +115,38 @@ mod kernels {
             };
 
             *out_elem = option_part + result_part + direct_part + niche_part;
+        }
+    }
+
+    /// Helper whose destructured arguments produce rustc MIR debug places with
+    /// static `Field` and `ConstantIndex` projections.
+    #[inline(never)]
+    fn debug_projection_values(
+        DebugProjectionStruct {
+            projected_field, ..
+        }: DebugProjectionStruct,
+        (_, projected_tuple): (u32, u64),
+        [_, _, projected_array, _]: [u32; 4],
+    ) -> u32 {
+        let field_part = projected_field as u32; // CUDA_OXIDE_DEBUG_PROJECTION_BREAKPOINT
+        field_part
+            .wrapping_add(projected_tuple as u32)
+            .wrapping_add(projected_array)
+    }
+
+    /// Full-debug fixture for statically-addressable source projections.
+    #[kernel]
+    pub fn test_projection_debug(seed: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            *out_elem = debug_projection_values(
+                DebugProjectionStruct {
+                    prefix: 0xA5,
+                    projected_field: seed as u64 + 11,
+                },
+                (seed, 0x1_0000_0021u64),
+                [3u32, 5, 37, 11],
+            );
         }
     }
 
@@ -644,6 +683,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let result = out_dev.to_host_vec(&stream)?;
         assert_eq!(result[0], 40, "test_enum_debug failed");
         println!("  ✓ Result: {} (expected 40)", result[0]);
+    }
+
+    // Test projected debug bindings and keep deterministic Field/ConstantIndex values live.
+    println!("Testing: test_projection_debug");
+    {
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        // seed=7: projected_field=18, projected_tuple low32=33, projected_array=37.
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_projection_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
+        let result = out_dev.to_host_vec(&stream)?;
+        assert_eq!(result[0], 88, "test_projection_debug failed");
+        println!("  ✓ Result: {} (expected 88)", result[0]);
     }
 
     // Test closure lowering and keep a deterministic full-debug fixture live.
