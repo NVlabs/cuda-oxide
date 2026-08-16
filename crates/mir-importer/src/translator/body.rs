@@ -28,8 +28,8 @@ use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::address_space;
 use llvm_export::export::DebugKind;
 use llvm_export::ops::{
-    DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourceScopeMap, DebugTypeMember,
-    LocalMemoryProvenanceAttr,
+    DebugEnumDiscriminant, DebugEnumVariant, DebugLocalTypeKind, DebugLocalVariableInfo,
+    DebugSourceScopeMap, DebugTypeMember, LocalMemoryProvenanceAttr,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
@@ -46,6 +46,7 @@ use rustc_public::CrateDef;
 use rustc_public::mir;
 use rustc_public::mir::mono;
 use rustc_public::ty::{ConstantKind, FloatTy, IntTy, RigidTy, Ty, TyKind, UintTy};
+use rustc_public_bridge::IndexedVal;
 
 /// Cluster dimensions extracted from `#[cluster(x,y,z)]` attribute.
 ///
@@ -789,21 +790,22 @@ fn debug_type_for_ty_at(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
             debug_struct_type(ty, name, fields, depth)
         }
         TyKind::RigidTy(RigidTy::Adt(adt_def, substs)) if depth < MAX_DEBUG_TYPE_DEPTH => {
-            // Only plain structs (one variant) are described as composites here;
-            // enums and unions need DWARF variant parts (deferred).
-            if !matches!(adt_def.kind(), rustc_public::ty::AdtKind::Struct) {
-                return None;
+            match adt_def.kind() {
+                rustc_public::ty::AdtKind::Struct => {
+                    let variants = adt_def.variants();
+                    if variants.len() != 1 {
+                        return None;
+                    }
+                    let name = adt_def.trimmed_name();
+                    let fields = variants[0]
+                        .fields()
+                        .into_iter()
+                        .map(|field| (field.name.to_string(), field.ty_with_args(&substs)));
+                    debug_struct_type(ty, name, fields, depth)
+                }
+                rustc_public::ty::AdtKind::Enum => debug_enum_type(ty, depth),
+                rustc_public::ty::AdtKind::Union => None,
             }
-            let variants = adt_def.variants();
-            if variants.len() != 1 {
-                return None;
-            }
-            let name = adt_def.trimmed_name();
-            let fields = variants[0]
-                .fields()
-                .into_iter()
-                .map(|field| (field.name.to_string(), field.ty_with_args(&substs)));
-            debug_struct_type(ty, name, fields, depth)
         }
         TyKind::RigidTy(RigidTy::Array(elem_ty, len_const)) if depth < MAX_DEBUG_TYPE_DEPTH => {
             let count = array_len_const(&len_const)?;
@@ -867,6 +869,238 @@ fn debug_struct_type(
         size_bits,
         members,
     })
+}
+
+/// Build a Rust enum debug type using rustc's physical layout.
+///
+/// This mirrors rustc's native DWARF representation rather than guessing from
+/// source-level `Option`/`Result` shapes: a top-level structure contains a
+/// variant part, whose discriminator is either the direct integer tag or the
+/// integer-normalized niche carrier. Variant payload fields use rustc's exact
+/// per-variant offsets. For niche layouts the untagged variant deliberately has
+/// no discriminant value, so the debugger treats it as the default branch.
+fn debug_enum_type(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
+    let TyKind::RigidTy(RigidTy::Adt(adt_def, substs)) = ty.kind() else {
+        return None;
+    };
+    if !matches!(adt_def.kind(), rustc_public::ty::AdtKind::Enum) {
+        return None;
+    }
+
+    #[derive(Clone, Copy)]
+    enum DebugEnumLayout {
+        Direct {
+            width: u64,
+        },
+        Niche {
+            width: u64,
+            niche_variant_start: usize,
+            niche_start: u128,
+            untagged_variant: usize,
+        },
+        Single,
+        Empty,
+    }
+
+    let layout_shape = ty.layout().ok()?.shape();
+    let size_bits = layout_shape.size.bytes() as u64 * 8;
+
+    let (discriminant, debug_layout) = match &layout_shape.variants {
+        rustc_public::abi::VariantsShape::Multiple {
+            tag,
+            tag_encoding: rustc_public::abi::TagEncoding::Direct,
+            tag_field,
+            ..
+        } => {
+            let primitive = match tag {
+                rustc_public::abi::Scalar::Initialized { value, .. }
+                | rustc_public::abi::Scalar::Union { value } => *value,
+            };
+            let rustc_public::abi::Primitive::Int { length, signed } = primitive else {
+                return None;
+            };
+            let width = length.bits() as u64;
+            if width == 0 || width > 64 {
+                return None;
+            }
+            let offset_bits = crate::translator::layout::enum_tag_offset(
+                &layout_shape.fields,
+                *tag_field,
+                pliron::location::Location::Unknown,
+            )
+            .ok()? as u64
+                * 8;
+            let tag_ty = DebugLocalTypeKind::Basic {
+                name: format!("{}{}", if signed { "i" } else { "u" }, width),
+                size_bits: width,
+                encoding: if signed {
+                    "DW_ATE_signed"
+                } else {
+                    "DW_ATE_unsigned"
+                },
+            };
+            (
+                Some(DebugEnumDiscriminant {
+                    offset_bits,
+                    ty: Box::new(tag_ty),
+                }),
+                DebugEnumLayout::Direct { width },
+            )
+        }
+        rustc_public::abi::VariantsShape::Multiple {
+            tag,
+            tag_encoding:
+                rustc_public::abi::TagEncoding::Niche {
+                    untagged_variant,
+                    niche_variants,
+                    niche_start,
+                },
+            tag_field,
+            ..
+        } => {
+            let primitive = match tag {
+                rustc_public::abi::Scalar::Initialized { value, .. }
+                | rustc_public::abi::Scalar::Union { value } => *value,
+            };
+            let width = primitive
+                .size(&rustc_public::target::MachineInfo::target())
+                .bits() as u64;
+            if width == 0 || width > 64 {
+                return None;
+            }
+            let offset_bits = crate::translator::layout::enum_tag_offset(
+                &layout_shape.fields,
+                *tag_field,
+                pliron::location::Location::Unknown,
+            )
+            .ok()? as u64
+                * 8;
+
+            // rustc normalizes niche carriers, including pointer niches, to an
+            // unsigned integer of the same physical width for DWARF.
+            let tag_name = match primitive {
+                rustc_public::abi::Primitive::Pointer(_) if width == 64 => "usize".to_string(),
+                _ => format!("u{width}"),
+            };
+            let tag_ty = DebugLocalTypeKind::Basic {
+                name: tag_name,
+                size_bits: width,
+                encoding: "DW_ATE_unsigned",
+            };
+            (
+                Some(DebugEnumDiscriminant {
+                    offset_bits,
+                    ty: Box::new(tag_ty),
+                }),
+                DebugEnumLayout::Niche {
+                    width,
+                    niche_variant_start: niche_variants.start().to_index(),
+                    niche_start: *niche_start,
+                    untagged_variant: untagged_variant.to_index(),
+                },
+            )
+        }
+        rustc_public::abi::VariantsShape::Single { .. } => (None, DebugEnumLayout::Single),
+        rustc_public::abi::VariantsShape::Empty => (None, DebugEnumLayout::Empty),
+    };
+
+    let source_variants = adt_def.variants();
+    let mut variants = Vec::with_capacity(source_variants.len());
+
+    for (variant_index, variant) in source_variants.iter().enumerate() {
+        let fields = variant.fields();
+        let field_offsets: Vec<u64> = match &layout_shape.variants {
+            rustc_public::abi::VariantsShape::Single { index }
+                if index.to_index() != variant_index =>
+            {
+                vec![0; fields.len()]
+            }
+            rustc_public::abi::VariantsShape::Empty => vec![0; fields.len()],
+            _ => crate::translator::layout::enum_variant_field_offsets(
+                &layout_shape,
+                variant_index,
+                pliron::location::Location::Unknown,
+            )
+            .ok()?
+            .into_iter()
+            .map(|offset| offset as u64)
+            .collect(),
+        };
+
+        let mut members = Vec::new();
+        for (field_index, field) in fields.into_iter().enumerate() {
+            let field_ty = field.ty_with_args(&substs);
+            let Some(member_ty) = debug_type_for_ty_at(&field_ty, depth + 1) else {
+                continue;
+            };
+            if member_ty.size_bits() == 0 {
+                continue;
+            }
+            let offset_bytes = *field_offsets.get(field_index)?;
+            let source_name = field.name.to_string();
+            let member_name = if source_name.parse::<usize>().ok() == Some(field_index) {
+                format!("__{field_index}")
+            } else {
+                source_name
+            };
+            members.push(DebugTypeMember {
+                name: member_name,
+                offset_bits: offset_bytes * 8,
+                ty: member_ty,
+            });
+        }
+
+        let discriminant_value = match debug_layout {
+            DebugEnumLayout::Direct { width } => {
+                let variant_idx = rustc_public::ty::VariantIdx::to_val(variant_index);
+                let raw = adt_def.discriminant_for_variant(variant_idx).val;
+                truncate_debug_discriminant(raw, width)
+            }
+            DebugEnumLayout::Niche {
+                width,
+                niche_variant_start,
+                niche_start,
+                untagged_variant,
+            } => {
+                if variant_index == untagged_variant {
+                    None
+                } else {
+                    let raw = (variant_index as u128)
+                        .wrapping_sub(niche_variant_start as u128)
+                        .wrapping_add(niche_start);
+                    truncate_debug_discriminant(raw, width)
+                }
+            }
+            DebugEnumLayout::Single | DebugEnumLayout::Empty => None,
+        };
+
+        variants.push(DebugEnumVariant {
+            name: variant.name().to_string(),
+            discriminant: discriminant_value,
+            members,
+        });
+    }
+
+    Some(DebugLocalTypeKind::Enum {
+        name: adt_def.trimmed_name(),
+        size_bits,
+        discriminant,
+        variants,
+    })
+}
+
+/// Truncate a physical discriminant to the width LLVM will attach as
+/// `extraData` on the corresponding variant member.
+fn truncate_debug_discriminant(value: u128, width: u64) -> Option<u64> {
+    if width == 0 || width > 64 {
+        return None;
+    }
+    let mask = if width == 64 {
+        u128::from(u64::MAX)
+    } else {
+        (1u128 << width) - 1
+    };
+    Some((value & mask) as u64)
 }
 
 /// Total size of `ty` in bits from its layout, or `None` if unavailable.
