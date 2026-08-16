@@ -133,7 +133,7 @@ mod kernels {
         }
     }
 
-    #[allow(clippy::manual_unwrap_or)]
+    #[allow(clippy::manual_unwrap_or, clippy::too_many_arguments)]
     #[kernel]
     pub fn scoped_integer_cas(
         block_counter: &[BlockAtomicU32],
