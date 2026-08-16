@@ -63,9 +63,13 @@ non-zero byte addends into a static (see `struct_constant_provenance`,
 in aggregate constants are also supported when their data pointer relocates to
 a device static and the pointee is a same-element array-to-slice view. Their
 literal `usize` length metadata is decoded independently, including non-zero
-static byte addends and nested aggregate field offsets. Pointer relocations
-inside union constants, unsupported fat-pointer metadata, and pointer-to-array
-union constants (`&[U; N]`) remain rejected.
+static byte addends and nested aggregate field offsets. Thin-pointer-only
+union constants preserve the same relocation provenance, including non-zero
+addends, by reconstructing one typed pointer carrier instead of transmuting
+placeholder bytes. Pointer/integer overlapping unions, fat or nested pointer
+storage in unions, over-aligned/padded pointer unions, unsupported fat-pointer
+metadata, pointer-to-array union constants (`&[U; N]`), and pointer
+relocations in device-global union initializers remain rejected.
 
 Enum constants preserve payload relocations to device statics, including
 non-zero byte addends. This includes niche-encoded `Option<&T>` and

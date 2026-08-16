@@ -21,6 +21,7 @@
 //! - tuple arrays containing pointers to device statics,
 //! - tuple-array pointer relocations with non-zero static addends,
 //! - initialized union constants, including `[U; N]` runtime indexing,
+//! - thin-pointer-only union constants that preserve device-static provenance,
 //! - unions nested inside tuple and struct constants,
 //! - `MaybeUninit<T>` array constants.
 //!
@@ -126,6 +127,28 @@ static POINTER_VALUES: [u32; 3] = [11, 17, 23];
 
 const POINTER_TUPLE_TABLE: [(&u32, bool); 2] =
     [(&FIRST_POINTER_VALUE, false), (&POINTER_VALUES[2], true)];
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+union PointerBits {
+    word: *const u32,
+    bytes: *const u8,
+}
+
+const DIRECT_POINTER_UNION: PointerBits = PointerBits {
+    word: &FIRST_POINTER_VALUE as *const u32,
+};
+const POINTER_UNION_TABLE: [PointerBits; 2] = [
+    PointerBits {
+        word: &POINTER_VALUES[0] as *const u32,
+    },
+    PointerBits {
+        // Initialize through the other union view and keep a non-zero addend.
+        // Import must preserve the relocation rather than the placeholder bytes.
+        bytes: &POINTER_VALUES[2] as *const u32 as *const u8,
+    },
+];
 
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
@@ -303,6 +326,21 @@ mod kernels {
     }
 
     #[inline(never)]
+    fn read_pointer_union(value: PointerBits) -> u32 {
+        unsafe { *value.word }
+    }
+
+    #[inline(never)]
+    fn direct_pointer_union_value() -> u32 {
+        read_pointer_union(DIRECT_POINTER_UNION)
+    }
+
+    #[inline(never)]
+    fn pointer_union_array_value(i: usize) -> u32 {
+        read_pointer_union(POINTER_UNION_TABLE[i & 1])
+    }
+
+    #[inline(never)]
     fn read_bits_word(bits: Bits) -> u32 {
         unsafe { bits.word }
     }
@@ -356,7 +394,11 @@ mod kernels {
 
     #[inline(never)]
     fn initialized_union_constants_value(i: usize) -> u32 {
-        direct_union_value()
+        direct_pointer_union_value()
+            .wrapping_mul(257)
+            .wrapping_add(pointer_union_array_value(i))
+            .wrapping_mul(257)
+            .wrapping_add(direct_union_value())
             .wrapping_mul(257)
             .wrapping_add(union_array_value(i))
             .wrapping_mul(257)
@@ -443,10 +485,15 @@ mod kernels {
 }
 
 fn expected_union(i: usize) -> u32 {
+    let pointer = [11u32, 23][i & 1];
     let table = [0x1122_3344u32, 0x5566_7788, 0x99aa_bbcc, 0xdead_beef][i & 3];
     let maybe = [0x1357_9bdfu32, 0x2468_ace0][i & 1];
 
-    0x1122_3344u32
+    11u32
+        .wrapping_mul(257)
+        .wrapping_add(pointer)
+        .wrapping_mul(257)
+        .wrapping_add(0x1122_3344)
         .wrapping_mul(257)
         .wrapping_add(table)
         .wrapping_mul(257)
@@ -615,7 +662,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if failures == 0 {
         println!(
-            "array_constants: PASS ({N} threads; primitive, enum, initialized union/MaybeUninit, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, padded/nested/ZST struct, pointer-to-array including struct references, and tuple-array static-pointer constants)"
+            "array_constants: PASS ({N} threads; primitive, enum, initialized union/MaybeUninit, pointer-union provenance, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, padded/nested/ZST struct, pointer-to-array including struct references, and tuple-array static-pointer constants)"
         );
         Ok(())
     } else {

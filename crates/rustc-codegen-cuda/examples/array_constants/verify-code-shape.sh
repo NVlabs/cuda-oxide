@@ -207,6 +207,8 @@ require_symbol_shape "${llvm_ir}" llvm "${bare_enum_symbol}" \
     "runtime enum-array element load" \
     'load \{ i32 \},'
 
+pointer_union_array_symbol='array_constants__kernels__pointer_union_array_value'
+direct_pointer_union_symbol='array_constants__kernels__direct_pointer_union_value'
 union_array_symbol='array_constants__kernels__union_array_value'
 direct_union_symbol='array_constants__kernels__direct_union_value'
 union_tuple_symbol='array_constants__kernels__union_tuple_value'
@@ -214,6 +216,29 @@ union_struct_symbol='array_constants__kernels__union_struct_value'
 partial_union_symbol='array_constants__kernels__partial_union_value'
 maybe_uninit_symbol='array_constants__kernels__maybe_uninit_array_value'
 union_storage='\{ \[0 x i32\], i32 \}'
+
+# Pointer-only union constants must keep a real pointer carrier. The second
+# table element is initialized through the `*const u8` view at POINTER_VALUES[2],
+# so its relocation carries an eight-byte addend even though the importer is
+# free to choose either compatible pointer field as the physical union carrier.
+require_symbol_shape "${llvm_ir}" llvm "${pointer_union_array_symbol}" \
+    "pointer-bearing union array storage with a provenance-carrying pointer slot" \
+    'alloca \[2 x \{[^}]*ptr[^}]*\}\]'
+require_symbol_shape "${llvm_ir}" llvm "${pointer_union_array_symbol}" \
+    "eight-byte pointer-union device-static subobject projection" \
+    'getelementptr( inbounds)? i8,.*i64 8([^0-9]|$)'
+reject_symbol_shape "${llvm_ir}" llvm "${pointer_union_array_symbol}" \
+    "placeholder-byte inttoptr reconstruction for pointer unions" \
+    'inttoptr'
+reject_symbol_shape "${llvm_ir}" llvm "${pointer_union_array_symbol}" \
+    "raw eight-byte image materialization for pointer unions" \
+    'alloca \[8 x i8\]'
+reject_symbol_shape "${llvm_ir}" llvm "${direct_pointer_union_symbol}" \
+    "placeholder-byte inttoptr reconstruction for direct pointer unions" \
+    'inttoptr'
+reject_symbol_shape "${llvm_ir}" llvm "${direct_pointer_union_symbol}" \
+    "raw eight-byte image materialization for direct pointer unions" \
+    'alloca \[8 x i8\]'
 
 # Initialized union constants are deliberately materialized element-wise instead
 # of taking the promoted-global fast path. rustc gives the importer a byte image
