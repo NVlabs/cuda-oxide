@@ -61,10 +61,12 @@ static byte addends and nested aggregate field offsets. Pointer relocations
 inside union constants, unsupported fat-pointer metadata, and pointer-to-array
 union constants (`&[U; N]`) remain rejected.
 
-Enum constants with direct thin-reference payloads preserve relocations to
-device statics, including non-zero byte addends. This includes niche-encoded
-`Option<&T>` and direct-tagged enum layouts. Anonymous promoted allocations and
-pointer relocations nested inside enum payload fields remain unsupported.
+Enum constants preserve payload relocations to device statics, including
+non-zero byte addends. This includes niche-encoded `Option<&T>` and
+direct-tagged enum layouts, both for direct thin-reference payloads and for
+pointers nested inside tuple, struct, or array payload fields. Anonymous
+promoted allocations remain unsupported, as does a relocation-carrying enum
+constant nested inside another constant's field.
 
 ## Compiler: Closures
 
