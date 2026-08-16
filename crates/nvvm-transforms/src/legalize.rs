@@ -650,12 +650,12 @@ fn rewrite_scoped_integer_atomic_rmw(ctx: &mut Context, rewrite: &IntegerRmwRewr
 
 /// Validate integer compare-exchange operations for the legacy NVVM path.
 ///
-/// Device scope plus monotonic failure ordering remains a native LLVM
-/// `cmpxchg`, matching the bare-atomicrmw/cmpxchg subset the legacy LLVM 7
-/// dialect handles directly. Block/system scope or a stronger failure
-/// ordering is rewritten to
-/// scoped inline PTX because legacy libNVVM accepts the LLVM failure-ordering
-/// field but ignores it.
+/// Device scope plus monotonic success and failure ordering remains a native
+/// LLVM `cmpxchg`, matching the bare-atomicrmw/cmpxchg subset the legacy
+/// LLVM 7 dialect handles directly. Block/system scope or any ordered success
+/// or failure ordering is rewritten to scoped inline PTX because legacy
+/// libNVVM accepts LLVM's cmpxchg ordering fields but lowers ordered forms to
+/// a bare unordered `atom.cas`.
 fn validate_integer_cmpxchg(
     ctx: &Context,
     op: Ptr<Operation>,
@@ -725,19 +725,15 @@ fn validate_integer_cmpxchg(
         .get_attr_llvm_cas_syncscope(ctx)
         .map(|scope| String::from((*scope).clone()));
     let scope = legacy_atomic_scope(ctx, op, syncscope, "compare-exchange")?;
+    // A validated pair never has a failure ordering stronger than its success
+    // ordering, so the success check also covers every ordered failure
+    // ordering. Any ordered form routes to the scoped PTX rewrite: the inline
+    // `atom.{sem}.{scope}.cas` derives its semantics from the success
+    // ordering, which is what the PTX atomic ABI requires.
     let needs_rewrite =
-        scope.needs_scoped_rewrite() || !matches!(failure, AtomicOrderingAttr::Monotonic);
+        scope.needs_scoped_rewrite() || !matches!(success, AtomicOrderingAttr::Monotonic);
 
     if !needs_rewrite {
-        // Legacy libNVVM accepts an ordered success ordering syntactically
-        // but lowers it to a bare unordered `atom.cas` with no fences, so a
-        // native-lane `cmpxchg` must be monotonic on the success side too.
-        if !matches!(success, AtomicOrderingAttr::Monotonic) {
-            return pliron::input_err!(
-                op.deref(ctx).loc(),
-                "legacy NVVM compare-exchange requires monotonic success ordering because libNVVM lowers ordered cmpxchg to an unordered atom.cas"
-            );
-        }
         return Ok(None);
     }
     if capability < 70 {
@@ -3278,10 +3274,63 @@ mod tests {
     }
 
     #[test]
+    fn legacy_integer_cmpxchg_rewrites_ordered_success_with_monotonic_failure() {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "ordered_success_cas".try_into().unwrap());
+
+        for (name, width, success) in [
+            ("device_acquire_success", 32, AtomicOrderingAttr::Acquire),
+            ("device_release_success", 64, AtomicOrderingAttr::Release),
+            ("device_acq_rel_success", 32, AtomicOrderingAttr::AcqRel),
+            ("device_seq_cst_success", 64, AtomicOrderingAttr::SeqCst),
+        ] {
+            integer_cmpxchg_function(
+                &mut ctx,
+                &module,
+                name,
+                1,
+                width,
+                success,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+            );
+        }
+
+        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
+        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+
+        let mut ops = Vec::new();
+        collect_ops(&ctx, module.get_operation(), &mut ops);
+        assert_eq!(
+            ops.iter()
+                .filter(|op| Operation::get_op::<llvm::AtomicCmpxchgOp>(**op, &ctx).is_some())
+                .count(),
+            0,
+            "ordered-success compare-exchange must route to the PTX rewrite lane"
+        );
+
+        let ir = export_module_to_string_with_config(
+            &ctx,
+            &module,
+            &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+        )
+        .expect("ordered-success compare-exchange exports as legacy-compatible inline PTX");
+        for instruction in [
+            "atom.acquire.gpu.cas.b32",
+            "atom.release.gpu.cas.b64",
+            "atom.acq_rel.gpu.cas.b32",
+            "fence.sc.gpu; atom.acquire.gpu.cas.b64",
+        ] {
+            assert!(ir.contains(instruction), "missing `{instruction}`:\n{ir}");
+        }
+    }
+
+    #[test]
     fn legacy_integer_cmpxchg_ptx_rewrite_requires_sm70() {
         for (scope, failure) in [
             (Some("block".to_string()), AtomicOrderingAttr::Monotonic),
             (Some("device".to_string()), AtomicOrderingAttr::Acquire),
+            (Some("device".to_string()), AtomicOrderingAttr::Monotonic),
         ] {
             let mut ctx = Context::new();
             let module = ModuleOp::new(&mut ctx, "integer_cas_floor".try_into().unwrap());
@@ -3424,38 +3473,6 @@ mod tests {
                 AtomicOrderingAttr::Acquire,
                 Some("device".to_string()),
                 "invalid success/failure ordering pair",
-            ),
-            (
-                32,
-                1,
-                AtomicOrderingAttr::Acquire,
-                AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
-                "monotonic success ordering",
-            ),
-            (
-                32,
-                1,
-                AtomicOrderingAttr::Release,
-                AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
-                "monotonic success ordering",
-            ),
-            (
-                32,
-                1,
-                AtomicOrderingAttr::AcqRel,
-                AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
-                "monotonic success ordering",
-            ),
-            (
-                32,
-                1,
-                AtomicOrderingAttr::SeqCst,
-                AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
-                "monotonic success ordering",
             ),
         ] {
             let mut ctx = Context::new();
