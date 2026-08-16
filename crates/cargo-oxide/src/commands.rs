@@ -18,28 +18,40 @@ use std::process::Command;
 
 const MATERIALIZE_ENV: &str = reserved_oxide_symbols::MATERIALIZE_CUBIN_ENV;
 const EXPECTED_PROVENANCE_ENV: &str = reserved_oxide_symbols::MATERIALIZER_PROVENANCE_ENV;
+const MATERIALIZER_HANDSHAKE_ENV: &str = reserved_oxide_symbols::MATERIALIZER_HANDSHAKE_ENV;
 const CODEGEN_FINGERPRINT_ENV: &str = reserved_oxide_symbols::CODEGEN_FINGERPRINT_ENV;
 const DEVICE_CODEGEN_CRATE_ENV: &str = reserved_oxide_symbols::DEVICE_CODEGEN_CRATE_ENV;
 const BACKEND_IDENTITY_CFG: &str = "cuda_oxide_internal_backend_identity";
 const LEGACY_CODEGEN_FINGERPRINT_CFG: &str = "cuda_oxide_internal_codegen_env";
 const LEGACY_MATERIALIZER_PROVENANCE_CFG: &str = "cuda_oxide_internal_materializer_provenance";
+const MATERIALIZER_HANDSHAKE_CACHE: &str = ".oxide-artifacts/materializer-handshake/v1.json";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct MaterializationMode {
-    provenance: Option<String>,
+    prepared: Option<PreparedMaterialization>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PreparedMaterialization {
+    provenance_sha256_hex: String,
+    tool_identity_handshake_json: String,
 }
 
 impl MaterializationMode {
     fn enabled(&self) -> bool {
-        self.provenance.is_some()
+        self.prepared.is_some()
     }
 
     fn apply(&self, cmd: &mut Command) {
-        if let Some(provenance) = &self.provenance {
+        if let Some(prepared) = &self.prepared {
             // These override inherited/project values: they are a single
             // wrapper-generated handshake tied to this Cargo invocation.
             cmd.env(MATERIALIZE_ENV, "1")
-                .env(EXPECTED_PROVENANCE_ENV, provenance)
+                .env(EXPECTED_PROVENANCE_ENV, &prepared.provenance_sha256_hex)
+                .env(
+                    MATERIALIZER_HANDSHAKE_ENV,
+                    &prepared.tool_identity_handshake_json,
+                )
                 .env("CUDA_OXIDE_EMIT_NVVM_IR", "1");
         }
     }
@@ -194,15 +206,26 @@ fn prepare_materialization_result_with_env(
         .parse()
         .map_err(|error| format!("invalid materialization target {arch:?}: {error}"))?;
 
+    let handshake = discover_materializer_handshake(ctx)?;
+    let handshake_json = serde_json::to_string(&handshake)
+        .map_err(|error| format!("could not encode materializer handshake: {error}"))?;
     Ok(MaterializationMode {
-        provenance: Some(discover_materializer_provenance(ctx)?),
+        prepared: Some(PreparedMaterialization {
+            provenance_sha256_hex: digest_hex(&handshake.provenance_sha256),
+            tool_identity_handshake_json: handshake_json,
+        }),
     })
 }
 
-fn discover_materializer_provenance(ctx: &Context) -> Result<String, String> {
+fn discover_materializer_handshake(
+    ctx: &Context,
+) -> Result<cuda_artifact_finalizer::MaterializerHandshakeV1, String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("could not locate cargo-oxide executable: {error}"))?;
     let mut command = materializer_discovery_command(ctx, &executable);
+    if let Some(cached) = read_materializer_handshake_cache(ctx) {
+        command.env(MATERIALIZER_HANDSHAKE_ENV, cached);
+    }
     let output = command
         .output()
         .map_err(|error| format!("could not start CUDA materializer discovery: {error}"))?;
@@ -213,41 +236,92 @@ fn discover_materializer_provenance(ctx: &Context) -> Result<String, String> {
             stderr.trim()
         ));
     }
-    let provenance = String::from_utf8(output.stdout)
+    let handshake = String::from_utf8(output.stdout)
         .map_err(|_| "CUDA materializer discovery returned non-UTF-8 output".to_string())?;
-    let provenance = provenance.trim();
-    if provenance.len() != 64
-        || !provenance
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-    {
+    let handshake: cuda_artifact_finalizer::MaterializerHandshakeV1 =
+        serde_json::from_str(handshake.trim()).map_err(|error| {
+            format!("CUDA materializer discovery returned an invalid v1 handshake: {error}")
+        })?;
+    if !handshake.has_consistent_provenance() {
         return Err(format!(
-            "CUDA materializer discovery returned an invalid provenance digest: {provenance:?}"
+            "CUDA materializer discovery returned an inconsistent handshake version {}",
+            handshake.version
         ));
     }
-    Ok(provenance.to_string())
+    write_materializer_handshake_cache(ctx, &handshake);
+    Ok(handshake)
 }
 
 fn materializer_discovery_command(ctx: &Context, executable: &Path) -> Command {
     let mut command = Command::new(executable);
-    command.arg("__materializer-provenance");
+    command.arg("__materializer-handshake");
     apply_config_env(&mut command, ctx);
     apply_ld_library_path(&mut command, ctx);
+    // Only the local cache explicitly installed by the caller may seed the
+    // helper; never consume an inherited or project-provided internal value.
+    command.env_remove(MATERIALIZER_HANDSHAKE_ENV);
     command
 }
 
-pub fn print_materializer_provenance() {
-    let finalizer = cuda_artifact_finalizer::Finalizer::discover().unwrap_or_else(|error| {
-        eprintln!("could not discover CUDA artifact finalizer: {error}");
-        std::process::exit(1);
-    });
-    let provenance = finalizer.provenance_digest().unwrap_or_else(|| {
+fn materializer_handshake_cache_path(ctx: &Context) -> PathBuf {
+    ctx.workspace_root.join(MATERIALIZER_HANDSHAKE_CACHE)
+}
+
+fn read_materializer_handshake_cache(ctx: &Context) -> Option<String> {
+    let json = fs::read_to_string(materializer_handshake_cache_path(ctx)).ok()?;
+    let handshake: cuda_artifact_finalizer::MaterializerHandshakeV1 =
+        serde_json::from_str(json.trim()).ok()?;
+    handshake.has_consistent_provenance().then_some(json)
+}
+
+fn write_materializer_handshake_cache(
+    ctx: &Context,
+    handshake: &cuda_artifact_finalizer::MaterializerHandshakeV1,
+) {
+    let path = materializer_handshake_cache_path(ctx);
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(json) = serde_json::to_string(handshake) else {
+        return;
+    };
+    let temporary = parent.join(format!("v1.{}.tmp", std::process::id()));
+    if fs::write(&temporary, json).is_ok() {
+        let _ = fs::rename(&temporary, &path);
+    }
+}
+
+pub fn print_materializer_handshake() {
+    let cached = std::env::var(MATERIALIZER_HANDSHAKE_ENV)
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .filter(cuda_artifact_finalizer::MaterializerHandshakeV1::has_consistent_provenance);
+    let finalizer = cached
+        .as_ref()
+        .map_or_else(
+            cuda_artifact_finalizer::Finalizer::discover,
+            cuda_artifact_finalizer::Finalizer::discover_with_handshake,
+        )
+        .unwrap_or_else(|error| {
+            eprintln!("could not discover CUDA artifact finalizer: {error}");
+            std::process::exit(1);
+        });
+    let handshake = finalizer.materializer_handshake().unwrap_or_else(|| {
         eprintln!(
             "the loaded libNVVM or nvJitLink library cannot be tied to an exact file; refusing materialization because Cargo could not fingerprint the compiler inputs"
         );
         std::process::exit(1);
     });
-    println!("{}", digest_hex(&provenance));
+    println!(
+        "{}",
+        serde_json::to_string(&handshake).unwrap_or_else(|error| {
+            eprintln!("could not encode CUDA materializer handshake: {error}");
+            std::process::exit(1);
+        })
+    );
 }
 
 fn parse_strict_bool(name: &str, value: &str) -> Result<bool, String> {
@@ -3204,6 +3278,9 @@ fn passthrough_codegen_fingerprint_with_env(
     effective_env.remove(CODEGEN_FINGERPRINT_ENV);
     effective_env.remove(MATERIALIZE_ENV);
     effective_env.remove(EXPECTED_PROVENANCE_ENV);
+    // Descriptor identity only accelerates verification; artifact identity is
+    // already represented by the content-derived provenance above.
+    effective_env.remove(MATERIALIZER_HANDSHAKE_ENV);
 
     if opts.verbose {
         effective_env.insert("CUDA_OXIDE_VERBOSE".to_string(), b"1".to_vec());
@@ -3220,11 +3297,11 @@ fn passthrough_codegen_fingerprint_with_env(
     if opts.emit_nvvm_ir || materialization.enabled() {
         effective_env.insert("CUDA_OXIDE_EMIT_NVVM_IR".to_string(), b"1".to_vec());
     }
-    if let Some(provenance) = &materialization.provenance {
+    if let Some(prepared) = &materialization.prepared {
         effective_env.insert(MATERIALIZE_ENV.to_string(), b"1".to_vec());
         effective_env.insert(
             EXPECTED_PROVENANCE_ENV.to_string(),
-            provenance.as_bytes().to_vec(),
+            prepared.provenance_sha256_hex.as_bytes().to_vec(),
         );
     }
     if let Some(target_arch) = target_arch {
@@ -6960,6 +7037,29 @@ mod tests {
         std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), unique))
     }
 
+    fn test_materializer_handshake() -> cuda_artifact_finalizer::MaterializerHandshakeV1 {
+        let file = cuda_artifact_finalizer::ToolFileIdentity {
+            length: 123,
+            modified_seconds: 456,
+            modified_nanoseconds: 789,
+            device: Some(10),
+            inode: Some(11),
+            change_time_seconds: Some(12),
+            change_time_nanoseconds: Some(13),
+        };
+        cuda_artifact_finalizer::MaterializerHandshakeV1::new(
+            cuda_artifact_finalizer::PinnedToolProvenance {
+                sha256: [1; 32],
+                file,
+            },
+            cuda_artifact_finalizer::PinnedToolProvenance {
+                sha256: [2; 32],
+                file,
+            },
+            [3; 32],
+        )
+    }
+
     #[test]
     fn strict_materialization_boolean_rejects_presence_only_values() {
         for value in ["1", "true", " YES ", "on"] {
@@ -7004,6 +7104,10 @@ mod tests {
                     "LD_LIBRARY_PATH".to_string(),
                     "/configured/cuda/lib64".to_string(),
                 ),
+                (
+                    MATERIALIZER_HANDSHAKE_ENV.to_string(),
+                    "ambient-handshake-must-not-be-used".to_string(),
+                ),
             ],
             ..OxideConfig::default()
         });
@@ -7035,6 +7139,35 @@ mod tests {
                 Some(configured_libdevice)
             );
         }
+        assert_eq!(command_env(&discovery, MATERIALIZER_HANDSHAKE_ENV), None);
+    }
+
+    #[test]
+    fn materializer_handshake_cache_accepts_only_consistent_v1_records() {
+        let root = unique_temp_dir("cargo_oxide_materializer_handshake");
+        fs::create_dir(&root).unwrap();
+        let mut ctx = test_context(OxideConfig::default());
+        ctx.workspace_root = root.clone();
+        let handshake = test_materializer_handshake();
+
+        write_materializer_handshake_cache(&ctx, &handshake);
+        let cached = read_materializer_handshake_cache(&ctx).unwrap();
+        assert_eq!(
+            serde_json::from_str::<cuda_artifact_finalizer::MaterializerHandshakeV1>(&cached)
+                .unwrap(),
+            handshake,
+        );
+
+        let mut inconsistent = handshake;
+        inconsistent.libnvvm.sha256[0] ^= 1;
+        fs::write(
+            materializer_handshake_cache_path(&ctx),
+            serde_json::to_string(&inconsistent).unwrap(),
+        )
+        .unwrap();
+        assert!(read_materializer_handshake_cache(&ctx).is_none());
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -9063,7 +9196,10 @@ device-owner = { path = "../device-owner" }
             )
         );
         let materialized = MaterializationMode {
-            provenance: Some("ab".repeat(32)),
+            prepared: Some(PreparedMaterialization {
+                provenance_sha256_hex: "ab".repeat(32),
+                tool_identity_handshake_json: "{\"version\":1}".to_string(),
+            }),
         };
         assert_ne!(
             base_hash,
@@ -9290,7 +9426,10 @@ device-owner = { path = "../device-owner" }
     fn materialization_forces_nvvm_ir_and_exact_provenance_handshake() {
         let mut cmd = Command::new("cargo");
         let materialization = MaterializationMode {
-            provenance: Some("42".repeat(32)),
+            prepared: Some(PreparedMaterialization {
+                provenance_sha256_hex: "42".repeat(32),
+                tool_identity_handshake_json: "{\"version\":1}".to_string(),
+            }),
         };
 
         apply_output_mode(&mut cmd, false, Some("sm_90"), &materialization);
@@ -9300,6 +9439,10 @@ device-owner = { path = "../device-owner" }
             Some("1")
         );
         assert_eq!(command_env(&cmd, MATERIALIZE_ENV).as_deref(), Some("1"));
+        assert_eq!(
+            command_env(&cmd, MATERIALIZER_HANDSHAKE_ENV).as_deref(),
+            Some("{\"version\":1}")
+        );
         assert_eq!(
             command_env(&cmd, EXPECTED_PROVENANCE_ENV).as_deref(),
             Some("4242424242424242424242424242424242424242424242424242424242424242")

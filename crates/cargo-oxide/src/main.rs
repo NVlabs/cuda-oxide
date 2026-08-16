@@ -63,8 +63,8 @@ struct Cli {
 enum Commands {
     /// Internal helper: discover exact CUDA compiler provenance in the same
     /// startup environment that will be given to Cargo/rustc.
-    #[command(name = "__materializer-provenance", hide = true)]
-    MaterializerProvenance,
+    #[command(name = "__materializer-handshake", hide = true)]
+    MaterializerHandshake,
     /// Build and run an example or project
     Run {
         /// Example name (required in workspace, optional for standalone projects)
@@ -559,7 +559,7 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
             "--materialize-cubin cannot be used with update because update only refreshes the codegen backend"
                 .to_string(),
         ),
-        Commands::MaterializerProvenance => Err(
+        Commands::MaterializerHandshake => Err(
             "--materialize-cubin cannot be passed to the internal materializer discovery helper"
                 .to_string(),
         ),
@@ -589,8 +589,8 @@ fn main() {
     let materialize_cubin = cli.materialize_cubin;
 
     match cli.command {
-        Commands::MaterializerProvenance => {
-            commands::print_materializer_provenance();
+        Commands::MaterializerHandshake => {
+            commands::print_materializer_handshake();
         }
         Commands::Run {
             example,

@@ -408,6 +408,7 @@ pub(crate) fn convert_atomic_store(
     );
 
     let asm_op = inline_asm.get_operation();
+    crate::convert::preserve_location(ctx, op, asm_op);
     rewriter.insert_operation(ctx, asm_op);
     rewriter.erase_operation(ctx, op);
 

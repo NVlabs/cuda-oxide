@@ -263,6 +263,7 @@ pub fn emit_inline_ptx(
         );
         tuple_op.deref_mut(ctx).set_loc(loc.clone());
         tuple_op.insert_after(ctx, inline_ptx);
+        super::super::helpers::set_compiler_result_bundle_marker(ctx, tuple_op);
         let tuple_val = tuple_op.deref(ctx).get_result(0);
 
         emit_store_result_and_goto(

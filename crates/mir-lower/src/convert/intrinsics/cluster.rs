@@ -41,6 +41,7 @@ pub(crate) fn convert_cluster_idx(
     let inline_asm = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         i32_type.into(),
         vec![],
         CLUSTER_IDX_ASM,
@@ -60,6 +61,7 @@ pub(crate) fn convert_num_clusters(
     let inline_asm = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         i32_type.into(),
         vec![],
         NUM_CLUSTERS_ASM,

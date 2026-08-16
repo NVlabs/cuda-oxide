@@ -8,10 +8,11 @@
 //! `cargo oxide --materialize-cubin` discovers and fingerprints the exact
 //! libNVVM, nvJitLink, and libdevice inputs before invoking Cargo. Device
 //! macros record the complete codegen identity and exact provenance as Cargo
-//! environment dependencies. We rediscover the tools and compare their bytes
-//! before compiling. Setting the internal opt-in around raw Cargo is
-//! unsupported: Cargo can reuse an existing artifact without invoking this
-//! backend, and when the backend does run it rejects a missing handshake.
+//! environment dependencies. We reopen the tools, bind the parent digest to
+//! matching retained-file identities, and revalidate those identities around
+//! compilation. Setting the internal opt-in around raw Cargo is unsupported:
+//! Cargo can reuse an existing artifact without invoking this backend, and
+//! when the backend does run it rejects a missing handshake.
 
 use cuda_artifact_finalizer::{
     CudaArch, CudaArchParseError, DebugPolicy, FinalizationOptions, Finalizer, FinalizerError,
@@ -22,11 +23,14 @@ use thiserror::Error;
 pub(crate) const MATERIALIZE_ENV: &str = reserved_oxide_symbols::MATERIALIZE_CUBIN_ENV;
 pub(crate) const EXPECTED_PROVENANCE_ENV: &str =
     reserved_oxide_symbols::MATERIALIZER_PROVENANCE_ENV;
+pub(crate) const MATERIALIZER_HANDSHAKE_ENV: &str =
+    reserved_oxide_symbols::MATERIALIZER_HANDSHAKE_ENV;
 pub(crate) const CODEGEN_FINGERPRINT_ENV: &str = reserved_oxide_symbols::CODEGEN_FINGERPRINT_ENV;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MaterializationRequest {
     expected_provenance: [u8; 32],
+    tool_identity_handshake: cuda_artifact_finalizer::MaterializerHandshakeV1,
 }
 
 /// Cubin bytes plus ptxas resource diagnostics from the final link.
@@ -55,6 +59,17 @@ pub(crate) enum MaterializeError {
         "{MATERIALIZE_ENV}=true is missing cargo-oxide's tracked codegen fingerprint; use `cargo oxide build --materialize-cubin` instead of invoking raw Cargo"
     )]
     MissingCargoFingerprint,
+
+    #[error(
+        "{MATERIALIZE_ENV}=true requires cargo-oxide's named v1 tool-identity handshake in {MATERIALIZER_HANDSHAKE_ENV}"
+    )]
+    MissingToolIdentityHandshake,
+
+    #[error("{MATERIALIZER_HANDSHAKE_ENV} is not valid Unicode")]
+    NonUnicodeToolIdentityHandshake,
+
+    #[error("{MATERIALIZER_HANDSHAKE_ENV} is not a valid named v1 handshake: {reason}")]
+    InvalidToolIdentityHandshake { reason: String },
 
     #[error(
         "cargo-oxide's tracked codegen fingerprint must be exactly 64 lowercase hexadecimal characters, got {value:?}"
@@ -119,10 +134,41 @@ pub(crate) fn request_from_env() -> Result<Option<MaterializationRequest>, Mater
     let value = std::env::var(EXPECTED_PROVENANCE_ENV)
         .map_err(|_| MaterializeError::MissingExpectedProvenance)?;
     let expected_provenance = parse_digest(&value)?;
+    let handshake_json =
+        std::env::var(MATERIALIZER_HANDSHAKE_ENV).map_err(|error| match error {
+            std::env::VarError::NotPresent => MaterializeError::MissingToolIdentityHandshake,
+            std::env::VarError::NotUnicode(_) => MaterializeError::NonUnicodeToolIdentityHandshake,
+        })?;
+    let handshake: cuda_artifact_finalizer::MaterializerHandshakeV1 =
+        serde_json::from_str(&handshake_json).map_err(|error| {
+            MaterializeError::InvalidToolIdentityHandshake {
+                reason: error.to_string(),
+            }
+        })?;
+    validate_tool_identity_handshake(expected_provenance, &handshake)?;
     validate_codegen_fingerprint()?;
     Ok(Some(MaterializationRequest {
         expected_provenance,
+        tool_identity_handshake: handshake,
     }))
+}
+
+fn validate_tool_identity_handshake(
+    expected_provenance: [u8; 32],
+    handshake: &cuda_artifact_finalizer::MaterializerHandshakeV1,
+) -> Result<(), MaterializeError> {
+    if !handshake.has_consistent_provenance() || handshake.provenance_sha256 != expected_provenance
+    {
+        return Err(MaterializeError::InvalidToolIdentityHandshake {
+            reason: format!(
+                "version {} and provenance {} do not match expected v1 provenance {}",
+                handshake.version,
+                digest_hex(&handshake.provenance_sha256),
+                digest_hex(&expected_provenance),
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Reject artifact-loading models the finalizer cannot reproduce, before any
@@ -194,7 +240,7 @@ fn options(
 }
 
 fn checked_finalizer(request: MaterializationRequest) -> Result<Finalizer, MaterializeError> {
-    let finalizer = Finalizer::discover()?;
+    let finalizer = Finalizer::discover_with_handshake(&request.tool_identity_handshake)?;
     let actual = finalizer
         .provenance_digest()
         .ok_or(MaterializeError::UnverifiableProvenance)?;
@@ -267,6 +313,33 @@ fn digest_hex(digest: &[u8; 32]) -> String {
 mod tests {
     use super::*;
 
+    fn empty_tool_file_identity() -> cuda_artifact_finalizer::ToolFileIdentity {
+        cuda_artifact_finalizer::ToolFileIdentity {
+            length: 0,
+            modified_seconds: 0,
+            modified_nanoseconds: 0,
+            device: None,
+            inode: None,
+            change_time_seconds: None,
+            change_time_nanoseconds: None,
+        }
+    }
+
+    fn test_handshake() -> cuda_artifact_finalizer::MaterializerHandshakeV1 {
+        let file = empty_tool_file_identity();
+        cuda_artifact_finalizer::MaterializerHandshakeV1::new(
+            cuda_artifact_finalizer::PinnedToolProvenance {
+                sha256: [1; 32],
+                file,
+            },
+            cuda_artifact_finalizer::PinnedToolProvenance {
+                sha256: [2; 32],
+                file,
+            },
+            [3; 32],
+        )
+    }
+
     #[test]
     fn strict_boolean_parser_accepts_only_documented_values() {
         for value in ["1", " true ", "YES", "on"] {
@@ -294,9 +367,29 @@ mod tests {
     }
 
     #[test]
+    fn tool_identity_handshake_fails_closed_on_version_or_provenance_mismatch() {
+        let mut handshake = test_handshake();
+        let expected = handshake.provenance_sha256;
+        assert!(validate_tool_identity_handshake(expected, &handshake).is_ok());
+
+        handshake.version += 1;
+        assert!(matches!(
+            validate_tool_identity_handshake(expected, &handshake),
+            Err(MaterializeError::InvalidToolIdentityHandshake { .. })
+        ));
+        handshake.version = cuda_artifact_finalizer::MaterializerHandshakeV1::VERSION;
+        assert!(matches!(
+            validate_tool_identity_handshake([8; 32], &handshake),
+            Err(MaterializeError::InvalidToolIdentityHandshake { .. })
+        ));
+    }
+
+    #[test]
     fn unsupported_collection_models_fail_without_tools() {
+        let handshake = test_handshake();
         let request = Some(MaterializationRequest {
-            expected_provenance: [0; 32],
+            expected_provenance: handshake.provenance_sha256,
+            tool_identity_handshake: handshake,
         });
         assert!(matches!(
             validate_collection(request, false, true),

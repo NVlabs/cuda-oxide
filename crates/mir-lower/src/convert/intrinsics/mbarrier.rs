@@ -70,6 +70,7 @@ pub(crate) fn convert_init(
             inline_asm_convergent(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 vec![bar_ptr, count],
                 "mbarrier.init.shared.b64 [$0], $1;",
@@ -111,6 +112,7 @@ pub(crate) fn convert_arrive(
         IntrinsicBackend::LibNvvm => inline_asm_convergent(
             ctx,
             rewriter,
+            op,
             i64_ty.into(),
             vec![bar_ptr],
             "mbarrier.arrive.shared.b64 $0, [$1];",
@@ -142,6 +144,7 @@ pub(crate) fn convert_test_wait(
     let asm_op = inline_asm_convergent(
         ctx,
         rewriter,
+        op,
         i32_ty.into(),
         vec![bar_ptr, token],
         asm_template,
@@ -190,6 +193,7 @@ pub(crate) fn convert_inval(
             inline_asm_convergent(
                 ctx,
                 rewriter,
+                op,
                 void_ty.into(),
                 vec![bar_ptr],
                 "mbarrier.inval.shared.b64 [$0];",

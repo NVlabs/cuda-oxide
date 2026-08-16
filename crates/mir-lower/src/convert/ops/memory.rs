@@ -135,6 +135,7 @@ pub(crate) fn convert_store(
     if let Some(align) = align {
         llvm_export::ops::set_op_alignment(ctx, llvm_store.get_operation(), align as u32);
     }
+    crate::convert::preserve_location(ctx, op, llvm_store.get_operation());
     rewriter.insert_operation(ctx, llvm_store.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())
@@ -402,6 +403,7 @@ fn convert_mem_transfer(
         func_ty,
         vec![dst, src, bytes, volatile_val],
     );
+    crate::convert::preserve_location(ctx, op, call.get_operation());
     rewriter.insert_operation(ctx, call.get_operation());
     rewriter.erase_operation(ctx, op);
     Ok(())

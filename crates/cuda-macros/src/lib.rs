@@ -116,7 +116,7 @@ pub fn gpu_printf(input: TokenStream) -> TokenStream {
 /// Literal PTX registers that begin with `%` must be escaped as `%%`, matching
 /// CUDA C++ inline PTX. Literal `$` labels can be written normally.
 ///
-/// The surface supports up to 16 output operands across `out` and `inout`,
+/// The surface supports up to 64 output operands across `out` and `inout`,
 /// up to 16 explicit `in` operands, `clobber("memory")`,
 /// `options(register_only)`, and the explicit
 /// `options(register_only, may_diverge)` opt-in. `out` constraints use an `=`

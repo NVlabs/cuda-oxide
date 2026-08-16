@@ -50,13 +50,13 @@ use cuda_device::clc::{
     clc_query_get_first_ctaid_x, clc_query_is_canceled, clc_try_cancel, clc_try_cancel_multicast,
 };
 use cuda_device::cluster;
+use cuda_device::convert::cvt_bf16x2_f32;
 use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
-    cvt_f32x2_bf16x2, stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_alloc_cg2,
-    tcgen05_commit_multicast_cg2, tcgen05_commit_shared_cluster, tcgen05_dealloc,
-    tcgen05_dealloc_cg2, tcgen05_ld_16x256b_pure, tcgen05_load_wait, tcgen05_mma_f16,
-    tcgen05_mma_f16_cg2, tcgen05_relinquish_alloc_permit_cg2,
+    stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_alloc_cg2, tcgen05_commit_multicast_cg2,
+    tcgen05_commit_shared_cluster, tcgen05_dealloc, tcgen05_dealloc_cg2, tcgen05_ld_16x256b_pure,
+    tcgen05_load_wait, tcgen05_mma_f16, tcgen05_mma_f16_cg2, tcgen05_relinquish_alloc_permit_cg2,
 };
 use cuda_device::tma::{
     TmaDescriptor, cp_async_bulk_tensor_2d_g2s, cp_async_bulk_tensor_2d_g2s_multicast,
@@ -506,8 +506,8 @@ mod kernels {
                     tcgen05_load_wait();
 
                     // Convert f32 pairs → packed bf16 pairs, write via stmatrix
-                    let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                    let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                    let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                    let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
 
                     let out_row_lo = warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                     let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -516,8 +516,8 @@ mod kernels {
                     stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
                     // Same for the upper 8 rows of this 16-row block
-                    let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                    let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                    let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                    let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
 
                     let out_row_hi =
                         warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
@@ -752,8 +752,8 @@ mod kernels {
                     );
                     tcgen05_load_wait();
 
-                    let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                    let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                    let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                    let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
 
                     let out_row_lo = warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                     let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -761,8 +761,8 @@ mod kernels {
                     );
                     stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                    let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                    let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                    let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                    let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
 
                     let out_row_hi =
                         warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
@@ -1063,8 +1063,8 @@ mod kernels {
                     );
                     tcgen05_load_wait();
 
-                    let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                    let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                    let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                    let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
 
                     let out_row_lo = warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                     let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -1072,8 +1072,8 @@ mod kernels {
                     );
                     stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                    let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                    let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                    let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                    let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
 
                     let out_row_hi =
                         warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
@@ -1406,8 +1406,8 @@ mod kernels {
                         );
                         tcgen05_load_wait();
 
-                        let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                        let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                        let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                        let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
 
                         let out_row_lo =
                             warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
@@ -1416,8 +1416,8 @@ mod kernels {
                         );
                         stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                        let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                        let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                        let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                        let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
 
                         let out_row_hi =
                             warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
@@ -1885,8 +1885,8 @@ mod kernels {
                             );
                             tcgen05_load_wait();
 
-                            let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                            let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                            let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                            let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
                             let out_row_lo =
                                 warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                             let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -1896,8 +1896,8 @@ mod kernels {
                             );
                             stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                            let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                            let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                            let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                            let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
                             let out_row_hi =
                                 warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
                             let smem_addr_hi = (&raw mut SMEM_OUT as *mut u8).add(
@@ -2477,8 +2477,8 @@ mod kernels {
                             );
                             tcgen05_load_wait();
 
-                            let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                            let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                            let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                            let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
                             let out_row_lo =
                                 warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                             let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -2488,8 +2488,8 @@ mod kernels {
                             );
                             stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                            let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                            let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                            let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                            let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
                             let out_row_hi =
                                 warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
                             let smem_addr_hi = (&raw mut SMEM_OUT as *mut u8).add(
@@ -3159,8 +3159,8 @@ mod kernels {
                             );
                             tcgen05_load_wait();
 
-                            let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                            let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                            let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                            let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
                             let out_row_lo =
                                 warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                             let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -3170,8 +3170,8 @@ mod kernels {
                             );
                             stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                            let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                            let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                            let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                            let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
                             let out_row_hi =
                                 warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
                             let smem_addr_hi = (&raw mut SMEM_OUT as *mut u8).add(
@@ -3866,8 +3866,8 @@ mod kernels {
                             );
                             tcgen05_load_wait();
 
-                            let p0_lo = cvt_f32x2_bf16x2(regs_a[0], regs_a[1]);
-                            let p1_lo = cvt_f32x2_bf16x2(regs_b[0], regs_b[1]);
+                            let p0_lo = cvt_bf16x2_f32(regs_a[0], regs_a[1]);
+                            let p1_lo = cvt_bf16x2_f32(regs_b[0], regs_b[1]);
                             let out_row_lo =
                                 warp_row_base + (tmem_row_block as usize * 16) + row_within_8;
                             let smem_addr_lo = (&raw mut SMEM_OUT as *mut u8).add(
@@ -3877,8 +3877,8 @@ mod kernels {
                             );
                             stmatrix_m8n8_x2(smem_addr_lo, p0_lo, p1_lo);
 
-                            let p0_hi = cvt_f32x2_bf16x2(regs_a[2], regs_a[3]);
-                            let p1_hi = cvt_f32x2_bf16x2(regs_b[2], regs_b[3]);
+                            let p0_hi = cvt_bf16x2_f32(regs_a[2], regs_a[3]);
+                            let p1_hi = cvt_bf16x2_f32(regs_b[2], regs_b[3]);
                             let out_row_hi =
                                 warp_row_base + (tmem_row_block as usize * 16) + 8 + row_within_8;
                             let smem_addr_hi = (&raw mut SMEM_OUT as *mut u8).add(

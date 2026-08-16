@@ -10,6 +10,7 @@ use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpIn
 use pliron::builtin::ops::ModuleOp;
 use pliron::context::Context;
 use pliron::linked_list::ContainsLinkedList;
+use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
 
@@ -67,6 +68,14 @@ fn test_intrinsic_insertion() -> Result<(), anyhow::Error> {
         0,
     );
     let tid_op = nvvm::ReadPtxSregTidXOp::new(tid_op_ptr);
+    let expected_location = Location::Named {
+        name: "source-tid-x".to_string(),
+        child_loc: Box::new(Location::Unknown),
+    };
+    tid_op
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(expected_location.clone());
     tid_op.get_operation().insert_at_back(block, &ctx);
 
     // Add Return
@@ -91,6 +100,7 @@ fn test_intrinsic_insertion() -> Result<(), anyhow::Error> {
 
     // Verify result
     let mut found_intrinsic = false;
+    let mut found_intrinsic_call = false;
     let mut found_kernel = false;
 
     let module_op = module_ptr.deref(&ctx);
@@ -130,11 +140,28 @@ fn test_intrinsic_insertion() -> Result<(), anyhow::Error> {
                         .next()
                         .is_some()
                 );
+                let kernel_region = func_op.get_operation().deref(&ctx).get_region(0);
+                for kernel_block in kernel_region.deref(&ctx).iter(&ctx) {
+                    for body_op in kernel_block.deref(&ctx).iter(&ctx) {
+                        let Some(call) = Operation::get_op::<llvm::CallOp>(body_op, &ctx) else {
+                            continue;
+                        };
+                        if matches!(
+                            call.callee(&ctx),
+                            CallOpCallable::Direct(symbol)
+                                if symbol.to_string() == "llvm_nvvm_read_ptx_sreg_tid_x"
+                        ) {
+                            found_intrinsic_call = true;
+                            assert_eq!(call.get_operation().deref(&ctx).loc(), expected_location);
+                        }
+                    }
+                }
             }
         }
     }
 
     assert!(found_intrinsic, "Intrinsic function declaration not found");
+    assert!(found_intrinsic_call, "Intrinsic call not found in kernel");
     assert!(found_kernel, "Kernel function not found");
 
     Ok(())
@@ -1581,6 +1608,10 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let shared_ptr_ty = MirPtrType::get_shared(&mut ctx, i32_ty.into(), true);
     let generic_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let expected_call_location = Location::Named {
+        name: "source-device-call".to_string(),
+        child_loc: Box::new(Location::Unknown),
+    };
 
     // Callee: takes a *mut i32 in addrspace(3), returns ().
     let callee_func_ty = FunctionType::get(&ctx, vec![shared_ptr_ty.into()], vec![]);
@@ -1651,6 +1682,9 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
         );
         let call_op = mir::MirCallOp::new(call_op_ptr);
         call_op.set_attr_callee(&ctx, StringAttr::new("callee".to_string()));
+        call_op_ptr
+            .deref_mut(&ctx)
+            .set_loc(expected_call_location.clone());
         call_op_ptr.insert_at_back(block, &ctx);
 
         let ret_op = Operation::new(
@@ -1670,6 +1704,7 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
     mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let mut found_addrspace_cast = false;
+    let mut found_call = false;
     let module_op = module_ptr.deref(&ctx);
     let region = module_op.get_region(0);
     let block = region.deref(&ctx).iter(&ctx).next().unwrap();
@@ -1686,6 +1721,18 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
                 if Operation::get_op::<AddrSpaceCastOp>(body_op, &ctx).is_some() {
                     found_addrspace_cast = true;
                 }
+                if let Some(call) = Operation::get_op::<llvm::CallOp>(body_op, &ctx)
+                    && matches!(
+                        call.callee(&ctx),
+                        CallOpCallable::Direct(symbol) if symbol.to_string() == "callee"
+                    )
+                {
+                    found_call = true;
+                    assert_eq!(
+                        call.get_operation().deref(&ctx).loc(),
+                        expected_call_location
+                    );
+                }
             }
         }
     }
@@ -1694,6 +1741,7 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
         found_addrspace_cast,
         "caller body must contain llvm.addrspacecast for the addrspace(0) -> (3) coercion at the call site",
     );
+    assert!(found_call, "caller body must contain the lowered call");
     Ok(())
 }
 
@@ -2883,6 +2931,13 @@ fn test_multi_result_inline_ptx_lowers_to_struct_asm_and_extractvalues() -> Resu
         true,
         false,
     );
+    let expected_location = Location::Named {
+        name: "source-inline-ptx".to_string(),
+        child_loc: Box::new(Location::Unknown),
+    };
+    inline_ptx
+        .deref_mut(&ctx)
+        .set_loc(expected_location.clone());
     inline_ptx.insert_at_back(entry, &ctx);
     append_return(&mut ctx, entry);
 
@@ -2892,6 +2947,10 @@ fn test_multi_result_inline_ptx_lowers_to_struct_asm_and_extractvalues() -> Resu
     let mut extract_indices = Vec::new();
     for op in lowered_kernel_body(&ctx, module_ptr) {
         if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
+            assert_eq!(
+                inline_asm.get_operation().deref(&ctx).loc(),
+                expected_location
+            );
             assert_eq!(
                 inline_asm
                     .get_attr_inline_asm_template(&ctx)
@@ -2926,6 +2985,7 @@ fn test_multi_result_inline_ptx_lowers_to_struct_asm_and_extractvalues() -> Resu
             }
             asm_result = Some(result);
         } else if let Some(extract) = Operation::get_op::<llvm::ExtractValueOp>(op, &ctx) {
+            assert_eq!(extract.get_operation().deref(&ctx).loc(), expected_location);
             let aggregate = extract.get_operation().deref(&ctx).get_operand(0);
             assert_eq!(
                 Some(aggregate),
