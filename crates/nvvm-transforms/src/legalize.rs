@@ -414,8 +414,10 @@ fn validate_integer_atomic_rmw(ctx: &Context, op: Ptr<Operation>) -> Result<()> 
 /// Validate integer compare-exchange operations that legacy LLVM 7 NVVM can
 /// preserve without weakening Rust semantics.
 ///
-/// Legacy libNVVM accepts a failure ordering syntactically but does not honor
-/// it, so only monotonic/Relaxed failure ordering is admitted here.
+/// Legacy libNVVM accepts success and failure orderings syntactically but
+/// honors neither: an ordered `cmpxchg` lowers to a bare `atom.cas` with no
+/// ordering qualifier and no surrounding fences, which PTX treats as relaxed.
+/// Only monotonic/Relaxed orderings are admitted here.
 fn validate_integer_cmpxchg(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
     let Some(cas) = Operation::get_op::<llvm::AtomicCmpxchgOp>(op, ctx) else {
         return Ok(());
@@ -443,13 +445,13 @@ fn validate_integer_cmpxchg(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
     }
 
     match cas.get_attr_llvm_cas_success_ordering(ctx).as_deref() {
-        Some(
-            AtomicOrderingAttr::Monotonic
-            | AtomicOrderingAttr::Acquire
-            | AtomicOrderingAttr::Release
-            | AtomicOrderingAttr::AcqRel
-            | AtomicOrderingAttr::SeqCst,
-        ) => {}
+        Some(AtomicOrderingAttr::Monotonic) => {}
+        Some(_) => {
+            return pliron::input_err!(
+                op.deref(ctx).loc(),
+                "legacy NVVM compare-exchange requires monotonic success ordering because libNVVM lowers ordered cmpxchg to an unordered atom.cas"
+            );
+        }
         None => {
             return pliron::input_err!(
                 op.deref(ctx).loc(),
@@ -2690,7 +2692,7 @@ mod tests {
                     &format!("cas_i{width}_p{address_space}"),
                     address_space,
                     width,
-                    AtomicOrderingAttr::AcqRel,
+                    AtomicOrderingAttr::Monotonic,
                     AtomicOrderingAttr::Monotonic,
                     Some("device".to_string()),
                 );
@@ -2738,8 +2740,8 @@ mod tests {
             }
         }
         assert!(
-            ir.contains("syncscope(\"device\") acq_rel monotonic"),
-            "legacy cmpxchg must retain AcqRel success and monotonic failure ordering:\n{ir}"
+            ir.contains("syncscope(\"device\") monotonic monotonic"),
+            "legacy cmpxchg must retain monotonic success and failure ordering:\n{ir}"
         );
     }
 
@@ -2820,10 +2822,11 @@ mod tests {
 
     #[test]
     fn legacy_integer_cmpxchg_rejects_unrepresentable_forms() {
-        for (width, address_space, failure, scope, expected) in [
+        for (width, address_space, success, failure, scope, expected) in [
             (
                 16,
                 1,
+                AtomicOrderingAttr::Monotonic,
                 AtomicOrderingAttr::Monotonic,
                 Some("device".to_string()),
                 "only i32 and i64",
@@ -2832,12 +2835,14 @@ mod tests {
                 128,
                 1,
                 AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::Monotonic,
                 Some("device".to_string()),
                 "only i32 and i64",
             ),
             (
                 32,
                 7,
+                AtomicOrderingAttr::Monotonic,
                 AtomicOrderingAttr::Monotonic,
                 Some("device".to_string()),
                 "address space 7",
@@ -2846,12 +2851,46 @@ mod tests {
                 32,
                 1,
                 AtomicOrderingAttr::Acquire,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "monotonic success ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Release,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "monotonic success ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::AcqRel,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "monotonic success ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::SeqCst,
+                AtomicOrderingAttr::Monotonic,
+                Some("device".to_string()),
+                "monotonic success ordering",
+            ),
+            (
+                32,
+                1,
+                AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::Acquire,
                 Some("device".to_string()),
                 "monotonic failure ordering",
             ),
             (
                 32,
                 1,
+                AtomicOrderingAttr::Monotonic,
                 AtomicOrderingAttr::SeqCst,
                 Some("device".to_string()),
                 "monotonic failure ordering",
@@ -2859,6 +2898,7 @@ mod tests {
             (
                 32,
                 1,
+                AtomicOrderingAttr::Monotonic,
                 AtomicOrderingAttr::Monotonic,
                 Some("block".to_string()),
                 "device synchronization scope",
@@ -2872,7 +2912,7 @@ mod tests {
                 "cas",
                 address_space,
                 width,
-                AtomicOrderingAttr::AcqRel,
+                success,
                 failure,
                 scope,
             );
@@ -2907,7 +2947,7 @@ mod tests {
             "invalid_cas",
             1,
             32,
-            AtomicOrderingAttr::AcqRel,
+            AtomicOrderingAttr::Monotonic,
             AtomicOrderingAttr::Acquire,
             Some("device".to_string()),
         );

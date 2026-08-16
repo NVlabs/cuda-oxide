@@ -49,10 +49,14 @@ mod kernels {
             return;
         }
 
+        // Relaxed on both sides: the legacy legalizer rejects ordered CAS
+        // because libNVVM lowers ordered cmpxchg to a bare, unordered
+        // atom.cas. Issue #922 tracks ordered CAS on the legacy path via
+        // inline PTX.
         let success_u32 = match counter_u32[0].compare_exchange(
             7,
             11,
-            AtomicOrdering::AcqRel,
+            AtomicOrdering::Relaxed,
             AtomicOrdering::Relaxed,
         ) {
             Ok(old) => old,
@@ -61,7 +65,7 @@ mod kernels {
         let failure_u32 = match counter_u32[0].compare_exchange(
             7,
             13,
-            AtomicOrdering::AcqRel,
+            AtomicOrdering::Relaxed,
             AtomicOrdering::Relaxed,
         ) {
             Ok(_) => u32::MAX,
@@ -71,7 +75,7 @@ mod kernels {
         let success_u64 = match counter_u64[0].compare_exchange(
             7,
             11,
-            AtomicOrdering::AcqRel,
+            AtomicOrdering::Relaxed,
             AtomicOrdering::Relaxed,
         ) {
             Ok(old) => old,
@@ -80,7 +84,7 @@ mod kernels {
         let failure_u64 = match counter_u64[0].compare_exchange(
             7,
             13,
-            AtomicOrdering::AcqRel,
+            AtomicOrdering::Relaxed,
             AtomicOrdering::Relaxed,
         ) {
             Ok(_) => u64::MAX,
