@@ -652,7 +652,7 @@ mod tests {
             name: "source-intrinsic".to_string(),
             child_loc: Box::new(Location::Unknown),
         };
-        trigger.deref_mut(&mut ctx).set_loc(expected.clone());
+        trigger.deref_mut(&ctx).set_loc(expected.clone());
 
         assert!(
             run_helper_action(&mut ctx, module_ptr, HelperAction::InlineAsmConvergent).is_none()
