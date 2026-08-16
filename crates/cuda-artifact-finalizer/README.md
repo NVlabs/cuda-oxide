@@ -1,12 +1,19 @@
 # cuda-artifact-finalizer
 
-Driver-independent finalization of NVVM IR and LTOIR into loadable device code.
+Driver-independent finalization of NVVM IR, LTOIR, and PTX into loadable device
+code.
 
 This crate is the single owner of cuda-oxide's libNVVM and nvJitLink
 compilation policy. It deliberately does **not** link the CUDA Driver, so the
 same typed target, FMA, debug, input-order, validation, and provenance rules
 apply whether an artifact is materialized at build time (`cargo oxide build
 --materialize-cubin`) or finalized at run time as a fallback.
+
+`PtxAssembler` is discovered separately from the ordinary `Finalizer`. It
+finds the toolkit `ptxas` executable, pins and fingerprints it, and assembles
+already-linked PTX without loading libNVVM, nvJitLink, or the CUDA Driver.
+Set `CUDA_OXIDE_PTXAS` to select an explicit executable; otherwise toolkit
+roots and `PATH` are searched.
 
 Keeping that policy in one driverless crate is what lets the two paths agree.
 A rule that lived in the runtime loader alone could not be applied during a

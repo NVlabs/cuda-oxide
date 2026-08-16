@@ -320,7 +320,7 @@ cargo oxide run gemm_sol_final
 |---------------------------|----------------------------------------------------------------|
 | `cargo-oxide`             | Cargo subcommand (`cargo oxide run`, etc.)                     |
 | `cuda-intrinsics-gen`     | Extractor and deterministic source generator for the intrinsics |
-| `cuda-artifact-finalizer` | Driver-independent NVVM IR and LTOIR finalization              |
+| `cuda-artifact-finalizer` | Driver-independent NVVM IR, LTOIR, and PTX finalization         |
 | `oxide-artifacts`         | Architecture-neutral embedded device artifact metadata         |
 | `reserved-oxide-symbols`  | Workspace-private `cuda_oxide_*` symbol-name contract          |
 | `fuzzer`                  | Differential codegen fuzzer support (rustlantis adapter)       |

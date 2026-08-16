@@ -28,7 +28,7 @@ static LINKER_TOOL_LOAD: OnceLock<Mutex<()>> = OnceLock::new();
 pub struct LinkReport {
     /// Complete cubin or PTX image.
     pub image: Vec<u8>,
-    /// Raw nvJitLink informational output, when available.
+    /// Compiler or linker informational output, when requested and available.
     pub info_log: Option<String>,
     /// Per-kernel ptxas resource usage parsed from the informational output.
     pub resource_usage: Vec<KernelResourceUsage>,
@@ -294,7 +294,7 @@ fn validate_inputs(inputs: &[NamedInput<'_>]) -> Result<(), FinalizerError> {
 /// nvjitlink-sys owns the PTX C-string rule (strip the single optional
 /// trailing NUL, reject any other NUL); this wrapper only adds the
 /// finalizer's non-empty-input policy and error vocabulary on top.
-fn logical_ptx(input: NamedInput<'_>) -> Result<&[u8], FinalizerError> {
+pub(crate) fn logical_ptx(input: NamedInput<'_>) -> Result<&[u8], FinalizerError> {
     let logical =
         nvjitlink_sys::logical_ptx(input.bytes, input.name).map_err(|error| match error {
             NvJitLinkError::InteriorNulPtx { name, .. } => FinalizerError::InteriorNulPtx { name },

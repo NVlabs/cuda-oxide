@@ -127,6 +127,20 @@ impl FinalizationOptions {
         options
     }
 
+    /// Semantic options for standalone PTX assembly with `ptxas`.
+    pub(crate) fn ptxas_options(&self) -> Vec<String> {
+        let mut options = vec![
+            format!("--gpu-name={}", self.target.sm()),
+            format!("--fmad={}", self.allow_fma_contraction),
+        ];
+        match self.debug {
+            DebugPolicy::None => {}
+            DebugPolicy::LineTables => options.push("--generate-line-info".to_string()),
+            DebugPolicy::Full => options.push("--device-debug".to_string()),
+        }
+        options
+    }
+
     fn append_nvjitlink_codegen_options(&self, options: &mut Vec<String>) {
         options.push(self.fma_option().to_string());
         match self.debug {
@@ -266,6 +280,19 @@ mod tests {
             base.with_debug_policy(DebugPolicy::Full)
                 .nvjitlink_ltoir_options(FinalizerOutput::Cubin),
             ["-arch=sm_90a", "-lto", "-fma=0", "-g"]
+        );
+
+        let base = FinalizationOptions::new("sm_90a".parse().unwrap()).with_fma_contraction(false);
+        assert_eq!(base.ptxas_options(), ["--gpu-name=sm_90a", "--fmad=false"]);
+        assert_eq!(
+            base.clone()
+                .with_debug_policy(DebugPolicy::LineTables)
+                .ptxas_options(),
+            ["--gpu-name=sm_90a", "--fmad=false", "--generate-line-info"]
+        );
+        assert_eq!(
+            base.with_debug_policy(DebugPolicy::Full).ptxas_options(),
+            ["--gpu-name=sm_90a", "--fmad=false", "--device-debug"]
         );
     }
 

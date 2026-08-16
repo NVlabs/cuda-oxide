@@ -15,6 +15,7 @@ mod link;
 mod nvvm;
 mod options;
 mod provenance;
+mod ptx;
 mod validation;
 
 pub use diagnostics::KernelResourceUsage;
@@ -26,6 +27,7 @@ pub use options::{DebugPolicy, FinalizationOptions, FinalizerOutput, NamedInput}
 pub use provenance::{
     MaterializerHandshakeV1, PinnedToolProvenance, ToolFileIdentity, ToolProvenance, recipe_digest,
 };
+pub use ptx::PtxAssembler;
 pub use validation::is_valid_cubin;
 
 use provenance::common_provenance_digest;
@@ -42,6 +44,33 @@ pub enum FinalizerError {
     /// nvJitLink failed to load or link.
     #[error("nvJitLink: {0}")]
     NvJitLink(#[from] nvjitlink_sys::NvJitLinkError),
+
+    /// No standalone PTX assembler could be discovered.
+    #[error(
+        "Could not locate ptxas. Set CUDA_OXIDE_PTXAS, CUDA_TOOLKIT_PATH, CUDA_HOME, or CUDA_PATH, or install the CUDA Toolkit. Tried:\n  {tried}"
+    )]
+    PtxasNotFound {
+        /// Newline-separated discovery paths.
+        tried: String,
+    },
+
+    /// A discovered executable was not NVIDIA's PTX assembler.
+    #[error("the discovered ptxas executable is invalid ({path}): {details}")]
+    InvalidPtxas {
+        /// Candidate executable path.
+        path: PathBuf,
+        /// Version-probe failure details.
+        details: String,
+    },
+
+    /// `ptxas` rejected the supplied PTX or options.
+    #[error("ptxas failed with {status}: {diagnostics}")]
+    PtxasFailed {
+        /// Process exit status.
+        status: String,
+        /// Combined standard output and error diagnostics.
+        diagnostics: String,
+    },
 
     /// `libdevice.10.bc` could not be found.
     #[error(
@@ -93,15 +122,15 @@ pub enum FinalizerError {
     #[error("at least one link input is required (ordered LTOIR modules or a single PTX module)")]
     NoLinkInputs,
 
-    /// nvJitLink returned bytes that are not a complete CUDA ELF image.
-    #[error("nvJitLink returned an invalid or truncated cubin")]
+    /// A CUDA finalization tool returned bytes that are not a complete CUDA ELF image.
+    #[error("CUDA artifact finalization returned an invalid or truncated cubin")]
     InvalidCubin,
 
     /// nvJitLink returned no PTX bytes.
     #[error("nvJitLink returned an empty PTX artifact")]
     EmptyPtx,
 
-    /// A pinned CUDA compiler DSO changed around an operation. Its output can
+    /// A pinned CUDA compilation tool changed around an operation. Its output can
     /// no longer be attributed to the provenance used by Cargo or a cache key.
     #[error(
         "the pinned {tool} file changed before or during CUDA artifact finalization; refusing the unverified output"

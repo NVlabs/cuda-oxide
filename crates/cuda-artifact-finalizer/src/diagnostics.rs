@@ -5,9 +5,10 @@
 
 //! Parsing of non-semantic CUDA compiler resource diagnostics.
 //!
-//! nvJitLink can forward `ptxas -v` output through its InfoLog. This module
-//! converts that human-readable output into a stable internal representation
-//! without making the raw text part of artifact provenance.
+//! Standalone `ptxas` emits resource usage directly, while nvJitLink can
+//! forward the same output through its InfoLog. This module converts that
+//! human-readable output into a stable internal representation without making
+//! the raw text part of artifact provenance.
 
 /// Per-kernel resource usage reported by ptxas.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,7 +33,7 @@ impl KernelResourceUsage {
     }
 }
 
-/// Parse ptxas resource statistics from an nvJitLink InfoLog.
+/// Parse ptxas resource statistics from direct or nvJitLink-forwarded output.
 ///
 /// The parser intentionally keys off stable ptxas phrases rather than exact
 /// whitespace or the complete line prefix. CUDA versions vary the amount of
