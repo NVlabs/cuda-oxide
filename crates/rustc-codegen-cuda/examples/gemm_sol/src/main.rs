@@ -55,9 +55,8 @@ use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
     stmatrix_m8n8_x2, tcgen05_alloc, tcgen05_alloc_cg2, tcgen05_commit_multicast_cg2,
-    tcgen05_commit_shared_cluster, tcgen05_dealloc, tcgen05_dealloc_cg2,
-    tcgen05_ld_16x256b_pure, tcgen05_load_wait, tcgen05_mma_f16, tcgen05_mma_f16_cg2,
-    tcgen05_relinquish_alloc_permit_cg2,
+    tcgen05_commit_shared_cluster, tcgen05_dealloc, tcgen05_dealloc_cg2, tcgen05_ld_16x256b_pure,
+    tcgen05_load_wait, tcgen05_mma_f16, tcgen05_mma_f16_cg2, tcgen05_relinquish_alloc_permit_cg2,
 };
 use cuda_device::tma::{
     TmaDescriptor, cp_async_bulk_tensor_2d_g2s, cp_async_bulk_tensor_2d_g2s_multicast,
