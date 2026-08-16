@@ -53,6 +53,17 @@ a projected unsized slice tail, and the tail byte offset behind padding:
 | 22 | `test_slice_tail_runtime_index`      | `Field(tail) -> MirSliceType -> Index`         |
 | 23 | `test_slice_tail_padded_offset`      | `[u16]` tail at byte offset 10 behind padding  |
 
+plus **6 DST slice-tail address regression kernels** for issue #881:
+
+| #  | Variant                                  | Shape pinned                                        |
+|:---|:-----------------------------------------|:----------------------------------------------------|
+| 24 | `test_slice_tail_write_constant_index`   | `Field(tail) -> ConstantIndex` mutable store        |
+| 25 | `test_slice_tail_write_runtime_index`    | `Field(tail) -> Index` mutable store                |
+| 26 | `test_slice_tail_borrow_constant_index`  | `&value.tail[1]` element borrow                     |
+| 27 | `test_slice_tail_borrow_runtime_index`   | `&value.tail[k]` element borrow                     |
+| 28 | `test_slice_tail_write_padded`           | Padded `[u16]` tail, constant + runtime writes      |
+| 29 | `test_slice_tail_borrow_padded`          | Padded `[u16]` tail, constant + runtime borrows     |
+
 Each kernel writes a difference (`r1 - r0`, or original-local readback for
 the write-through variants) for inputs chosen so a correct implementation
 must produce `+5.0` for every element. The harness prints `PASS` per kernel,
@@ -71,6 +82,15 @@ issue #870 repro layout (`head: u64`, `tag: u8`, `tail: [u16]`), whose
 tail sits at byte offset 10 behind a padding byte: `SliceTail` places its
 tail at offset 4 with no padding, so only the padded variant can catch a
 wrong-tail-offset bug in the `Field(tail)` address computation.
+
+The issue #881 regressions exercise the corresponding address-producing path.
+Whole-tail borrows such as `&value.tail` already rebuild the DST tail as a
+`(data_ptr, len)` slice value. Element writes and borrows continue one
+projection farther: after rebuilding that fat tail, the address walker
+normalizes it back to its data pointer and reuses the existing
+`Index`/`ConstantIndex` element-offset lowering. The padded variants verify
+that this address arithmetic still starts at the real tail byte offset rather
+than at a naive aggregate prefix.
 
 ## Trigger conditions
 
@@ -120,7 +140,7 @@ the fix, the same MIR lowers to
 %v9 = load float, ptr %v8                                              ; correct
 ```
 
-and all 23 kernels report `PASS` (the harness prints a final `SUCCESS`
+and all 29 kernels report `PASS` (the harness prints a final `SUCCESS`
 marker and exits non-zero if any kernel reports a wrong diff).
 
 ## Build & run

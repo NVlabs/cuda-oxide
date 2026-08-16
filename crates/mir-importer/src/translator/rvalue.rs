@@ -4603,6 +4603,11 @@ fn translate_place_addr_from_slot(
     // that already-consumed projection and preserves slice-data provenance for
     // a following Index/ConstantIndex.
     let mut consumed_slice_subslice = false;
+    // A fat DST Deref can consume the immediately following slice-tail Field
+    // while rebuilding the `(data_ptr, len)` value needed for an indexed
+    // element address. The next loop iteration skips that already-lowered
+    // Field and preserves slice-data provenance for Index/ConstantIndex.
+    let mut consumed_slice_tail_field = false;
     let mut current_slice_len: Option<Value> = None;
     // Set by a `Downcast` and consumed by the `Field` that follows it, which
     // is the only projection pair that can name an enum payload.
@@ -4618,6 +4623,20 @@ fn translate_place_addr_from_slot(
         let entered_as_slice_data = current_is_slice_data;
         let entered_slice_len = current_slice_len.take();
         current_is_slice_data = false;
+
+        // The preceding fat-DST Deref already lowered this slice-tail Field
+        // so it could preserve the metadata before continuing to an element
+        // index. Skip the syntactic Field here and carry the normalized
+        // slice-data state into the following Index/ConstantIndex.
+        if consumed_slice_tail_field {
+            if !matches!(elem, mir::ProjectionElem::Field(_, _)) {
+                return Ok(None);
+            }
+            consumed_slice_tail_field = false;
+            current_is_slice_data = entered_as_slice_data;
+            current_slice_len = entered_slice_len;
+            continue;
+        }
 
         // A `Downcast` names a variant only for the `Field` IMMEDIATELY
         // after it (rustc's MIR validator enforces the pairing). Any other
@@ -4785,24 +4804,26 @@ fn translate_place_addr_from_slot(
                         let data_ptr = extract_ptr.deref(ctx).get_result(0);
                         current_prev_op = Some(extract_ptr);
 
-                        // Borrow of the struct's unsized slice tail, e.g.
-                        // `&(*iter).data`. No thin pointer can represent
-                        // that place: the result must itself be a fat
-                        // (tail pointer, len) pair, with the len carried
-                        // over from the fat reference we walked through.
-                        // Only valid as the FINAL projection.
+                        // Borrow or index of the struct's unsized slice tail,
+                        // e.g. `&(*iter).data` or `&(*p).tail[k]`. No thin
+                        // pointer can represent the whole tail: rebuild the
+                        // `(tail pointer, len)` pair while the fat reference's
+                        // metadata is still available.
                         if let mir::ProjectionElem::Field(field_idx, field_rust_ty) =
                             &projection[proj_idx + 1]
                             && let rustc_public::ty::TyKind::RigidTy(
                                 rustc_public::ty::RigidTy::Slice(tail_elem_rust_ty),
                             ) = field_rust_ty.kind()
                         {
-                            if proj_idx + 2 != projection.len() {
-                                // Projections continuing past an unsized
-                                // tail borrow are not a shape rustc emits;
-                                // punt rather than guess.
+                            let tail_continuation = projection.get(proj_idx + 2);
+                            if !matches!(
+                                tail_continuation,
+                                None | Some(&mir::ProjectionElem::Index(_))
+                                    | Some(&mir::ProjectionElem::ConstantIndex { .. })
+                            ) {
                                 return Ok(None);
                             }
+
                             let tail_elem_ty = types::translate_type(ctx, &tail_elem_rust_ty)?;
 
                             // Address of the first tail element. The struct
@@ -4854,7 +4875,50 @@ fn translate_place_addr_from_slot(
                             );
                             construct.deref_mut(ctx).set_loc(loc.clone());
                             construct.insert_after(ctx, extract_len);
-                            return Ok(Some((construct.deref(ctx).get_result(0), Some(construct))));
+                            let tail_slice = construct.deref(ctx).get_result(0);
+
+                            // Whole-tail borrow/reborrow: return the fat value.
+                            if tail_continuation.is_none() {
+                                return Ok(Some((tail_slice, Some(construct))));
+                            }
+
+                            // Element borrow/write: normalize the rebuilt tail
+                            // to its data pointer, then let the existing
+                            // Index/ConstantIndex arms perform the element
+                            // offset and return the real address.
+                            let indexed_data_ptr_ty: TypeHandle =
+                                dialect_mir::types::MirPtrType::get_generic(
+                                    ctx,
+                                    tail_elem_ty,
+                                    is_mutable,
+                                )
+                                .into();
+                            let indexed_extract = Operation::new(
+                                ctx,
+                                MirExtractFieldOp::get_concrete_op_info(),
+                                vec![indexed_data_ptr_ty],
+                                vec![tail_slice],
+                                vec![],
+                                0,
+                            );
+                            indexed_extract.deref_mut(ctx).set_loc(loc.clone());
+                            MirExtractFieldOp::new(indexed_extract)
+                                .set_attr_index(ctx, dialect_mir::attributes::FieldIndexAttr(0));
+                            indexed_extract.insert_after(ctx, construct);
+
+                            current = indexed_extract.deref(ctx).get_result(0);
+                            current_prev_op = Some(indexed_extract);
+                            current_is_slice_data = true;
+                            current_slice_len = if matches!(
+                                tail_continuation,
+                                Some(&mir::ProjectionElem::ConstantIndex { from_end: true, .. })
+                            ) {
+                                Some(len_val)
+                            } else {
+                                None
+                            };
+                            consumed_slice_tail_field = true;
+                            continue;
                         }
 
                         match &projection[proj_idx + 1] {

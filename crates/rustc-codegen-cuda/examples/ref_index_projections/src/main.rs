@@ -16,6 +16,8 @@
  *     value.tail[1]                                      // DST slice tail + const index
  *     value.tail[k]                                      // DST slice tail + runtime index
  *     padded.tail[k]                                     // DST slice tail behind padding
+ *     value.tail[k] = x                                  // DST tail element write
+ *     &value.tail[k]                                     // DST tail element borrow
  *
  * Each kernel writes the difference compute(1) - compute(0), with inputs
  * designed so the two slots differ: a dropped index reads slot 0 twice
@@ -719,6 +721,182 @@ mod kernels {
             *slot = (c1 as f32 - c0 as f32) + (r1 as f32 - r0 as f32);
         }
     }
+
+    // ── DST slice-tail address regressions (issue #881) ────────────────
+
+    /// Constant-index write through a mutable DST slice tail. The store must
+    /// target the original tail element, not a materialized copy.
+    #[kernel]
+    pub fn test_slice_tail_write_constant_index(
+        input: &[[f32; 2]],
+        mut out: DisjointSlice<f32>,
+    ) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let base = input[i][0];
+        let mut concrete = SliceTail {
+            head: u32::MAX,
+            tail: [base, base],
+        };
+        {
+            let value: &mut SliceTail<[f32]> = &mut concrete;
+            value.tail[1] += 5.0;
+        }
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = concrete.tail[1] - concrete.tail[0];
+        }
+    }
+
+    /// Runtime-index write through a mutable DST slice tail.
+    #[kernel]
+    pub fn test_slice_tail_write_runtime_index(
+        input: &[[f32; 2]],
+        mut out: DisjointSlice<f32>,
+    ) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let base = input[i][0];
+        let mut concrete = SliceTail {
+            head: u32::MAX,
+            tail: [base, base],
+        };
+        let k = ((input[0][0] as usize) & 1) + 1;
+        {
+            let value: &mut SliceTail<[f32]> = &mut concrete;
+            value.tail[k] += 5.0;
+        }
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = concrete.tail[1] - concrete.tail[0];
+        }
+    }
+
+    /// Constant-index shared borrow of a DST slice-tail element.
+    #[kernel]
+    pub fn test_slice_tail_borrow_constant_index(
+        input: &[[f32; 2]],
+        mut out: DisjointSlice<f32>,
+    ) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let concrete = SliceTail {
+            head: u32::MAX,
+            tail: input[i],
+        };
+        let value: &SliceTail<[f32]> = &concrete;
+
+        let r0: &f32 = &value.tail[0];
+        let r1: &f32 = &value.tail[1];
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = *r1 - *r0;
+        }
+    }
+
+    /// Runtime-index shared borrow of a DST slice-tail element.
+    #[kernel]
+    pub fn test_slice_tail_borrow_runtime_index(
+        input: &[[f32; 2]],
+        mut out: DisjointSlice<f32>,
+    ) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let concrete = SliceTail {
+            head: u32::MAX,
+            tail: input[i],
+        };
+        let value: &SliceTail<[f32]> = &concrete;
+
+        let k = (input[0][0] as usize) & 1;
+        let r0: &f32 = &value.tail[k];
+        let r1: &f32 = &value.tail[k + 1];
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = *r1 - *r0;
+        }
+    }
+
+    /// Padded DST write regression. A literal index and a runtime index both
+    /// target tail[1]; together their +2/+3 writes preserve the +5 oracle.
+    #[kernel]
+    pub fn test_slice_tail_write_padded(
+        input: &[[f32; 2]],
+        mut out: DisjointSlice<f32>,
+    ) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let base = input[i][0] as u16;
+        let mut concrete = PaddedTail {
+            head: u64::MAX,
+            tag: 0xFF,
+            tail: [base, base, base, base],
+        };
+        {
+            let value: &mut PaddedTail<[u16]> = &mut concrete;
+            value.tail[1] += 2;
+            let k = ((input[0][0] as usize) & 1) + 1;
+            value.tail[k] += 3;
+        }
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = (concrete.tail[1] as f32) - (concrete.tail[0] as f32);
+        }
+    }
+
+    /// Padded DST borrow regression. Constant borrows contribute +5 while
+    /// runtime borrows of equal tail elements contribute zero.
+    #[kernel]
+    pub fn test_slice_tail_borrow_padded(
+        input: &[[f32; 2]],
+        mut out: DisjointSlice<f32>,
+    ) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let a = input[i][0] as u16;
+        let b = input[i][1] as u16;
+        let concrete = PaddedTail {
+            head: u64::MAX,
+            tag: 0xFF,
+            tail: [a, b, b, b],
+        };
+        let value: &PaddedTail<[u16]> = &concrete;
+
+        let c0: &u16 = &value.tail[0];
+        let c1: &u16 = &value.tail[1];
+
+        let k = ((input[0][0] as usize) & 1) + 2;
+        let r0: &u16 = &value.tail[k];
+        let r1: &u16 = &value.tail[k + 1];
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = (*c1 as f32 - *c0 as f32) + (*r1 as f32 - *r0 as f32);
+        }
+    }
 }
 
 const N: usize = 4;
@@ -899,6 +1077,46 @@ fn main() {
     all_pass &= run_and_report("test_slice_tail_padded_offset", &stream, |s, cfg, i, o| {
         // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
         unsafe { module.test_slice_tail_padded_offset(s, cfg, i, o) }.expect("launch")
+    });
+    all_pass &= run_and_report(
+        "test_slice_tail_write_constant_index",
+        &stream,
+        |s, cfg, i, o| {
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_slice_tail_write_constant_index(s, cfg, i, o) }.expect("launch")
+        },
+    );
+    all_pass &= run_and_report(
+        "test_slice_tail_write_runtime_index",
+        &stream,
+        |s, cfg, i, o| {
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_slice_tail_write_runtime_index(s, cfg, i, o) }.expect("launch")
+        },
+    );
+    all_pass &= run_and_report(
+        "test_slice_tail_borrow_constant_index",
+        &stream,
+        |s, cfg, i, o| {
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_slice_tail_borrow_constant_index(s, cfg, i, o) }.expect("launch")
+        },
+    );
+    all_pass &= run_and_report(
+        "test_slice_tail_borrow_runtime_index",
+        &stream,
+        |s, cfg, i, o| {
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_slice_tail_borrow_runtime_index(s, cfg, i, o) }.expect("launch")
+        },
+    );
+    all_pass &= run_and_report("test_slice_tail_write_padded", &stream, |s, cfg, i, o| {
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_slice_tail_write_padded(s, cfg, i, o) }.expect("launch")
+    });
+    all_pass &= run_and_report("test_slice_tail_borrow_padded", &stream, |s, cfg, i, o| {
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_slice_tail_borrow_padded(s, cfg, i, o) }.expect("launch")
     });
 
     if all_pass {
