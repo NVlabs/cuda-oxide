@@ -51,7 +51,7 @@
 use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_type, get_type_size, mir_type_abi_align,
-    validate_initialized_global_layout,
+    validate_initialized_global_layout, validate_relocated_initialized_global_layout,
 };
 use crate::helpers;
 use dialect_mir::types::{MirPtrType, MirStructType};
@@ -960,13 +960,19 @@ fn create_device_global(
                 "device global initializer is missing its evaluated Rust allocation alignment"
             )));
         }
-        validate_initialized_global_layout(ctx, spec.mir_type, byte_count, spec.alignment)
-            .map_err(anyhow_to_pliron)?;
-
         let storage_type = if let Some(encoded) = spec.initializer_relocations {
+            validate_relocated_initialized_global_layout(
+                ctx,
+                spec.mir_type,
+                byte_count,
+                spec.alignment,
+            )
+            .map_err(anyhow_to_pliron)?;
             relocated_initializer_storage_type(ctx, byte_count, spec.alignment, encoded)
                 .map_err(anyhow_to_pliron)?
         } else {
+            validate_initialized_global_layout(ctx, spec.mir_type, byte_count, spec.alignment)
+                .map_err(anyhow_to_pliron)?;
             let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
             ArrayType::get(ctx, i8_ty.into(), byte_count).into()
         };
@@ -1047,6 +1053,7 @@ fn relocated_initializer_storage_type(
 
     let mut cursor = 0u64;
     let mut fields = Vec::with_capacity(relocations.len() * 2 + 1);
+    let mut requires_packed_storage = false;
     let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
 
     for (index, relocation) in relocations.iter().enumerate() {
@@ -1067,20 +1074,8 @@ fn relocated_initializer_storage_type(
         }
 
         let width = u64::from(relocation.width_bytes);
-        if relocation.source_offset % width != 0 {
-            anyhow::bail!(
-                "device global relocation {index} starts at unaligned byte offset {} for a {}-byte pointer",
-                relocation.source_offset,
-                relocation.width_bytes
-            );
-        }
-        if allocation_alignment < width {
-            anyhow::bail!(
-                "device global relocation {index} requires {}-byte alignment but the Rust allocation alignment is {}",
-                relocation.width_bytes,
-                allocation_alignment
-            );
-        }
+        requires_packed_storage |=
+            allocation_alignment < width || !relocation.source_offset.is_multiple_of(width);
         if relocation.source_offset < cursor {
             anyhow::bail!(
                 "device global relocation {index} overlaps the previous relocation or literal span"
@@ -1111,7 +1106,12 @@ fn relocated_initializer_storage_type(
         fields.push(ArrayType::get(ctx, i8_ty.into(), byte_count - cursor).into());
     }
 
-    let storage: TypeHandle = StructType::get_unnamed(ctx, (fields, StructLayout::Unpacked)).into();
+    let layout = if requires_packed_storage {
+        StructLayout::Packed
+    } else {
+        StructLayout::Unpacked
+    };
+    let storage: TypeHandle = StructType::get_unnamed(ctx, (fields, layout)).into();
     let lowered_size = get_type_size(ctx, storage);
     if lowered_size != byte_count {
         anyhow::bail!(
@@ -3575,6 +3575,84 @@ mod tests {
             global.initializer_relocations(&ctx).as_deref(),
             Some(encoded.as_str())
         );
+    }
+
+    #[test]
+    fn relocated_global_uses_packed_storage_for_unaligned_pointer_slot() {
+        let mut ctx = make_ctx();
+        let encoded =
+            llvm::encode_global_initializer_relocations(&[llvm::GlobalInitializerRelocation {
+                source_offset: 1,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 0,
+                target_key: "target_static".to_string(),
+            }]);
+
+        let storage = relocated_initializer_storage_type(&mut ctx, 9, 1, &encoded)
+            .expect("unaligned relocation should use packed storage");
+        let storage_ref = storage.deref(&ctx);
+        let struct_ty = storage_ref
+            .downcast_ref::<StructType>()
+            .expect("relocated initializer must use struct storage");
+        assert_eq!(struct_ty.layout(), StructLayout::Packed);
+        assert_eq!(struct_ty.num_fields(), 2);
+        assert_eq!(get_type_size(&ctx, storage), 9);
+
+        let fields: Vec<_> = struct_ty.fields().collect();
+        let literal_ref = fields[0].deref(&ctx);
+        let literal = literal_ref
+            .downcast_ref::<ArrayType>()
+            .expect("leading literal span must be a byte array");
+        assert_eq!(literal.size(), 1);
+        let pointer_ref = fields[1].deref(&ctx);
+        let pointer = pointer_ref
+            .downcast_ref::<IntegerType>()
+            .expect("relocation slot must be an integer carrier");
+        assert_eq!(pointer.width(), 64);
+    }
+
+    #[test]
+    fn relocated_global_uses_packed_storage_for_underaligned_allocation() {
+        let mut ctx = make_ctx();
+        let encoded =
+            llvm::encode_global_initializer_relocations(&[llvm::GlobalInitializerRelocation {
+                source_offset: 0,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 0,
+                target_key: "target_static".to_string(),
+            }]);
+
+        let storage = relocated_initializer_storage_type(&mut ctx, 8, 1, &encoded)
+            .expect("underaligned allocation should use packed storage");
+        let storage_ref = storage.deref(&ctx);
+        let struct_ty = storage_ref
+            .downcast_ref::<StructType>()
+            .expect("relocated initializer must use struct storage");
+        assert_eq!(struct_ty.layout(), StructLayout::Packed);
+        assert_eq!(get_type_size(&ctx, storage), 8);
+    }
+
+    #[test]
+    fn relocated_global_keeps_naturally_aligned_storage_unpacked() {
+        let mut ctx = make_ctx();
+        let encoded =
+            llvm::encode_global_initializer_relocations(&[llvm::GlobalInitializerRelocation {
+                source_offset: 8,
+                width_bytes: 8,
+                target_address_space: llvm_addr::GLOBAL,
+                target_addend: 0,
+                target_key: "target_static".to_string(),
+            }]);
+
+        let storage = relocated_initializer_storage_type(&mut ctx, 16, 8, &encoded)
+            .expect("aligned relocation should keep ordinary storage");
+        let storage_ref = storage.deref(&ctx);
+        let struct_ty = storage_ref
+            .downcast_ref::<StructType>()
+            .expect("relocated initializer must use struct storage");
+        assert_eq!(struct_ty.layout(), StructLayout::Unpacked);
     }
 
     #[test]

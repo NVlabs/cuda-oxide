@@ -28,6 +28,30 @@ static RELOCATION_REFERENCE: &u32 = &RELOCATION_TARGET_A;
 static RELOCATION_REFERENCES: [&u32; 2] = [&RELOCATION_TARGET_A, &RELOCATION_TARGET_B];
 static INTERIOR_RELOCATION_REFERENCE: &f32 = &STATIC_WEIGHTS[2][1];
 
+#[repr(C, packed)]
+struct PackedRelocation {
+    tag: u8,
+    ptr: &'static u32,
+}
+
+static PACKED_RELOCATION: PackedRelocation = PackedRelocation {
+    tag: 0x7b,
+    ptr: &RELOCATION_TARGET_A,
+};
+
+#[repr(C, packed)]
+struct PackedInteriorRelocation {
+    prefix: [u8; 3],
+    ptr: &'static f32,
+    suffix: u16,
+}
+
+static PACKED_INTERIOR_RELOCATION: PackedInteriorRelocation = PackedInteriorRelocation {
+    prefix: [0x11, 0x22, 0x33],
+    ptr: &STATIC_WEIGHTS[2][1],
+    suffix: 0x4455,
+};
+
 /// One-past-the-end interior pointer: const eval permits forming a pointer
 /// whose addend equals the allocation size (32 bytes here). It is legal to
 /// form and compare, only dereferencing it would be UB, so the translator
@@ -145,6 +169,34 @@ mod kernels {
             *out.add(1) = *RELOCATION_REFERENCES[0];
             *out.add(2) = *RELOCATION_REFERENCES[1];
             *out.add(3) = (*INTERIOR_RELOCATION_REFERENCE).to_bits();
+        }
+    }
+
+    /// Read relocation slots whose pointer bytes start at unaligned offsets
+    /// inside `repr(packed)` statics. The pointer fields are loaded with
+    /// `read_unaligned` so no invalid aligned reference is ever formed.
+    #[kernel]
+    pub unsafe fn packed_static_initializer_relocations(out: *mut u32) {
+        let tag = unsafe { core::ptr::addr_of!(PACKED_RELOCATION.tag).read_unaligned() };
+        let direct_ptr = unsafe { core::ptr::addr_of!(PACKED_RELOCATION.ptr).read_unaligned() };
+        let prefix0 = unsafe {
+            core::ptr::addr_of!(PACKED_INTERIOR_RELOCATION.prefix)
+                .cast::<u8>()
+                .read_unaligned()
+        };
+        let interior_ptr = unsafe {
+            core::ptr::addr_of!(PACKED_INTERIOR_RELOCATION.ptr).read_unaligned()
+        };
+        let suffix = unsafe {
+            core::ptr::addr_of!(PACKED_INTERIOR_RELOCATION.suffix).read_unaligned()
+        };
+
+        unsafe {
+            *out.add(0) = tag as u32;
+            *out.add(1) = *direct_ptr;
+            *out.add(2) = prefix0 as u32;
+            *out.add(3) = (*interior_ptr).to_bits();
+            *out.add(4) = suffix as u32;
         }
     }
 
@@ -294,6 +346,40 @@ fn main() {
         std::process::exit(1);
     }
 
+    let packed_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 5)
+        .expect("Failed to allocate packed relocation output");
+
+    unsafe {
+        module.packed_static_initializer_relocations(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            packed_relocation_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Packed static initializer relocation kernel launch failed");
+
+    let packed_relocation_result = packed_relocation_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy packed relocation output");
+    let packed_relocation_expected = [
+        0x7bu32,
+        0x1234_5678,
+        0x11,
+        8.0f32.to_bits(),
+        0x4455,
+    ];
+
+    println!(
+        "Packed static initializer relocations: result = {packed_relocation_result:?}"
+    );
+
+    if packed_relocation_result.as_slice() != packed_relocation_expected.as_slice() {
+        eprintln!(
+            "FAILED: expected packed static initializer relocations {packed_relocation_expected:?}, got {packed_relocation_result:?}"
+        );
+        std::process::exit(1);
+    }
+
     let one_past_end_dev =
         DeviceBuffer::<u32>::zeroed(&stream, 1).expect("Failed to allocate one-past-end output");
 
@@ -318,6 +404,6 @@ fn main() {
     }
 
     println!(
-        "\nSUCCESS: device globals preserved storage, initializer bytes, pointer relocations, pointer addends, and subobject addresses."
+        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned and packed pointer relocations, pointer addends, and subobject addresses."
     );
 }

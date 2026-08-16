@@ -33,7 +33,7 @@ use pliron::{
 use crate::{
     attributes::FPHalfAttr,
     ops::{self, FuncOp, GlobalOpExt},
-    types::{ArrayType, FuncType, PointerType, StructType},
+    types::{ArrayType, FuncType, PointerType, StructLayout, StructType},
 };
 
 use super::{
@@ -260,8 +260,12 @@ impl<'a> ModuleExportState<'a> {
         let mut field_index = 0usize;
         let mut cursor = 0u64;
         let mut first = true;
+        let (open, close) = match storage.layout() {
+            StructLayout::Packed => ("<{ ", " }>"),
+            StructLayout::Unpacked => ("{ ", " }"),
+        };
 
-        write!(output, "{{ ").unwrap();
+        write!(output, "{open}").unwrap();
         for (index, relocation) in relocations.iter().enumerate() {
             if relocation.width_bytes != 8 {
                 return Err(format!(
@@ -339,7 +343,7 @@ impl<'a> ModuleExportState<'a> {
                 fields.len()
             ));
         }
-        write!(output, " }}").unwrap();
+        write!(output, "{close}").unwrap();
         Ok(())
     }
 

@@ -9815,8 +9815,8 @@ fn encode_global_initializer_relocations(relocations: &[GlobalInitializerRelocat
 ///
 /// Undefined bytes are Rust padding and become deterministic zeros. Each
 /// provenance entry is preserved as a static-to-static pointer relocation.
-/// Anonymous memory, functions, vtables, packed pointer slots, and malformed
-/// source ranges remain diagnosed rather than being flattened to integer bytes.
+/// Anonymous memory, functions, vtables, and malformed source ranges remain
+/// diagnosed rather than being flattened to integer bytes.
 fn allocation_initializer_data(
     alloc: &rustc_public::ty::Allocation,
     description: &str,
@@ -9839,15 +9839,6 @@ fn allocation_initializer_data(
             ))
         );
     }
-    if !alloc.provenance.ptrs.is_empty() && alloc.align < pointer_width as u64 {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "{description} has ABI alignment {}, but its pointer relocations require {pointer_width}-byte alignment",
-                alloc.align
-            ))
-        );
-    }
 
     let mut entries: Vec<_> = alloc.provenance.ptrs.to_vec();
     entries.sort_by_key(|(source_offset, _)| *source_offset);
@@ -9856,14 +9847,6 @@ fn allocation_initializer_data(
     let mut previous_end = 0usize;
 
     for (index, (source_offset, provenance)) in entries.into_iter().enumerate() {
-        if source_offset % pointer_width != 0 {
-            return input_err!(
-                loc,
-                TranslationErr::unsupported(format!(
-                    "{description} pointer relocation {index} starts at unaligned byte offset {source_offset}; {pointer_width}-byte pointer slots must be naturally aligned"
-                ))
-            );
-        }
         if source_offset < previous_end {
             return input_err!(
                 loc,

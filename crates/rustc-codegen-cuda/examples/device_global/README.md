@@ -51,6 +51,15 @@ each slot with `getelementptr`, `addrspacecast`, and `ptrtoint` constant
 expressions, so the device linker sees an actual relocation rather than a null
 placeholder.
 
+Packed `repr(C, packed)` statics are also covered. When either the allocation
+alignment or a relocation's byte offset cannot satisfy the pointer carrier's
+natural alignment, cuda-oxide uses a packed LLVM struct only as the physical
+initializer carrier.
+The semantic Rust aggregate remains on the existing fail-closed by-value path;
+device code accesses the packed pointer field with `addr_of!` plus
+`read_unaligned()`. For example, a one-byte tag followed by an eight-byte
+pointer is emitted as `<{ [1 x i8], i64 }>` with allocation alignment 1.
+
 The relocation coverage includes:
 
 - a direct static-to-static reference;
@@ -58,6 +67,7 @@ The relocation coverage includes:
 - two fields sharing one target;
 - a second independently materialized target;
 - an interior pointer with a non-zero byte addend;
+- packed/unaligned relocation slots, including literal prefix/suffix bytes;
 - targets reachable only through another static initializer;
 - modern opaque-pointer NVVM IR and legacy LLVM 7 typed-pointer NVVM IR.
 
@@ -91,8 +101,10 @@ excluded from the literal byte image and emitted as provenance-preserving LLVM
 constant expressions.
 
 Before emitting an initializer, cuda-oxide proves that its typed field loads
-use the same offsets and size as rustc. Relocation records are also checked for
-pointer width, alignment, bounds, overlap, target identity, target address
+use the same offsets and size as rustc. For a relocated top-level packed struct,
+the physical initializer carrier follows rustc's explicit non-overlapping byte
+ranges instead of requiring natural LLVM field alignment. Relocation records are
+still checked for pointer width, bounds, overlap, target identity, target address
 space, and addend bounds. Unsupported layouts fail at compile time instead of
 producing a wrong value.
 
@@ -100,5 +112,6 @@ The supported relocation scope is intentionally narrow: thin pointers from one
 device static to another device static in global or constant memory, including
 zero and non-zero byte addends. Anonymous promoted allocations, functions,
 vtables, trait-object metadata, slices and other fat pointers, unsized pointees,
-packed or unaligned pointer slots, and relocation targets outside device static
-storage remain fail-closed.
+and relocation targets outside device static storage remain fail-closed. Packed
+or otherwise unaligned thin-pointer slots are supported when the containing
+top-level struct has an explicit, non-overlapping rustc layout.

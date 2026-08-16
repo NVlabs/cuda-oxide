@@ -1906,6 +1906,73 @@ fn initialized_global_exports_static_pointer_relocation() {
 }
 
 #[test]
+fn initialized_global_exports_unaligned_pointer_relocation_as_packed_storage() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "packed_static_relocation".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+
+    let literal_ty = ArrayType::get(&ctx, i8_ty.into(), 1);
+    let reference_ty = StructType::get_unnamed(
+        &ctx,
+        (vec![literal_ty.into(), i64_ty.into()], StructLayout::Packed),
+    );
+    let reference = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "packed_reference".try_into().unwrap(),
+        reference_ty.into(),
+        1,
+    );
+    reference.set_address_space(&mut ctx, 1);
+    reference.set_source_global_key(&mut ctx, "PACKED_REFERENCE");
+    reference.set_initializer_hex(&mut ctx, "7b0000000000000000");
+    let encoded = encode_global_initializer_relocations(&[GlobalInitializerRelocation {
+        source_offset: 1,
+        width_bytes: 8,
+        target_address_space: 1,
+        target_addend: 0,
+        target_key: "TARGET".to_string(),
+    }]);
+    reference.set_initializer_relocations(&mut ctx, &encoded);
+    reference.get_operation().insert_at_back(module_block, &ctx);
+
+    let target_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+    let target =
+        GlobalOp::new_with_alignment(&mut ctx, "target".try_into().unwrap(), target_ty.into(), 4);
+    target.set_address_space(&mut ctx, 1);
+    target.set_source_global_key(&mut ctx, "TARGET");
+    target.set_initializer_hex(&mut ctx, "78563412");
+    target.get_operation().insert_at_back(module_block, &ctx);
+
+    let modern = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::Modern),
+    )
+    .expect("modern packed relocated initializer export succeeds");
+    assert!(
+        modern.contains(
+            r#"@packed_reference = addrspace(1) global <{ [1 x i8], i64 }> <{ [1 x i8] c"\7B", i64 ptrtoint (ptr addrspacecast (ptr addrspace(1) @target to ptr) to i64) }>, align 1"#
+        ),
+        "{modern}"
+    );
+
+    let legacy = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+    )
+    .expect("legacy packed relocated initializer export succeeds");
+    assert!(
+        legacy.contains(
+            r#"@packed_reference = addrspace(1) global <{ [1 x i8], i64 }> <{ [1 x i8] c"\7B", i64 ptrtoint (i8* addrspacecast (i8 addrspace(1)* bitcast ([4 x i8] addrspace(1)* @target to i8 addrspace(1)*) to i8*) to i64) }>, align 1"#
+        ),
+        "{legacy}"
+    );
+}
+
+#[test]
 fn initialized_global_exports_multiple_relocations_and_addends() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "multiple_static_relocations".try_into().unwrap());

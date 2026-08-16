@@ -15,7 +15,7 @@ use pliron::{
     r#type::TypeHandle,
 };
 
-use crate::types::{FuncType, HalfType, PointerType, StructType, VoidType};
+use crate::types::{FuncType, HalfType, PointerType, StructLayout, StructType, VoidType};
 
 use super::state::ModuleExportState;
 
@@ -81,14 +81,18 @@ impl<'a> ModuleExportState<'a> {
         } else if ty_ref.is::<FP64Type>() {
             write!(output, "double").unwrap();
         } else if let Some(struct_ty) = ty_ref.downcast_ref::<StructType>() {
-            write!(output, "{{ ").unwrap();
+            let (open, close) = match struct_ty.layout() {
+                StructLayout::Packed => ("<{ ", " }>"),
+                StructLayout::Unpacked => ("{ ", " }"),
+            };
+            write!(output, "{open}").unwrap();
             for (i, elem_ty) in struct_ty.fields().enumerate() {
                 if i > 0 {
                     write!(output, ", ").unwrap();
                 }
                 self.export_type(elem_ty, output)?;
             }
-            write!(output, " }}").unwrap();
+            write!(output, "{close}").unwrap();
         } else if let Some(array_ty) = ty_ref.downcast_ref::<crate::types::ArrayType>() {
             write!(output, "[{} x ", array_ty.size()).unwrap();
             self.export_type(array_ty.elem_type(), output)?;
@@ -204,13 +208,17 @@ impl<'a> ModuleExportState<'a> {
             }
             a
         } else if let Some(struct_ty) = ty_ref.downcast_ref::<StructType>() {
-            // Max field alignment (1 if empty). May under-state a repr(align)
-            // raise; the true alignment is carried on the op, not the type.
-            struct_ty
-                .fields()
-                .map(|f| self.natural_alignment(f))
-                .max()
-                .unwrap_or(1)
+            if struct_ty.layout() == StructLayout::Packed {
+                1
+            } else {
+                // Max field alignment (1 if empty). May under-state a repr(align)
+                // raise; the true alignment is carried on the op, not the type.
+                struct_ty
+                    .fields()
+                    .map(|f| self.natural_alignment(f))
+                    .max()
+                    .unwrap_or(1)
+            }
         } else {
             // Conservative fallback for pointers and unknown types.
             8

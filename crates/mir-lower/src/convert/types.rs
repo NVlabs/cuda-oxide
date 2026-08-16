@@ -1047,15 +1047,20 @@ fn collect_llvm_pointer_storage(
         }
         if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
             let fields: Vec<_> = struct_ty.fields().collect();
+            let packed = struct_ty.layout() == llvm_types::StructLayout::Packed;
             let mut end = 0u64;
             for field in fields {
                 let (field_size, field_align) = llvm_type_size_align(ctx, field)?;
-                let field_align = field_align.max(1);
-                let remainder = end % field_align;
-                let field_offset = if remainder == 0 {
+                let field_offset = if packed {
                     end
                 } else {
-                    end.checked_add(field_align - remainder)?
+                    let field_align = field_align.max(1);
+                    let remainder = end % field_align;
+                    if remainder == 0 {
+                        end
+                    } else {
+                        end.checked_add(field_align - remainder)?
+                    }
                 };
                 collect(ctx, field, base_offset.checked_add(field_offset)?, out)?;
                 end = field_offset.checked_add(field_size)?;
@@ -1334,6 +1339,12 @@ pub(crate) fn llvm_type_is_byte_faithful(ctx: &Context, ty: TypeHandle) -> bool 
     }
     if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
         let fields: Vec<_> = struct_ty.fields().collect();
+        if struct_ty.layout() == llvm_types::StructLayout::Packed {
+            return fields
+                .into_iter()
+                .all(|field| llvm_type_is_byte_faithful(ctx, field));
+        }
+
         let mut end = 0u64;
         let mut max_align = 1u64;
         for field in fields {
@@ -1547,6 +1558,15 @@ pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64
     }
     if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
         let fields: Vec<_> = struct_ty.fields().collect();
+        if struct_ty.layout() == llvm_types::StructLayout::Packed {
+            let mut size = 0u64;
+            for field in fields {
+                let (field_size, _) = llvm_type_size_align(ctx, field)?;
+                size = size.checked_add(field_size)?;
+            }
+            return Some((size, 1));
+        }
+
         let (_end, size, align) = natural_struct_layout(ctx, &fields)?;
         return Some((size, align));
     }
@@ -2219,6 +2239,124 @@ pub(crate) fn validate_initialized_global_layout(
             initializer_size,
             initializer_align
         ));
+    }
+
+    Ok(())
+}
+
+/// Validate an initialized global that carries pointer relocations.
+///
+/// Ordinary initialized globals require the semantic LLVM aggregate to match
+/// rustc byte-for-byte. Relocated globals use a separate segmented physical
+/// carrier, so a top-level `repr(packed)` struct may legitimately diverge from
+/// the semantic LLVM struct as long as rustc's field ranges are explicit,
+/// non-overlapping, in-bounds, and every nested field remains independently
+/// representable. Whole-value moves of the divergent struct stay rejected by
+/// the existing `repr(packed)` value-path guards.
+pub(crate) fn validate_relocated_initialized_global_layout(
+    ctx: &mut Context,
+    mir_ty: TypeHandle,
+    initializer_size: u64,
+    initializer_align: u64,
+) -> Result<(), anyhow::Error> {
+    match validate_initialized_global_layout(ctx, mir_ty, initializer_size, initializer_align) {
+        Ok(()) => Ok(()),
+        Err(original_error) => {
+            if initializer_align == 0 || !initializer_align.is_power_of_two() {
+                return Err(original_error);
+            }
+
+            let struct_ty = {
+                let ty_ref = mir_ty.deref(ctx);
+                ty_ref.downcast_ref::<MirStructType>().cloned()
+            };
+            let Some(struct_ty) = struct_ty else {
+                return Err(original_error);
+            };
+            if !struct_ty.has_explicit_layout()
+                || struct_ty.total_size() != initializer_size
+                || struct_ty.abi_align != initializer_align
+            {
+                return Err(original_error);
+            }
+
+            validate_relocated_struct_field_ranges(ctx, &struct_ty)?;
+
+            let mut visited = vec![mir_ty];
+            for field_ty in struct_ty.field_types.iter().copied() {
+                validate_initialized_global_type(ctx, field_ty, &mut visited)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Prove that rustc's explicit field ranges for a relocated top-level struct
+/// are non-overlapping and fit within the evaluated allocation.
+fn validate_relocated_struct_field_ranges(
+    ctx: &mut Context,
+    struct_ty: &MirStructType,
+) -> Result<(), anyhow::Error> {
+    let layout = StructLayoutInfo::of_struct(struct_ty);
+
+    // Relocated globals relax only natural LLVM placement. Preserve the
+    // ordinary struct-layout metadata invariants before accepting rustc's
+    // explicit byte ranges as the physical initializer contract.
+    build_struct_slot_map(ctx, &layout)?;
+
+    let mut ranges = Vec::with_capacity(layout.field_types.len());
+    for (decl_index, field_ty) in layout.field_types.iter().copied().enumerate() {
+        let field_size = if let Some(size) = mir_stored_size(ctx, field_ty) {
+            size
+        } else {
+            let llvm_ty = convert_type(ctx, field_ty)?;
+            llvm_type_size_align(ctx, llvm_ty)
+                .map(|(size, _)| size)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "relocated initialized struct `{}` field {} has unsupported size",
+                        struct_ty.name(),
+                        decl_index
+                    )
+                })?
+        };
+        if field_size == 0 {
+            continue;
+        }
+
+        let start = layout.field_offsets[decl_index];
+        let end = start.checked_add(field_size).ok_or_else(|| {
+            anyhow::anyhow!(
+                "relocated initialized struct `{}` field {} range overflows",
+                struct_ty.name(),
+                decl_index
+            )
+        })?;
+        if end > layout.total_size {
+            return Err(anyhow::anyhow!(
+                "relocated initialized struct `{}` field {} occupies bytes {}..{}, but the allocation is only {} bytes",
+                struct_ty.name(),
+                decl_index,
+                start,
+                end,
+                layout.total_size
+            ));
+        }
+        ranges.push((start, end, decl_index));
+    }
+
+    ranges.sort_by_key(|(start, _, _)| *start);
+    for pair in ranges.windows(2) {
+        let (_, previous_end, previous_index) = pair[0];
+        let (next_start, _, next_index) = pair[1];
+        if next_start < previous_end {
+            return Err(anyhow::anyhow!(
+                "relocated initialized struct `{}` fields {} and {} overlap in rustc's byte layout",
+                struct_ty.name(),
+                previous_index,
+                next_index
+            ));
+        }
     }
 
     Ok(())
@@ -4455,6 +4593,107 @@ mod tests {
         .into();
         let err = validate_initialized_global_layout(&mut ctx, outer, 16, 8).unwrap_err();
         assert!(err.to_string().contains("lowers at byte"));
+    }
+
+    #[test]
+    fn relocated_initialized_global_layout_accepts_top_level_packed_struct() {
+        let mut ctx = make_ctx();
+        let byte = mir_uint(&mut ctx, 8);
+        let target = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_global(&mut ctx, target, false).into();
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedRelocation".into(),
+            vec!["tag".into(), "ptr".into()],
+            vec![byte, pointer],
+            vec![0, 1],
+            vec![0, 1],
+            9,
+            1,
+        )
+        .into();
+
+        validate_relocated_initialized_global_layout(&mut ctx, packed, 9, 1)
+            .expect("relocated top-level packed struct must be accepted");
+        assert!(validate_initialized_global_layout(&mut ctx, packed, 9, 1).is_err());
+    }
+
+    #[test]
+    fn relocated_initialized_global_layout_rejects_malformed_memory_order() {
+        let mut ctx = make_ctx();
+        let byte = mir_uint(&mut ctx, 8);
+        let target = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_global(&mut ctx, target, false).into();
+        let malformed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "MalformedPackedRelocation".into(),
+            vec!["tag".into(), "ptr".into()],
+            vec![byte, pointer],
+            vec![0, 0],
+            vec![0, 1],
+            9,
+            1,
+        )
+        .into();
+
+        let error = validate_relocated_initialized_global_layout(&mut ctx, malformed, 9, 1)
+            .expect_err("malformed memory order must remain unsupported");
+        assert!(error.to_string().contains("not a permutation"), "{error}");
+    }
+
+    #[test]
+    fn relocated_initialized_global_layout_rejects_nested_packed_struct() {
+        let mut ctx = make_ctx();
+        let byte = mir_uint(&mut ctx, 8);
+        let target = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_global(&mut ctx, target, false).into();
+        let nested_packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "NestedPackedRelocation".into(),
+            vec!["tag".into(), "ptr".into()],
+            vec![byte, pointer],
+            vec![0, 1],
+            vec![0, 1],
+            9,
+            1,
+        )
+        .into();
+        let outer: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "OuterPackedRelocation".into(),
+            vec!["prefix".into(), "nested".into()],
+            vec![byte, nested_packed],
+            vec![0, 1],
+            vec![0, 1],
+            10,
+            1,
+        )
+        .into();
+
+        let error = validate_relocated_initialized_global_layout(&mut ctx, outer, 10, 1)
+            .expect_err("nested packed structs must remain unsupported");
+        assert!(error.to_string().contains("lowers at byte"), "{error}");
+    }
+
+    #[test]
+    fn relocated_initialized_global_layout_rejects_overlapping_struct_fields() {
+        let mut ctx = make_ctx();
+        let word = mir_uint(&mut ctx, 32);
+        let overlapping: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "OverlappingRelocation".into(),
+            vec!["left".into(), "right".into()],
+            vec![word, word],
+            vec![0, 1],
+            vec![0, 0],
+            4,
+            1,
+        )
+        .into();
+
+        let error = validate_relocated_initialized_global_layout(&mut ctx, overlapping, 4, 1)
+            .expect_err("overlapping field ranges must remain unsupported");
+        assert!(error.to_string().contains("overlap"), "{error}");
     }
 
     #[test]
