@@ -727,6 +727,18 @@ mod tests {
     }
 
     #[test]
+    fn accepts_maximum_output_pack() {
+        let outputs = (0..64)
+            .map(|index| format!("out(\"=r\") value_{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let input: PtxAsmInput = syn::parse_str(&format!("\"nop;\", {outputs}")).unwrap();
+
+        build_ptx_asm(input)
+            .expect("64 outputs must build: Blackwell tensor-memory loads need the full pack");
+    }
+
+    #[test]
     fn rejects_too_many_outputs() {
         let outputs = (0..65)
             .map(|index| format!("out(\"=r\") value_{index}"))

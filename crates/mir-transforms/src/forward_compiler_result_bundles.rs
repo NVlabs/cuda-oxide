@@ -182,6 +182,7 @@ fn analyze_marked_bundle(ctx: &Context, outer: Ptr<Operation>) -> Option<Forward
             ctx,
             user,
             outer_value,
+            &bundle_nodes,
             Vec::new(),
             &mut seen_projections,
             &mut projection_nodes,
@@ -237,6 +238,7 @@ fn analyze_projection(
     ctx: &Context,
     projection: Ptr<Operation>,
     bundle: Value,
+    bundle_nodes: &[Ptr<Operation>],
     mut path: Vec<usize>,
     seen: &mut FxHashSet<Ptr<Operation>>,
     projection_nodes: &mut Vec<Ptr<Operation>>,
@@ -272,6 +274,17 @@ fn analyze_projection(
                 return None;
             }
             let replacement = resolve_construct_path(ctx, bundle, &path)?;
+            // A whole-subaggregate read (e.g. loading the array field of a
+            // struct-wrapped bundle in one piece) resolves to one of the
+            // bundle's own construct results.  Forwarding it would leave live
+            // uses of an operation this pass erases, so fail closed and keep
+            // the memory path.
+            if replacement
+                .defining_op()
+                .is_some_and(|definer| bundle_nodes.contains(&definer))
+            {
+                return None;
+            }
             if replacement.get_type(ctx) != user.deref(ctx).get_result(0).get_type(ctx) {
                 return None;
             }
@@ -290,6 +303,7 @@ fn analyze_projection(
             ctx,
             user,
             bundle,
+            bundle_nodes,
             path.clone(),
             seen,
             projection_nodes,
@@ -398,9 +412,9 @@ fn rewrite_plan(ctx: &mut Context, plan: ForwardingPlan) -> usize {
 mod tests {
     use super::*;
     use dialect_mir::{
-        attributes::CompilerResultBundleAttr,
+        attributes::{CompilerResultBundleAttr, FieldIndexAttr},
         ops::{MirCallOp, MirFuncOp, MirGotoOp, MirReturnOp},
-        types::{MirArrayType, MirPtrType},
+        types::{MirArrayType, MirPtrType, MirStructType},
     };
     use pliron::{
         builtin::{
@@ -423,11 +437,11 @@ mod tests {
         return_op: Ptr<Operation>,
     }
 
-    fn build_fixture(ctx: &mut Context, marked: bool, extra_store: bool) -> Fixture {
+    fn build_fixture(ctx: &mut Context, marked: bool, extra_store: bool, width: usize) -> Fixture {
         dialect_mir::register(ctx);
 
         let element_type: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
-        let array_type: TypeHandle = MirArrayType::get(ctx, element_type, 2).into();
+        let array_type: TypeHandle = MirArrayType::get(ctx, element_type, width as u64).into();
         let pointer_type: TypeHandle = MirPtrType::get_generic(ctx, array_type, true).into();
 
         let module = ModuleOp::new(ctx, "test".try_into().unwrap());
@@ -466,18 +480,17 @@ mod tests {
         let producer = Operation::new(
             ctx,
             MirCallOp::get_concrete_op_info(),
-            vec![element_type, element_type],
+            vec![element_type; width],
             vec![],
             vec![],
             0,
         );
-        MirCallOp::new(producer).set_attr_callee(ctx, StringAttr::new("register_pair".to_string()));
+        MirCallOp::new(producer).set_attr_callee(ctx, StringAttr::new("register_pack".to_string()));
         producer.insert_at_back(entry, ctx);
 
-        let producer_results = vec![
-            producer.deref(ctx).get_result(0),
-            producer.deref(ctx).get_result(1),
-        ];
+        let producer_results: Vec<_> = (0..width)
+            .map(|index| producer.deref(ctx).get_result(index))
+            .collect();
         let bundle = Operation::new(
             ctx,
             MirConstructArrayOp::get_concrete_op_info(),
@@ -539,7 +552,7 @@ mod tests {
             ctx,
             IntegerAttr::new(
                 index_type,
-                APInt::from_u64(1, NonZeroUsize::new(64).unwrap()),
+                APInt::from_u64((width - 1) as u64, NonZeroUsize::new(64).unwrap()),
             ),
         );
         index.insert_at_back(body, ctx);
@@ -593,10 +606,160 @@ mod tests {
             .count()
     }
 
+    /// Models the importer output for a struct-wrapped bundle such as
+    /// `CuSimd([r0, r1])` that is read back in one piece (`CuSimd::to_array`):
+    /// a `mir.field_addr` projection followed by a whole-array load.
+    fn build_struct_wrapped_fixture(ctx: &mut Context) -> Fixture {
+        dialect_mir::register(ctx);
+
+        let element_type: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+        let array_type: TypeHandle = MirArrayType::get(ctx, element_type, 2).into();
+        let struct_type: TypeHandle = MirStructType::get(
+            ctx,
+            "CuSimd".to_string(),
+            vec!["inner".to_string()],
+            vec![array_type],
+        )
+        .into();
+        let pointer_type: TypeHandle = MirPtrType::get_generic(ctx, struct_type, true).into();
+
+        let module = ModuleOp::new(ctx, "test".try_into().unwrap());
+        let function_type = FunctionType::get(ctx, vec![], vec![array_type]);
+        let function = Operation::new(
+            ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let function_op = MirFuncOp::new(ctx, function, TypeAttr::new(function_type.into()));
+        function_op.set_symbol_name(ctx, "kernel".try_into().unwrap());
+        module.append_operation(ctx, function, 0);
+
+        let region: Ptr<Region> = function.deref(ctx).get_region(0);
+        let entry = BasicBlock::new(ctx, None, vec![]);
+        entry.insert_at_back(region, ctx);
+        let body = BasicBlock::new(ctx, None, vec![]);
+        body.insert_at_back(region, ctx);
+
+        let alloca = Operation::new(
+            ctx,
+            MirAllocaOp::get_concrete_op_info(),
+            vec![pointer_type],
+            vec![],
+            vec![],
+            0,
+        );
+        alloca.insert_at_back(entry, ctx);
+        let slot = alloca.deref(ctx).get_result(0);
+
+        let producer = Operation::new(
+            ctx,
+            MirCallOp::get_concrete_op_info(),
+            vec![element_type, element_type],
+            vec![],
+            vec![],
+            0,
+        );
+        MirCallOp::new(producer).set_attr_callee(ctx, StringAttr::new("register_pair".to_string()));
+        producer.insert_at_back(entry, ctx);
+
+        let producer_results = vec![
+            producer.deref(ctx).get_result(0),
+            producer.deref(ctx).get_result(1),
+        ];
+        let inner = Operation::new(
+            ctx,
+            MirConstructArrayOp::get_concrete_op_info(),
+            vec![array_type],
+            producer_results,
+            vec![],
+            0,
+        );
+        inner.insert_at_back(entry, ctx);
+        let inner_value = inner.deref(ctx).get_result(0);
+
+        let outer = Operation::new(
+            ctx,
+            MirConstructStructOp::get_concrete_op_info(),
+            vec![struct_type],
+            vec![inner_value],
+            vec![],
+            0,
+        );
+        outer.deref_mut(ctx).attributes.set(
+            Identifier::try_from(COMPILER_RESULT_BUNDLE_ATTR_KEY).unwrap(),
+            CompilerResultBundleAttr(true),
+        );
+        outer.insert_at_back(entry, ctx);
+        let outer_value = outer.deref(ctx).get_result(0);
+
+        let store = Operation::new(
+            ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![slot, outer_value],
+            vec![],
+            0,
+        );
+        store.insert_at_back(entry, ctx);
+
+        let goto = Operation::new(
+            ctx,
+            MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![body],
+            0,
+        );
+        goto.insert_at_back(entry, ctx);
+
+        let array_pointer: TypeHandle = MirPtrType::get_generic(ctx, array_type, false).into();
+        let field_address = Operation::new(
+            ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![array_pointer],
+            vec![slot],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(field_address).set_attr_field_index(ctx, FieldIndexAttr(0));
+        field_address.insert_at_back(body, ctx);
+        let field_address_value = field_address.deref(ctx).get_result(0);
+
+        let load = Operation::new(
+            ctx,
+            MirLoadOp::get_concrete_op_info(),
+            vec![array_type],
+            vec![field_address_value],
+            vec![],
+            0,
+        );
+        load.insert_at_back(body, ctx);
+
+        let load_value = load.deref(ctx).get_result(0);
+        let return_op = Operation::new(
+            ctx,
+            MirReturnOp::get_concrete_op_info(),
+            vec![],
+            vec![load_value],
+            vec![],
+            0,
+        );
+        return_op.insert_at_back(body, ctx);
+
+        Fixture {
+            module: module.get_operation(),
+            producer,
+            return_op,
+        }
+    }
+
     #[test]
     fn marked_exact_bundle_forwards_to_producer_results() {
         let mut ctx = Context::new();
-        let fixture = build_fixture(&mut ctx, true, false);
+        let fixture = build_fixture(&mut ctx, true, false, 2);
         let mut analyses = AnalysisManager::default();
 
         let forwarded =
@@ -614,10 +777,55 @@ mod tests {
         );
     }
 
+    /// A 64-result producer models the widest `ptx_asm!` output pack the
+    /// macro now accepts (Blackwell tcgen05 tensor-memory loads).  The pass
+    /// must forward the full-width bundle just like the two-wide case.
+    #[test]
+    fn sixty_four_result_pack_forwards_to_producer_results() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture(&mut ctx, true, false, 64);
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 1);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirStoreOp>(&ctx, fixture.module), 0);
+        assert_eq!(
+            fixture.return_op.deref(&ctx).get_operand(0),
+            fixture.producer.deref(&ctx).get_result(63)
+        );
+    }
+
+    /// Regression test: a whole-array field load out of a struct-wrapped
+    /// bundle resolves to the bundle's own inner construct op.  Forwarding it
+    /// would leave live uses of an erased operation (an ICE), so the pass must
+    /// fail closed and leave the memory path intact.
+    #[test]
+    fn struct_wrapped_whole_array_load_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture = build_struct_wrapped_fixture(&mut ctx);
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirFieldAddrOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirConstructStructOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirStoreOp>(&ctx, fixture.module), 1);
+    }
+
     #[test]
     fn ordinary_unmarked_aggregate_is_untouched() {
         let mut ctx = Context::new();
-        let fixture = build_fixture(&mut ctx, false, false);
+        let fixture = build_fixture(&mut ctx, false, false, 2);
         let mut analyses = AnalysisManager::default();
 
         let forwarded =
@@ -632,7 +840,7 @@ mod tests {
     #[test]
     fn additional_bundle_store_fails_closed() {
         let mut ctx = Context::new();
-        let fixture = build_fixture(&mut ctx, true, true);
+        let fixture = build_fixture(&mut ctx, true, true, 2);
         let mut analyses = AnalysisManager::default();
 
         let forwarded =
