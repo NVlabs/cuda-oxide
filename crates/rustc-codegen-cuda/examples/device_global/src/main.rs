@@ -184,12 +184,10 @@ mod kernels {
                 .cast::<u8>()
                 .read_unaligned()
         };
-        let interior_ptr = unsafe {
-            core::ptr::addr_of!(PACKED_INTERIOR_RELOCATION.ptr).read_unaligned()
-        };
-        let suffix = unsafe {
-            core::ptr::addr_of!(PACKED_INTERIOR_RELOCATION.suffix).read_unaligned()
-        };
+        let interior_ptr =
+            unsafe { core::ptr::addr_of!(PACKED_INTERIOR_RELOCATION.ptr).read_unaligned() };
+        let suffix =
+            unsafe { core::ptr::addr_of!(PACKED_INTERIOR_RELOCATION.suffix).read_unaligned() };
 
         unsafe {
             *out.add(0) = tag as u32;
@@ -361,17 +359,9 @@ fn main() {
     let packed_relocation_result = packed_relocation_out_dev
         .to_host_vec(&stream)
         .expect("Failed to copy packed relocation output");
-    let packed_relocation_expected = [
-        0x7bu32,
-        0x1234_5678,
-        0x11,
-        8.0f32.to_bits(),
-        0x4455,
-    ];
+    let packed_relocation_expected = [0x7bu32, 0x1234_5678, 0x11, 8.0f32.to_bits(), 0x4455];
 
-    println!(
-        "Packed static initializer relocations: result = {packed_relocation_result:?}"
-    );
+    println!("Packed static initializer relocations: result = {packed_relocation_result:?}");
 
     if packed_relocation_result.as_slice() != packed_relocation_expected.as_slice() {
         eprintln!(
