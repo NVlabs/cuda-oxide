@@ -16,7 +16,7 @@ Speed-of-light GEMM kernels for Blackwell (sm_100) using tcgen05 tensor cores, T
 
 5. **SMEM descriptors use compile-time SBO/LBO** — after TMA copies, each K-group block in SMEM is 128 rows × 8 elements with 16-byte row stride. SBO=128 bytes (stride between 8-row groups within a K-group block), LBO=2048 bytes (stride between K-group blocks). These are constants baked into PTX, not launch parameters.
 
-6. **Epilogue writes TMEM → registers → SMEM → global** — `tcgen05_ld` reads f32 accumulators from TMEM, `cvt_f32x2_bf16x2` converts to bf16, `stmatrix` writes to SMEM, then threads scatter-copy to the correct global C location.
+6. **Epilogue writes TMEM → registers → SMEM → global** — `tcgen05_ld` reads f32 accumulators from TMEM, `cvt_bf16x2_f32` converts to bf16, `stmatrix` writes to SMEM, then threads scatter-copy to the correct global C location.
 
 ### Phase 1.5: `gemm_sol_swizzled` (SWIZZLE_128B, single TMA copy)
 
