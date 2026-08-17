@@ -16,15 +16,13 @@
 //! native basic-block structure. Turning this proof into native CFG is a
 //! separate, fallible normalization step.
 
+use crate::version::{PtxVersionError, validate_ptx_version};
 use ptx_parse::{
     Document, Instruction, LabelId, ScopeId, StatementId, StatementKind, split_top_level,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::ops::Range;
-
-const SUPPORTED_PTX_MAJOR: u16 = 9;
-const SUPPORTED_PTX_MINOR: u16 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EdgeKind {
@@ -179,7 +177,7 @@ pub struct ControlFlow {
 
 impl ControlFlow {
     pub fn analyze(document: &Document<'_>) -> Result<Self, CfgError> {
-        validate_ptx_version(document)?;
+        validate_ptx_version(document).map_err(CfgError::Version)?;
         let mut callables = Vec::new();
         for callable in document.callables() {
             let body_span = match (callable.body_span(), callable.definition_scope()) {
@@ -227,14 +225,7 @@ impl ControlFlow {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CfgError {
-    MissingPtxVersion,
-    InvalidPtxVersion {
-        value: String,
-    },
-    UnsupportedPtxVersion {
-        value: String,
-        supported: String,
-    },
+    Version(PtxVersionError),
     EmptyCallable {
         callable: String,
     },
@@ -289,14 +280,7 @@ pub enum CfgError {
 impl fmt::Display for CfgError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingPtxVersion => write!(formatter, "PTX CFG requires a .version directive"),
-            Self::InvalidPtxVersion { value } => {
-                write!(formatter, "invalid PTX .version value {value:?}")
-            }
-            Self::UnsupportedPtxVersion { value, supported } => write!(
-                formatter,
-                "PTX {value} is newer than the CFG semantics ceiling {supported}"
-            ),
+            Self::Version(error) => error.fmt(formatter),
             Self::EmptyCallable { callable } => {
                 write!(formatter, "PTX callable {callable:?} has no instructions")
             }
@@ -375,28 +359,6 @@ impl fmt::Display for CfgError {
 }
 
 impl std::error::Error for CfgError {}
-
-fn validate_ptx_version(document: &Document<'_>) -> Result<(), CfgError> {
-    let value = document
-        .directives()
-        .iter()
-        .find(|directive| directive.name() == ".version")
-        .map(|directive| directive.arguments().trim())
-        .ok_or(CfgError::MissingPtxVersion)?;
-    let (major, minor) = value
-        .split_once('.')
-        .and_then(|(major, minor)| Some((major.parse().ok()?, minor.parse().ok()?)))
-        .ok_or_else(|| CfgError::InvalidPtxVersion {
-            value: value.to_string(),
-        })?;
-    if (major, minor) > (SUPPORTED_PTX_MAJOR, SUPPORTED_PTX_MINOR) {
-        return Err(CfgError::UnsupportedPtxVersion {
-            value: value.to_string(),
-            supported: format!("{SUPPORTED_PTX_MAJOR}.{SUPPORTED_PTX_MINOR}"),
-        });
-    }
-    Ok(())
-}
 
 fn analyze_callable(
     document: &Document<'_>,
@@ -887,7 +849,7 @@ Done:
     fn rejects_newer_isa_and_unclosed_targets() {
         assert!(matches!(
             analyze(".version 9.4\n.entry kernel() { ret; }"),
-            Err(CfgError::UnsupportedPtxVersion { .. })
+            Err(CfgError::Version(PtxVersionError::Unsupported { .. }))
         ));
         assert!(matches!(
             analyze(".version 9.0\n.entry kernel() { bra Missing; }"),

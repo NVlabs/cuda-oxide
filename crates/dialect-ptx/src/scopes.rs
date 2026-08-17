@@ -11,6 +11,7 @@
 //! This prevents neighboring tokens from fusing and preserves line structure.
 
 use crate::registers::{RegisterAlphaError, RegisterAlphaPlan};
+use crate::version::{PtxVersionError, validate_ptx_version};
 use ptx_parse::{Document, EditError, EditScript, ScopeId, StatementId, StatementKind};
 use std::collections::HashMap;
 use std::fmt;
@@ -24,6 +25,9 @@ pub struct ScopeFlattenPlan {
 
 impl ScopeFlattenPlan {
     pub fn analyze(document: &Document<'_>) -> Result<Self, ScopeFlattenError> {
+        // Flattening removes lexical structure; gate it behind the same PTX
+        // version ceiling as the CFG so an unaudited ISA never gets rewritten.
+        validate_ptx_version(document).map_err(ScopeFlattenError::Version)?;
         let register_alpha =
             RegisterAlphaPlan::analyze(document).map_err(ScopeFlattenError::RegisterAlpha)?;
         let mut callable_by_scope = HashMap::new();
@@ -172,6 +176,7 @@ impl FlattenedScope {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScopeFlattenError {
+    Version(PtxVersionError),
     RegisterAlpha(RegisterAlphaError),
     HeaderOwnedScope {
         callable: StatementId,
@@ -199,6 +204,7 @@ pub enum ScopeFlattenError {
 impl fmt::Display for ScopeFlattenError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Version(error) => error.fmt(formatter),
             Self::RegisterAlpha(error) => error.fmt(formatter),
             Self::HeaderOwnedScope {
                 callable,
@@ -316,6 +322,23 @@ mod tests {
             ScopeFlattenPlan::analyze(&document),
             Err(ScopeFlattenError::UnsupportedDirective { name, .. }) if name == ".pragma"
         ));
+    }
+
+    #[test]
+    fn gates_flatten_plans_behind_the_ptx_version_ceiling() {
+        let body = ".entry kernel() { { .reg .b32 x; mov.u32 x, 1; } ret; }";
+        let gated = format!(".version 9.4\n{body}");
+        let gated = Document::parse(&gated).unwrap();
+        assert!(matches!(
+            ScopeFlattenPlan::analyze(&gated),
+            Err(ScopeFlattenError::Version(
+                PtxVersionError::Unsupported { .. }
+            ))
+        ));
+        let supported = format!(".version 9.3\n{body}");
+        let supported = Document::parse(&supported).unwrap();
+        let plan = ScopeFlattenPlan::analyze(&supported).unwrap();
+        assert_eq!(plan.scopes().len(), 1);
     }
 
     #[test]

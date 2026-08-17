@@ -28,3 +28,8 @@ direct and indexed branches, predicated fallthrough, and terminal instructions.
 It retains CST statement/scope lineage and fails closed for unsupported PTX
 versions or unresolved targets instead of attaching guessed successors to the
 operation tree.
+
+`RegisterAlphaPlan` and `ScopeFlattenPlan` rewrite surface PTX and gate behind
+the same version ceiling as the CFG. Rename plans also fail closed on
+vector-element uses of a renamed register (`v.x` lexes as one word) and on
+rename targets that would capture a label or callable name.

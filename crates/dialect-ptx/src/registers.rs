@@ -9,6 +9,7 @@
 //! produces a separately auditable rename plan which makes every nested
 //! register binding callable-unique, a prerequisite for later scope flattening.
 
+use crate::version::{PtxVersionError, validate_ptx_version};
 use ptx_parse::{
     Document, EditError, EditScript, RegisterDeclarationError, ScopeId, StatementId, Token,
     TokenKind,
@@ -24,6 +25,10 @@ pub struct RegisterAlphaPlan {
 
 impl RegisterAlphaPlan {
     pub fn analyze(document: &Document<'_>) -> Result<Self, RegisterAlphaError> {
+        // Renaming rewrites live register uses; a PTX version newer than the
+        // audited semantics ceiling could bind or spell registers in ways
+        // this resolver does not model, so rewrites gate exactly like the CFG.
+        validate_ptx_version(document).map_err(RegisterAlphaError::Version)?;
         let parsed_declarations = document
             .register_declarations()
             .collect::<Result<Vec<_>, _>>()
@@ -199,6 +204,7 @@ impl RegisterUseRename {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RegisterAlphaError {
+    Version(PtxVersionError),
     MalformedDeclaration(RegisterDeclarationError),
     DuplicateBinding {
         callable: StatementId,
@@ -244,6 +250,7 @@ pub enum RenameCollisionKind {
 impl fmt::Display for RegisterAlphaError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Version(error) => error.fmt(formatter),
             Self::MalformedDeclaration(error) => error.fmt(formatter),
             Self::DuplicateBinding {
                 callable,
@@ -841,6 +848,28 @@ __oxide_s2_r:
         let document = Document::parse(&harmless).unwrap();
         let plan = RegisterAlphaPlan::analyze(&document).unwrap();
         assert_eq!(plan.callables()[0].renames()[0].new_name(), "__oxide_s2_r");
+    }
+
+    #[test]
+    fn gates_rename_plans_behind_the_ptx_version_ceiling() {
+        let body = ".entry kernel() { { .reg .b32 x; mov.u32 x, 1; } ret; }";
+        let gated = format!(".version 9.4\n{body}");
+        let gated = Document::parse(&gated).unwrap();
+        assert!(matches!(
+            RegisterAlphaPlan::analyze(&gated),
+            Err(RegisterAlphaError::Version(
+                PtxVersionError::Unsupported { .. }
+            ))
+        ));
+        let missing = Document::parse(body).unwrap();
+        assert!(matches!(
+            RegisterAlphaPlan::analyze(&missing),
+            Err(RegisterAlphaError::Version(PtxVersionError::Missing))
+        ));
+        let supported = format!(".version 9.3\n{body}");
+        let supported = Document::parse(&supported).unwrap();
+        let plan = RegisterAlphaPlan::analyze(&supported).unwrap();
+        assert_eq!(plan.callables()[0].renames().len(), 1);
     }
 
     #[test]
