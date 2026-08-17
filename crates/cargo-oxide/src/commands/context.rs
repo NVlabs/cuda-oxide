@@ -488,24 +488,53 @@ fn parse_config_env(
 
 /// Resolve an example name to its directory path, or exit with a list of
 /// available examples if not found.
-pub(super) fn resolve_example_dir(ctx: &Context, example: &str) -> PathBuf {
-    let example_dir = ctx.examples_dir.join(example);
-    if !example_dir.exists() {
-        eprintln!("Error: Example not found: {}", example_dir.display());
-        eprintln!();
-        eprintln!("Available examples:");
-        if let Ok(entries) = std::fs::read_dir(&ctx.examples_dir) {
-            let mut names: Vec<_> = entries
-                .flatten()
-                .filter(|e| e.path().is_dir())
-                .map(|e| e.file_name().to_string_lossy().to_string())
-                .collect();
-            names.sort();
-            for name in names {
-                eprintln!("  - {}", name);
-            }
+pub(super) fn example_roots(ctx: &Context) -> Vec<PathBuf> {
+    let mut roots = vec![ctx.examples_dir.clone()];
+    if ctx.is_workspace {
+        let cute_examples = ctx.workspace_root.join("cuteir/examples");
+        if cute_examples.is_dir() {
+            roots.push(cute_examples);
         }
+    }
+    roots
+}
+
+pub(super) fn resolve_example_dir(ctx: &Context, example: &str) -> PathBuf {
+    let roots = example_roots(ctx);
+    let matches: Vec<_> = roots
+        .iter()
+        .map(|root| root.join(example))
+        .filter(|path| path.is_dir())
+        .collect();
+    if let [example_dir] = matches.as_slice() {
+        return example_dir.clone();
+    }
+    if matches.len() > 1 {
+        eprintln!("Error: Example name is ambiguous: {example}");
+        for path in matches {
+            eprintln!("  - {}", path.display());
+        }
+        eprintln!("Example names must be unique across all configured roots.");
         std::process::exit(1);
     }
-    example_dir
+
+    eprintln!("Error: Example not found: {example}");
+    eprintln!();
+    eprintln!("Available examples:");
+    let mut names: Vec<_> = roots
+        .iter()
+        .filter_map(|root| std::fs::read_dir(root).ok())
+        .flat_map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().is_dir())
+                .map(|entry| entry.file_name().to_string_lossy().to_string())
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    for name in names {
+        eprintln!("  - {name}");
+    }
+    std::process::exit(1);
 }

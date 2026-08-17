@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 dialect-mir = { workspace = true }
 dialect-iket = { workspace = true }
 dialect-nvvm = { workspace = true }
+dialect-cute = { workspace = true }
 iket-lower = { workspace = true }
 mir-lower = { workspace = true }
 mir-transforms = { workspace = true }

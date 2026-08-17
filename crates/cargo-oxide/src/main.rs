@@ -1095,7 +1095,9 @@ fn resolve_example_name(name: Option<String>, ctx: &commands::Context, subcomman
     eprintln!();
     eprintln!("Usage: cargo oxide {subcommand} <EXAMPLE>");
     eprintln!();
-    eprintln!("Available examples are in crates/rustc-codegen-cuda/examples/");
+    eprintln!(
+        "Run `cargo oxide list`, or browse crates/rustc-codegen-cuda/examples/ and cuteir/examples/"
+    );
     std::process::exit(1);
 }
 

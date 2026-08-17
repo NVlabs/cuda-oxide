@@ -3514,6 +3514,49 @@ fn example_discovery_is_sorted_and_uses_manifest_fallback() {
 }
 
 #[test]
+fn example_discovery_combines_roots_and_rejects_duplicate_names() {
+    let root = unique_temp_dir("cargo_oxide_list_multi_root");
+    let standard = root.join("standard");
+    let cute = root.join("cute");
+    std::fs::create_dir_all(&standard).unwrap();
+    std::fs::create_dir_all(&cute).unwrap();
+
+    write_list_example(&standard, "zeta", None, None);
+    write_list_example(&cute, "alpha", None, None);
+    let examples = discover_examples_from_roots(&[standard.clone(), cute.clone()]).unwrap();
+    assert_eq!(
+        examples
+            .iter()
+            .map(|example| example.name.as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+
+    write_list_example(&cute, "zeta", None, None);
+    let error = discover_examples_from_roots(&[standard, cute]).unwrap_err();
+    assert!(error.contains("example name `zeta` exists in more than one example root"));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn workspace_example_roots_include_existing_cute_examples() {
+    let root = unique_temp_dir("cargo_oxide_cute_example_root");
+    let standard = root.join("crates/rustc-codegen-cuda/examples");
+    let cute = root.join("cuteir/examples");
+    std::fs::create_dir_all(&standard).unwrap();
+    std::fs::create_dir_all(&cute).unwrap();
+
+    let mut ctx = test_context(OxideConfig::default());
+    ctx.workspace_root = root.clone();
+    ctx.examples_dir = standard.clone();
+    ctx.is_workspace = true;
+    assert_eq!(example_roots(&ctx), [standard, cute]);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn example_discovery_keeps_examples_without_readmes() {
     let root = unique_temp_dir("cargo_oxide_list_missing_readme");
     std::fs::create_dir_all(&root).unwrap();
