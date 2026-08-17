@@ -73,6 +73,7 @@ use crate::model::{
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, bail, ensure};
+use ptx_parse::ParseError;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -2364,11 +2365,12 @@ fn validate_policy(
             "{} has a declaration but no NVPTX TableGen selection record",
             policy.id
         );
-        let matching_selections: Vec<_> = declaration
-            .selections
-            .iter()
-            .filter(|selection| selection_matches_policy(policy, selection))
-            .collect();
+        let mut matching_selections = Vec::new();
+        for selection in &declaration.selections {
+            if selection_matches_policy(policy, selection)? {
+                matching_selections.push(selection);
+            }
+        }
         let expected_selection_count = match policy.family.as_str() {
             "vote" | "warp_barrier" | "elect" => 2,
             "warp_match" => 4,
@@ -2500,44 +2502,44 @@ fn validate_policy(
 fn selection_matches_policy(
     policy: &OverlayIntrinsic,
     selection: &crate::model::ImportedSelection,
-) -> bool {
+) -> Result<bool, ParseError> {
     if policy.family == "wgmma_control" {
         let Some(control) = &policy.wgmma_control else {
-            return false;
+            return Ok(false);
         };
         let recipe = wgmma_control_recipe(control.mode);
         let selection_shape_matches = if control.mode == WgmmaControlMode::WaitGroup {
             selection.asm == "wgmma.wait_group.sync.aligned \t$n;"
         } else {
-            policy.expected_ptx.matches(&selection.asm)
+            policy.expected_ptx.matches(&selection.asm)?
         };
-        return selection.source_record == recipe.selection_record
+        return Ok(selection.source_record == recipe.selection_record
             && selection_shape_matches
             && selection.predicates == ["Subtarget->getPTXVersion() >= 80", "hasSM90a"]
-            && selection.constraints.is_empty();
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "tma" {
-        return selection_matches_tma_policy(policy, selection);
+        return Ok(selection_matches_tma_policy(policy, selection));
     }
     if matches!(
         policy.family.as_str(),
         "counted_barrier" | "grid_dependency" | "register_control"
     ) {
         let Some(operation) = ExecutionControlOperation::from_catalog_id(&policy.id) else {
-            return false;
+            return Ok(false);
         };
         let recipe = execution_control_recipe(operation);
-        return recipe
+        return Ok(recipe
             .selection_records
             .contains(&selection.source_record.as_str())
             && selection.asm == recipe.selection_asm
             && selection.predicates == recipe.selection_predicates
-            && selection.constraints.is_empty();
+            && selection.constraints.is_empty());
     }
     if policy.family == "tcgen05" {
         let Some(tcgen05) = &policy.tcgen05 else {
-            return false;
+            return Ok(false);
         };
         if let Some(mma) = &tcgen05.mma {
             let expected = if mma.alias.is_some() {
@@ -2552,17 +2554,17 @@ fn selection_matches_policy(
             } else {
                 tcgen05_mma_valid_selection_asms(mma.form)
             };
-            return expected.contains(&selection.asm)
+            return Ok(expected.contains(&selection.asm)
                 && selection.predicates
                     == [if selection.asm.contains(".kind::i8.") {
                         "Subtarget->hasTcgen05MMAI8Kind()"
                     } else {
                         "Subtarget->hasTcgen05InstSupport()"
                     }]
-                && selection.constraints.is_empty();
+                && selection.constraints.is_empty());
         }
         if tcgen05.source_contract != Tcgen05SourceContract::ExactTablegenSelection {
-            return false;
+            return Ok(false);
         }
         if let Some(cp) = tcgen05.cp {
             let recipe = tcgen05_cp_member_recipe(cp.member);
@@ -2570,7 +2572,7 @@ fn selection_matches_policy(
                 Tcgen05CpGroup::Cg1 => 1,
                 Tcgen05CpGroup::Cg2 => 2,
             };
-            return selection.source_record
+            return Ok(selection.source_record
                 == format!("TCGEN05_CP_{}_cg{group}", recipe.selection_stem)
                 && selection.asm
                     == format!(
@@ -2578,157 +2580,159 @@ fn selection_matches_policy(
                         recipe.ptx_suffix
                     )
                 && selection.predicates == ["Subtarget->hasTcgen05InstSupport()"]
-                && selection.constraints.is_empty();
+                && selection.constraints.is_empty());
         }
         let recipe = tcgen05_recipe(tcgen05.operation);
-        return recipe.selection_record == Some(selection.source_record.as_str())
-            && recipe.selection_asm == Some(selection.asm.as_str())
-            && selection.constraints.is_empty();
+        return Ok(
+            recipe.selection_record == Some(selection.source_record.as_str())
+                && recipe.selection_asm == Some(selection.asm.as_str())
+                && selection.constraints.is_empty(),
+        );
     }
     if policy.family == "sparse_mma" {
         let Some(last) = policy.expected_ptx.operands.last() else {
-            return false;
+            return Ok(false);
         };
         if *last != OperandPattern::Immediate {
-            return false;
+            return Ok(false);
         }
         let mut selection_shape = policy.expected_ptx.clone();
         *selection_shape.operands.last_mut().unwrap() = OperandPattern::RegisterOrImmediate;
-        return selection_shape.matches(&selection.asm) && selection.constraints.is_empty();
+        return Ok(selection_shape.matches(&selection.asm)? && selection.constraints.is_empty());
     }
     if policy.family == "sync" {
         if policy.id == "sync_threads" {
-            return selection.source_record == "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
+            return Ok(selection.source_record == "BARRIER_CTA_SYNC_ALIGNED_ALL_i"
                 && selection.asm == "bar.sync \t$i;"
                 && selection.predicates.is_empty()
-                && selection.constraints.is_empty();
+                && selection.constraints.is_empty());
         }
         let Some(scope) = threadfence_scope_for_id(&policy.id) else {
-            return false;
+            return Ok(false);
         };
         let recipe = threadfence_recipe(scope);
-        return selection.source_record == recipe.selection_record
+        return Ok(selection.source_record == recipe.selection_record
             && selection.asm == format!("membar.{};", recipe.ptx_level)
             && selection.predicates.is_empty()
-            && selection.constraints.is_empty();
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "vote" {
         let Some(vote) = &policy.vote else {
-            return false;
+            return Ok(false);
         };
         let recipe = vote_recipe(vote.mode);
-        return [recipe.immediate_selection, recipe.register_selection]
+        return Ok([recipe.immediate_selection, recipe.register_selection]
             .contains(&selection.source_record.as_str())
-            && policy.expected_ptx.matches(&selection.asm)
+            && policy.expected_ptx.matches(&selection.asm)?
             && selection.constraints.address_space.is_none()
-            && selection.constraints.immediate_bindings.is_empty();
+            && selection.constraints.immediate_bindings.is_empty());
     }
 
     if policy.family == "warp_match" {
         let Some(warp_match) = &policy.warp_match else {
-            return false;
+            return Ok(false);
         };
         let recipe = warp_match_recipe(warp_match.mode, warp_match.value_width);
-        return recipe
+        return Ok(recipe
             .selections
             .contains(&selection.source_record.as_str())
-            && policy.expected_ptx.matches(&selection.asm)
-            && selection.constraints.is_empty();
+            && policy.expected_ptx.matches(&selection.asm)?
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "elect" {
-        return ["INT_ELECT_SYNC_I", "INT_ELECT_SYNC_R"]
+        return Ok(["INT_ELECT_SYNC_I", "INT_ELECT_SYNC_R"]
             .contains(&selection.source_record.as_str())
             && selection.asm == "elect.sync \t$dest|$pred, $mask;"
-            && selection.constraints.is_empty();
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "warp_barrier" {
-        return policy.warp_barrier.is_some()
+        return Ok(policy.warp_barrier.is_some()
             && ["INT_BAR_WARP_SYNC_I", "INT_BAR_WARP_SYNC_R"]
                 .contains(&selection.source_record.as_str())
-            && policy.expected_ptx.matches(&selection.asm)
-            && selection.constraints.is_empty();
+            && policy.expected_ptx.matches(&selection.asm)?
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "warp_shuffle" {
         let Some(shuffle) = &policy.warp_shuffle else {
-            return false;
+            return Ok(false);
         };
         let recipe = warp_shuffle_recipe(shuffle.mode, shuffle.value_kind);
-        return selection.asm
+        return Ok(selection.asm
             == format!(
                 "shfl.sync.{}.b32 \t$dst, $src, $offset, $mask, $threadmask;",
                 recipe.ptx_mode
             )
-            && selection.constraints.is_empty();
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "cp_async_copy" {
         let Some(copy) = &policy.cp_async_copy else {
-            return false;
+            return Ok(false);
         };
         let Some(recipe) = cp_async_copy_recipe(copy) else {
-            return false;
+            return Ok(false);
         };
-        return recipe
+        return Ok(recipe
             .selections
             .contains(&selection.source_record.as_str())
-            && policy.expected_ptx.matches(&selection.asm)
-            && selection.constraints.is_empty();
+            && policy.expected_ptx.matches(&selection.asm)?
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "cp_async_control" {
         let Some(control) = &policy.cp_async_control else {
-            return false;
+            return Ok(false);
         };
         let recipe = cp_async_control_recipe(control.operation);
         let instruction_matches = if control.operation == CpAsyncControlOperation::WaitGroup {
             selection.asm == "cp.async.wait_group \t$n;"
         } else {
-            policy.expected_ptx.matches(&selection.asm)
+            policy.expected_ptx.matches(&selection.asm)?
         };
-        return selection.source_record == recipe.selection
+        return Ok(selection.source_record == recipe.selection
             && instruction_matches
-            && selection.constraints.is_empty();
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "cp_async_mbarrier" {
         let Some(bridge) = &policy.cp_async_mbarrier else {
-            return false;
+            return Ok(false);
         };
         let recipe = cp_async_mbarrier_recipe(bridge.operation, bridge.state_space);
-        return selection.source_record == recipe.selection
+        return Ok(selection.source_record == recipe.selection
             && selection.asm == recipe.selection_asm
-            && selection.constraints.is_empty();
+            && selection.constraints.is_empty());
     }
 
     if policy.family == "mbarrier_basic" {
         let Some(mbarrier) = &policy.mbarrier_basic else {
-            return false;
+            return Ok(false);
         };
         let recipe = mbarrier_basic_recipe(mbarrier.operation);
-        return selection.source_record == recipe.selection
-            && policy.expected_ptx.matches(&selection.asm)
-            && selection.constraints.is_empty();
+        return Ok(selection.source_record == recipe.selection
+            && policy.expected_ptx.matches(&selection.asm)?
+            && selection.constraints.is_empty());
     }
 
-    if !policy.expected_ptx.matches(&selection.asm)
+    if !policy.expected_ptx.matches(&selection.asm)?
         || policy
             .selected_address_space
             .is_some_and(|address_space| selection.constraints.address_space != Some(address_space))
     {
-        return false;
+        return Ok(false);
     }
 
     let Some(dot_product) = &policy.dot_product else {
-        return true;
+        return Ok(true);
     };
     if selection.constraints.address_space.is_some() {
-        return false;
+        return Ok(false);
     }
-    match dot_product.adapter {
+    Ok(match dot_product.adapter {
         DotProductAdapter::DirectThreeOperands => {
             selection.constraints.immediate_bindings.is_empty()
         }
@@ -2737,7 +2741,7 @@ fn selection_matches_policy(
                 && selection.constraints.immediate_bindings[0].argument_index == 2
                 && selection.constraints.immediate_bindings[0].value == 0
         }
-    }
+    })
 }
 
 fn selection_matches_tma_policy(
@@ -18734,11 +18738,12 @@ fn validate_scalar_arithmetic_policy(
             policy.id
         );
     }
-    let selected = declaration
-        .selections
-        .iter()
-        .filter(|selection| selection_matches_policy(policy, selection))
-        .collect::<Vec<_>>();
+    let mut selected = Vec::new();
+    for selection in &declaration.selections {
+        if selection_matches_policy(policy, selection)? {
+            selected.push(selection);
+        }
+    }
     ensure!(
         selected.len() == 1 && selected[0].source_record == recipe.selection_record,
         "{} must select only its direct scalar arithmetic instruction",
@@ -23498,7 +23503,7 @@ fn validate_sparse_mma_policy(
                 mma.accumulator,
                 SparseMmaAccumulator::F16 | SparseMmaAccumulator::F32
             ) || declaration.selections[0].predicates == ["Subtarget->hasMMABlockScale()"])
-            && selection_matches_policy(policy, &declaration.selections[0]),
+            && selection_matches_policy(policy, &declaration.selections[0])?,
         "{} imported sparse MMA declaration changed its class, immediate range, properties, or exact selection contract",
         policy.id
     );
@@ -23608,7 +23613,7 @@ fn validate_register_mma_policy(
         declaration.classes.iter().any(|class| class == "NVVM_MMA")
             && declaration.properties == ["IntrNoCallback", "IntrNoMem"]
             && declaration.selections.len() == 1
-            && selection_matches_policy(policy, &declaration.selections[0]),
+            && selection_matches_policy(policy, &declaration.selections[0])?,
         "{} imported MMA declaration changed its class, properties, or exact selection contract",
         policy.id
     );
@@ -23858,7 +23863,7 @@ fn validate_register_mma_fp8_policy(
     ensure!(
         declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_MMA"]
             && declaration.properties == ["IntrNoCallback", "IntrNoMem"]
-            && selection_matches_policy(policy, selection)
+            && selection_matches_policy(policy, selection)?
             && selection.predicates == expected_predicates
             && selection.constraints.is_empty(),
         "{} imported standard FP8 declaration or selection changed",
@@ -23999,7 +24004,7 @@ fn validate_register_mma_f8f6f4_policy(
     ensure!(
         declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_MMA"]
             && declaration.properties == ["IntrNoCallback", "IntrNoMem"]
-            && selection_matches_policy(policy, selection)
+            && selection_matches_policy(policy, selection)?
             && selection.predicates == ["Subtarget->hasMMABlockScale()"]
             && selection.constraints.is_empty(),
         "{} imported dense f8f6f4 declaration or selection changed",
@@ -24176,7 +24181,7 @@ fn validate_register_mma_mxf8f6f4_policy(
     ensure!(
         declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_MMA_BLOCK_SCALE"]
             && declaration.properties == ["IntrNoCallback", "IntrNoMem"]
-            && selection_matches_policy(policy, selection)
+            && selection_matches_policy(policy, selection)?
             && selection.predicates == ["Subtarget->hasMMABlockScale()"]
             && selection.constraints.is_empty(),
         "{} imported dense mxf8f6f4 declaration or selection changed",
@@ -25723,11 +25728,12 @@ fn validate_cluster_memory_policy(
                 "{} must retain the AS7-returning LLVM mapa record as identity only",
                 policy.id
             );
-            let selections = declaration
-                .selections
-                .iter()
-                .filter(|selection| selection_matches_policy(policy, selection))
-                .collect::<Vec<_>>();
+            let mut selections = Vec::new();
+            for selection in &declaration.selections {
+                if selection_matches_policy(policy, selection)? {
+                    selections.push(selection);
+                }
+            }
             ensure!(
                 selections.len() == 2
                     && selections
@@ -29198,22 +29204,26 @@ fn materialize_record(
     } else {
         policy.dialect_results.clone()
     };
+    let mut selections = Vec::new();
+    for selection in declaration
+        .into_iter()
+        .flat_map(|declaration| declaration.selections.iter())
+    {
+        if selection_matches_policy(policy, selection)? {
+            selections.push(CatalogSelection {
+                source_record: selection.source_record.clone(),
+                asm: selection.asm.clone(),
+                predicates: selection.predicates.clone(),
+                constraints: selection.constraints.clone(),
+            });
+        }
+    }
     Ok(CatalogIntrinsic {
         id: policy.id.clone(),
         operation_key: policy.operation_key.clone(),
         family: policy.family.clone(),
         source,
-        selections: declaration
-            .into_iter()
-            .flat_map(|declaration| declaration.selections.iter())
-            .filter(|selection| selection_matches_policy(policy, selection))
-            .map(|selection| CatalogSelection {
-                source_record: selection.source_record.clone(),
-                asm: selection.asm.clone(),
-                predicates: selection.predicates.clone(),
-                constraints: selection.constraints.clone(),
-            })
-            .collect(),
+        selections,
         rust: CatalogRust {
             abi_id: policy.abi_id.clone(),
             module: policy.rust_module.clone(),
@@ -32379,7 +32389,7 @@ scope = "system"
                 declaration
                     .selections
                     .iter()
-                    .filter(|selection| selection_matches_policy(record, selection))
+                    .filter(|selection| selection_matches_policy(record, selection).unwrap())
                     .count(),
                 1
             );
@@ -34040,13 +34050,13 @@ scope = "system"
             .unwrap();
         assert!(mma_f16.expected_ptx.matches(
             "tcgen05.mma.cta_group::1.kind::f16 [%r1], %rd1, %rd2, %r2, {%z, %z, %z, %z}, %enable_pred;"
-        ));
+        ).unwrap());
         assert!(!mma_f16.expected_ptx.matches(
             "tcgen05.mma.cta_group::1.kind::f16 [%r1], %rd1, %rd2, %r2, {%clock64, %z, %z, %z}, %enable_pred;"
-        ));
+        ).unwrap());
         assert!(!mma_f16.expected_ptx.matches(
             "tcgen05.mma.cta_group::1.kind::f16 [%r1], %rd1, %rd2, %r2, {%z, %z, %z, %z}, %other_pred;"
-        ));
+        ).unwrap());
 
         let mma_f16_cg2 = records
             .iter()
@@ -34054,7 +34064,7 @@ scope = "system"
             .unwrap();
         assert!(mma_f16_cg2.expected_ptx.matches(
             "tcgen05.mma.cta_group::2.kind::f16 [%r1], %rd1, %rd2, %r2, {%z, %z, %z, %z, %z, %z, %z, %z}, %enable_pred;"
-        ));
+        ).unwrap());
         assert!(
             !records
                 .iter()
@@ -34254,19 +34264,19 @@ scope = "system"
         let dense = &mma[0];
         assert!(dense.expected_ptx.matches(
             "tcgen05.mma.cta_group::1.kind::f16.collector::a::discard [%r1], %rd1, %rd2, %r2, %enable_pred;"
-        ));
+        ).unwrap());
         assert!(!dense.expected_ptx.matches(
             "tcgen05.mma.cta_group::1.kind::f16.collector::a::discard [%r1], %rd1, %rd2, %r2, %clock64;"
-        ));
+        ).unwrap());
         assert!(mma[4].expected_ptx.matches(
             "tcgen05.mma.sp.cta_group::1.kind::f16.collector::a::discard [%r1], [%r2], %rd1, [%r3], %r4, %enable_pred;"
-        ));
+        ).unwrap());
         assert!(mma[7].expected_ptx.matches(
             "tcgen05.mma.ws.cta_group::1.kind::f16.collector::b0::discard [%r1], %rd1, %rd2, %r2, %enable_pred, %rd3;"
-        ));
+        ).unwrap());
         assert!(mma[14].expected_ptx.matches(
             "tcgen05.mma.ws.cta_group::1.kind::f8f6f4.collector::b0::discard [%r1], [%r2], %rd1, %r3, %enable_pred;"
-        ));
+        ).unwrap());
 
         let canonical = &mma[..14];
         assert_eq!(
@@ -34281,7 +34291,7 @@ scope = "system"
             declarations[record.source_record.as_deref().unwrap()]
                 .selections
                 .iter()
-                .filter(|selection| selection_matches_policy(record, selection))
+                .filter(|selection| selection_matches_policy(record, selection).unwrap())
                 .count()
         };
         let newly_matched = canonical
@@ -34391,12 +34401,22 @@ scope = "system"
             .iter()
             .find(|record| record.id == "tcgen05_mma_ws_f16")
             .unwrap();
-        assert!(legacy_f16.expected_ptx.matches(
-            "tcgen05.mma.ws.cta_group::1.kind::f16 [%r1], [%r2], %rd1, %r3, %enable_pred;"
-        ));
-        assert!(!legacy_f16.expected_ptx.matches(
-            "tcgen05.mma.ws.cta_group::1.kind::f16 [%r1], [%r2], %rd1, %r3, %other_pred;"
-        ));
+        assert!(
+            legacy_f16
+                .expected_ptx
+                .matches(
+                    "tcgen05.mma.ws.cta_group::1.kind::f16 [%r1], [%r2], %rd1, %r3, %enable_pred;"
+                )
+                .unwrap()
+        );
+        assert!(
+            !legacy_f16
+                .expected_ptx
+                .matches(
+                    "tcgen05.mma.ws.cta_group::1.kind::f16 [%r1], [%r2], %rd1, %r3, %other_pred;"
+                )
+                .unwrap()
+        );
     }
 
     #[test]
@@ -34681,11 +34701,13 @@ scope = "system"
             scalar_raw
                 .expected_ptx
                 .matches("tcgen05.ld.sync.aligned.16x64b.x1.b32 {%r1}, [%r2];")
+                .unwrap()
         );
         assert!(
             !scalar_raw
                 .expected_ptx
                 .matches("tcgen05.ld.sync.aligned.16x64b.x1.b32 %r1, [%r2];")
+                .unwrap()
         );
         let scalar_pack = &loads[1];
         assert_eq!(
@@ -34824,11 +34846,13 @@ scope = "system"
             scalar_raw
                 .expected_ptx
                 .matches("tcgen05.st.sync.aligned.16x64b.x1.b32 [%r1], {%r2};")
+                .unwrap()
         );
         assert!(
             !scalar_raw
                 .expected_ptx
                 .matches("tcgen05.st.sync.aligned.16x64b.x1.b32 [%r1], %r2;")
+                .unwrap()
         );
         assert_eq!(
             stores[1].expected_ptx.modifiers,
@@ -35008,6 +35032,7 @@ scope = "system"
             scalar_pack
                 .expected_ptx
                 .matches("tcgen05.ld.sync.aligned.16x32bx2.x1.pack::16b.b32 {%r1}, [%r2], 16;")
+                .unwrap()
         );
 
         let scalar_unpack = &stores[1];
@@ -35023,6 +35048,7 @@ scope = "system"
             scalar_unpack
                 .expected_ptx
                 .matches("tcgen05.st.sync.aligned.16x32bx2.x1.unpack::16b.b32 [%r1], 16, {%r2};")
+                .unwrap()
         );
 
         let mut missing = test_tcgen05_offset_admission();
@@ -36239,7 +36265,7 @@ scope = "system"
             let declaration = declarations[policy.source_record.as_deref().unwrap()];
             assert_eq!(declaration.selections.len(), 1);
             assert!(
-                selection_matches_policy(policy, &declaration.selections[0]),
+                selection_matches_policy(policy, &declaration.selections[0]).unwrap(),
                 "{}",
                 policy.id
             );
@@ -36670,7 +36696,7 @@ scope = "system"
             let declaration = declarations[policy.source_record.as_deref().unwrap()];
             assert_eq!(declaration.selections.len(), 1);
             assert!(
-                selection_matches_policy(policy, &declaration.selections[0]),
+                selection_matches_policy(policy, &declaration.selections[0]).unwrap(),
                 "{}",
                 policy.id
             );
@@ -37593,7 +37619,7 @@ scope = "system"
             let selected: Vec<_> = declaration
                 .selections
                 .iter()
-                .filter(|selection| selection_matches_policy(&policy, selection))
+                .filter(|selection| selection_matches_policy(&policy, selection).unwrap())
                 .collect();
             assert_eq!(selected.len(), 2);
             assert!(selected.iter().any(|selection| {
@@ -37732,7 +37758,7 @@ scope = "system"
                 declaration
                     .selections
                     .iter()
-                    .filter(|selection| selection_matches_policy(&policy, selection))
+                    .filter(|selection| selection_matches_policy(&policy, selection).unwrap())
                     .count(),
                 8
             );
@@ -38171,13 +38197,13 @@ scope = "system"
         let selected: Vec<_> = declaration
             .selections
             .iter()
-            .filter(|selection| selection_matches_policy(&policy, selection))
+            .filter(|selection| selection_matches_policy(&policy, selection).unwrap())
             .collect();
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].source_record, "BARRIER_CTA_SYNC_ALIGNED_ALL_i");
         assert_eq!(selected[0].asm, "bar.sync \t$i;");
-        assert!(policy.expected_ptx.matches("bar.sync 0;"));
-        assert!(!policy.expected_ptx.matches(&selected[0].asm));
+        assert!(policy.expected_ptx.matches("bar.sync 0;").unwrap());
+        assert!(!policy.expected_ptx.matches(&selected[0].asm).unwrap());
         assert_eq!(policy.minimum_ptx, "1.0");
         assert!(policy.minimum_sm.is_none());
         let llvm_route = policy
@@ -38327,7 +38353,7 @@ scope = "system"
         let selected: Vec<_> = declaration
             .selections
             .iter()
-            .filter(|selection| selection_matches_policy(&policy, selection))
+            .filter(|selection| selection_matches_policy(&policy, selection).unwrap())
             .collect();
         assert_eq!(selected.len(), 2);
         assert_eq!(
@@ -38551,7 +38577,7 @@ scope = "system"
             let selected: Vec<_> = declaration
                 .selections
                 .iter()
-                .filter(|selection| selection_matches_policy(policy, selection))
+                .filter(|selection| selection_matches_policy(policy, selection).unwrap())
                 .collect();
             assert_eq!(selected.len(), 1);
             if policy.id.starts_with("dp2a") {
@@ -40800,7 +40826,7 @@ scope = "system"
             let selected = declaration
                 .selections
                 .iter()
-                .filter(|selection| selection_matches_policy(record, selection))
+                .filter(|selection| selection_matches_policy(record, selection).unwrap())
                 .collect::<Vec<_>>();
             assert_eq!(selected.len(), 1, "{}", record.id);
             if declaration.selections.len() == 3 {
@@ -40924,7 +40950,7 @@ scope = "system"
                 declaration
                     .selections
                     .iter()
-                    .filter(|selection| selection_matches_policy(record, selection))
+                    .filter(|selection| selection_matches_policy(record, selection).unwrap())
                     .count(),
                 1,
                 "{}",

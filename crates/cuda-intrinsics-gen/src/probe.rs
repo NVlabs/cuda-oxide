@@ -734,7 +734,7 @@ fn candidate_artifact(
 
 fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<()> {
     ensure!(
-        record.expected_ptx.matches(ptx),
+        record.expected_ptx.matches(ptx)?,
         "probe PTX has no instruction matching `{}`",
         record.expected_ptx
     );
@@ -792,7 +792,7 @@ fn uses_typed_llvm_nvptx_lowering(record: &CatalogIntrinsic) -> bool {
 }
 
 fn validate_exact_pure_instruction(expected: &InstructionPattern, ptx: &str) -> Result<()> {
-    let instructions = instructions_with_matching_head(ptx, expected);
+    let instructions = instructions_with_matching_head(ptx, expected)?;
     ensure!(
         instructions.len() == 1,
         "packed pure probe must contain exactly one `{}` instruction; found {}",
@@ -805,7 +805,7 @@ fn validate_exact_pure_instruction(expected: &InstructionPattern, ptx: &str) -> 
         instructions.len()
     );
     ensure!(
-        matching_instructions(ptx, expected).len() == 1,
+        matching_instructions(ptx, expected)?.len() == 1,
         "packed pure probe instruction does not match `{expected}`"
     );
     ensure!(
@@ -828,7 +828,7 @@ fn validate_sparse_mma_selectors(
         *selector == OperandPattern::Immediate,
         "sparse MMA selector must be an immediate operand"
     );
-    let instructions = instructions_with_matching_head(ptx, expected);
+    let instructions = instructions_with_matching_head(ptx, expected)?;
     ensure!(
         instructions.len() == selectors.len(),
         "sparse MMA probe must contain exactly {} matching instructions; found {}",
@@ -847,7 +847,7 @@ fn validate_sparse_mma_selectors(
             value: selector.to_string(),
         };
         ensure!(
-            matching_instructions(ptx, &pattern).len() == 1,
+            matching_instructions(ptx, &pattern)?.len() == 1,
             "sparse MMA probe PTX must contain exactly one selector {selector} form matching `{pattern}`"
         );
     }
@@ -886,7 +886,7 @@ fn validate_wide_warp_shuffle_recipe(
         "wide shuffle expected PTX must be `lo, lo, <register>, {clamp}, <register>`"
     );
 
-    let all_shuffles = instructions_with_matching_head(ptx, expected);
+    let all_shuffles = instructions_with_matching_head(ptx, expected)?;
     ensure!(
         all_shuffles.len() == 2,
         "wide shuffle probe must contain exactly two `{}` instructions; found {}",
@@ -899,7 +899,7 @@ fn validate_wide_warp_shuffle_recipe(
         all_shuffles.len()
     );
 
-    let low = matching_instructions(ptx, expected);
+    let low = matching_instructions(ptx, expected)?;
     ensure!(
         low.len() == 1,
         "wide shuffle probe must contain exactly one low-half instruction matching `{expected}`"
@@ -907,7 +907,7 @@ fn validate_wide_warp_shuffle_recipe(
     let mut high_pattern = expected.clone();
     high_pattern.operands[0] = OperandPattern::Exact { value: "hi".into() };
     high_pattern.operands[1] = OperandPattern::Exact { value: "hi".into() };
-    let high = matching_instructions(ptx, &high_pattern);
+    let high = matching_instructions(ptx, &high_pattern)?;
     ensure!(
         high.len() == 1,
         "wide shuffle probe must contain exactly one high-half instruction matching `{high_pattern}`"
@@ -937,8 +937,8 @@ fn validate_wide_warp_shuffle_recipe(
             },
         ],
     };
-    let split = matching_instructions(ptx, &split_pattern);
-    let reassemble = matching_instructions(ptx, &reassemble_pattern);
+    let split = matching_instructions(ptx, &split_pattern)?;
+    let reassemble = matching_instructions(ptx, &reassemble_pattern)?;
     ensure!(
         split.len() == 1,
         "wide shuffle probe must contain exactly one split matching `{split_pattern}`"
@@ -995,11 +995,11 @@ fn validate_register_and_immediate_forms(
     };
 
     ensure!(
-        register.matches(ptx),
+        register.matches(ptx)?,
         "probe PTX has no register form matching `{register}`"
     );
     ensure!(
-        immediate_pattern.matches(ptx),
+        immediate_pattern.matches(ptx)?,
         "probe PTX has no immediate form matching `{immediate_pattern}`"
     );
     Ok(())
@@ -1060,7 +1060,7 @@ fn validate_two_register_and_immediate_forms(
         pattern.operands[first_operand_index] = first;
         pattern.operands[second_operand_index] = second;
         ensure!(
-            pattern.matches(ptx),
+            pattern.matches(ptx)?,
             "probe PTX has no {name} form matching `{pattern}`"
         );
     }
