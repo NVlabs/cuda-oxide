@@ -5,11 +5,14 @@
 
 //! End-to-end tour of the structured PTX dialect: build a kernel with a
 //! counting loop, show the typed IR (including the typed guard predicate on
-//! the loop terminator), emit canonical PTX, and prove the emitted text
-//! re-parses losslessly with ptx-parse.
+//! the loop terminator), emit canonical PTX, prove the emitted text
+//! re-parses losslessly with ptx-parse, then raise the same text into the
+//! native Pliron CFG and show the loop block's ptx.terminator carrying the
+//! typed predicate and real successor edges.
 
-use dialect_ptx::attributes::PredicateAttr;
-use dialect_ptx::ops::PtxInstructionOp;
+use dialect_ptx::attributes::{PredicateAttr, TerminatorKindAttr};
+use dialect_ptx::ops::{PtxInstructionOp, PtxTerminatorOp};
+use dialect_ptx::raising::NativeCfgPlan;
 use dialect_ptx::{PtxBuilder, emit_canonical_module};
 use pliron::context::Context;
 use pliron::linked_list::ContainsLinkedList;
@@ -76,5 +79,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         if predicate.is_negated() { "!" } else { "" },
         predicate.register()
     );
+
+    // Raise the emitted text into the native Pliron CFG: labels become real
+    // basic blocks and the guarded back-edge becomes a ptx.terminator whose
+    // successors are CFG edges rather than label text.
+    let mut cfg_ctx = Context::new();
+    dialect_ptx::register(&mut cfg_ctx);
+    let raised = NativeCfgPlan::analyze(&emitted)?.materialize(&mut cfg_ctx);
+    println!("== native CFG ==");
+    println!("{}", raised.module().get_operation().disp(&cfg_ctx));
+    let loop_terminator = raised
+        .blocks()
+        .iter()
+        .find_map(|block| {
+            let terminator = block.block().deref(&cfg_ctx).iter(&cfg_ctx).last()?;
+            let terminator = Operation::get_op::<PtxTerminatorOp>(terminator, &cfg_ctx)?;
+            (terminator.kind(&cfg_ctx) == TerminatorKindAttr::Branch
+                && terminator.predicate(&cfg_ctx).is_some())
+            .then_some(terminator)
+        })
+        .expect("raised kernel keeps its guarded loop back-edge");
+    println!("== raised loop-block terminator ==");
+    println!("{}", loop_terminator.get_operation().disp(&cfg_ctx));
+    let reemitted = emit_canonical_module(&cfg_ctx, &raised.module())?;
+    assert_eq!(reemitted, emitted);
+    println!("== native CFG round trip ==");
+    println!("canonical emission from the raised CFG is byte-identical");
     Ok(())
 }
