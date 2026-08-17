@@ -19,6 +19,7 @@ use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
+use pliron::r#type::Typed;
 
 /// Convert TMA G2S (global to shared) operations using LLVM intrinsics.
 pub(crate) fn convert_g2s(
@@ -32,7 +33,7 @@ pub(crate) fn convert_g2s(
     convert_g2s_impl(ctx, rewriter, op, dims, multicast, 0)
 }
 
-fn g2s_inline_asm(dims: usize, multicast: bool, cta_group: i32) -> (String, String) {
+fn g2s_cluster_inline_asm(dims: usize, multicast: bool, cta_group: i32) -> (String, String) {
     let coordinates = (0..dims)
         .map(|index| format!("${}", 3 + index))
         .collect::<Vec<_>>()
@@ -52,6 +53,20 @@ fn g2s_inline_asm(dims: usize, multicast: bool, cta_group: i32) -> (String, Stri
     if multicast {
         constraints.push("h");
     }
+    constraints.push("~{memory}");
+    (template, constraints.join(","))
+}
+
+fn g2s_cta_inline_asm(dims: usize) -> (String, String) {
+    let coordinates = (0..dims)
+        .map(|index| format!("${}", 3 + index))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let template = format!(
+        "cp.async.bulk.tensor.{dims}d.shared::cta.global.tile.mbarrier::complete_tx::bytes [$0], [$2, {{{coordinates}}}], [$1];"
+    );
+    let mut constraints = vec!["l"; 3];
+    constraints.extend(std::iter::repeat_n("r", dims));
     constraints.push("~{memory}");
     (template, constraints.join(","))
 }
@@ -85,7 +100,21 @@ fn convert_g2s_impl(
         );
     }
 
-    let dst_casted = cast_to_cluster_shared_addrspace(ctx, rewriter, operands[0]);
+    let destination_address_space = operands[0]
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<llvm_types::PointerType>()
+        .map(|pointer| pointer.address_space());
+    // PTX 8.6 added a CTA-local G2S form. An explicit AS3 destination is
+    // already proven local, so it does not need the cluster form or ptxas'
+    // peer-CTA fallback. Generic, remote, multicast, and CTA-group copies
+    // keep the wider cluster semantics.
+    let cta_local = !multicast && cta_group == 0 && destination_address_space == Some(3);
+    let dst_casted = if cta_local {
+        cast_to_shared_addrspace(ctx, rewriter, operands[0])
+    } else {
+        cast_to_cluster_shared_addrspace(ctx, rewriter, operands[0])
+    };
     let barrier_casted = cast_to_shared_addrspace(ctx, rewriter, operands[1]);
 
     if context::lowering_options(ctx).intrinsic_backend == IntrinsicBackend::LibNvvm {
@@ -95,7 +124,11 @@ fn convert_g2s_impl(
             inputs.push(operands[3 + dims]);
         }
 
-        let (template, constraints) = g2s_inline_asm(dims, multicast, cta_group);
+        let (template, constraints) = if cta_local {
+            g2s_cta_inline_asm(dims)
+        } else {
+            g2s_cluster_inline_asm(dims, multicast, cta_group)
+        };
 
         inline_asm_convergent(
             ctx,
@@ -111,35 +144,50 @@ fn convert_g2s_impl(
     }
 
     let mut arg_types: Vec<pliron::r#type::TypeHandle> = vec![
-        shared_cluster_ptr_ty.into(),
+        if cta_local {
+            smem_ptr_ty.into()
+        } else {
+            shared_cluster_ptr_ty.into()
+        },
         smem_ptr_ty.into(),
         generic_ptr_ty.into(),
     ];
     for _ in 0..dims {
         arg_types.push(i32_ty.into());
     }
-    arg_types.push(i16_ty.into()); // cta_mask
-    arg_types.push(i64_ty.into()); // cache_hint
-    arg_types.push(i1_ty.into()); // use_cta_mask
-    arg_types.push(i1_ty.into()); // use_cache_hint
-    arg_types.push(i32_ty.into()); // cta_group
+    if cta_local {
+        arg_types.push(i64_ty.into()); // cache_hint
+        arg_types.push(i1_ty.into()); // use_cache_hint
+    } else {
+        arg_types.push(i16_ty.into()); // cta_mask
+        arg_types.push(i64_ty.into()); // cache_hint
+        arg_types.push(i1_ty.into()); // use_cta_mask
+        arg_types.push(i1_ty.into()); // use_cache_hint
+        arg_types.push(i32_ty.into()); // cta_group
+    }
 
-    let intrinsic_name = format!("llvm_nvvm_cp_async_bulk_tensor_g2s_tile_{}d", dims);
+    let intrinsic_name = if cta_local {
+        format!("llvm_nvvm_cp_async_bulk_tensor_g2s_cta_tile_{}d", dims)
+    } else {
+        format!("llvm_nvvm_cp_async_bulk_tensor_g2s_tile_{}d", dims)
+    };
     let func_ty = llvm_types::FuncType::get(ctx, void_ty.into(), arg_types, false);
 
     let parent_block = op.deref(ctx).get_parent_block().unwrap();
     helpers::ensure_intrinsic_declared(ctx, parent_block, &intrinsic_name, func_ty)
         .map_err(|e| pliron::input_error_noloc!("{}", e))?;
 
-    let mut call_args = vec![dst_casted, barrier_casted];
-    call_args.extend(operands[2..].iter().copied());
-
-    let use_cta_mask = create_i1_const(ctx, rewriter, multicast);
-    let use_cache_hint = create_i1_const(ctx, rewriter, false);
-    let cta_group_val = create_i32_const(ctx, rewriter, cta_group);
-    call_args.push(use_cta_mask);
-    call_args.push(use_cache_hint);
-    call_args.push(cta_group_val);
+    let mut call_args = vec![dst_casted, barrier_casted, operands[2]];
+    call_args.extend(operands[3..3 + dims].iter().copied());
+    if cta_local {
+        call_args.push(operands[4 + dims]); // cache_hint; skip cta_mask
+        call_args.push(create_i1_const(ctx, rewriter, false));
+    } else {
+        call_args.extend(operands[3 + dims..].iter().copied());
+        call_args.push(create_i1_const(ctx, rewriter, multicast));
+        call_args.push(create_i1_const(ctx, rewriter, false));
+        call_args.push(create_i32_const(ctx, rewriter, cta_group));
+    }
 
     let sym_name: pliron::identifier::Identifier = intrinsic_name.as_str().try_into().unwrap();
     let callee = CallOpCallable::Direct(sym_name);
@@ -722,22 +770,29 @@ pub(crate) fn convert_control(
 
 #[cfg(test)]
 mod tests {
-    use super::{g2s_inline_asm, reduce_inline_asm, s2g_inline_asm};
+    use super::{g2s_cluster_inline_asm, g2s_cta_inline_asm, reduce_inline_asm, s2g_inline_asm};
 
     #[test]
     fn inline_tma_templates_keep_exact_ptx_shapes() {
         assert_eq!(
-            g2s_inline_asm(1, false, 0),
+            g2s_cluster_inline_asm(1, false, 0),
             (
                 "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [$0], [$2, {$3}], [$1];".into(),
                 "l,l,l,r,~{memory}".into(),
             )
         );
         assert_eq!(
-            g2s_inline_asm(2, true, 2),
+            g2s_cluster_inline_asm(2, true, 2),
             (
                 "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.cta_group::2 [$0], [$2, {$3, $4}], [$1], $5;".into(),
                 "l,l,l,r,r,h,~{memory}".into(),
+            )
+        );
+        assert_eq!(
+            g2s_cta_inline_asm(2),
+            (
+                "cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes [$0], [$2, {$3, $4}], [$1];".into(),
+                "l,l,l,r,r,~{memory}".into(),
             )
         );
         assert_eq!(

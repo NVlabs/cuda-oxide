@@ -259,19 +259,21 @@ pub fn compile_translated_module(
             .emit(format!("{}", module.deref(ctx).disp(ctx)));
     }
 
-    // This is the shared CuTe backend seam. Validate the complete semantic
-    // story once, before either a native lowering or an external compiler
-    // translation is allowed to consume it.
-    dialect_cute::verify::verify_cute_semantics(ctx, module).map_err(|error| {
-        PipelineError::Lowering(format!(
-            "dialect-cute semantic verification failed: {error}"
-        ))
-    })?;
-
     // After the pinning above, `backend.target_arch` is exactly the target
     // the rest of the pipeline will compile for (or `None`, in which case
     // materialization fails with its explicit-target requirement).
     materialize_iket(ctx, module, backend.target_arch.as_deref(), &backend.iket)?;
+
+    if request.trace.verbose {
+        request
+            .trace
+            .emit("\n=== Expanding dialect-cute operations for the native backend ===");
+    }
+    dialect_cute::expand::expand_cute_ops(ctx, module).map_err(|error| {
+        PipelineError::Lowering(format!("dialect-cute expansion failed: {error}"))
+    })?;
+    crate::generated::resolve_cute_generated_intrinsic_markers(ctx, module)?;
+    verify_operation(ctx, module, "module after native CuTe expansion")?;
 
     // Calls need structured extern declarations before lowering so pointer
     // address spaces are preserved by the call converter.

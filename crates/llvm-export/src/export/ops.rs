@@ -123,6 +123,7 @@ enum LlvmOp<'op> {
     FPExt(&'op ops::FPExtOp),
     FPTrunc(&'op ops::FPTruncOp),
     // Aggregates
+    ExtractElement(&'op ops::ExtractElementOp),
     ExtractValue(&'op ops::ExtractValueOp),
     InsertValue(&'op ops::InsertValueOp),
     // Virtual / constant ops
@@ -212,6 +213,7 @@ impl<'op> TryFrom<&'op dyn Op> for LlvmOp<'op> {
             FPExt        => ops::FPExtOp,
             FPTrunc      => ops::FPTruncOp,
             // Aggregates
+            ExtractElement => ops::ExtractElementOp,
             ExtractValue => ops::ExtractValueOp,
             InsertValue  => ops::InsertValueOp,
             // Virtual / constant ops
@@ -476,6 +478,9 @@ impl<'a> ModuleExportState<'a> {
                 self.export_cast("fptrunc", op.get_operation(), value_names, output)?
             }
             // Aggregates
+            Some(LlvmOp::ExtractElement(op)) => {
+                self.emit_extract_element(op, value_names, output)?
+            }
             Some(LlvmOp::ExtractValue(op)) => self.emit_extract_value(op, value_names, output)?,
             Some(LlvmOp::InsertValue(op)) => self.emit_insert_value(op, value_names, output)?,
             // Virtual ops
@@ -1885,6 +1890,30 @@ impl<'a> ModuleExportState<'a> {
         self.export_value(val, value_names, output)?;
         write!(output, " to ").unwrap();
         self.export_type(res.get_type(self.ctx), output)?;
+        writeln!(output).unwrap();
+        Ok(())
+    }
+
+    fn emit_extract_element(
+        &mut self,
+        op: &ops::ExtractElementOp,
+        value_names: &FxHashMap<Value, String>,
+        output: &mut String,
+    ) -> Result<(), String> {
+        let op_ref = op.get_operation().deref(self.ctx);
+        let result = op_ref.get_result(0);
+        let result_name = value_names.get(&result).unwrap();
+        let vector = op_ref.get_operand(0);
+        let index = op_ref.get_operand(1);
+
+        write!(output, "  {result_name} = extractelement ").unwrap();
+        self.export_type(vector.get_type(self.ctx), output)?;
+        write!(output, " ").unwrap();
+        self.export_value(vector, value_names, output)?;
+        write!(output, ", ").unwrap();
+        self.export_type(index.get_type(self.ctx), output)?;
+        write!(output, " ").unwrap();
+        self.export_value(index, value_names, output)?;
         writeln!(output).unwrap();
         Ok(())
     }

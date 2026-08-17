@@ -21,6 +21,7 @@
 
 pub mod attributes;
 pub mod epilogue_ops;
+pub mod expand;
 pub mod gemm_tma_ops;
 pub mod gemv_ops;
 pub mod ops;

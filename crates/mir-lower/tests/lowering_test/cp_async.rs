@@ -725,3 +725,118 @@ fn assert_cp_async_zfill_inline_asm_lowering(
 // =============================================================================
 // Generated packed arithmetic lowering tests
 // =============================================================================
+
+fn lower_tma_g2s(
+    backend: mir_lower::IntrinsicBackend,
+    dims: usize,
+    shared_destination: bool,
+    multicast: bool,
+) -> Result<String, anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let i16_ty = IntegerType::get(&ctx, 16, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let destination_ty = if shared_destination {
+        MirPtrType::get_shared(&mut ctx, u8_ty.into(), true)
+    } else {
+        MirPtrType::get_generic(&mut ctx, u8_ty.into(), true)
+    };
+    let barrier_ty = MirPtrType::get_shared(&mut ctx, i64_ty.into(), true);
+    let tensor_map_ty = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let mut argument_types: Vec<pliron::r#type::TypeHandle> = vec![
+        destination_ty.into(),
+        barrier_ty.into(),
+        tensor_map_ty.into(),
+    ];
+    let i32_handle: pliron::r#type::TypeHandle = i32_ty.into();
+    argument_types.extend(std::iter::repeat_n(i32_handle, dims));
+    argument_types.push(i16_ty.into());
+    argument_types.push(i64_ty.into());
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+    let operands = (0..3 + dims + 2)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect();
+    let operation = match (dims, multicast) {
+        (1, false) => nvvm::CpAsyncBulkTensorG2sTile1dOp::get_concrete_op_info(),
+        (2, false) => nvvm::CpAsyncBulkTensorG2sTile2dOp::get_concrete_op_info(),
+        (2, true) => nvvm::CpAsyncBulkTensorG2sTile2dMulticastOp::get_concrete_op_info(),
+        (3, false) => nvvm::CpAsyncBulkTensorG2sTile3dOp::get_concrete_op_info(),
+        (4, false) => nvvm::CpAsyncBulkTensorG2sTile4dOp::get_concrete_op_info(),
+        (5, false) => nvvm::CpAsyncBulkTensorG2sTile5dOp::get_concrete_op_info(),
+        _ => unreachable!("unsupported TMA test shape"),
+    };
+    Operation::new(&mut ctx, operation, vec![], operands, vec![], 0).insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+    llvm_export::export::export_module_to_string(&ctx, &module)
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
+#[test]
+fn local_tma_g2s_uses_cta_destination_on_both_backends() -> Result<(), anyhow::Error> {
+    for dims in [1, 2, 5] {
+        let llvm_ir = lower_tma_g2s(mir_lower::IntrinsicBackend::LlvmNvptx, dims, true, false)?;
+        assert!(
+            llvm_ir.contains(&format!(
+                "@llvm.nvvm.cp.async.bulk.tensor.g2s.cta.tile.{dims}d(ptr addrspace(3)"
+            )),
+            "{llvm_ir}"
+        );
+        assert!(
+            !llvm_ir.contains(&format!(
+                "@llvm.nvvm.cp.async.bulk.tensor.g2s.tile.{dims}d("
+            )),
+            "{llvm_ir}"
+        );
+
+        let libnvvm_ir = lower_tma_g2s(mir_lower::IntrinsicBackend::LibNvvm, dims, true, false)?;
+        assert!(
+            libnvvm_ir.contains(&format!(
+                "cp.async.bulk.tensor.{dims}d.shared::cta.global.tile.mbarrier::complete_tx::bytes"
+            )),
+            "{libnvvm_ir}"
+        );
+        assert!(
+            !libnvvm_ir.contains("shared::cluster.global"),
+            "{libnvvm_ir}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn generic_and_multicast_tma_g2s_keep_cluster_destination() -> Result<(), anyhow::Error> {
+    let generic = lower_tma_g2s(mir_lower::IntrinsicBackend::LlvmNvptx, 2, false, false)?;
+    assert!(
+        generic.contains("@llvm.nvvm.cp.async.bulk.tensor.g2s.tile.2d(ptr addrspace(7)"),
+        "{generic}"
+    );
+    assert!(
+        !generic.contains("@llvm.nvvm.cp.async.bulk.tensor.g2s.cta.tile.2d("),
+        "{generic}"
+    );
+
+    let multicast = lower_tma_g2s(mir_lower::IntrinsicBackend::LibNvvm, 2, true, true)?;
+    assert!(
+        multicast.contains(
+            "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster"
+        ),
+        "{multicast}"
+    );
+    assert!(!multicast.contains("shared::cta.global"), "{multicast}");
+    Ok(())
+}

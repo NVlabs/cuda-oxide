@@ -32,6 +32,117 @@ pub(crate) enum GeneratedMarkerPolicy {
     Optional,
 }
 
+/// Resolve temporary requests emitted by the CuTe expansion pass against the
+/// generated intrinsic catalog owned by this crate.
+pub(crate) fn resolve_cute_generated_intrinsic_markers(
+    ctx: &mut Context,
+    root: Ptr<Operation>,
+) -> Result<(), PipelineError> {
+    use pliron::builtin::attributes::{StringAttr, UnitAttr};
+    use pliron::identifier::Identifier;
+
+    let request_key = Identifier::try_from(dialect_cute::expand::GENERATED_INTRINSIC_REQUEST_ATTR)
+        .map_err(|error| {
+            PipelineError::Lowering(format!(
+                "invalid cute generated-intrinsic request key: {error}"
+            ))
+        })?;
+    let marker_key = Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).map_err(|error| {
+        PipelineError::Lowering(format!("invalid generated-intrinsic marker key: {error}"))
+    })?;
+
+    fn collect(ctx: &Context, op: Ptr<Operation>, output: &mut Vec<Ptr<Operation>>) {
+        output.push(op);
+        let regions: Vec<_> = op.deref(ctx).regions().collect();
+        for region in regions {
+            let blocks: Vec<_> = region.deref(ctx).iter(ctx).collect();
+            for block in blocks {
+                let children: Vec<_> = block.deref(ctx).iter(ctx).collect();
+                for child in children {
+                    collect(ctx, child, output);
+                }
+            }
+        }
+    }
+
+    let mut operations = Vec::new();
+    collect(ctx, root, &mut operations);
+
+    // Validate every request before changing any operation. A bad request
+    // therefore leaves the module untouched and easy to inspect.
+    let mut resolutions = Vec::new();
+    for op_ptr in operations {
+        let requested = {
+            let op = op_ptr.deref(ctx);
+            if !op.attributes.0.contains_key(&request_key) {
+                false
+            } else if op.attributes.get::<UnitAttr>(&request_key).is_none() {
+                return Err(generated_requirement_error(
+                    ctx,
+                    op_ptr,
+                    format!(
+                        "`{}` must be a unit attribute",
+                        dialect_cute::expand::GENERATED_INTRINSIC_REQUEST_ATTR
+                    ),
+                ));
+            } else {
+                true
+            }
+        };
+        if !requested {
+            continue;
+        }
+
+        let op_name = Operation::get_opid(op_ptr, ctx).to_string();
+        let matches = generated_intrinsic_targets_by_op_name(&op_name)
+            .filter(|target| generated_intrinsic_operation_matches(ctx, target, op_ptr))
+            .collect::<Vec<_>>();
+        let [target] = matches.as_slice() else {
+            return Err(generated_requirement_error(
+                ctx,
+                op_ptr,
+                format!(
+                    "cute expansion emitted `{op_name}`, which matches {} exact generated catalog variants; expected one",
+                    matches.len()
+                ),
+            ));
+        };
+
+        let op = op_ptr.deref(ctx);
+        if op.attributes.0.contains_key(&marker_key) {
+            let Some(existing) = op.attributes.get::<StringAttr>(&marker_key) else {
+                return Err(generated_requirement_error(
+                    ctx,
+                    op_ptr,
+                    format!("`{GENERATED_INTRINSIC_MARKER_ATTR}` must be a string attribute"),
+                ));
+            };
+            if String::from(existing.clone()) != target.marker {
+                return Err(generated_requirement_error(
+                    ctx,
+                    op_ptr,
+                    format!(
+                        "cute expansion emitted `{op_name}` with marker `{}`, but the exact catalog marker is `{}`",
+                        String::from(existing.clone()),
+                        target.marker
+                    ),
+                ));
+            }
+        }
+        resolutions.push((op_ptr, *target));
+    }
+
+    for (op_ptr, target) in resolutions {
+        let mut op = op_ptr.deref_mut(ctx);
+        op.attributes.set(
+            marker_key.clone(),
+            StringAttr::new(target.marker.to_string()),
+        );
+        op.attributes.0.remove(&request_key);
+    }
+    Ok(())
+}
+
 /// Exact generated-intrinsic requirements found in typed, pre-lowering IR.
 ///
 /// `targets` keeps one entry per ABI marker. Selector-dependent calls are also
@@ -570,6 +681,79 @@ mod tests {
             crate::lower::append_to_module(ctx, module_op, *op);
         }
         module_op
+    }
+
+    #[test]
+    fn native_cute_requests_resolve_to_the_catalog_abi() {
+        use dialect_nvvm::ops::{
+            CvtRnBf16x2Ue8m0x2Op, CvtRnF16x2E2m1x2Op, FenceProxyAsyncSharedCtaOp,
+            RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaKindAttr,
+            RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr,
+            RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+        };
+
+        let mut ctx = Context::new();
+        register_dialects(&mut ctx);
+        let f32_ty = FP32Type::get(&ctx).to_handle();
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned).to_handle();
+        let u16_ty = IntegerType::get(&ctx, 16, Signedness::Unsigned).to_handle();
+        let mut argument_types = vec![f32_ty; 4];
+        argument_types.extend([u32_ty; 7]);
+        argument_types.extend([u16_ty; 2]);
+        argument_types.push(u32_ty);
+        argument_types.extend([u16_ty; 2]);
+        let block = BasicBlock::new(&mut ctx, None, argument_types);
+
+        let fence = FenceProxyAsyncSharedCtaOp::build(&mut ctx);
+        let e2m1_input = block.deref(&ctx).get_argument(11);
+        let ue8m0_input = block.deref(&ctx).get_argument(12);
+        let e2m1 = CvtRnF16x2E2m1x2Op::build(&mut ctx, e2m1_input);
+        let ue8m0 = CvtRnBf16x2Ue8m0x2Op::build(&mut ctx, ue8m0_input);
+        let operands = (0..16)
+            .map(|index| block.deref(&ctx).get_argument(index))
+            .collect();
+        let mma = Operation::new(
+            &mut ctx,
+            RegisterMmaOp::get_concrete_op_info(),
+            vec![f32_ty; 4],
+            operands,
+            vec![],
+            0,
+        );
+        let mma_op = RegisterMmaOp::new(mma);
+        mma_op.set_attr_nvvm_register_mma_shape(&ctx, RegisterMmaShapeAttr::M16n8k64);
+        mma_op.set_attr_nvvm_register_mma_operation(&ctx, RegisterMmaOperationAttr::Multiply);
+        mma_op.set_attr_nvvm_register_mma_kind(&ctx, RegisterMmaKindAttr::Mxf4);
+        mma_op.set_attr_nvvm_register_mma_accumulator(&ctx, RegisterMmaAccumulatorAttr::F32);
+        mma_op.set_attr_nvvm_register_mma_a_element(&ctx, RegisterMmaElementAttr::E2m1);
+        mma_op.set_attr_nvvm_register_mma_b_element(&ctx, RegisterMmaElementAttr::E2m1);
+        mma_op.set_attr_nvvm_register_mma_a_layout(&ctx, RegisterMmaLayoutAttr::Row);
+        mma_op.set_attr_nvvm_register_mma_b_layout(&ctx, RegisterMmaLayoutAttr::Col);
+        mma_op.set_attr_nvvm_register_mma_overflow(&ctx, RegisterMmaOverflowAttr::NotApplicable);
+
+        let marker_key = Identifier::try_from(GENERATED_INTRINSIC_MARKER_ATTR).unwrap();
+        let request_key =
+            Identifier::try_from(dialect_cute::expand::GENERATED_INTRINSIC_REQUEST_ATTR).unwrap();
+        for (operation, expected) in [
+            (fence, "v1:i0312"),
+            (e2m1, "v1:i1026"),
+            (ue8m0, "v1:i1027"),
+            (mma, "v1:i1028"),
+        ] {
+            dialect_cute::expand::request_generated_intrinsic_marker(&mut ctx, operation);
+            resolve_cute_generated_intrinsic_markers(&mut ctx, operation).unwrap();
+            let operation = operation.deref(&ctx);
+            assert!(!operation.attributes.0.contains_key(&request_key));
+            assert_eq!(
+                operation
+                    .attributes
+                    .get::<StringAttr>(&marker_key)
+                    .cloned()
+                    .map(String::from)
+                    .as_deref(),
+                Some(expected)
+            );
+        }
     }
 
     fn tcgen05_mma_shared_op(

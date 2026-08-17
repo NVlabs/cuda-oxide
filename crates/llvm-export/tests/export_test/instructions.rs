@@ -10,10 +10,10 @@ use llvm_export::{
     },
     op_interfaces::CastOpInterface,
     ops::{
-        AddrSpaceCastOp, AllocaOp, BitcastOp, ConstantOp, FuncOp, GepIndex, GetElementPtrOp,
-        InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
+        AddrSpaceCastOp, AllocaOp, BitcastOp, ConstantOp, ExtractElementOp, FuncOp, GepIndex,
+        GetElementPtrOp, InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
     },
-    types::{FuncType, PointerType, VoidType},
+    types::{FuncType, PointerType, VectorType, VectorTypeKind, VoidType},
 };
 use pliron::{
     builtin::{
@@ -574,5 +574,39 @@ fn export_emits_fast_math_flags_only_on_flagged_float_ops() {
     assert!(
         !fmul_line.contains("fast"),
         "a float binop with no fast-math flags must not gain them:\n{ir}"
+    );
+}
+
+#[test]
+fn export_extract_element_prints_vector_and_index_types() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let vector_ty = VectorType::get(&ctx, i8_ty.to_handle(), 4, VectorTypeKind::Fixed);
+    let function_type = FuncType::get(
+        &ctx,
+        i8_ty.to_handle(),
+        vec![vector_ty.to_handle(), i64_ty.to_handle()],
+        false,
+    );
+    let function = FuncOp::new(&mut ctx, "extract_lane".try_into().unwrap(), function_type);
+    let entry = function.get_or_create_entry_block(&mut ctx);
+    let vector = entry.deref(&ctx).get_argument(0);
+    let index = entry.deref(&ctx).get_argument(1);
+    let extract = ExtractElementOp::new(&mut ctx, vector, index);
+    let result = extract.get_operation().deref(&ctx).get_result(0);
+    extract.get_operation().insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, Some(result))
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    function.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
+    assert!(
+        ir.contains(" = extractelement <4 x i8> %v0, i64 %v1"),
+        "unexpected extractelement spelling:\n{ir}"
     );
 }

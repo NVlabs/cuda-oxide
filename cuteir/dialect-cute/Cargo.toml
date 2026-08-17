@@ -15,6 +15,6 @@ linkme = { workspace = true }
 combine = { workspace = true }
 once_cell = { workspace = true }
 cute-layout = { workspace = true }
-# Semantic operations use ordinary MIR carrier types. Native and MLIR
-# backends depend on this crate, not the other way around.
 dialect-mir = { workspace = true }
+dialect-nvvm = { workspace = true }
+llvm-export = { workspace = true }
