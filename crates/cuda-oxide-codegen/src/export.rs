@@ -16,7 +16,7 @@ use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
 use pliron::operation::Operation;
-use ptx_syntax::{CallableKind, Document, ParseError};
+use ptx_parse::{CallableKind, Document, ParseError};
 use std::path::Path;
 
 /// An external device function declaration (for FFI with external LTOIR).

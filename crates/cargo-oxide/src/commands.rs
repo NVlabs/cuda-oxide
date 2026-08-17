@@ -1700,7 +1700,7 @@ fn ptx_recorded_target(ptx_path: &Path) -> Result<String, String> {
             ptx_path.display()
         )
     })?;
-    let document = ptx_syntax::Document::parse(&text).map_err(|error| {
+    let document = ptx_parse::Document::parse(&text).map_err(|error| {
         format!(
             "could not parse emitted PTX {} to read its target: {error}",
             ptx_path.display()
@@ -1710,7 +1710,7 @@ fn ptx_recorded_target(ptx_path: &Path) -> Result<String, String> {
         .directives()
         .iter()
         .find(|directive| directive.name() == ".target")
-        .and_then(|directive| ptx_syntax::split_top_level(directive.arguments()))
+        .and_then(|directive| ptx_parse::split_top_level(directive.arguments()))
         .and_then(|arguments| arguments.first().copied())
         .map(str::to_string)
         .filter(|target| !target.is_empty())

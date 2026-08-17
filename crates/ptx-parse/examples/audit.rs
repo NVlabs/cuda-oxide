@@ -1,4 +1,4 @@
-use ptx_syntax::Document;
+use ptx_parse::Document;
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};

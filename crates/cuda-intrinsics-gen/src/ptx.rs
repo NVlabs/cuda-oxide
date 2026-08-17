@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use ptx_syntax::{Document, split_top_level};
+use ptx_parse::{Document, split_top_level};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 

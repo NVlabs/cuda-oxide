@@ -15,7 +15,7 @@ use crate::target::{
 };
 use libnvvm_sys::CudaArch;
 use llvm_export::export::DebugKind;
-use ptx_syntax::{Document, EditScript, split_top_level};
+use ptx_parse::{Document, EditScript, split_top_level};
 use std::path::{Path, PathBuf};
 
 /// Links `libdevice.10.bc` into the emitted IR using `llvm-link`.

@@ -123,8 +123,8 @@ pub fn load_all_ptx_bundles_merged(
 }
 
 fn strip_ptx_module_headers(ptx: &str) -> Result<String, String> {
-    let document = ptx_syntax::Document::parse(ptx).map_err(|error| error.to_string())?;
-    let mut edits = ptx_syntax::EditScript::new();
+    let document = ptx_parse::Document::parse(ptx).map_err(|error| error.to_string())?;
+    let mut edits = ptx_parse::EditScript::new();
     for directive in document
         .directives()
         .iter()

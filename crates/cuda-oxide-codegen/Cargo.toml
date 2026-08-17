@@ -12,7 +12,7 @@ readme = "README.md"
 
 [dependencies]
 pliron = { workspace = true }
-ptx-syntax = { workspace = true }
+ptx-parse = { workspace = true }
 thiserror = { workspace = true }
 dialect-mir = { workspace = true }
 dialect-iket = { workspace = true }
