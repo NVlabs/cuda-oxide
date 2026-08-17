@@ -451,21 +451,43 @@ dependencies = [
 name = "cuda-oxide-codegen"
 version = "0.1.0"
 dependencies = [
+ "cuda-oxide-mlir-export",
  "cuda-target-spec",
  "dialect-cute",
  "dialect-iket",
  "dialect-mir",
  "dialect-nvvm",
  "iket-lower",
+ "libloading",
  "libnvvm-sys",
  "llvm-export",
  "mir-lower",
  "mir-transforms",
  "nvvm-transforms",
+ "object",
  "pliron",
+ "pliron-mlir-export",
  "ptx-parse",
  "rustc-demangle",
+ "serde_json",
+ "sha2",
  "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "cuda-oxide-mlir-export"
+version = "0.1.0"
+dependencies = [
+ "dialect-cute",
+ "dialect-mir",
+ "dialect-nvvm",
+ "llvm-export",
+ "pliron",
+ "pliron-derive",
+ "pliron-mlir-export",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
@@ -1103,6 +1125,15 @@ dependencies = [
  "bitflags",
  "log",
  "pliron",
+ "thiserror",
+]
+
+[[package]]
+name = "pliron-mlir-export"
+version = "0.1.0"
+dependencies = [
+ "pliron",
+ "pliron-derive",
  "thiserror",
 ]
 

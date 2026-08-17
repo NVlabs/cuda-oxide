@@ -314,11 +314,13 @@ cargo oxide run gemm_sol_final
 | `dialect-iket`       | pliron dialect modelling in-kernel event tracing      |
 | `iket-lower`         | `dialect-iket` profiles + instrumentation lowering    |
 | `llvm-export`        | pliron-llvm shim + textual `.ll` exporter             |
+| `pliron-mlir-export` | Typed deterministic Pliron-to-MLIR translation        |
+| `cuda-oxide-mlir-export` | CUTLASS 4.7 CuTe MLIR mapping packs and profile   |
 | `dialect-nvvm`       | pliron dialect modelling NVVM intrinsics              |
 | `dialect-ptx`        | pliron dialect modelling structured PTX               |
 | `mir-transforms`     | Optimization passes over the MIR dialect (loop unroll, ...) |
 | `nvvm-transforms`    | Target-aware LLVM dialect legalization for NVVM      |
-| `cuda-oxide-codegen` | Experimental rustc-independent PTX backend           |
+| `cuda-oxide-codegen` | Rustc-independent PTX and CUTLASS cubin backend       |
 
 ### Build Tooling
 

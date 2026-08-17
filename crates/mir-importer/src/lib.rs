@@ -101,6 +101,7 @@ pub mod pipeline;
 // under it, since every item in it would count as reachable API.
 pub(crate) mod translator;
 
+pub use cuda_oxide_codegen::__private::{CutlassBackendConfig, DeviceBackend};
 pub use error::{TranslationErr, TranslationResult};
 pub use pipeline::{
     CollectedFunction, CompilationArtifactKind, CompilationResult, DebugGlobalVariableIdentity,

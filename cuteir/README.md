@@ -87,3 +87,8 @@ own READMEs give the exact device and shape requirements.
 Each program checks every GPU output bit pattern against a deterministic host
 result before reporting success. Backend-specific artifact and code-shape
 checks live with the backend implementation rather than in this shared layer.
+
+On the translation branch, the [official CUTLASS backend](docs/translation.md)
+maps these semantic operations directly to the CUTLASS 4.7 MLIR profile and
+embeds the compiler-produced cubin. It does not pass through native CuTe
+expansion.
