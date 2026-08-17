@@ -291,9 +291,12 @@ they become `call` instructions to `@llvm.nvvm.*` intrinsics.
 
 ### Architecture Coverage
 
-The dialect holds 543 operations across 41 modules, and they come from two
-different places. The split is the first thing to know about it, because it
-decides where -- and whether -- you would add one.
+At catalog SHA-256 `df42ef97` (the stamp in every `ops/generated/` file
+header), the dialect holds 543 operations across 41 modules, and they come
+from two different places. The split is the first thing to know about it,
+because it decides where -- and whether -- you would add one. If the header
+stamp no longer starts with `df42ef97`, the counts on this page predate the
+catalog you are reading.
 
 **Hand-written**, directly under `crates/dialect-nvvm/src/ops/`. These are the
 ops with bespoke verification or lowering that the intrinsic catalog does not
