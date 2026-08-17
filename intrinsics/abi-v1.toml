@@ -6872,3 +6872,59 @@ status = "active"
 catalog_id = "cp_async_bulk_tensor_reduce_xor_im2col_5d"
 operation_key = "memory.reduce.async.bulk.tensor.xor.im2col.5d"
 raw_rust_signature = { safe = false, arguments = ["*const u8", "*const u8", "i32", "i32", "i32", "i32", "i32"], result = "()" }
+
+[[entry]]
+abi_id = "i0987"
+status = "active"
+catalog_id = "min_relu_s32"
+operation_key = "integer.minmax.s32.min.relu"
+raw_rust_signature = { safe = true, arguments = ["i32", "i32"], result = "i32" }
+
+[[entry]]
+abi_id = "i0988"
+status = "active"
+catalog_id = "max_relu_s32"
+operation_key = "integer.minmax.s32.max.relu"
+raw_rust_signature = { safe = true, arguments = ["i32", "i32"], result = "i32" }
+
+[[entry]]
+abi_id = "i0989"
+status = "active"
+catalog_id = "min_s16x2"
+operation_key = "integer.minmax.s16x2.min"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0990"
+status = "active"
+catalog_id = "max_s16x2"
+operation_key = "integer.minmax.s16x2.max"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0991"
+status = "active"
+catalog_id = "min_u16x2"
+operation_key = "integer.minmax.u16x2.min"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0992"
+status = "active"
+catalog_id = "max_u16x2"
+operation_key = "integer.minmax.u16x2.max"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0993"
+status = "active"
+catalog_id = "min_relu_s16x2"
+operation_key = "integer.minmax.s16x2.min.relu"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }
+
+[[entry]]
+abi_id = "i0994"
+status = "active"
+catalog_id = "max_relu_s16x2"
+operation_key = "integer.minmax.s16x2.max.relu"
+raw_rust_signature = { safe = true, arguments = ["u32", "u32"], result = "u32" }

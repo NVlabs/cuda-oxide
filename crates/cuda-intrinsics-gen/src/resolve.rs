@@ -22,34 +22,35 @@ use crate::model::{
     EvidenceStageKind, ExecutionControlOperation, ExtendedMinMax, ExtendedMinMaxAdapter,
     ExtendedMinMaxAdmission, ExtendedMinMaxFormat, ExtendedMinMaxNan, ExtendedMinMaxOperation,
     ExtendedMinMaxSubnormal, ImportedAddressSpace, ImportedFile, ImportedIntrinsic,
-    IntrinsicBackend, IntrinsicSource, LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement,
-    LdmatrixLayout, LdmatrixMemoryOrder, LdmatrixMultiplicity, LdmatrixParticipation,
-    LdmatrixShape, LdmatrixStateSpace, MaskEncoding, MatchOperandEncoding, MbarrierBasicAdapter,
-    MbarrierBasicOperation, MbarrierExtended, MbarrierExtendedAdapter, MbarrierExtendedAdmission,
-    MbarrierExtendedOperation, MbarrierExtendedSourceContract, MbarrierStateSpace,
-    MovmatrixAdapter, MovmatrixParticipation, OverlayBackendLowering, OverlayFile,
-    OverlayIntrinsic, OverlayShardFile, PackedAluAdapter, PackedAluFormat, PackedAluOperation,
-    PackedAtomicAccessContract, PackedAtomicAdapter, PackedAtomicAtomicity,
-    PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation, PackedAtomicOrdering,
-    PackedAtomicPointerContract, PackedAtomicReturnContract, PackedAtomicRounding,
-    PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace, PackedAtomicSubnormal,
-    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionFp8Admission,
-    PackedConversionFp8Direction, PackedConversionFp8F16x2Admission, PackedConversionFp8Format,
-    PackedConversionRounding, PackedConversionSaturation, PackedConversionSourceFormat,
-    PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission, PrmtMode, PtxVersion, ReduxAdapter,
-    ReduxOperation, ReduxParticipation, RegisterMma, RegisterMmaAccumulator, RegisterMmaAdapter,
-    RegisterMmaAmpereFloatAdmission, RegisterMmaAmpereFloatVariant, RegisterMmaBinaryAdmission,
-    RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaF8F6F4Admission,
-    RegisterMmaFp8Admission, RegisterMmaIntegerAdmission, RegisterMmaKind, RegisterMmaLayout,
-    RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation, RegisterMmaShape,
-    RuntimeValidation, ScalarArithmetic, ScalarArithmeticAdmission, ScalarArithmeticFormat,
-    ScalarArithmeticOperation, ScalarArithmeticRounding, ScalarArithmeticSaturation,
-    ScalarArithmeticSubnormal, ScalarConversion, ScalarConversionAdapter,
-    ScalarConversionAdmission, ScalarConversionDestinationFormat,
-    ScalarConversionResultRepresentation, ScalarConversionRounding, ScalarConversionSaturation,
-    ScalarConversionSourceFormat, ScalarMath, ScalarMathAdmission, ScalarMathFormat,
-    ScalarMathOperation, ScalarMathPrecision, ScalarMathSubnormal, SparseMma, SparseMmaAccumulator,
-    SparseMmaAdapter, SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
+    IntegerMinMaxFormat, IntegerMinMaxOperation, IntrinsicBackend, IntrinsicSource,
+    LdmatrixAdapter, LdmatrixAddressContract, LdmatrixElement, LdmatrixLayout, LdmatrixMemoryOrder,
+    LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MaskEncoding,
+    MatchOperandEncoding, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierExtended,
+    MbarrierExtendedAdapter, MbarrierExtendedAdmission, MbarrierExtendedOperation,
+    MbarrierExtendedSourceContract, MbarrierStateSpace, MovmatrixAdapter, MovmatrixParticipation,
+    OverlayBackendLowering, OverlayFile, OverlayIntrinsic, OverlayShardFile, PackedAluAdapter,
+    PackedAluFormat, PackedAluOperation, PackedAtomicAccessContract, PackedAtomicAdapter,
+    PackedAtomicAtomicity, PackedAtomicCodegenContract, PackedAtomicFormat, PackedAtomicOperation,
+    PackedAtomicOrdering, PackedAtomicPointerContract, PackedAtomicReturnContract,
+    PackedAtomicRounding, PackedAtomicScope, PackedAtomicScopeContract, PackedAtomicStateSpace,
+    PackedAtomicSubnormal, PackedConversionAdapter, PackedConversionDestinationFormat,
+    PackedConversionFp8Admission, PackedConversionFp8Direction, PackedConversionFp8F16x2Admission,
+    PackedConversionFp8Format, PackedConversionRounding, PackedConversionSaturation,
+    PackedConversionSourceFormat, PreSm70MemberMaskRule, Prmt, PrmtAdapter, PrmtAdmission,
+    PrmtMode, PtxVersion, ReduxAdapter, ReduxOperation, ReduxParticipation, RegisterMma,
+    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaAmpereFloatAdmission,
+    RegisterMmaAmpereFloatVariant, RegisterMmaBinaryAdmission, RegisterMmaCompatibilitySource,
+    RegisterMmaElement, RegisterMmaF8F6F4Admission, RegisterMmaFp8Admission,
+    RegisterMmaIntegerAdmission, RegisterMmaKind, RegisterMmaLayout, RegisterMmaOperation,
+    RegisterMmaOverflow, RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation,
+    ScalarArithmetic, ScalarArithmeticAdmission, ScalarArithmeticFormat, ScalarArithmeticOperation,
+    ScalarArithmeticRounding, ScalarArithmeticSaturation, ScalarArithmeticSubnormal,
+    ScalarConversion, ScalarConversionAdapter, ScalarConversionAdmission,
+    ScalarConversionDestinationFormat, ScalarConversionResultRepresentation,
+    ScalarConversionRounding, ScalarConversionSaturation, ScalarConversionSourceFormat, ScalarMath,
+    ScalarMathAdmission, ScalarMathFormat, ScalarMathOperation, ScalarMathPrecision,
+    ScalarMathSubnormal, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
     SparseMmaF8F6F4F16Admission, SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter,
     SparseMmaMetadata, SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector,
     SparseMmaShape, SpecialRegister, SpecialRegisterAdmission, SpecialRegisterKind,
@@ -2046,6 +2047,7 @@ fn validate_policy(
         )?,
         "warp_shuffle" => validate_warp_shuffle_policy(policy, declaration)?,
         "packed_alu" => validate_packed_alu_policy(policy, source, declaration)?,
+        "integer_minmax" => validate_integer_minmax_policy(policy, source, declaration)?,
         "packed_conversion" => validate_packed_conversion_policy(policy, source, declaration)?,
         "scalar_conversion" => validate_scalar_conversion_policy(
             policy,
@@ -3166,6 +3168,7 @@ fn expand_threadfence_admission(admission: &ThreadfenceAdmission) -> Result<Vec<
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -3630,6 +3633,7 @@ fn expand_clc_admission(admission: &ClcAdmission) -> Result<Vec<OverlayIntrinsic
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -4709,6 +4713,7 @@ fn expand_tma_reduction_variant(
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
@@ -5867,6 +5872,7 @@ fn expand_tma_admission(admission: &TmaAdmission) -> Result<Vec<OverlayIntrinsic
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -7631,6 +7637,7 @@ fn materialize_tcgen05_mma_variant(
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
@@ -8516,6 +8523,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -12688,6 +12696,7 @@ fn expand_special_register_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -13324,6 +13333,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
@@ -14259,6 +14269,7 @@ fn expand_stmatrix_admission(admission: &StmatrixAdmission) -> Result<Vec<Overla
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -17517,6 +17528,7 @@ fn packed_conversion_overlay_record(
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: Some(conversion.clone()),
         scalar_conversion: None,
         scalar_arithmetic: None,
@@ -18015,6 +18027,7 @@ fn scalar_conversion_overlay_record(
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: None,
         scalar_conversion: Some(ScalarConversion {
             source_format: ScalarConversionSourceFormat::F32,
@@ -18521,6 +18534,7 @@ fn scalar_arithmetic_overlay_record(
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: Some(ScalarArithmetic {
@@ -19250,6 +19264,7 @@ fn scalar_math_overlay_record(
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
@@ -19919,6 +19934,7 @@ fn extended_minmax_overlay_record(
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
@@ -21355,6 +21371,7 @@ fn expand_register_mma_integer_admission(
             warp_shuffle: None,
             dot_product: None,
             packed_alu: None,
+        integer_minmax: None,
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
@@ -21675,6 +21692,7 @@ fn expand_register_mma_f8f6f4_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -21887,6 +21905,7 @@ fn expand_register_mma_mxf8f6f4_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -22187,6 +22206,7 @@ fn expand_register_mma_fp8_admission(
                         warp_shuffle: None,
                         dot_product: None,
                         packed_alu: None,
+                integer_minmax: None,
                         packed_conversion: None,
                         scalar_conversion: None,
                         scalar_arithmetic: None,
@@ -22383,6 +22403,7 @@ fn expand_register_mma_ampere_float_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -22570,6 +22591,7 @@ fn expand_register_mma_binary_admission(
             warp_shuffle: None,
             dot_product: None,
             packed_alu: None,
+        integer_minmax: None,
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
@@ -23386,6 +23408,7 @@ fn sparse_mma_overlay_record(
         warp_shuffle: None,
         dot_product: None,
         packed_alu: None,
+        integer_minmax: None,
         packed_conversion: None,
         scalar_conversion: None,
         scalar_arithmetic: None,
@@ -24468,6 +24491,7 @@ fn expand_prmt_admission(admission: &PrmtAdmission) -> Result<Vec<OverlayIntrins
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -24829,6 +24853,7 @@ fn expand_cluster_barrier_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -25276,6 +25301,7 @@ fn expand_debug_control_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -25655,6 +25681,7 @@ fn expand_cluster_memory_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -26487,6 +26514,7 @@ fn expand_mbarrier_extended_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -26747,6 +26775,7 @@ fn expand_wgmma_control_admission(
                 warp_shuffle: None,
                 dot_product: None,
                 packed_alu: None,
+                integer_minmax: None,
                 packed_conversion: None,
                 scalar_conversion: None,
                 scalar_arithmetic: None,
@@ -27025,6 +27054,254 @@ fn validate_movmatrix_policy(policy: &OverlayIntrinsic, source: &IntrinsicSource
     Ok(())
 }
 
+struct IntegerMinMaxRecipe {
+    id: &'static str,
+    abi_id: &'static str,
+    operation_key: &'static str,
+    rust_module: &'static str,
+    rust_name: &'static str,
+    /// Rust and PTX carrier type: `i32` for the scalar forms, `u32` for the
+    /// packed pairs.
+    scalar: &'static str,
+    dialect_op_type: &'static str,
+    dialect_op_name: &'static str,
+    ptx_mnemonic: &'static str,
+    modifiers: &'static [&'static str],
+}
+
+/// Returns the closed recipe for an extended integer min/max variant.
+///
+/// `None` means the combination is outside the family: `.relu` exists only
+/// for the signed formats, and the plain scalar forms are ordinary codegen
+/// (`min.s32`/`max.s32` from generic Rust min/max), not intrinsics.
+fn integer_minmax_recipe(
+    format: IntegerMinMaxFormat,
+    operation: IntegerMinMaxOperation,
+    relu: bool,
+) -> Option<IntegerMinMaxRecipe> {
+    use IntegerMinMaxFormat as Format;
+    use IntegerMinMaxOperation as Operation;
+    Some(match (format, operation, relu) {
+        (Format::S32, Operation::Min, true) => IntegerMinMaxRecipe {
+            id: "min_relu_s32",
+            abi_id: "i0987",
+            operation_key: "integer.minmax.s32.min.relu",
+            rust_module: "int",
+            rust_name: "min_relu_s32",
+            scalar: "i32",
+            dialect_op_type: "MinReluS32Op",
+            dialect_op_name: "nvvm.min_relu_s32",
+            ptx_mnemonic: "min.relu.s32",
+            modifiers: &["relu", "s32"],
+        },
+        (Format::S32, Operation::Max, true) => IntegerMinMaxRecipe {
+            id: "max_relu_s32",
+            abi_id: "i0988",
+            operation_key: "integer.minmax.s32.max.relu",
+            rust_module: "int",
+            rust_name: "max_relu_s32",
+            scalar: "i32",
+            dialect_op_type: "MaxReluS32Op",
+            dialect_op_name: "nvvm.max_relu_s32",
+            ptx_mnemonic: "max.relu.s32",
+            modifiers: &["relu", "s32"],
+        },
+        (Format::S16x2, Operation::Min, false) => IntegerMinMaxRecipe {
+            id: "min_s16x2",
+            abi_id: "i0989",
+            operation_key: "integer.minmax.s16x2.min",
+            rust_module: "i16x2",
+            rust_name: "min_s16x2",
+            scalar: "u32",
+            dialect_op_type: "MinS16x2Op",
+            dialect_op_name: "nvvm.min_s16x2",
+            ptx_mnemonic: "min.s16x2",
+            modifiers: &["s16x2"],
+        },
+        (Format::S16x2, Operation::Max, false) => IntegerMinMaxRecipe {
+            id: "max_s16x2",
+            abi_id: "i0990",
+            operation_key: "integer.minmax.s16x2.max",
+            rust_module: "i16x2",
+            rust_name: "max_s16x2",
+            scalar: "u32",
+            dialect_op_type: "MaxS16x2Op",
+            dialect_op_name: "nvvm.max_s16x2",
+            ptx_mnemonic: "max.s16x2",
+            modifiers: &["s16x2"],
+        },
+        (Format::U16x2, Operation::Min, false) => IntegerMinMaxRecipe {
+            id: "min_u16x2",
+            abi_id: "i0991",
+            operation_key: "integer.minmax.u16x2.min",
+            rust_module: "i16x2",
+            rust_name: "min_u16x2",
+            scalar: "u32",
+            dialect_op_type: "MinU16x2Op",
+            dialect_op_name: "nvvm.min_u16x2",
+            ptx_mnemonic: "min.u16x2",
+            modifiers: &["u16x2"],
+        },
+        (Format::U16x2, Operation::Max, false) => IntegerMinMaxRecipe {
+            id: "max_u16x2",
+            abi_id: "i0992",
+            operation_key: "integer.minmax.u16x2.max",
+            rust_module: "i16x2",
+            rust_name: "max_u16x2",
+            scalar: "u32",
+            dialect_op_type: "MaxU16x2Op",
+            dialect_op_name: "nvvm.max_u16x2",
+            ptx_mnemonic: "max.u16x2",
+            modifiers: &["u16x2"],
+        },
+        (Format::S16x2, Operation::Min, true) => IntegerMinMaxRecipe {
+            id: "min_relu_s16x2",
+            abi_id: "i0993",
+            operation_key: "integer.minmax.s16x2.min.relu",
+            rust_module: "i16x2",
+            rust_name: "min_relu_s16x2",
+            scalar: "u32",
+            dialect_op_type: "MinReluS16x2Op",
+            dialect_op_name: "nvvm.min_relu_s16x2",
+            ptx_mnemonic: "min.relu.s16x2",
+            modifiers: &["relu", "s16x2"],
+        },
+        (Format::S16x2, Operation::Max, true) => IntegerMinMaxRecipe {
+            id: "max_relu_s16x2",
+            abi_id: "i0994",
+            operation_key: "integer.minmax.s16x2.max.relu",
+            rust_module: "i16x2",
+            rust_name: "max_relu_s16x2",
+            scalar: "u32",
+            dialect_op_type: "MaxReluS16x2Op",
+            dialect_op_name: "nvvm.max_relu_s16x2",
+            ptx_mnemonic: "max.relu.s16x2",
+            modifiers: &["relu", "s16x2"],
+        },
+        (Format::S32, _, false) | (Format::U16x2, _, true) => return None,
+    })
+}
+
+fn integer_minmax_isa_reference(operation: IntegerMinMaxOperation) -> (&'static str, &'static str) {
+    match operation {
+        IntegerMinMaxOperation::Min => (
+            "9.7.1.13 Integer Arithmetic Instructions: min",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#integer-arithmetic-instructions-min",
+        ),
+        IntegerMinMaxOperation::Max => (
+            "9.7.1.14 Integer Arithmetic Instructions: max",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#integer-arithmetic-instructions-max",
+        ),
+    }
+}
+
+fn validate_integer_minmax_policy(
+    policy: &OverlayIntrinsic,
+    source: &IntrinsicSource,
+    declaration: Option<&ImportedIntrinsic>,
+) -> Result<()> {
+    let minmax = policy
+        .integer_minmax
+        .as_ref()
+        .with_context(|| format!("{} has no closed integer-min/max contract", policy.id))?;
+    let recipe = integer_minmax_recipe(minmax.format, minmax.operation, minmax.relu)
+        .with_context(|| format!("{} is outside the closed integer-min/max recipe", policy.id))?;
+    ensure!(
+        policy.id == recipe.id
+            && policy.abi_id == recipe.abi_id
+            && policy.operation_key == recipe.operation_key,
+        "{} integer-min/max identity does not match its closed operation recipe",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == recipe.rust_module
+            && policy.rust_name == recipe.rust_name
+            && policy.rust_arguments == [recipe.scalar, recipe.scalar]
+            && policy.rust_result == recipe.scalar
+            && policy.safe
+            && policy.must_use
+            && policy
+                .safe_allowlist_reason
+                .as_deref()
+                .is_some_and(|reason| !reason.trim().is_empty())
+            && policy.public_rust_path
+                == format!(
+                    "cuda_intrinsics::{}::{}",
+                    recipe.rust_module, recipe.rust_name
+                )
+            && policy.compatibility_rust_paths
+                == [format!(
+                    "cuda_device::{}::{}",
+                    recipe.rust_module, recipe.rust_name
+                )],
+        "{} must preserve its reviewed safe integer-min/max API",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == recipe.dialect_op_type
+            && policy.dialect_op_name == recipe.dialect_op_name
+            && policy.dialect_operands == ["i32", "i32"]
+            && policy.dialect_results == ["i32"]
+            && policy.lowering == "generated_integer_minmax_inline_ptx",
+        "{} is outside the closed integer-min/max dialect and lowering recipe",
+        policy.id
+    );
+    ensure!(
+        policy.pure
+            && policy.memory == "none"
+            && !policy.convergent
+            && policy.execution_scope == "thread"
+            && policy.minimum_ptx == "8.0"
+            && policy.minimum_sm.as_deref() == Some("sm_90")
+            && policy.ptx_result == recipe.scalar
+            && policy.targets == "all"
+            && minmax.native_minimum_sm == 90,
+        "{} integer-min/max effects, carrier, or target floor disagree",
+        policy.id
+    );
+    let (isa_section, isa_url) = integer_minmax_isa_reference(minmax.operation);
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == isa_section
+            && policy.ptx_isa_url == isa_url,
+        "{} integer-min/max PTX provenance does not match its reviewed instruction section",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx.mnemonic
+            == recipe.ptx_mnemonic.split('.').next().expect("PTX mnemonic")
+            && policy.expected_ptx.modifiers == recipe.modifiers
+            && policy.expected_ptx.operands == vec![OperandPattern::Register; 3],
+        "{} expected PTX does not match its exact integer-min/max instruction",
+        policy.id
+    );
+    ensure!(
+        source
+            == &IntrinsicSource::PtxNative {
+                instruction: recipe.ptx_mnemonic.to_owned(),
+            }
+            && declaration.is_none(),
+        "{} integer-min/max source does not match its PTX-native recipe",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.len() == 1
+            && policy.backend_lowerings[0].backend == IntrinsicBackend::LlvmNvptx
+            && policy.backend_lowerings[0].mechanism == BackendLoweringMechanism::InlinePtx
+            && policy.backend_lowerings[0].targets.is_none()
+            && policy.backend_lowerings[0].minimum_ptx.is_none()
+            && policy.backend_lowerings[0].minimum_sm.is_none()
+            && !policy.backend_lowerings[0]
+                .evidence_profile
+                .trim()
+                .is_empty(),
+        "{} integer-min/max backend route changed",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "integer_minmax")?;
+    Ok(())
+}
+
 fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> Result<()> {
     ensure!(
         policy.packed_atomic.is_none()
@@ -27040,6 +27317,7 @@ fn ensure_no_other_family_contract(policy: &OverlayIntrinsic, family: &str) -> R
             && policy.ldmatrix_adapter.is_none()
             && (policy.family == "tma" || policy.selected_address_space.is_none())
             && (policy.family == "packed_alu") == policy.packed_alu.is_some()
+            && (policy.family == "integer_minmax") == policy.integer_minmax.is_some()
             && (policy.family == "packed_conversion") == policy.packed_conversion.is_some()
             && (policy.family == "scalar_conversion") == policy.scalar_conversion.is_some()
             && (policy.family == "scalar_arithmetic") == policy.scalar_arithmetic.is_some()
@@ -29270,6 +29548,7 @@ fn materialize_record(
         warp_shuffle: policy.warp_shuffle.clone(),
         dot_product: policy.dot_product.clone(),
         packed_alu: policy.packed_alu.clone(),
+        integer_minmax: policy.integer_minmax.clone(),
         packed_conversion: policy.packed_conversion.clone(),
         scalar_conversion: policy.scalar_conversion.clone(),
         scalar_arithmetic: policy.scalar_arithmetic.clone(),
@@ -29403,6 +29682,7 @@ mod tests {
             warp_shuffle: None,
             dot_product: None,
             packed_alu: None,
+            integer_minmax: None,
             packed_conversion: None,
             scalar_conversion: None,
             scalar_arithmetic: None,
@@ -30867,8 +31147,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 63);
-        assert_eq!(overlay.intrinsics.len(), 986);
+        assert_eq!(overlay.shards.len(), 64);
+        assert_eq!(overlay.intrinsics.len(), 994);
         assert_eq!(
             overlay
                 .intrinsics

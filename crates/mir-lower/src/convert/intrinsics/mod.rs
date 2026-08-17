@@ -81,6 +81,7 @@ pub mod debug;
 pub mod dotprod;
 pub mod execution_control;
 pub mod extended_minmax;
+pub mod integer_minmax;
 pub mod ldmatrix;
 pub mod mbarrier;
 pub mod memory;

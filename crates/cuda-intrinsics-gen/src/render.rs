@@ -13,19 +13,19 @@ use crate::model::{
     DotProductAdapter, DotProductOperation, DotProductSignedness, EvidenceArtifactKind,
     EvidenceStageKind, ExecutionControlOperation, ExtendedMinMaxAdapter, ExtendedMinMaxFormat,
     ExtendedMinMaxNan, ExtendedMinMaxOperation, ExtendedMinMaxSubnormal, ImportedAddressSpace,
-    IntrinsicBackend, IntrinsicSource, LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity,
-    LdmatrixParticipation, LdmatrixShape, LdmatrixStateSpace, MbarrierBasicAdapter,
-    MbarrierBasicOperation, MbarrierExtendedAdapter, MbarrierExtendedOperation,
-    MbarrierExtendedSourceContract, MbarrierStateSpace, PackedAluAdapter, PackedAluFormat,
-    PackedAluOperation, PackedAtomicFormat, PackedConversionAdapter,
-    PackedConversionDestinationFormat, PackedConversionRounding, PackedConversionSaturation,
-    PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter, RegisterMmaAccumulator,
-    RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement, RegisterMmaKind,
-    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaShape,
-    RuntimeValidation, ScalarArithmeticFormat, ScalarArithmeticOperation, ScalarArithmeticRounding,
-    ScalarArithmeticSaturation, ScalarArithmeticSubnormal, ScalarConversionRounding,
-    ScalarConversionSaturation, ScalarMathFormat, ScalarMathOperation, ScalarMathPrecision,
-    ScalarMathSubnormal, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
+    IntegerMinMaxFormat, IntegerMinMaxOperation, IntrinsicBackend, IntrinsicSource,
+    LdmatrixElement, LdmatrixLayout, LdmatrixMultiplicity, LdmatrixParticipation, LdmatrixShape,
+    LdmatrixStateSpace, MbarrierBasicAdapter, MbarrierBasicOperation, MbarrierExtendedAdapter,
+    MbarrierExtendedOperation, MbarrierExtendedSourceContract, MbarrierStateSpace,
+    PackedAluAdapter, PackedAluFormat, PackedAluOperation, PackedAtomicFormat,
+    PackedConversionAdapter, PackedConversionDestinationFormat, PackedConversionRounding,
+    PackedConversionSaturation, PackedConversionSourceFormat, PrmtAdapter, PrmtMode, ReduxAdapter,
+    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
+    RegisterMmaKind, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
+    RegisterMmaShape, RuntimeValidation, ScalarArithmeticFormat, ScalarArithmeticOperation,
+    ScalarArithmeticRounding, ScalarArithmeticSaturation, ScalarArithmeticSubnormal,
+    ScalarConversionRounding, ScalarConversionSaturation, ScalarMathFormat, ScalarMathOperation,
+    ScalarMathPrecision, ScalarMathSubnormal, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
     SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaLayout, SparseMmaMetadata,
     SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, SpecialRegisterObservation,
     SpecialRegisterOutputConstraint, SpecialRegisterPtxType, StmatrixLayout, StmatrixMultiplicity,
@@ -172,6 +172,20 @@ pub fn all_outputs(
         "crates/cuda-device/src/generated/f16x2.rs".into(),
         render_compat_packed_alu(catalog, catalog_sha256, PackedAluFormat::F16x2),
     );
+    for module in ["i16x2", "int"] {
+        if integer_minmaxes(catalog).any(|record| record.rust.module == module) {
+            outputs.insert(
+                format!("crates/cuda-device/src/generated/{module}.rs").into(),
+                render_compat_integer_minmax(catalog, catalog_sha256, module),
+            );
+        }
+    }
+    if integer_minmaxes(catalog).next().is_some() {
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/integer_minmax.rs".into(),
+            render_dialect_integer_minmax(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/cuda-device/src/generated/convert.rs".into(),
         render_compat_packed_conversion(
@@ -1759,6 +1773,29 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                         }
                     }),
                 "{} is outside the closed generated shfl.sync recipe",
+                record.id
+            ),
+            "integer_minmax" => ensure!(
+                record.integer_minmax.as_ref().is_some_and(|minmax| {
+                    let module = match minmax.format {
+                        IntegerMinMaxFormat::S32 => "int",
+                        IntegerMinMaxFormat::S16x2 | IntegerMinMaxFormat::U16x2 => "i16x2",
+                    };
+                    record.rust.module == module
+                })
+                    && record.rust.arguments.len() == 2
+                    && record
+                        .rust
+                        .arguments
+                        .iter()
+                        .all(|argument| argument == &record.rust.result)
+                    && matches!(record.rust.result.as_str(), "i32" | "u32")
+                    && record.rust.safe
+                    && record.rust.must_use
+                    && record.dialect.operands == ["i32", "i32"]
+                    && record.dialect.results == ["i32"]
+                    && record.lowering == "generated_integer_minmax_inline_ptx",
+                "{} is outside the closed generated integer-min/max recipe",
                 record.id
             ),
             family => ensure!(false, "{} has unrenderable family {family}", record.id),
@@ -3563,6 +3600,35 @@ fn dot_product_ptx(record: &CatalogIntrinsic) -> &'static str {
             DotProductAdapter::InsertLowHalfFalse,
         ) => "dp2a.lo.u32.u32 $0, $1, $2, $3;",
         combination => panic!("unsupported generated dot-product recipe {combination:?}"),
+    }
+}
+
+fn integer_minmaxes(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "integer_minmax")
+}
+
+fn integer_minmax_ptx_mnemonic(record: &CatalogIntrinsic) -> &'static str {
+    let minmax = record
+        .integer_minmax
+        .as_ref()
+        .expect("integer-min/max record");
+    match (minmax.format, minmax.operation, minmax.relu) {
+        (IntegerMinMaxFormat::S32, IntegerMinMaxOperation::Min, true) => "min.relu.s32",
+        (IntegerMinMaxFormat::S32, IntegerMinMaxOperation::Max, true) => "max.relu.s32",
+        (IntegerMinMaxFormat::S16x2, IntegerMinMaxOperation::Min, false) => "min.s16x2",
+        (IntegerMinMaxFormat::S16x2, IntegerMinMaxOperation::Max, false) => "max.s16x2",
+        (IntegerMinMaxFormat::U16x2, IntegerMinMaxOperation::Min, false) => "min.u16x2",
+        (IntegerMinMaxFormat::U16x2, IntegerMinMaxOperation::Max, false) => "max.u16x2",
+        (IntegerMinMaxFormat::S16x2, IntegerMinMaxOperation::Min, true) => "min.relu.s16x2",
+        (IntegerMinMaxFormat::S16x2, IntegerMinMaxOperation::Max, true) => "max.relu.s16x2",
+        // `integer_minmax_recipe` rejects those combinations before a record
+        // can exist.
+        (IntegerMinMaxFormat::S32, _, false) | (IntegerMinMaxFormat::U16x2, _, true) => {
+            panic!("{} is outside the closed integer-min/max recipe", record.id)
+        }
     }
 }
 
@@ -6901,6 +6967,94 @@ fn render_compat_mbarrier_extended(catalog: &CatalogFile, hash: &str) -> String 
     output
 }
 
+fn render_compat_integer_minmax(catalog: &CatalogFile, hash: &str, module: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    writeln!(
+        output,
+        "// Included inside `cuda_device::{module}` to keep existing paths stable.\n"
+    )
+    .unwrap();
+    for record in integer_minmaxes(catalog).filter(|record| record.rust.module == module) {
+        let path = record
+            .rust
+            .compatibility_paths
+            .iter()
+            .find(|path| path.starts_with(&format!("cuda_device::{module}::")))
+            .expect("integer-min/max compatibility path");
+        let scalar = &record.rust.result;
+        writeln!(output, "/// {}", record.summary).unwrap();
+        output.push_str("#[must_use]\n#[inline(never)]\n");
+        writeln!(
+            output,
+            "pub fn {}(arg0: {scalar}, arg1: {scalar}) -> {scalar} {{",
+            record.rust.name
+        )
+        .unwrap();
+        output.push_str("    let _ = (arg0, arg1);\n");
+        writeln!(
+            output,
+            "    unreachable!(\"generated CUDA intrinsic `{path}` executed outside device compilation\")"
+        )
+        .unwrap();
+        output.push_str("}\n\n");
+    }
+    output
+}
+
+fn render_dialect_integer_minmax(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Structural operations for generated extended integer min/max.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
+    );
+    for record in integer_minmaxes(catalog) {
+        let signedness = if record.rust.result == "i32" {
+            "Signed"
+        } else {
+            "Unsigned"
+        };
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(
+            output,
+            "///\n/// Lowers to `{}`.",
+            integer_minmax_ptx_mnemonic(record)
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<2>, NResultsInterface<1>],\n)]",
+            record.dialect.op_name
+        )
+        .unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, arg0: Value, arg1: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::{signedness});\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![arg0, arg1],\n            vec![],\n            0,\n        )\n    }}\n}}"
+        )
+        .unwrap();
+        writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 2 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !(0..2).all(|index| is_i32(ctx, op.get_operand(index).get_type(ctx)))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            format!(
+                "{} requires exactly 2 operands and one result",
+                record.dialect.op_name
+            ),
+            format!(
+                "{} operands and result must be 32-bit integers",
+                record.dialect.op_name
+            ),
+        )
+        .unwrap();
+    }
+    output.push_str("\npub(super) fn register(ctx: &mut Context) {\n");
+    for record in integer_minmaxes(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
 fn render_compat_packed_alu(catalog: &CatalogFile, hash: &str, format: PackedAluFormat) -> String {
     let mut output = rust_header(catalog, hash);
     let module = match format {
@@ -7197,6 +7351,18 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    redux::register(ctx);",
                 "    redux::register(ctx);\n    scalar_math::register(ctx);",
+            );
+    }
+    if integer_minmaxes(catalog).next().is_some() {
+        output = output
+            .replace("mod ldmatrix;", "mod integer_minmax;\nmod ldmatrix;")
+            .replace(
+                "pub use ldmatrix::*;",
+                "pub use integer_minmax::*;\npub use ldmatrix::*;",
+            )
+            .replace(
+                "    ldmatrix::register(ctx);",
+                "    integer_minmax::register(ctx);\n    ldmatrix::register(ctx);",
             );
     }
     if extended_minmax(catalog).next().is_some() {
@@ -12001,6 +12167,16 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(&record.dialect.op_type);
         }
     }
+    if integer_minmaxes(catalog).next().is_some() {
+        // packed_alu records always exist, so a separator is always needed.
+        output.push_str(", ");
+        for (index, record) in integer_minmaxes(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
     if packed_conversions(catalog).next().is_some() {
         if sregs(catalog).next().is_some()
             || ldmatrix(catalog).next().is_some()
@@ -12748,6 +12924,9 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str("        }\n");
     }
     for record in packed_alus(catalog) {
+        render_importer_pure_value_dispatch(&mut output, catalog, record);
+    }
+    for record in integer_minmaxes(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
     for record in packed_conversions(catalog) {
@@ -14572,6 +14751,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "inline_asm_convergent, inline_asm_sideeffect}",
         );
     }
+    if integer_minmaxes(catalog).next().is_some() {
+        output = output.replace(
+            "ldmatrix::convert_generated_ldmatrix, ",
+            "integer_minmax::convert_generated_integer_minmax, ldmatrix::convert_generated_ldmatrix, ",
+        );
+    }
     if stmatrices(catalog).next().is_some() {
         output = output.replace(
             "common::{call_intrinsic,",
@@ -14822,6 +15007,16 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             output.push_str(", ");
         }
         for (index, record) in packed_alus(catalog).enumerate() {
+            if index != 0 {
+                output.push_str(", ");
+            }
+            output.push_str(&record.dialect.op_type);
+        }
+    }
+    if integer_minmaxes(catalog).next().is_some() {
+        // packed_alu records always exist, so a separator is always needed.
+        output.push_str(", ");
+        for (index, record) in integer_minmaxes(catalog).enumerate() {
             if index != 0 {
                 output.push_str(", ");
             }
@@ -15792,6 +15987,24 @@ fn convert_generated_tcgen05_load(
             output,
             "        convert_generated_packed_alu(ctx, rewriter, self.get_operation(), {:?})",
             packed_alu_ptx_mnemonic(record)
+        )
+        .unwrap();
+        output.push_str("    }\n}\n\n");
+    }
+    for record in integer_minmaxes(catalog) {
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str(
+            "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n",
+        );
+        writeln!(
+            output,
+            "        convert_generated_integer_minmax(ctx, rewriter, self.get_operation(), {:?})",
+            integer_minmax_ptx_mnemonic(record)
         )
         .unwrap();
         output.push_str("    }\n}\n\n");
@@ -18713,6 +18926,16 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 output.push_str("  ret void\n}\n\nattributes #0 = { convergent }\n");
             }
         }
+    } else if record.integer_minmax.is_some() {
+        let parameters = "i32 %arg0, i32 %arg1";
+        writeln!(output, "define i32 @probe_{}({parameters}) {{", record.id).unwrap();
+        writeln!(
+            output,
+            "  %result = call i32 asm \"{} $0, $1, $2;\", \"=r,r,r\"(i32 %arg0, i32 %arg1)",
+            integer_minmax_ptx_mnemonic(record)
+        )
+        .unwrap();
+        output.push_str("  ret i32 %result\n}\n");
     } else if record.packed_alu.is_some() {
         let arity = record.rust.arguments.len();
         let parameters = (0..arity)
@@ -22292,7 +22515,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 986);
+        assert_eq!(catalog.intrinsics.len(), 994);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 154);
         let generated_records = records

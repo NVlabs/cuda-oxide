@@ -16,6 +16,7 @@ shards = [
     "overlay/elect.toml",
     "overlay/extended_minmax.toml",
     "overlay/grid_dependency.toml",
+    "overlay/integer_minmax.toml",
     "overlay/ldmatrix.toml",
     "overlay/ldmatrix_blackwell.toml",
     "overlay/mbarrier_basic.toml",
