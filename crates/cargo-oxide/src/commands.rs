@@ -4632,9 +4632,12 @@ pub fn doctor(ctx: &Context) {
     // CI boxes are supported workflows (`build`/`pipeline` work fine), and
     // the examples-compile CI job is exactly that.
     print!("NVIDIA driver / GPU... ");
-    match query_gpu_name_and_compute_cap() {
-        Some((name, (major, minor))) => {
-            println!("✓ {} (compute capability {}.{})", name, major, minor);
+    match query_gpu_name_cap_and_driver() {
+        Some((name, (major, minor), driver)) => {
+            println!(
+                "✓ {} (compute capability {}.{}, driver {})",
+                name, major, minor, driver
+            );
         }
         None => {
             // Some containers mount the kernel driver without shipping
@@ -6295,25 +6298,37 @@ fn parse_compute_cap_field(field: &str) -> Option<(u32, u32)> {
     Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
-/// Query the name and compute capability of the first GPU via `nvidia-smi`,
-/// for doctor's driver / GPU report. Same trust rules as
-/// [`query_device_compute_cap`].
-fn query_gpu_name_and_compute_cap() -> Option<(String, (u32, u32))> {
+/// Query the name, compute capability, and driver version of the first GPU
+/// via `nvidia-smi`, for doctor's driver / GPU report. Same trust rules as
+/// [`query_device_compute_cap`]. The driver version matters for triage:
+/// PTX-JIT and driver-API compatibility bugs are driver-version-specific,
+/// and the bug-report template points reporters at this line.
+fn query_gpu_name_cap_and_driver() -> Option<(String, (u32, u32), String)> {
     let output = Command::new("nvidia-smi")
-        .args(["--query-gpu=name,compute_cap", "--format=csv,noheader"])
+        .args([
+            "--query-gpu=name,compute_cap,driver_version",
+            "--format=csv,noheader",
+        ])
         .output()
         .ok()
         .filter(|o| o.status.success())?;
-    parse_gpu_name_and_compute_cap(&String::from_utf8_lossy(&output.stdout))
+    parse_gpu_name_cap_and_driver(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Parse the first line of `nvidia-smi --query-gpu=name,compute_cap` output
-/// into the GPU name and `(major, minor)` pair. Splits on the LAST comma:
-/// GPU names may contain commas in principle, `compute_cap` never does.
-fn parse_gpu_name_and_compute_cap(stdout: &str) -> Option<(String, (u32, u32))> {
+/// Parse the first line of `nvidia-smi
+/// --query-gpu=name,compute_cap,driver_version` output into the GPU name,
+/// `(major, minor)` pair, and driver version. Splits on the LAST two commas:
+/// GPU names may contain commas in principle, `compute_cap` and
+/// `driver_version` never do.
+fn parse_gpu_name_cap_and_driver(stdout: &str) -> Option<(String, (u32, u32), String)> {
     let line = stdout.lines().next()?;
-    let (name, cap) = line.rsplit_once(',')?;
-    Some((name.trim().to_string(), parse_compute_cap_field(cap)?))
+    let (rest, driver) = line.rsplit_once(',')?;
+    let (name, cap) = rest.rsplit_once(',')?;
+    Some((
+        name.trim().to_string(),
+        parse_compute_cap_field(cap)?,
+        driver.trim().to_string(),
+    ))
 }
 
 /// Format a `(major, minor)` compute-capability tuple as the `sm_XX` /
@@ -9570,17 +9585,21 @@ device-owner = { path = "../device-owner" }
     }
 
     #[test]
-    fn parse_gpu_name_and_compute_cap_splits_on_last_comma() {
+    fn parse_gpu_name_cap_and_driver_splits_on_last_two_commas() {
         assert_eq!(
-            parse_gpu_name_and_compute_cap("NVIDIA GeForce RTX 5090, 12.0\n"),
-            Some(("NVIDIA GeForce RTX 5090".to_string(), (12, 0)))
+            parse_gpu_name_cap_and_driver("NVIDIA GeForce RTX 5090, 12.0, 580.65.06\n"),
+            Some((
+                "NVIDIA GeForce RTX 5090".to_string(),
+                (12, 0),
+                "580.65.06".to_string()
+            ))
         );
-        // Failure banner: no comma-separated cc field.
+        // Failure banner: no comma-separated cc/driver fields.
         assert_eq!(
-            parse_gpu_name_and_compute_cap("NVIDIA-SMI has failed.\n"),
+            parse_gpu_name_cap_and_driver("NVIDIA-SMI has failed.\n"),
             None
         );
-        assert_eq!(parse_gpu_name_and_compute_cap(""), None);
+        assert_eq!(parse_gpu_name_cap_and_driver(""), None);
     }
 
     #[test]
