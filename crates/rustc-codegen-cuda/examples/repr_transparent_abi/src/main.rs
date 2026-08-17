@@ -351,8 +351,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(nested_return_out.to_host_vec(&stream)?, [47]);
     assert_eq!(ordinary_return_out.to_host_vec(&stream)?, [53]);
 
-    println!(
-        "repr_transparent_abi: PASS (kernel parameters, device returns, and runtime values)"
-    );
+    println!("repr_transparent_abi: PASS (kernel parameters, device returns, and runtime values)");
     Ok(())
 }
