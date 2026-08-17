@@ -69,13 +69,19 @@ fn relu(value: i16) -> i16 {
     value.max(0)
 }
 
+fn scalar_relu_reference(a: i32, b: i32, op: fn(i32, i32) -> i32) -> u32 {
+    op(a, b).max(0) as u32
+}
+
 fn main() {
     println!("=== integer_minmax (sm_90+) ===");
 
     let ctx = CudaContext::new(0).expect("CUDA init");
     let (major, minor) = ctx.compute_capability().expect("compute capability");
     if major * 10 + minor < 90 {
-        println!("skipping: integer min/max extensions require sm_90+ (device is sm_{major}{minor})");
+        println!(
+            "skipping: integer min/max extensions require sm_90+ (device is sm_{major}{minor})"
+        );
         return;
     }
 
@@ -91,12 +97,18 @@ fn main() {
     assert_eq!(rows.len(), 1, "unexpected result-row count");
 
     let expected = [
-        ("min_relu_s32", (-7_i32).min(5).max(0) as u32),
-        ("max_relu_s32", (-7_i32).max(5).max(0) as u32),
+        ("min_relu_s32", scalar_relu_reference(-7, 5, i32::min)),
+        ("max_relu_s32", scalar_relu_reference(-7, 5, i32::max)),
         ("min_s16x2", signed_reference(PACKED_A, PACKED_B, i16::min)),
         ("max_s16x2", signed_reference(PACKED_A, PACKED_B, i16::max)),
-        ("min_u16x2", unsigned_reference(PACKED_A, PACKED_B, u16::min)),
-        ("max_u16x2", unsigned_reference(PACKED_A, PACKED_B, u16::max)),
+        (
+            "min_u16x2",
+            unsigned_reference(PACKED_A, PACKED_B, u16::min),
+        ),
+        (
+            "max_u16x2",
+            unsigned_reference(PACKED_A, PACKED_B, u16::max),
+        ),
         (
             "min_relu_s16x2",
             signed_reference(RELU_A, RELU_B, |a, b| relu(a.min(b))),
@@ -114,7 +126,10 @@ fn main() {
             if got == want {
                 println!("  {label}: ok  ({})", *got as i32);
             } else {
-                println!("  {label}: FAIL  got {}, expected {}", *got as i32, *want as i32);
+                println!(
+                    "  {label}: FAIL  got {}, expected {}",
+                    *got as i32, *want as i32
+                );
                 passed = false;
             }
             continue;
