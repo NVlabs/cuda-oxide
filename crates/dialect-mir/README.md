@@ -102,14 +102,17 @@ This catches mismatches immediately after `mir-importer` translates from rustc, 
 
 ## Attributes
 
-The dialect defines four domain-specific attribute types (following the pliron best practice of avoiding overloaded `IntegerAttr`):
+The dialect defines seven domain-specific attribute types (following the pliron best practice of avoiding overloaded `IntegerAttr`), one row per `#[pliron_attr(...)]` in `src/attributes.rs`:
 
-| Attribute           | Rust Type          | Description                                                                                                          |
-|---------------------|--------------------|----------------------------------------------------------------------------------------------------------------------|
-| `mir.cast_kind`     | `MirCastKindAttr`  | Preserves Rust cast intent (e.g. `IntToFloat`, `PtrToPtr`, `Transmute`) so lowering picks the right LLVM instruction |
-| `mir.mutability`    | `MutabilityAttr`   | Boolean: `&` vs `&mut` for `mir.ref`                                                                                 |
-| `mir.field_index`   | `FieldIndexAttr`   | Structural field index for `extract_field`, `insert_field`, `field_addr`, `enum_payload`                             |
-| `mir.variant_index` | `VariantIndexAttr` | Enum variant index for `construct_enum`, `enum_payload`                                                              |
+| Attribute                     | Rust Type                   | Description                                                                                                          |
+|-------------------------------|-----------------------------|----------------------------------------------------------------------------------------------------------------------|
+| `mir.cast_kind`               | `MirCastKindAttr`           | Preserves Rust cast intent (e.g. `IntToFloat`, `PtrToPtr`, `Transmute`) so lowering picks the right LLVM instruction |
+| `mir.mutability`              | `MutabilityAttr`            | Boolean: `&` vs `&mut` for `mir.ref`                                                                                 |
+| `mir.field_index`             | `FieldIndexAttr`            | Structural field index for `extract_field`, `insert_field`, `field_addr`, `enum_payload`                             |
+| `mir.variant_index`           | `VariantIndexAttr`          | Enum variant index for `construct_enum`, `enum_payload`                                                              |
+| `mir.fp16_attr`               | `MirFP16Attr`               | IEEE 754 binary16 value for `f16` constants, paired with `MirFP16Type`                                               |
+| `mir.unroll`                  | `UnrollAttr`                | Unroll factor carried by `mir.unroll_hint` -- `0` means full unroll, `n >= 2` means `n` body copies per trip          |
+| `mir.compiler_result_bundle`  | `CompilerResultBundleAttr`  | Marks an aggregate that exists only to adapt a compiler-owned multi-result op to a Rust aggregate return ABI          |
 
 ## Registration
 
@@ -126,19 +129,23 @@ register(&mut ctx);  // Registers all ops, types, and attributes
 ```text
 src/
 ├── lib.rs                       # Dialect registration
-├── types.rs                     # 7 MIR types + address_space constants
-├── attributes.rs                # 4 domain-specific attributes
+├── types.rs                     # 9 MIR types + address_space constants
+├── attributes.rs                # 7 domain-specific attributes
+├── const_fold.rs                # Constant folding over dialect-mir ops
+├── rust_intrinsics.rs           # Recognised core/std intrinsic calls
+├── side_effects.rs              # Per-op side-effect classification
 ├── ops/
 │   ├── mod.rs                   # Op module registry + re-exports
 │   ├── function.rs              # MirFuncOp
-│   ├── control_flow.rs          # Terminators and branches
-│   ├── memory.rs                # Load, store, alloc, shared memory
+│   ├── control_flow.rs          # Terminators, branches, unroll hints
+│   ├── memory.rs                # Load, store, alloc, memcpy, shared memory
 │   ├── constants.rs             # Integer and float literals
 │   ├── arithmetic.rs            # Math, bitwise, shifts, checked ops
 │   ├── comparison.rs            # Relational and equality
-│   ├── aggregate.rs             # Struct, tuple, array manipulation
+│   ├── aggregate.rs             # Struct, tuple, array, slice manipulation
 │   ├── enum_ops.rs              # Enum construction and inspection
 │   ├── cast.rs                  # Type conversions
+│   ├── debug.rs                 # dbg_value source-variable bindings
 │   ├── storage.rs               # Lifetime markers
 │   └── call.rs                  # Function calls
 ```
