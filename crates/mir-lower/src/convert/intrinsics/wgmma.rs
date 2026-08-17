@@ -500,11 +500,22 @@ pub(crate) fn convert_mma_loop_pipeline_values(
     let f32_ty = FP32Type::get(ctx);
     let struct_ty: TypeHandle = llvm_types::StructType::get_unnamed(
         ctx,
-        vec![f32_ty.into(); COUNTED_PIPELINE_RESULT_COUNT],
+        (
+            vec![f32_ty.into(); COUNTED_PIPELINE_RESULT_COUNT],
+            llvm_types::StructLayout::Unpacked,
+        ),
     )
     .into();
 
-    let asm_op = inline_asm_convergent(ctx, rewriter, struct_ty, operands, &template, &constraints);
+    let asm_op = inline_asm_convergent(
+        ctx,
+        rewriter,
+        op,
+        struct_ty,
+        operands,
+        &template,
+        &constraints,
+    );
     let aggregate = asm_op.deref(ctx).get_result(0);
 
     let mut extracted_values = Vec::with_capacity(COUNTED_PIPELINE_RESULT_COUNT);
