@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use crate::attributes::CallableKindAttr;
+use crate::attributes::{CallableKindAttr, PredicateAttr};
 use crate::ops::{
     PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
 };
@@ -407,18 +407,10 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
                     .get_operation()
             }),
             StatementKind::Instruction => self.instructions.get(&statement).map(|instruction| {
-                let prefix = instruction
-                    .predicate()
-                    .map_or_else(String::new, |predicate| {
-                        format!(
-                            "@{}{}",
-                            if predicate.is_negated() { "!" } else { "" },
-                            predicate.register()
-                        )
-                    });
+                let predicate = instruction.predicate().map(PredicateAttr::from);
                 PtxInstructionOp::build(
                     self.ctx,
-                    &prefix,
+                    predicate,
                     instruction.head(),
                     instruction.operands(),
                 )
@@ -546,6 +538,45 @@ L0:
             .deref(&ctx)
             .verify(&ctx)
             .unwrap();
+    }
+
+    #[test]
+    fn projects_predicates_into_typed_attributes() {
+        let source = "\
+.visible .entry kernel() {
+    @%p0 add.u32 %r0, %r0, 1;
+    @!%p2 bra L0;
+L0:
+    ret;
+}
+";
+        let mut ctx = Context::new();
+        crate::register(&mut ctx);
+        let projection = Projection::parse(&mut ctx, source).unwrap();
+        let callable_op = projection
+            .module()
+            .body(&ctx)
+            .deref(&ctx)
+            .iter(&ctx)
+            .next()
+            .unwrap();
+        let callable = Operation::get_op::<PtxCallableOp>(callable_op, &ctx).unwrap();
+        let predicates: Vec<_> = callable
+            .entry_block(&ctx)
+            .unwrap()
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|operation| Operation::get_op::<PtxInstructionOp>(operation, &ctx))
+            .map(|instruction| instruction.predicate(&ctx))
+            .collect();
+        assert_eq!(
+            predicates,
+            vec![
+                Some(PredicateAttr::new("%p0", false)),
+                Some(PredicateAttr::new("%p2", true)),
+                None
+            ]
+        );
     }
 
     #[test]

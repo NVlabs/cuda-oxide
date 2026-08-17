@@ -18,5 +18,7 @@ attribute, so generated operations never need synthetic source locations.
 
 The dialect currently models module and lexical scopes, callable declarations
 and definitions, directives, labels, generic instructions, and a raw escape hatch.
-Typed ISA operations can be added incrementally without making the lossless
-parser reject newer PTX spellings.
+Guard predicates (`@%p` / `@!%p`) are a typed attribute on instructions, and
+callable name/kind/external are typed attributes verified against the header
+text they print through. Typed ISA operations can be added incrementally
+without making the lossless parser reject newer PTX spellings.

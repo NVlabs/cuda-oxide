@@ -134,9 +134,8 @@ fn emit_operation(
     }
     if let Some(instruction) = Operation::get_op::<PtxInstructionOp>(operation, ctx) {
         write_indent(output, indent)?;
-        let prefix = instruction.prefix(ctx);
-        if !prefix.is_empty() {
-            output.write_str(prefix.trim())?;
+        if let Some(predicate) = instruction.predicate(ctx) {
+            output.write_str(&predicate.guard_text())?;
             output.write_char(' ')?;
         }
         output.write_str(&instruction.head(ctx))?;
@@ -218,5 +217,52 @@ L0: @%p0 add.u32 %r0, %r0, 1;
         );
         let reparsed = ptx_parse::Document::parse(&emitted).unwrap();
         assert!(reparsed.coverage().is_complete());
+    }
+
+    #[test]
+    fn predicated_instructions_round_trip_through_the_typed_attribute() {
+        let source = "\
+.visible .entry kernel() {
+    @%p1 add.u32 %r0, %r0, 1;
+    @!%p1 bra L0;
+L0:
+    ret;
+}
+";
+        let mut ctx = Context::new();
+        crate::register(&mut ctx);
+        let projection = Projection::parse(&mut ctx, source).unwrap();
+        let emitted = emit_module(&ctx, &projection.module()).unwrap();
+        assert_eq!(
+            emitted,
+            "\
+.visible .entry kernel()
+{
+    @%p1 add.u32 %r0, %r0, 1;
+    @!%p1 bra L0;
+    L0:
+    ret;
+}
+"
+        );
+        let reparsed = ptx_parse::Document::parse(&emitted).unwrap();
+        assert!(reparsed.coverage().is_complete());
+        let predicates: Vec<_> = reparsed
+            .instructions()
+            .iter()
+            .map(|instruction| {
+                instruction
+                    .predicate()
+                    .map(|predicate| (predicate.register().to_string(), predicate.is_negated()))
+            })
+            .collect();
+        assert_eq!(
+            predicates,
+            vec![
+                Some(("%p1".to_string(), false)),
+                Some(("%p1".to_string(), true)),
+                None
+            ]
+        );
     }
 }

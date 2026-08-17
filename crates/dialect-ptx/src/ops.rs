@@ -10,7 +10,7 @@
 //! [`crate::Projection`]'s lineage table rather than in the operations, so a
 //! freshly-built module does not need to invent source spans.
 
-use crate::attributes::CallableKindAttr;
+use crate::attributes::{CallableKindAttr, PredicateAttr};
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
@@ -453,12 +453,16 @@ impl Verify for PtxScopeOp {
 }
 
 /// One structurally discovered or directly constructed PTX instruction.
+///
+/// Predication is the only instruction prefix PTX defines, so the guard is a
+/// typed, optional [`PredicateAttr`] rather than free-form prefix text. The
+/// emitter derives the `@%p` / `@!%p` spelling from it.
 #[pliron_op(
     name = "ptx.instruction",
     format,
     interfaces = [NRegionsInterface<0>, NOpdsInterface<0>, NResultsInterface<0>],
     attributes = (
-        instruction_prefix: StringAttr,
+        instruction_predicate: PredicateAttr,
         instruction_head: StringAttr,
         instruction_operands: VecAttr
     )
@@ -468,13 +472,15 @@ pub struct PtxInstructionOp;
 impl PtxInstructionOp {
     pub fn build<'operand>(
         ctx: &mut Context,
-        prefix: &str,
+        predicate: Option<PredicateAttr>,
         head: &str,
         operands: impl IntoIterator<Item = &'operand str>,
     ) -> Self {
         let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], vec![], vec![], 0);
         let wrapped = Self { op };
-        wrapped.set_attr_instruction_prefix(ctx, StringAttr::new(prefix.to_string()));
+        if let Some(predicate) = predicate {
+            wrapped.set_attr_instruction_predicate(ctx, predicate);
+        }
         wrapped.set_attr_instruction_head(ctx, StringAttr::new(head.to_string()));
         wrapped.set_attr_instruction_operands(
             ctx,
@@ -488,11 +494,9 @@ impl PtxInstructionOp {
         wrapped
     }
 
-    pub fn prefix(&self, ctx: &Context) -> String {
-        self.get_attr_instruction_prefix(ctx)
-            .expect("verified ptx.instruction has a prefix")
-            .as_str()
-            .to_string()
+    pub fn predicate(&self, ctx: &Context) -> Option<PredicateAttr> {
+        self.get_attr_instruction_predicate(ctx)
+            .map(|predicate| predicate.clone())
     }
 
     pub fn head(&self, ctx: &Context) -> String {
@@ -521,9 +525,6 @@ impl PtxInstructionOp {
 impl Verify for PtxInstructionOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let operation = self.get_operation().deref(ctx);
-        if self.get_attr_instruction_prefix(ctx).is_none() {
-            return verify_err!(operation.loc(), "ptx.instruction requires a prefix");
-        }
         let Some(head) = self.get_attr_instruction_head(ctx) else {
             return verify_err!(operation.loc(), "ptx.instruction requires a head");
         };
@@ -695,6 +696,35 @@ mod tests {
         let error = scope.verify(&ctx).unwrap_err().to_string();
         assert!(
             error.contains("spells the PTX callable \"kernel\""),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn unpredicated_instruction_verifies_without_a_predicate_attribute() {
+        let mut ctx = test_context();
+        let instruction = PtxInstructionOp::build(&mut ctx, None, "ret", []);
+        instruction.verify(&ctx).unwrap();
+        assert_eq!(instruction.predicate(&ctx), None);
+    }
+
+    #[test]
+    fn predicate_register_must_be_percent_prefixed() {
+        let mut ctx = test_context();
+        let instruction = PtxInstructionOp::build(
+            &mut ctx,
+            Some(PredicateAttr::new("p1", false)),
+            "bra",
+            ["L0"],
+        );
+        let error = instruction
+            .get_operation()
+            .deref(&ctx)
+            .verify(&ctx)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("must be a %-prefixed register name"),
             "unexpected error: {error}"
         );
     }

@@ -5,7 +5,7 @@
 
 //! Ergonomic construction of structured PTX operations.
 
-use crate::attributes::CallableKindAttr;
+use crate::attributes::{CallableKindAttr, PredicateAttr};
 use crate::emitter::{EmitError, emit_module};
 use crate::ops::{
     PtxCallableOp, PtxDirectiveOp, PtxInstructionOp, PtxLabelOp, PtxModuleOp, PtxRawOp, PtxScopeOp,
@@ -135,7 +135,34 @@ impl PtxBodyBuilder<'_> {
         self
     }
 
-    pub fn instruction<I, S>(&mut self, prefix: &str, head: &str, operands: I) -> &mut Self
+    pub fn instruction<I, S>(&mut self, head: &str, operands: I) -> &mut Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.build_instruction(None, head, operands)
+    }
+
+    /// An instruction guarded by a predicate register, e.g. `@!%p1 bra L0;`.
+    pub fn predicated_instruction<I, S>(
+        &mut self,
+        predicate: PredicateAttr,
+        head: &str,
+        operands: I,
+    ) -> &mut Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        self.build_instruction(Some(predicate), head, operands)
+    }
+
+    fn build_instruction<I, S>(
+        &mut self,
+        predicate: Option<PredicateAttr>,
+        head: &str,
+        operands: I,
+    ) -> &mut Self
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
@@ -144,9 +171,14 @@ impl PtxBodyBuilder<'_> {
             .into_iter()
             .map(|operand| operand.as_ref().to_string())
             .collect();
-        PtxInstructionOp::build(self.ctx, prefix, head, operands.iter().map(String::as_str))
-            .get_operation()
-            .insert_at_back(self.block, self.ctx);
+        PtxInstructionOp::build(
+            self.ctx,
+            predicate,
+            head,
+            operands.iter().map(String::as_str),
+        )
+        .get_operation()
+        .insert_at_back(self.block, self.ctx);
         self
     }
 
@@ -186,8 +218,8 @@ mod tests {
         builder.visible_entry("kernel", "()", |body| {
             body.directive(".reg", ".b32 %r<2>;");
             body.label("L0");
-            body.instruction("", "mov.u32", ["%r0", "7"]);
-            body.instruction("", "ret", std::iter::empty::<&str>());
+            body.instruction("mov.u32", ["%r0", "7"]);
+            body.instruction("ret", std::iter::empty::<&str>());
         });
         let emitted = builder.emit().unwrap();
         assert_eq!(
