@@ -169,11 +169,19 @@ enum DirectiveScopeEffect {
 fn directive_scope_effect(name: &str) -> DirectiveScopeEffect {
     match name {
         ".reg" => DirectiveScopeEffect::RegisterBinding,
-        // These directives affect source/debug or optimization state at their
-        // lexical position; flattening leaves that position unchanged.
-        ".loc" | ".pragma" => DirectiveScopeEffect::ScopeNeutral,
+        // .loc only sets debug source-location state for the instructions
+        // that lexically follow it; braces never bound its effect, and
+        // flattening leaves lexical order unchanged.
+        ".loc" => DirectiveScopeEffect::ScopeNeutral,
         // Declarations and indexed-dispatch tables have lexical ownership.
-        ".branchtargets" | ".const" | ".global" | ".local" | ".param" | ".shared" => {
+        // .pragma is scope-sensitive too: pragma strings are tool-defined
+        // with placement-dependent meanings (module, entry-function, or
+        // statement level), and the flattener cannot know the semantics of
+        // every string ptxas accepts. Deleting the braces around a
+        // block-scoped pragma such as `.pragma "nounroll";` can widen its
+        // effect to the whole callable, so refuse to flatten instead of
+        // changing optimization scope.
+        ".branchtargets" | ".const" | ".global" | ".local" | ".param" | ".pragma" | ".shared" => {
             DirectiveScopeEffect::ScopeSensitive
         }
         _ => DirectiveScopeEffect::Unknown,
@@ -331,7 +339,6 @@ mod tests {
 .version 9.3
 .entry kernel() {
     {
-        .pragma \"nounroll\";
         .loc 1 2 3;
         ret;
     }
@@ -342,8 +349,28 @@ mod tests {
             .unwrap()
             .apply(source)
             .unwrap();
-        assert!(rewritten.contains(".pragma \"nounroll\";"));
+        assert_eq!(rewritten.matches('{').count(), 1);
         assert!(rewritten.contains(".loc 1 2 3;"));
+    }
+
+    #[test]
+    fn rejects_pragma_directives_in_nested_scopes() {
+        // A block-scoped `.pragma "nounroll";` covers only its block's loops;
+        // flattening would widen it to the whole callable, so refuse.
+        let source = "\
+.version 9.3
+.entry kernel() {
+    {
+        .pragma \"nounroll\";
+        ret;
+    }
+}
+";
+        let document = Document::parse(source).unwrap();
+        assert!(matches!(
+            ScopeFlattenPlan::analyze(&document),
+            Err(ScopeFlattenError::UnsupportedDirective { name, .. }) if name == ".pragma"
+        ));
     }
 
     #[test]
