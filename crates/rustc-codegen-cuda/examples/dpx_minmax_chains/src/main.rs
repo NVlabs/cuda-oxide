@@ -30,7 +30,9 @@ mod kernels {
         if t < 6 {
             EDGES[((t + operand) % 6) as usize]
         } else {
-            let v = t.wrapping_add(operand.wrapping_mul(0x85EB_CA6B)).wrapping_mul(0x9E37_79B1);
+            let v = t
+                .wrapping_add(operand.wrapping_mul(0x85EB_CA6B))
+                .wrapping_mul(0x9E37_79B1);
             (v ^ (v >> 15)) as i32
         }
     }
@@ -41,7 +43,9 @@ mod kernels {
         if t < 6 {
             EDGES[((t + operand) % 6) as usize]
         } else {
-            let v = t.wrapping_add(operand.wrapping_mul(0xC2B2_AE35)).wrapping_mul(0x27D4_EB2F);
+            let v = t
+                .wrapping_add(operand.wrapping_mul(0xC2B2_AE35))
+                .wrapping_mul(0x27D4_EB2F);
             v ^ (v >> 13)
         }
     }
