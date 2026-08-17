@@ -297,6 +297,7 @@ cargo oxide run gemm_sol_final
 | `cuda-async`        | Async execution layer (`DeviceOperation`, `DeviceFuture`, `DeviceBox<T>`) |
 | `libnvvm-sys`       | `dlopen` bindings to libNVVM (used by `cuda-host::ltoir`)                 |
 | `nvjitlink-sys`     | `dlopen` bindings to nvJitLink (used by `cuda-host::ltoir`)               |
+| `ptx-parse`         | Lossless structural views over PTX source text                            |
 
 ### Compiler Crates
 
