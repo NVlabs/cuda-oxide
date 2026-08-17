@@ -141,6 +141,19 @@ cuda-oxide is split into focused crates. Here is every one and its role:
 | `cuda-core`          | Safe bindings to the CUDA Driver API (`CudaContext`, `DeviceBuffer`, `CudaStream`)     |
 | `cuda-async`         | Async GPU programming: `DeviceOperation`, combinators, stream pool scheduling          |
 | `cuda-bindings`      | Low-level FFI bindings to CUDA driver (`libcuda.so`)                                   |
+| `cuda-intrinsics`    | Generated low-level CUDA intrinsic declarations                                        |
+| `cuda-intrinsics-gen`| Extractor and deterministic source generator for the intrinsics                        |
+| `cuda-artifact-finalizer` | Driver-independent NVVM IR, LTOIR, and PTX finalization                           |
+| `oxide-artifacts`    | Architecture-neutral embedded device artifact metadata                                 |
+| `dialect-iket`       | pliron dialect modelling in-kernel event tracing                                       |
+| `iket-lower`         | `dialect-iket` profiles + instrumentation lowering                                     |
+| `dialect-ptx`        | pliron dialect modelling structured PTX                                                |
+| `ptx-parse`          | Lossless structural views over PTX source text                                         |
+| `cuda-oxide-codegen` | Experimental rustc-independent PTX backend                                             |
+| `libnvvm-sys`        | `dlopen` bindings to libNVVM (used by `cuda-host::ltoir`)                              |
+| `nvjitlink-sys`      | `dlopen` bindings to nvJitLink (used by `cuda-host::ltoir`)                             |
+| `reserved-oxide-symbols` | Workspace-private `cuda_oxide_*` symbol-name contract                              |
+| `fuzzer`             | Differential codegen fuzzer support (rustlantis adapter)                               |
 
 ### Dependency flow
 
@@ -185,10 +198,12 @@ add build complexity, slow down CI, and make contributor onboarding painful.
 With pliron, dialects are defined using standard Rust traits and derive macros,
 and the IR can be inspected with any Rust debugger.
 
-cuda-oxide defines two dialects on top of pliron: `dialect-mir` (models
-Rust MIR) and `dialect-nvvm` (NVIDIA GPU intrinsics). The LLVM dialect comes
-from the upstream `pliron-llvm` crate; cuda-oxide's `llvm-export` crate
-re-exports it and adds the textual `.ll` exporter.
+cuda-oxide defines four dialects on top of pliron. Two carry the lowering
+path: `dialect-mir` (models Rust MIR) and `dialect-nvvm` (NVIDIA GPU
+intrinsics). Two sit off it: `dialect-iket` (in-kernel event tracing) and
+`dialect-ptx` (structured terminal PTX). The LLVM dialect comes from the
+upstream `pliron-llvm` crate; cuda-oxide's `llvm-export` crate re-exports it
+and adds the textual `.ll` exporter.
 
 :::{seealso}
 For a deeper dive into pliron's architecture, see

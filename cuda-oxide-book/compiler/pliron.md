@@ -349,9 +349,12 @@ function signature.
 
 ## How cuda-oxide uses pliron
 
-cuda-oxide works with three dialects: it defines `dialect-mir` and
-`dialect-nvvm` locally (each as its own crate) and consumes the LLVM dialect
-from the upstream `pliron-llvm` crate. Registration is automatic: every
+The lowering path works with three dialects: cuda-oxide defines `dialect-mir`
+and `dialect-nvvm` locally (each as its own crate) and consumes the LLVM
+dialect from the upstream `pliron-llvm` crate. Two further local dialects sit
+off that path -- `dialect-iket` for in-kernel event tracing and `dialect-ptx`
+for structured terminal PTX -- and the sections below cover only the three
+above. Registration is automatic: every
 dialect, op, type, and attribute linked into the binary registers itself when
 a `Context` is created (`Context::default` runs all link-time registrations),
 so kernel authors and pass authors never have to think about dialect setup --
