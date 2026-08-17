@@ -43,3 +43,21 @@ operation tree.
 the same version ceiling as the CFG. Rename plans also fail closed on
 vector-element uses of a renamed register (`v.x` lexes as one word) and on
 rename targets that would capture a label or callable name.
+
+## First consumers
+
+The first in-tree consumers of the native CFG are IKET PTX instrumentation
+(`dialect-iket`), which needs verified block boundaries and successor edges to
+place probes, and the Tile-to-SIMT interop epic (#96), which splices SIMT
+regions into externally produced PTX. Longer term the raised dialect is the
+substrate for a direct-to-PTX emission path that bypasses textual `.ll`
+round-trips entirely.
+
+## Transform conventions
+
+Transforms that operate on the raised dialect must use pliron's rewriter,
+dialect-conversion, and op-interface infrastructure, per the repo-wide rules;
+manual walk-and-replace over raised operations is not acceptable. The
+text-domain `EditScript` layer exists only for pre-raising normalization of
+surface PTX (alpha-renaming, scope flattening). Once operations exist, edits
+go through the IR, and the canonical emitter prints the result.
