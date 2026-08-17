@@ -1,11 +1,16 @@
 # Pliron Dialects
 
 cuda-oxide does not lower Rust to PTX in a single, heroic transformation. It
-works across three pliron dialects, each modeling a different level of
-abstraction: two defined locally (`dialect-mir`, `dialect-nvvm`) and the LLVM
-dialect provided by the upstream `pliron-llvm` crate. This chapter walks
-through all three -- their types, their operations, and how they fit together
-to form the compilation pipeline.
+works across three pliron dialects on the way down, each modeling a different
+level of abstraction: two defined locally (`dialect-mir`, `dialect-nvvm`) and
+the LLVM dialect provided by the upstream `pliron-llvm` crate. This chapter
+walks through all three -- their types, their operations, and how they fit
+together to form the compilation pipeline.
+
+Two further pliron dialects live in this tree off that path and are not covered
+here: `dialect-iket`, the compiler-facing form of in-kernel event tracing, and
+`dialect-ptx`, a structured terminal PTX dialect that can be built directly or
+projected from parsed PTX source. Each crate's README is the reference.
 
 If you have not read the [Pliron -- Pliron IR (MLIR-like)](pliron.md) chapter yet, now
 is a good time. The concepts there (operations, types, attributes, regions,
@@ -291,16 +296,16 @@ they become `call` instructions to `@llvm.nvvm.*` intrinsics.
 
 ### Architecture Coverage
 
-At catalog SHA-256 `df42ef97` (the stamp in every `ops/generated/` file
-header), the dialect holds 543 operations across 41 modules, and they come
+At catalog SHA-256 `20440c06` (the stamp in every `ops/generated/` file
+header), the dialect holds 560 operations across 42 modules, and they come
 from two different places. The split is the first thing to know about it,
 because it decides where -- and whether -- you would add one. If the header
-stamp no longer starts with `df42ef97`, the counts on this page predate the
+stamp no longer starts with `20440c06`, the counts on this page predate the
 catalog you are reading.
 
 **Hand-written**, directly under `crates/dialect-nvvm/src/ops/`. These are the
 ops with bespoke verification or lowering that the intrinsic catalog does not
-describe. There are seven modules and 18 operations:
+describe. There are seven modules and 19 operations:
 
 | Module    | Description                                                 | Ops |
 | :-------- | :---------------------------------------------------------- | --: |
@@ -310,12 +315,12 @@ describe. There are seven modules and 18 operations:
 | `debug`   | `assertfail`, `vprintf`                                     |   2 |
 | `grid`    | Cooperative `grid_sync`                                     |   1 |
 | `memory`  | Generic-to-shared address conversion with a byte offset     |   1 |
-| `wgmma`   | Warpgroup MMA descriptors and the m64n64k16 bf16 shapes     |   6 |
+| `wgmma`   | Warpgroup MMA descriptors and the m64n64k16 bf16 shapes     |   7 |
 
 **Generated**, under `ops/generated/`, from `intrinsics/catalog.json` by
 `cuda-intrinsics-gen`. Every file there opens with `// @generated ... DO NOT
 EDIT.`, and editing one by hand is undone by the next generator run. This is
-the large majority -- 34 modules and 525 operations, resolved from 986 catalog
+the large majority -- 35 modules and 541 operations, resolved from 1002 catalog
 entries, since several intrinsics can share one structural op:
 
 | Area                        | Modules                                                                       | Ops |
@@ -323,13 +328,14 @@ entries, since several intrinsics can share one structural op:
 | Tensor Core Gen 5 + TMEM    | `tcgen05`                                                                     | 210 |
 | Tensor Memory Accelerator   | `tma`                                                                         | 111 |
 | Special registers           | `sreg`                                                                        |  44 |
-| Packed (SIMD-in-register)   | `packed_alu`, `packed_conversion`, `packed_atomic`                            |  43 |
+| Packed (SIMD-in-register)   | `packed_alu`, `packed_conversion`, `packed_atomic`                            |  51 |
 | Async copy and barriers     | `cp_async`, `mbarrier_extended`, `mbarrier_basic`, `sync`                     |  34 |
 | Warp-level                  | `warp_shuffle`, `redux`, `vote`, `warp_match`, `warp_barrier`, `active_mask`, `elect` |  31 |
 | Matrix fragment movement    | `ldmatrix`, `register_mma`, `stmatrix`, `wgmma_control`, `movmatrix`, `sparse_mma` |  22 |
 | Execution and debug control | `execution_control`, `debug_control`                                          |  11 |
 | Cluster                     | `clc`, `cluster_barrier`, `cluster_memory`                                    |  10 |
 | Scalar math                 | `dotprod`, `scalar_arithmetic`, `scalar_conversion`, `scalar_math`, `extended_minmax`, `prmt` |   9 |
+| Integer min/max (DPX)       | `integer_minmax`                                                              |   8 |
 
 Architecture requirements live per intrinsic rather than per module -- the
 catalog records the PTX version and minimum SM for each, and
