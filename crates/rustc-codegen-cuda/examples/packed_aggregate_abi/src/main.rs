@@ -289,14 +289,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
 
-    assert_eq!(
-        by_value1_out.to_host_vec(&stream)?,
-        [0x22, 0x1122_3344]
-    );
-    assert_eq!(
-        by_value2_out.to_host_vec(&stream)?,
-        [0x33, 0x6172_8394]
-    );
+    assert_eq!(by_value1_out.to_host_vec(&stream)?, [0x22, 0x1122_3344]);
+    assert_eq!(by_value2_out.to_host_vec(&stream)?, [0x33, 0x6172_8394]);
     assert_eq!(load1_out.to_host_vec(&stream)?, [0x41, 0x90a0_b0c0]);
     assert_eq!(load2_out.to_host_vec(&stream)?, [0x51, 0xd0e0_f001]);
 
