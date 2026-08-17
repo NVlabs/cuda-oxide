@@ -503,6 +503,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dialect-ptx"
+version = "0.1.0"
+dependencies = [
+ "pliron",
+ "pliron-derive",
+ "ptx-parse",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
