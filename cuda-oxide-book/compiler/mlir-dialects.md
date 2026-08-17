@@ -50,7 +50,7 @@ to LLVM's type system.
 
 ### Types
 
-The dialect defines seven custom types that mirror Rust's compound types:
+The dialect defines nine custom types that mirror Rust's own:
 
 | Type                 | Example                                                   | Description                                                   |
 | :------------------- | :-------------------------------------------------------- | :------------------------------------------------------------ |
@@ -58,9 +58,11 @@ The dialect defines seven custom types that mirror Rust's compound types:
 | `mir.ptr`            | `mir.ptr<f32, mutable, addrspace: 1>`                     | Pointers with GPU address space                               |
 | `mir.array`          | `mir.array<f32, 256>`                                     | Fixed-size arrays                                             |
 | `mir.struct`         | `mir.struct<"Point", [f32, f32]>`                         | Named structs with layout info                                |
+| `mir.union`          | `mir.union<"Repr", [a, b], [i32, f32], 4, 4>`             | Rust unions -- every field is a view of the same bytes        |
 | `mir.slice`          | `mir.slice<f32, addrspace: 1>`                            | Fat pointers (ptr + length)                                   |
 | `mir.disjoint_slice` | `mir.disjoint_slice<f32>`                                 | Bounds-checked slice carrying a typed index space              |
 | `mir.enum`           | `mir.enum<"Option_i32", [("None", []), ("Some", [i32])]>` | Rust enums with discriminant and variant payloads             |
+| `mir.fp16`           | `mir.fp16`                                                | IEEE 754 binary16, Rust's `f16`                               |
 
 The address spaces on `mir.ptr` and `mir.slice` track where data lives in
 the GPU memory hierarchy:
@@ -76,21 +78,23 @@ the GPU memory hierarchy:
 
 ### Operations
 
-`dialect-mir` defines 54 operations across 11 categories:
+`dialect-mir` defines 62 operations across 12 categories, one per module under
+`crates/dialect-mir/src/ops/`:
 
 | Category     | Examples                                                                                                                                                                                            | Count |
 | :----------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----: |
 | Function     | `mir.func`                                                                                                                                                                                          |     1 |
-| Control flow | `mir.goto`, `mir.cond_br`, `mir.return`, `mir.assert`, `mir.unreachable`                                                                                                                            |     5 |
+| Control flow | `mir.goto`, `mir.cond_br`, `mir.return`, `mir.assert`, `mir.unreachable`, `mir.unroll_hint`                                                                                                         |     6 |
 | Constants    | `mir.constant`, `mir.float_constant`, `mir.undef`                                                                                                                                                   |     3 |
-| Memory       | `mir.alloca`, `mir.load`, `mir.store`, `mir.assign`, `mir.ref`, `mir.ptr_offset`, `mir.shared_alloc`, `mir.global_alloc`, `mir.extern_shared`                                                       |     9 |
+| Memory       | `mir.alloca`, `mir.load`, `mir.store`, `mir.assign`, `mir.ref`, `mir.ptr_offset`, `mir.memcpy`, `mir.memmove`, `mir.shared_alloc`, `mir.global_alloc`, `mir.extern_shared`                          |    11 |
 | Arithmetic   | `mir.add`, `mir.sub`, `mir.mul`, `mir.div`, `mir.rem`, `mir.checked_add`, `mir.checked_sub`, `mir.checked_mul`, `mir.neg`, `mir.not`, `mir.shr`, `mir.shl`, `mir.bitand`, `mir.bitor`, `mir.bitxor` |    15 |
-| Comparison   | `mir.eq`, `mir.ne`, `mir.lt`, `mir.le`, `mir.gt`, `mir.ge`                                                                                                                                          |     6 |
-| Aggregate    | `mir.extract_field`, `mir.insert_field`, `mir.construct_struct`, `mir.construct_tuple`, `mir.construct_array`, `mir.extract_array_element`, `mir.field_addr`, `mir.array_element_addr`              |     8 |
-| Enum         | `mir.get_discriminant`, `mir.construct_enum`, `mir.enum_payload`                                                                                                                                    |     3 |
+| Comparison   | `mir.eq`, `mir.ne`, `mir.lt`, `mir.le`, `mir.gt`, `mir.ge`, `mir.cmp`                                                                                                                               |     7 |
+| Aggregate    | `mir.extract_field`, `mir.insert_field`, `mir.construct_struct`, `mir.construct_tuple`, `mir.construct_array`, `mir.construct_slice`, `mir.construct_disjoint_slice`, `mir.extract_array_element`, `mir.field_addr`, `mir.array_element_addr` |    10 |
+| Enum         | `mir.get_discriminant`, `mir.set_discriminant`, `mir.construct_enum`, `mir.enum_payload`                                                                                                            |     4 |
 | Cast         | `mir.cast`                                                                                                                                                                                          |     1 |
 | Storage      | `mir.storage_live`, `mir.storage_dead`                                                                                                                                                              |     2 |
 | Call         | `mir.call`                                                                                                                                                                                          |     1 |
+| Debug        | `mir.dbg_value`                                                                                                                                                                                     |     1 |
 
 That is a lot of operations, but they fall into natural groups. If you know
 Rust MIR (or have read the [rustc_public chapter](rustc-public.md)), each
@@ -179,22 +183,30 @@ handles all of that flattening.
 
 ### Operations
 
-The dialect defines 62 operations:
+At the pinned `pliron` revision the dialect defines 69 operations:
 
 | Category     | Examples                                                                                                                                | Count |
 | :----------- | :-------------------------------------------------------------------------------------------------------------------------------------- | ----: |
 | Arithmetic   | `add`, `sub`, `mul`, `fadd`, `fsub`, `fmul`, `fdiv`, `frem`, `fneg`, ...                                                                |    19 |
 | Cast         | `zext`, `sext`, `trunc`, `fpext`, `fptrunc`, `sitofp`, `uitofp`, `fptosi`, `fptoui`, `ptrtoint`, `inttoptr`, `addrspacecast`, `bitcast` |    13 |
-| Control flow | `br`, `cond_br`, `switch`, `return`, `unreachable`                                                                                      |     5 |
+| Control flow | `br`, `cond_br`, `switch`, `return`, `unreachable`, `indirectbr`                                                                        |     6 |
 | Memory       | `load`, `store`, `alloca`, `gep`                                                                                                        |     4 |
 | Atomic       | `atomic_load`, `atomic_store`, `atomicrmw`, `cmpxchg`, `fence`                                                                          |     5 |
 | Comparison   | `icmp`, `fcmp`                                                                                                                          |     2 |
-| Aggregate    | `extract_value`, `insert_value`, `extractelement`                                                                                       |     3 |
+| Aggregate    | `extract_value`, `insert_value`, `extract_element`, `insert_element`, `shuffle_vector`                                                  |     5 |
 | Call         | `call`, `call_intrinsic`                                                                                                                |     2 |
-| Inline asm   | `inline_asm`, `inline_asm_multi`                                                                                                        |     2 |
-| Constants    | `constant`, `zero`, `undef`                                                                                                             |     3 |
+| Inline asm   | `inline_asm`                                                                                                                            |     1 |
+| Constants    | `constant`, `zero`, `undef`, `poison`                                                                                                   |     4 |
 | Symbol       | `func`, `global`, `addressof`                                                                                                           |     3 |
 | Select       | `select`                                                                                                                                |     1 |
+| Other        | `freeze`, `va_arg`, `blockaddress`, `blocktag`                                                                                          |     4 |
+
+`llvm-export` adds one operation of its own on top of those, `llvm.dbg_value`,
+alongside the address-space and fp16 helpers mentioned above.
+
+Because the dialect is upstream, this table moves when the `pliron` pin moves
+rather than when this repository changes; `pliron-llvm`'s `src/ops.rs` is the
+list it is counting.
 
 If you have read LLVM IR before, nothing here will surprise you. The operation
 names are intentionally the same as their LLVM counterparts, prefixed with
@@ -279,28 +291,59 @@ they become `call` instructions to `@llvm.nvvm.*` intrinsics.
 
 ### Architecture Coverage
 
-The dialect is organized into modules, each targeting a GPU feature set:
+At catalog SHA-256 `df42ef97` (the stamp in every `ops/generated/` file
+header), the dialect holds 543 operations across 41 modules, and they come
+from two different places. The split is the first thing to know about it,
+because it decides where -- and whether -- you would add one. If the header
+stamp no longer starts with `df42ef97`, the counts on this page predate the
+catalog you are reading.
 
-| Module     | Description                                          | Ops | Minimum SM | GPU Family |
-| :--------- | :--------------------------------------------------- | --: | :--------- | :--------- |
-| `thread`   | Thread/block indexing, `barrier0`, threadfences      |  18 | All        | All GPUs   |
-| `warp`     | Lane id, shuffle, vote, match                        |  18 | All        | All GPUs   |
-| `grid`     | Cooperative `grid_sync`                              |   1 | sm_70      | Volta+     |
-| `debug`    | Clock, trap, breakpoint, `vprintf`                   |   6 | All        | All GPUs   |
-| `atomic`   | Atomic load/store/RMW/cmpxchg                        |   4 | sm_70      | Volta+     |
-| `cluster`  | Thread Block Clusters + DSMEM                        |  11 | sm_90      | Hopper+    |
-| `mbarrier` | Async barriers + fence proxy + nanosleep             |  10 | sm_90      | Hopper+    |
-| `tma`      | Tensor Memory Accelerator (bulk G2S/S2G)             |  15 | sm_90      | Hopper+    |
-| `wgmma`    | Warpgroup Matrix Multiply-Accumulate                 |   5 | sm_90      | Hopper+    |
-| `stmatrix` | Shared memory matrix store + bf16 convert            |   5 | sm_90      | Hopper+    |
-| `tcgen05`  | Tensor Core Gen 5 + TMEM                             |  24 | sm_100     | Blackwell+ |
-| `clc`      | Cluster Launch Control                               |   6 | sm_100     | Blackwell+ |
+**Hand-written**, directly under `crates/dialect-nvvm/src/ops/`. These are the
+ops with bespoke verification or lowering that the intrinsic catalog does not
+describe. There are seven modules and 18 operations:
 
-That is 123 operations total. Most users will only encounter the first three
-modules (thread indexing, warp shuffles, barriers). The rest are for advanced
-GPU programming -- TMA, matrix accelerators, and Blackwell's tensor memory --
-covered in the [Advanced GPU Features](../advanced/tensor-memory-accelerator.md)
-chapters.
+| Module    | Description                                                 | Ops |
+| :-------- | :---------------------------------------------------------- | --: |
+| `asm`     | `inline_ptx`                                                |   1 |
+| `atomic`  | Atomic load/store/RMW/cmpxchg/fence                         |   5 |
+| `cluster` | Cluster index and cluster-count registers                   |   2 |
+| `debug`   | `assertfail`, `vprintf`                                     |   2 |
+| `grid`    | Cooperative `grid_sync`                                     |   1 |
+| `memory`  | Generic-to-shared address conversion with a byte offset     |   1 |
+| `wgmma`   | Warpgroup MMA descriptors and the m64n64k16 bf16 shapes     |   6 |
+
+**Generated**, under `ops/generated/`, from `intrinsics/catalog.json` by
+`cuda-intrinsics-gen`. Every file there opens with `// @generated ... DO NOT
+EDIT.`, and editing one by hand is undone by the next generator run. This is
+the large majority -- 34 modules and 525 operations, resolved from 986 catalog
+entries, since several intrinsics can share one structural op:
+
+| Area                        | Modules                                                                       | Ops |
+| :-------------------------- | :---------------------------------------------------------------------------- | --: |
+| Tensor Core Gen 5 + TMEM    | `tcgen05`                                                                     | 210 |
+| Tensor Memory Accelerator   | `tma`                                                                         | 111 |
+| Special registers           | `sreg`                                                                        |  44 |
+| Packed (SIMD-in-register)   | `packed_alu`, `packed_conversion`, `packed_atomic`                            |  43 |
+| Async copy and barriers     | `cp_async`, `mbarrier_extended`, `mbarrier_basic`, `sync`                     |  34 |
+| Warp-level                  | `warp_shuffle`, `redux`, `vote`, `warp_match`, `warp_barrier`, `active_mask`, `elect` |  31 |
+| Matrix fragment movement    | `ldmatrix`, `register_mma`, `stmatrix`, `wgmma_control`, `movmatrix`, `sparse_mma` |  22 |
+| Execution and debug control | `execution_control`, `debug_control`                                          |  11 |
+| Cluster                     | `clc`, `cluster_barrier`, `cluster_memory`                                    |  10 |
+| Scalar math                 | `dotprod`, `scalar_arithmetic`, `scalar_conversion`, `scalar_math`, `extended_minmax`, `prmt` |   9 |
+
+Architecture requirements live per intrinsic rather than per module -- the
+catalog records the PTX version and minimum SM for each, and
+`intrinsics/generated-reference.md` renders them alongside the PTX each one is
+expected to emit. That file is regenerated with the ops, so it is the list to
+consult rather than a count kept by hand here.
+
+Most users will only encounter special registers, warp shuffles and barriers.
+The rest are for advanced GPU programming -- TMA, matrix accelerators, and
+Blackwell's tensor memory -- covered in the
+[Advanced GPU Features](../advanced/tensor-memory-accelerator.md) chapters. If
+you are adding an op, read
+[Adding New Intrinsics](adding-new-intrinsics.md) first: it walks the catalog
+path, which is the one nearly every new intrinsic takes.
 
 ### From Rust to PTX: An Intrinsic's Journey
 

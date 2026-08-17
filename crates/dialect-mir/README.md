@@ -8,7 +8,7 @@ rustc MIR ──► mir-importer ──► dialect-mir ──► mir-lower ─�
 
 ## Types
 
-The dialect defines seven types that preserve Rust-level semantics:
+The dialect defines nine types that preserve Rust-level semantics:
 
 | Type                  | Description                                        | Example                               |
 |-----------------------|----------------------------------------------------|---------------------------------------|
@@ -17,8 +17,10 @@ The dialect defines seven types that preserve Rust-level semantics:
 | `MirSliceType`        | Fat pointers (`&[T]` = ptr + len)                  | `mir.slice<f32, addrspace: 1>`        |
 | `MirDisjointSliceType`| `DisjointSlice<T>` -- per-thread unique access     | `mir.disjoint_slice<f32, ...>`        |
 | `MirStructType`       | Named structs with layout metadata                 | `mir.struct<"Point", [f32, f32]>`     |
+| `MirUnionType`        | Rust unions -- each field a view of the same bytes | `mir.union<"Repr", [a, b], [i32, f32], 4, 4>` |
 | `MirEnumType`         | Rust enums with their exact rustc layout           | `mir.enum<"Ordering", i8, ...>`       |
 | `MirArrayType`        | Fixed-size arrays                                  | `mir.array<f32, 256>`                 |
+| `MirFP16Type`         | IEEE 754 binary16 -- Rust's `f16`                  | `mir.fp16`                            |
 
 `MirEnumType` records the enum's layout the way rustc computed it: Direct,
 Niche, Single, or Empty; the physical integer/pointer carrier and absolute
@@ -60,21 +62,22 @@ Pointers and slices carry an NVPTX address space:
 
 ## Operations
 
-55 operations across 11 modules:
+62 operations across 12 modules, one row per file in `src/ops/`:
 
-| Module         | Ops | Description                                                                             |
-|----------------|-----|-----------------------------------------------------------------------------------------|
-| `function`     | 1   | `MirFuncOp` -- function definition                                                      |
-| `control_flow` | 5   | return, goto, cond_branch, assert, unreachable                                          |
-| `memory`       | 9   | alloca, load, store, ref, assign, ptr_offset, shared_alloc, global_alloc, extern_shared |
-| `constants`    | 3   | integer, float, and undef constants                                                     |
-| `arithmetic`   | 15  | add/sub/mul/div/rem, checked variants, bitwise, shifts                                  |
-| `comparison`   | 6   | lt, le, gt, ge, eq, ne                                                                  |
-| `aggregate`    | 8   | construct/extract/insert for structs, tuples, and arrays; field and element address     |
-| `enum_ops`     | 4   | construct_enum, get_discriminant, set_discriminant, enum_payload                        |
-| `cast`         | 1   | type conversions (kind tracked via `MirCastKindAttr`)                                   |
-| `storage`      | 2   | storage_live, storage_dead (lifetime markers)                                           |
-| `call`         | 1   | function calls                                                                          |
+| Module         | Ops | Description                                                                                              |
+|----------------|-----|----------------------------------------------------------------------------------------------------------|
+| `function`     | 1   | `MirFuncOp` -- function definition                                                                       |
+| `control_flow` | 6   | return, goto, cond_branch, assert, unreachable, unroll_hint                                              |
+| `memory`       | 11  | alloca, load, store, ref, assign, ptr_offset, memcpy, memmove, shared_alloc, global_alloc, extern_shared |
+| `constants`    | 3   | integer, float, and undef constants                                                                      |
+| `arithmetic`   | 15  | add/sub/mul/div/rem, checked variants, bitwise, shifts                                                   |
+| `comparison`   | 7   | lt, le, gt, ge, eq, ne, cmp                                                                              |
+| `aggregate`    | 10  | construct/extract/insert for structs, tuples, arrays, slices and disjoint slices; field and element address |
+| `enum_ops`     | 4   | construct_enum, get_discriminant, set_discriminant, enum_payload                                          |
+| `cast`         | 1   | type conversions (kind tracked via `MirCastKindAttr`)                                                    |
+| `storage`      | 2   | storage_live, storage_dead (lifetime markers)                                                            |
+| `call`         | 1   | function calls                                                                                           |
+| `debug`        | 1   | dbg_value -- binds a value to a source-level variable                                                    |
 
 `MirAllocaOp` implements `PromotableAllocationInterface` and `MirLoadOp` / `MirStoreOp` implement `PromotableOpInterface`, so pliron's `mem2reg` pass can promote scalar stack slots back into SSA. `MirUndefOp` is the default reaching definition the pass materialises when a load is not dominated by any store.
 

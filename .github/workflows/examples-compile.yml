@@ -18,8 +18,7 @@ jobs:
   examples-compile:
     name: compile all examples (device pipeline, GPU-less)
     runs-on: ubuntu-latest
-    # 145 example crates as of the scoped-cache repair:
-    # backend build + shared dep tree + per-example
+    # 210 example crates: backend build + shared dep tree + per-example
     # device codegen. Typically well under an hour with the shared
     # CARGO_TARGET_DIR; the timeout leaves headroom for cold runners.
     # Leave job-level headroom around the 50-minute full compile and the
@@ -67,7 +66,7 @@ jobs:
           opt-21 --version | head -2
 
       - name: Compile every example (smoketest --compile-only)
-        # Step-level timeout, below the job's 60: a job-level timeout
+        # Step-level timeout, below the job's 75: a job-level timeout
         # CANCELS the job and `if: failure()` never fires, losing the
         # logs. A step timeout fails the step, so the upload still runs.
         timeout-minutes: 50
@@ -216,9 +215,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: smoketest-compile-logs
+          # One glob per log the artifact-modes step writes. `iket-trace-*`
+          # matched neither of the other two, so the one assertion that
+          # exercises the full libNVVM + nvJitLink path -- and the only one
+          # that can fail on internalization dropping `__iket_meta_info` from
+          # the cubin -- was the one whose log never reached the artifact.
+          # `if-no-files-found: ignore` below made that silent.
           path: |
             ${{ runner.temp }}/smoketest-logs/
             ${{ runner.temp }}/vecadd-*-build.log
+            ${{ runner.temp }}/iket-trace-*-build.log
             ${{ runner.temp }}/cross-crate-*-build.log
           if-no-files-found: ignore
           retention-days: 7

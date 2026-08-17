@@ -34,6 +34,10 @@ pub enum EmbeddedModuleError {
     #[error("embedded CUDA module '{name}' has no supported payload")]
     UnsupportedPayload { name: String },
 
+    /// PTX source could not be parsed or edited safely while merging bundles.
+    #[error("embedded CUDA module '{name}' contains invalid PTX: {reason}")]
+    InvalidPtx { name: String, reason: String },
+
     /// NVVM IR or LTOIR payload compilation failed.
     #[error("failed to build embedded CUDA module: {0}")]
     Ltoir(#[from] ltoir::LtoirError),
@@ -97,15 +101,14 @@ pub fn load_all_ptx_bundles_merged(
             } else {
                 // Strip per-file header directives; only one set is valid in a
                 // concatenated PTX module.
-                for line in ptx_str.lines() {
-                    let trimmed = line.trim_start();
-                    if trimmed.starts_with(".version")
-                        || trimmed.starts_with(".target")
-                        || trimmed.starts_with(".address_size")
-                    {
-                        continue;
+                let body = strip_ptx_module_headers(ptx_str).map_err(|reason| {
+                    EmbeddedModuleError::InvalidPtx {
+                        name: bundle.name.clone(),
+                        reason,
                     }
-                    merged.push_str(line);
+                })?;
+                merged.push_str(&body);
+                if !body.ends_with('\n') {
                     merged.push('\n');
                 }
             }
@@ -117,6 +120,21 @@ pub fn load_all_ptx_bundles_merged(
     }
 
     Ok(ctx.load_module_from_image(merged.as_bytes())?)
+}
+
+fn strip_ptx_module_headers(ptx: &str) -> Result<String, String> {
+    let document = ptx_parse::Document::parse(ptx).map_err(|error| error.to_string())?;
+    let mut edits = ptx_parse::EditScript::new();
+    for directive in document
+        .directives()
+        .iter()
+        .filter(|directive| matches!(directive.name(), ".version" | ".target" | ".address_size"))
+    {
+        edits
+            .delete(directive.line_span())
+            .map_err(|error| error.to_string())?;
+    }
+    edits.apply(ptx).map_err(|error| error.to_string())
 }
 
 /// Load the first embedded artifact bundle with a supported payload.
@@ -236,6 +254,21 @@ mod tests {
                 .unwrap()
                 .map(|target| target.sm()),
             Some("sm_90".to_string())
+        );
+    }
+
+    #[test]
+    fn strips_only_structural_ptx_module_headers() {
+        let ptx = "\
+// .target sm_1
+.version 8.9
+.target sm_120a, debug
+.address_size 64
+.visible .entry kernel() { ret; }
+";
+        assert_eq!(
+            strip_ptx_module_headers(ptx).unwrap(),
+            "// .target sm_1\n.visible .entry kernel() { ret; }\n"
         );
     }
 

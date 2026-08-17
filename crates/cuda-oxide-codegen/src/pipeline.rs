@@ -526,7 +526,12 @@ pub fn compile_translated_module(
                 request.files.ptx.display()
             ))
         })?;
-        let unresolved = unresolved_libdevice_ptx_declarations(&ptx_text);
+        let unresolved = unresolved_libdevice_ptx_declarations(&ptx_text).map_err(|error| {
+            PipelineError::PtxGeneration(format!(
+                "failed to parse generated PTX to check for unresolved libdevice symbols ({}): {error}",
+                request.files.ptx.display()
+            ))
+        })?;
         if !unresolved.is_empty() {
             return Err(PipelineError::UnsupportedLinking {
                 symbols: unresolved,

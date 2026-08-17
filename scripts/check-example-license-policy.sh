@@ -44,11 +44,17 @@ EXAMPLES_ROOT=crates/rustc-codegen-cuda/examples
 #   error[source-not-allowed]: detected 'git' source not explicitly allowed  (x7)
 #   error[unlicensed]: cuda-bindings = 0.1.0 is unlicensed
 #
-# The first needs cutile-rs added to `[sources] allow-git`, the second needs a
-# license field on a crate this repository does not own.  Both are policy calls
-# for a maintainer, and they are the open question in #663 -- the same reason
-# the example is already exempt from the inventory guard.  Delete the entry once
-# that is settled.
+# The first needs cutile-rs added to `[sources] allow-git`; `deny.toml`'s
+# allow-git still lists only pliron.  The second is not ours to fix: that
+# `cuda-bindings` is cutile-rs's own vendored copy at 0.1.0, not this
+# repository's crate of the same name (ours is 0.2.1 and inherits the workspace
+# license).  Both are policy calls for a maintainer.
+#
+# Tracked in #953.  (This comment used to cite #663, which is closed; that
+# issue's general gap was fixed by #664 and #681, but neither of these two
+# decisions was, so they moved to their own issue.)  The example is exempt from
+# the inventory guard for the same reason, so these crates are governed by
+# neither -- the one such hole in the tree.  Delete the entry once settled.
 #
 # Every name here is checked against the examples on disk below, so a typo or a
 # rename fails the run instead of quietly exempting nothing -- or everything.

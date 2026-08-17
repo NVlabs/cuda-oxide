@@ -13,11 +13,19 @@
 # had to be fixed again. New files fail here now instead of in the next
 # license audit.
 #
-# Scope: tracked *.rs *.sh *.py *.cu *.c *.h *.ll files. Measured when this
-# guard was written that is 1789 files, and the header always sits within the
-# first four lines; the check reads the first 15 so a longer shebang/attribute
-# preamble cannot push a real header out of view, while a stray SPDX string in
-# the body of a generator or test still cannot satisfy it.
+# Scope: tracked *.rs *.sh *.py *.cu *.c *.h *.ll *.js *.css *.html *.nix
+# files -- 1803 of them, and the header always sits within the first four
+# lines; the check reads the first 15 so a longer shebang/attribute preamble
+# cannot push a real header out of view, while a stray SPDX string in the body
+# of a generator or test still cannot satisfy it.
+#
+# The last four extensions were outside the glob until this guard was extended,
+# and the eight files they cover -- the book's `_static` CSS and JS, its two
+# `_templates` HTML fragments, and `flake.nix` -- all carry the standard header
+# already. That is the point: someone wrote them correctly, and nothing was
+# checking, so the next one could arrive without a header exactly as #819 and
+# #835 did for shell scripts. Every one of the eight passes unchanged, so this
+# only closes the hole.
 #
 # Two kinds of files are deliberately not held to the standard header:
 #
@@ -101,7 +109,8 @@ while IFS= read -r f; do
     elif ! grep -Eq "${license_re}" <<<"${w}"; then
         violations="${violations}  ${f}: missing 'SPDX-License-Identifier: Apache-2.0' line"$'\n'
     fi
-done < <(git ls-files -- '*.rs' '*.sh' '*.py' '*.cu' '*.c' '*.h' '*.ll' |
+done < <(git ls-files -- '*.rs' '*.sh' '*.py' '*.cu' '*.c' '*.h' '*.ll' \
+    '*.js' '*.css' '*.html' '*.nix' |
     grep -v '^crates/fuzzer/rustlantis/' |
     grep -vxF -f <(printf '%s\n' "${BSD_EXEMPT_FILES[@]}"))
 

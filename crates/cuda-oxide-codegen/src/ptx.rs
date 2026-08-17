@@ -15,6 +15,7 @@ use crate::target::{
 };
 use libnvvm_sys::CudaArch;
 use llvm_export::export::DebugKind;
+use ptx_parse::{Document, EditScript, split_top_level};
 use std::path::{Path, PathBuf};
 
 /// Links `libdevice.10.bc` into the emitted IR using `llvm-link`.
@@ -629,7 +630,12 @@ fn strip_target_debug_from_ptx(ptx_path: &Path) -> Result<(), PipelineError> {
             ptx_path.display()
         ))
     })?;
-    let stripped = strip_target_debug_from_ptx_text(&ptx);
+    let stripped = strip_target_debug_from_ptx_text(&ptx).map_err(|error| {
+        PipelineError::PtxGeneration(format!(
+            "failed to edit PTX for line-table debug cleanup ({}): {error}",
+            ptx_path.display()
+        ))
+    })?;
     if stripped != ptx {
         std::fs::write(ptx_path, stripped).map_err(|e| {
             PipelineError::PtxGeneration(format!(
@@ -641,49 +647,32 @@ fn strip_target_debug_from_ptx(ptx_path: &Path) -> Result<(), PipelineError> {
     Ok(())
 }
 
-fn strip_target_debug_from_ptx_text(ptx: &str) -> String {
-    let mut out = String::with_capacity(ptx.len());
-    for line in ptx.split_inclusive('\n') {
-        let (line_body, newline) = line
-            .strip_suffix('\n')
-            .map_or((line, ""), |without_newline| (without_newline, "\n"));
-        out.push_str(&strip_target_debug_from_ptx_line(line_body));
-        out.push_str(newline);
-    }
-    out
-}
-
-fn strip_target_debug_from_ptx_line(line: &str) -> String {
-    let indent_len = line.len() - line.trim_start().len();
-    let indent = &line[..indent_len];
-    let body = &line[indent_len..];
-    let Some(rest) = body.strip_prefix(".target") else {
-        return line.to_string();
-    };
-
-    let mut parts = rest.split(',');
-    let Some(arch) = parts.next() else {
-        return line.to_string();
-    };
-
-    let options: Vec<&str> = parts
-        .map(str::trim)
-        .filter(|option| *option != "debug")
-        .collect();
-    if !rest
-        .split(',')
-        .skip(1)
-        .any(|option| option.trim() == "debug")
+fn strip_target_debug_from_ptx_text(ptx: &str) -> Result<String, String> {
+    let document = Document::parse(ptx).map_err(|error| error.to_string())?;
+    let mut edits = EditScript::new();
+    for directive in document
+        .directives()
+        .iter()
+        .filter(|directive| directive.name() == ".target")
     {
-        return line.to_string();
+        let Some(arguments) = split_top_level(directive.arguments()) else {
+            continue;
+        };
+        if arguments.first().is_none_or(|arch| *arch == "debug")
+            || !arguments[1..].contains(&"debug")
+        {
+            continue;
+        }
+        let replacement = arguments
+            .into_iter()
+            .filter(|argument| *argument != "debug")
+            .collect::<Vec<_>>()
+            .join(", ");
+        edits
+            .replace(directive.arguments_span(), replacement)
+            .map_err(|error| error.to_string())?;
     }
-
-    let mut stripped = format!("{indent}.target{arch}");
-    for option in options {
-        stripped.push_str(", ");
-        stripped.push_str(option);
-    }
-    stripped
+    edits.apply(ptx).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -1166,7 +1155,7 @@ mod tests {
 \t.b8 1;
 ";
 
-        let stripped = strip_target_debug_from_ptx_text(ptx);
+        let stripped = strip_target_debug_from_ptx_text(ptx).unwrap();
 
         assert!(
             stripped.contains(".target sm_120a\n"),
@@ -1182,7 +1171,7 @@ mod tests {
     fn line_table_ptx_cleanup_preserves_other_target_options() {
         let ptx = ".target sm_90a, texmode_independent, debug\n";
 
-        let stripped = strip_target_debug_from_ptx_text(ptx);
+        let stripped = strip_target_debug_from_ptx_text(ptx).unwrap();
 
         assert_eq!(stripped, ".target sm_90a, texmode_independent\n");
     }

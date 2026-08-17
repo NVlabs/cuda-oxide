@@ -210,6 +210,7 @@ dependencies = [
  "libnvvm-sys",
  "nvjitlink-sys",
  "oxide-artifacts",
+ "ptx-parse",
  "reserved-oxide-symbols",
  "serde_json",
  "sha2",
@@ -409,6 +410,7 @@ dependencies = [
  "cuda-device",
  "cuda-macros",
  "half",
+ "ptx-parse",
  "sha2",
  "thiserror",
 ]
@@ -422,6 +424,7 @@ name = "cuda-intrinsics-gen"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ptx-parse",
  "serde",
  "serde_json",
  "sha2",
@@ -456,6 +459,7 @@ dependencies = [
  "mir-transforms",
  "nvvm-transforms",
  "pliron",
+ "ptx-parse",
  "rustc-demangle",
  "tempfile",
  "thiserror",
@@ -496,6 +500,15 @@ dependencies = [
  "pliron",
  "pliron-derive",
  "thiserror",
+]
+
+[[package]]
+name = "dialect-ptx"
+version = "0.1.0"
+dependencies = [
+ "pliron",
+ "pliron-derive",
+ "ptx-parse",
 ]
 
 [[package]]
@@ -1063,6 +1076,10 @@ checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "ptx-parse"
+version = "0.1.0"
 
 [[package]]
 name = "quote"

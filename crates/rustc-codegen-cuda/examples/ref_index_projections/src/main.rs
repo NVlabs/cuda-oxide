@@ -16,6 +16,8 @@
  *     value.tail[1]                                      // DST slice tail + const index
  *     value.tail[k]                                      // DST slice tail + runtime index
  *     padded.tail[k]                                     // DST slice tail behind padding
+ *     outer.inner.tail[1]                                // nested DST tail + const index
+ *     outer.inner.tail[k]                                // nested DST tail + runtime index
  *     value.tail[k] = x                                  // DST tail element write
  *     &value.tail[k]                                     // DST tail element borrow
  *
@@ -103,6 +105,31 @@ pub struct PaddedTail<T: ?Sized> {
     pub head: u64,
     pub tag: u8,
     pub tail: T,
+}
+
+/// Slice-tailed inner struct used to pin issue #880's nested projection:
+/// `Deref -> Field(inner) -> Field(tail) -> Index`.
+#[repr(C)]
+pub struct NestedInner<T: ?Sized> {
+    pub head: u32,
+    pub tail: T,
+}
+
+/// A DST whose unsized tail is inherited through its final `NestedInner<T>`
+/// field. The outer fat pointer carries the metadata needed by `inner.tail`.
+#[repr(C)]
+pub struct NestedOuter<T: ?Sized> {
+    pub id: u64,
+    pub inner: NestedInner<T>,
+}
+
+/// Nested padded variant. `PaddedTail<[u16]>` places its tail at byte offset
+/// 10 inside `inner`; `marker` also forces `inner` away from offset zero.
+/// Together they catch both lost metadata and a naive nested field offset.
+#[repr(C)]
+pub struct NestedPaddedOuter<T: ?Sized> {
+    pub marker: u32,
+    pub inner: PaddedTail<T>,
 }
 
 /// Out-of-line accessor pinning the `[Deref, Field(0), Deref, Index(k)]`
@@ -722,6 +749,98 @@ mod kernels {
         }
     }
 
+    /// Issue #880 constant-index repro. The fat reference belongs to
+    /// `NestedOuter<[f32]>`, while the indexed slice lives one struct field
+    /// deeper at `inner.tail`. Metadata must survive `Field(inner)`.
+    #[kernel]
+    pub fn test_nested_slice_tail_constant_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let concrete = NestedOuter {
+            id: u64::MAX,
+            inner: NestedInner {
+                head: u32::MAX,
+                tail: input[i],
+            },
+        };
+        let value: &NestedOuter<[f32]> = &concrete;
+
+        let r0 = value.inner.tail[0];
+        let r1 = value.inner.tail[1];
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = r1 - r0;
+        }
+    }
+
+    /// Issue #880 runtime-index repro. The data-derived index prevents MIR
+    /// from folding the final projection into a ConstantIndex.
+    #[kernel]
+    pub fn test_nested_slice_tail_runtime_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let concrete = NestedOuter {
+            id: u64::MAX,
+            inner: NestedInner {
+                head: u32::MAX,
+                tail: input[i],
+            },
+        };
+        let value: &NestedOuter<[f32]> = &concrete;
+
+        let k = (input[0][0] as usize) & 1;
+        let r0 = value.inner.tail[k];
+        let r1 = value.inner.tail[k + 1];
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = r1 - r0;
+        }
+    }
+
+    /// Nested padded issue #880 regression. The `[u16]` tail is ten bytes
+    /// into `PaddedTail`, and that whole DST is itself the final field of
+    /// `NestedPaddedOuter`. Both constant and runtime indexing must retain
+    /// the outer fat pointer's length while computing the two field offsets.
+    #[kernel]
+    pub fn test_nested_slice_tail_padded_offset(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
+        let idx = thread::index_1d();
+        let i = idx.get();
+        if i >= input.len() {
+            return;
+        }
+
+        let a = input[i][0] as u16;
+        let b = input[i][1] as u16;
+        let concrete = NestedPaddedOuter {
+            marker: u32::MAX,
+            inner: PaddedTail {
+                head: u64::MAX,
+                tag: 0xFF,
+                tail: [a, b, b, b],
+            },
+        };
+        let value: &NestedPaddedOuter<[u16]> = &concrete;
+
+        let c0 = value.inner.tail[0];
+        let c1 = value.inner.tail[1];
+
+        let k = ((input[0][0] as usize) & 1) + 2;
+        let r0 = value.inner.tail[k];
+        let r1 = value.inner.tail[k + 1];
+
+        if let Some(slot) = out.get_mut(idx) {
+            *slot = (c1 as f32 - c0 as f32) + (r1 as f32 - r0 as f32);
+        }
+    }
+
     // ── DST slice-tail address regressions (issue #881) ────────────────
 
     /// Constant-index write through a mutable DST slice tail. The store must
@@ -1060,6 +1179,30 @@ fn main() {
         // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
         unsafe { module.test_slice_tail_padded_offset(s, cfg, i, o) }.expect("launch")
     });
+    all_pass &= run_and_report(
+        "test_nested_slice_tail_constant_index",
+        &stream,
+        |s, cfg, i, o| {
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_nested_slice_tail_constant_index(s, cfg, i, o) }.expect("launch")
+        },
+    );
+    all_pass &= run_and_report(
+        "test_nested_slice_tail_runtime_index",
+        &stream,
+        |s, cfg, i, o| {
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_nested_slice_tail_runtime_index(s, cfg, i, o) }.expect("launch")
+        },
+    );
+    all_pass &= run_and_report(
+        "test_nested_slice_tail_padded_offset",
+        &stream,
+        |s, cfg, i, o| {
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_nested_slice_tail_padded_offset(s, cfg, i, o) }.expect("launch")
+        },
+    );
     all_pass &= run_and_report(
         "test_slice_tail_write_constant_index",
         &stream,

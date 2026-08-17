@@ -4,6 +4,8 @@ members = [
     # Core crates
     "crates/cuda-intrinsics",
     "crates/cuda-intrinsics-gen",
+    "crates/ptx-parse",
+    "crates/dialect-ptx",
     "crates/cuda-device",
     "crates/cuda-artifact-finalizer",
     "crates/cuda-host",
@@ -59,6 +61,7 @@ pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "8447aa426e2
 llvm-export = { path = "crates/llvm-export" }
 dialect-mir = { path = "crates/dialect-mir" }
 dialect-iket = { path = "crates/dialect-iket" }
+dialect-ptx = { path = "crates/dialect-ptx" }
 dialect-nvvm = { path = "crates/dialect-nvvm" }
 mir-lower = { path = "crates/mir-lower" }
 iket-lower = { path = "crates/iket-lower" }
@@ -82,6 +85,7 @@ nvjitlink-sys = { path = "crates/nvjitlink-sys" }
 reserved-oxide-symbols = { path = "crates/reserved-oxide-symbols" }
 fuzzer = { path = "crates/fuzzer" }
 oxide-artifacts = { path = "crates/oxide-artifacts" }
+ptx-parse = { path = "crates/ptx-parse" }
 
 # Common dependencies
 futures = "0.3"

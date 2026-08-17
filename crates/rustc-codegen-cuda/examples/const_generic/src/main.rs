@@ -68,30 +68,27 @@ fn specialization_names() -> [&'static str; 5] {
     ]
 }
 
-fn entry_body<'a>(ptx: &'a str, name: &str) -> &'a str {
-    let start_marker = format!(".visible .entry {name}(");
-    let start = ptx
-        .find(&start_marker)
-        .unwrap_or_else(|| panic!("missing PTX entry `{name}`"));
-    let rest = &ptx[start..];
-    let end = rest
-        .find("\n}")
-        .unwrap_or_else(|| panic!("unterminated PTX entry `{name}`"));
-    &rest[..end]
+fn entry_body<'source>(document: &ptx_parse::Document<'source>, name: &str) -> &'source str {
+    document
+        .callables_named(name)
+        .find(|callable| callable.kind() == ptx_parse::CallableKind::Entry)
+        .and_then(|callable| callable.body_text().map(|_| callable.text()))
+        .unwrap_or_else(|| panic!("missing or incomplete PTX entry `{name}`"))
 }
 
 fn verify_generated_ptx() {
     let ptx = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/const_generic.ptx"))
         .expect("read const_generic.ptx; run `cargo oxide build const_generic` first");
+    let document = ptx_parse::Document::parse(&ptx).expect("parse generated PTX");
     let [value_4, value_8, unused_4, unused_8, name_only_4] = specialization_names();
 
     assert_ne!(value_4, value_8);
     assert_ne!(unused_4, unused_8);
-    let body_4 = entry_body(&ptx, value_4);
-    let body_8 = entry_body(&ptx, value_8);
-    let _unused_body_4 = entry_body(&ptx, unused_4);
-    let _unused_body_8 = entry_body(&ptx, unused_8);
-    let _name_only_body_4 = entry_body(&ptx, name_only_4);
+    let body_4 = entry_body(&document, value_4);
+    let body_8 = entry_body(&document, value_8);
+    let _unused_body_4 = entry_body(&document, unused_4);
+    let _unused_body_8 = entry_body(&document, unused_8);
+    let _name_only_body_4 = entry_body(&document, name_only_4);
     assert!(body_4.contains(".maxntid 64, 1, 1"));
     assert!(body_8.contains(".maxntid 64, 1, 1"));
     assert!(

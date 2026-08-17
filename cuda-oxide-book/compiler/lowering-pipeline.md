@@ -649,15 +649,37 @@ dialect accepts only a subset:
 |:----------------|:----------------|:-----------------------------|
 | Atomic load or store | Not supported as an LLVM atomic instruction | Rejected; it needs another lowering |
 | `fence` | LLVM `fence` is unsupported; an NVVM memory-barrier operation is required | Rejected pending an exact ordering/scope mapping |
-| `cmpxchg` | `i32`/`i64`, plus `i128` on `compute_90+`; global/shared pointers or generic pointers known to refer there | Rejected pending type, address-space, alignment, and ordering validation |
-| `atomicrmw` | Integer `xchg`, `add`, `sub`, `and`, `or`, `xor`, `max`, `min`, `umax`, and `umin` on `i32`/`i64`; `i128 xchg` on `compute_90+`; the same address-space restriction | Rejected pending the same validation |
-| NVVM atomic intrinsics | Provide selected additional operations, including floating-point atomic add | Relaxed, device-scoped `atomicrmw fadd` on `f32`/`f64` in generic/global/shared address spaces is lowered to the exact legacy intrinsic; other atomic RMW operations remain rejected |
+| `cmpxchg` | `i32`/`i64`, plus `i128` on `compute_90+`; global/shared pointers or generic pointers known to refer there | Kept native for `i32`/`i64` at relaxed (monotonic) ordering in the generic, global and shared address spaces; a success ordering stronger than relaxed, or block/system scope, is rewritten to inline PTX. Other widths (`i128` included, on every capability), other address spaces, and a failure ordering stronger than the success ordering are rejected |
+| `atomicrmw` | Integer `xchg`, `add`, `sub`, `and`, `or`, `xor`, `max`, `min`, `umax`, and `umin` on `i32`/`i64`; `i128 xchg` on `compute_90+`; the same address-space restriction | Kept native for `i32`/`i64` in the generic, global and shared address spaces, for those ten operations, at monotonic ordering. Other widths, kinds, orderings and address spaces are rejected |
+| NVVM atomic intrinsics | Provide selected additional operations, including floating-point atomic add | Relaxed, device-scoped `atomicrmw fadd` on `f32`/`f64` in generic/global/shared address spaces is lowered to the exact legacy intrinsic; other *floating-point* atomic RMW operations remain rejected |
 
-The normal LLVM-to-PTX path keeps its existing atomic support. The limitation
-above applies only to the legacy NVVM legalizer. cuda-oxide rejects these
-operations until it can prove that their type, address space, ordering, and
-scope are preserved. The legacy specification also accepts but ignores
-`cmpxchg`'s `weak` marker and failure ordering.
+The normal LLVM-to-PTX path keeps its existing atomic support. The table above
+describes only the legacy NVVM legalizer.
+
+Two rules explain that column. The first is that nothing is
+emitted whose type, address space, ordering and scope cannot be shown to
+survive: [#921](https://github.com/NVlabs/cuda-oxide/pull/921) and
+[#923](https://github.com/NVlabs/cuda-oxide/pull/923) admitted integer RMW
+and compare-exchange by proving those properties rather than by relaxing the
+requirement, which is why the surviving rejections are the cases where the
+proof does not hold.
+
+The second is that **scope is never weakened to fit**. libNVVM's legacy dialect
+drops what it cannot express: an ordered `cmpxchg` lowers to a bare
+`atom.cas.b32`/`.b64` with no ordering qualifier and no surrounding fence,
+which PTX then treats as relaxed. So a block- or system-scoped integer atomic,
+and a compare-exchange whose success ordering is stronger than relaxed, are
+rewritten to inline PTX that states the scope and ordering explicitly instead
+of being handed to libNVVM. That rewrite needs `sm_70` or newer. A failure
+ordering stronger than the success ordering is never rewritten; it is
+rejected outright.
+
+Monotonic is the only ordering an `atomicrmw` reaches here because MIR lowering
+has already split Rust's stronger orderings into separate fences, so the
+instruction itself carries none.
+
+The legacy specification also accepts but ignores `cmpxchg`'s `weak` marker
+and failure ordering.
 
 For the exact accepted types and operations, see the
 [CUDA 12.4 NVVM IR specification](https://docs.nvidia.com/cuda/archive/12.4.0/nvvm-ir-spec/index.html).

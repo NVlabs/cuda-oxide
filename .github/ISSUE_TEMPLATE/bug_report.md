@@ -22,6 +22,20 @@ What should happen.
 What actually happens (error message, wrong output, panic, etc.).
 
 **Environment**
+Paste the output of `cargo oxide doctor`. It reports the GPU and driver, the
+toolchain and its components, the resolved `llc`, libNVVM, nvJitLink and
+libdevice, and the backend it would load -- which is most of what a triage
+question would otherwise ask for one field at a time.
+
+<details><summary><code>cargo oxide doctor</code></summary>
+
+```text
+
+```
+
+</details>
+
+If `doctor` itself is what fails, the individual facts still help:
 - GPU: <!-- e.g. RTX 4090, H100 -->
 - CUDA driver version:
 - `rustc --version --verbose`:

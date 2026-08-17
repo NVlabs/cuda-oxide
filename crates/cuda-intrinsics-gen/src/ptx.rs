@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use ptx_parse::{Document, ParseError, split_top_level};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -148,7 +149,10 @@ impl InstructionPattern {
 
     /// Return true when `source` contains an instruction with exactly this
     /// shape. Comments and quoted directive strings are not searched.
-    pub fn matches(&self, source: &str) -> bool {
+    ///
+    /// Fails when `source` is not lexically well-formed PTX, so a broken
+    /// artifact reads as an error rather than as "no match".
+    pub fn matches(&self, source: &str) -> Result<bool, ParseError> {
         contains_matching_instruction(source, self)
     }
 }
@@ -201,8 +205,11 @@ impl fmt::Display for InstructionPattern {
 
 /// Search emitted PTX or a TableGen assembly string for an exact instruction
 /// shape.
-pub fn contains_matching_instruction(source: &str, pattern: &InstructionPattern) -> bool {
-    !matching_instructions(source, pattern).is_empty()
+pub fn contains_matching_instruction(
+    source: &str,
+    pattern: &InstructionPattern,
+) -> Result<bool, ParseError> {
+    Ok(!matching_instructions(source, pattern)?.is_empty())
 }
 
 /// Return every instruction matching `pattern` without treating comments or
@@ -210,8 +217,8 @@ pub fn contains_matching_instruction(source: &str, pattern: &InstructionPattern)
 pub(crate) fn matching_instructions(
     source: &str,
     pattern: &InstructionPattern,
-) -> Vec<InstructionMatch> {
-    instructions_with_matching_head(source, pattern)
+) -> Result<Vec<InstructionMatch>, ParseError> {
+    Ok(instructions_with_matching_head(source, pattern)?
         .into_iter()
         .filter(|instruction| {
             instruction.operands.len() == pattern.operands.len()
@@ -221,144 +228,39 @@ pub(crate) fn matching_instructions(
                     .zip(&pattern.operands)
                     .all(|(operand, expected)| operand_matches(operand, expected))
         })
-        .collect()
+        .collect())
 }
 
 /// Return every instruction with the exact mnemonic and modifier sequence.
+///
+/// A source which does not lex as PTX is an error, not an empty match list:
+/// callers gate generated intrinsics on these matches, so unparseable PTX
+/// must fail loudly instead of reading as "no match".
 pub(crate) fn instructions_with_matching_head(
     source: &str,
     pattern: &InstructionPattern,
-) -> Vec<InstructionMatch> {
+) -> Result<Vec<InstructionMatch>, ParseError> {
     if pattern.mnemonic.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-
-    let source = mask_non_code(source);
-    let bytes = source.as_bytes();
-    let mut search_from = 0;
-    let mut matches = Vec::new();
-
-    while search_from < source.len() {
-        let Some(relative_start) = source[search_from..].find(pattern.mnemonic.as_str()) else {
-            break;
-        };
-        let start = search_from + relative_start;
-        search_from = start + pattern.mnemonic.len();
-
-        if !is_instruction_start(bytes, start) {
-            continue;
-        }
-
-        let mut head_end = start;
-        while head_end < bytes.len() && is_instruction_head_byte(bytes[head_end]) {
-            head_end += 1;
-        }
-        if !instruction_head_matches(&source[start..head_end], pattern) {
-            continue;
-        }
-        if bytes
-            .get(head_end)
-            .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b';')
-        {
-            continue;
-        }
-
-        let Some(statement_end) = find_top_level_semicolon(&source, head_end) else {
-            continue;
-        };
-        let Some(operands) = split_top_level(&source[head_end..statement_end]) else {
-            continue;
-        };
-        matches.push(InstructionMatch {
-            offset: start,
-            end: statement_end + 1,
-            prefix: statement_prefix(&source, start).to_owned(),
-            operands: operands
-                .into_iter()
-                .map(|operand| operand.trim().to_owned())
-                .collect(),
-        });
-    }
-
-    matches
-}
-
-fn statement_prefix(source: &str, instruction_start: usize) -> &str {
-    let statement_start = source[..instruction_start]
-        .rfind([';', '{', '}'])
-        .map_or(0, |offset| offset + 1);
-    source[statement_start..instruction_start].trim()
-}
-
-fn is_instruction_start(source: &[u8], start: usize) -> bool {
-    start == 0
-        || source[start - 1].is_ascii_whitespace()
-        || matches!(source[start - 1], b';' | b'{' | b'}' | b':')
-}
-
-fn is_instruction_head_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b':')
+    let document = Document::parse(source)?;
+    Ok(document
+        .instructions()
+        .iter()
+        .filter(|instruction| instruction_head_matches(instruction.head(), pattern))
+        .map(|instruction| InstructionMatch {
+            offset: instruction.head_offset(),
+            end: instruction.end_offset(),
+            prefix: instruction.prefix().to_owned(),
+            operands: instruction.operands().map(str::to_owned).collect(),
+        })
+        .collect())
 }
 
 fn instruction_head_matches(head: &str, pattern: &InstructionPattern) -> bool {
     let mut parts = head.split('.');
     parts.next() == Some(pattern.mnemonic.as_str())
         && parts.eq(pattern.modifiers.iter().map(String::as_str))
-}
-
-fn find_top_level_semicolon(source: &str, start: usize) -> Option<usize> {
-    let mut delimiters = Vec::new();
-    for (relative, byte) in source.as_bytes()[start..].iter().copied().enumerate() {
-        match byte {
-            b'{' => delimiters.push(b'}'),
-            b'[' => delimiters.push(b']'),
-            b'(' => delimiters.push(b')'),
-            b'}' | b']' | b')' if delimiters.pop() != Some(byte) => return None,
-            b'}' | b']' | b')' => {}
-            b';' if delimiters.is_empty() => return Some(start + relative),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn split_top_level(source: &str) -> Option<Vec<&str>> {
-    let source = source.trim();
-    if source.is_empty() {
-        return Some(Vec::new());
-    }
-
-    let mut operands = Vec::new();
-    let mut delimiters = Vec::new();
-    let mut operand_start = 0;
-    for (index, byte) in source.bytes().enumerate() {
-        match byte {
-            b'{' => delimiters.push(b'}'),
-            b'[' => delimiters.push(b']'),
-            b'(' => delimiters.push(b')'),
-            b'}' | b']' | b')' if delimiters.pop() != Some(byte) => return None,
-            b'}' | b']' | b')' => {}
-            b',' if delimiters.is_empty() => {
-                let operand = source[operand_start..index].trim();
-                if operand.is_empty() {
-                    return None;
-                }
-                operands.push(operand);
-                operand_start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if !delimiters.is_empty() {
-        return None;
-    }
-
-    let operand = source[operand_start..].trim();
-    if operand.is_empty() {
-        return None;
-    }
-    operands.push(operand);
-    Some(operands)
 }
 
 fn operand_matches(operand: &str, pattern: &OperandPattern) -> bool {
@@ -484,82 +386,6 @@ fn enclosed_body(source: &str, open: u8, close: u8) -> Option<&str> {
     None
 }
 
-fn mask_non_code(source: &str) -> String {
-    #[derive(Clone, Copy)]
-    enum State {
-        Code,
-        LineComment,
-        BlockComment,
-        Quoted,
-    }
-
-    let source = source.as_bytes();
-    let mut masked = source.to_vec();
-    let mut state = State::Code;
-    let mut index = 0;
-    while index < source.len() {
-        match state {
-            State::Code if source[index..].starts_with(b"//") => {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-                state = State::LineComment;
-            }
-            State::Code if source[index..].starts_with(b"/*") => {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-                state = State::BlockComment;
-            }
-            State::Code if source[index] == b'"' => {
-                masked[index] = b' ';
-                index += 1;
-                state = State::Quoted;
-            }
-            State::Code => index += 1,
-            State::LineComment if source[index] == b'\n' => {
-                index += 1;
-                state = State::Code;
-            }
-            State::LineComment => {
-                masked[index] = b' ';
-                index += 1;
-            }
-            State::BlockComment if source[index..].starts_with(b"*/") => {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-                state = State::Code;
-            }
-            State::BlockComment => {
-                if source[index] != b'\n' {
-                    masked[index] = b' ';
-                }
-                index += 1;
-            }
-            State::Quoted if source[index] == b'\\' && index + 1 < source.len() => {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-            }
-            State::Quoted if source[index] == b'"' => {
-                masked[index] = b' ';
-                index += 1;
-                state = State::Code;
-            }
-            State::Quoted => {
-                if source[index] != b'\n' {
-                    masked[index] = b' ';
-                }
-                index += 1;
-            }
-        }
-    }
-
-    // Every replacement is one ASCII byte, so valid UTF-8 input stays valid.
-    String::from_utf8(masked).expect("masking PTX preserves UTF-8")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,33 +408,44 @@ mod tests {
         assert!(
             ldmatrix_x4()
                 .matches("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];")
+                .unwrap()
         );
         assert!(ldmatrix_x4().matches(
             "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {$dst0, $dst1, $dst2, $dst3}, [$addr];"
-        ));
+        ).unwrap());
     }
 
     #[test]
     fn requires_exact_mnemonic_and_ordered_modifiers() {
         assert!(
-            !ldmatrix_x4().matches(
-                "loadmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];"
-            )
+            !ldmatrix_x4()
+                .matches("loadmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];")
+                .unwrap()
         );
-        assert!(!ldmatrix_x4().matches(
-            "ldmatrix_extra.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];"
-        ));
+        assert!(
+            !ldmatrix_x4()
+                .matches(
+                    "ldmatrix_extra.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];"
+                )
+                .unwrap()
+        );
         assert!(
             !ldmatrix_x4()
                 .matches("ldmatrix.aligned.sync.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];")
+                .unwrap()
         );
         assert!(
             !ldmatrix_x4()
                 .matches("ldmatrix.sync.aligned.m8n8.x4.shared {%r1, %r2, %r3, %r4}, [%rd5];")
+                .unwrap()
         );
-        assert!(!ldmatrix_x4().matches(
-            "ldmatrix.sync.aligned.m8n8.x4.shared.b16.relaxed {%r1, %r2, %r3, %r4}, [%rd5];"
-        ));
+        assert!(
+            !ldmatrix_x4()
+                .matches(
+                    "ldmatrix.sync.aligned.m8n8.x4.shared.b16.relaxed {%r1, %r2, %r3, %r4}, [%rd5];"
+                )
+                .unwrap()
+        );
     }
 
     #[test]
@@ -620,13 +457,17 @@ mod tests {
             pattern.to_string(),
             "mma.sp::ordered_metadata.sync.aligned;"
         );
-        assert!(pattern.matches("mma.sp::ordered_metadata.sync.aligned;"));
+        assert!(
+            pattern
+                .matches("mma.sp::ordered_metadata.sync.aligned;")
+                .unwrap()
+        );
         for invalid in [
             "mma.sp.sync.aligned;",
             "mma.sp.ordered_metadata.sync.aligned;",
             "mma.sp::ordered_metadata.sync.aligned.extra;",
         ] {
-            assert!(!pattern.matches(invalid), "{invalid}");
+            assert!(!pattern.matches(invalid).unwrap(), "{invalid}");
         }
     }
 
@@ -635,10 +476,15 @@ mod tests {
         assert!(
             !ldmatrix_x4()
                 .matches("ldmatrix.sync.aligned.m8n8.x4.b16 {%r1, %r2, %r3, %r4}, [%rd5];")
+                .unwrap()
         );
-        assert!(!ldmatrix_x4().matches(
-            "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];"
-        ));
+        assert!(
+            !ldmatrix_x4()
+                .matches(
+                    "ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];"
+                )
+                .unwrap()
+        );
     }
 
     #[test]
@@ -653,16 +499,18 @@ mod tests {
                 },
             ],
         );
-        assert!(pattern.matches("mov.u32 %r1, %tid.x;"));
-        assert!(!pattern.matches("mov.u32 %r1;"));
-        assert!(!pattern.matches("mov.u32 %r1, %tid.x, 0;"));
-        assert!(!pattern.matches("mov.u32 %r1, %tid.y;"));
+        assert!(pattern.matches("mov.u32 %r1, %tid.x;").unwrap());
+        assert!(!pattern.matches("mov.u32 %r1;").unwrap());
+        assert!(!pattern.matches("mov.u32 %r1, %tid.x, 0;").unwrap());
+        assert!(!pattern.matches("mov.u32 %r1, %tid.y;").unwrap());
     }
 
     #[test]
     fn distinguishes_x2_and_x4_register_lists() {
         assert!(
-            !ldmatrix_x4().matches("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2}, [%rd5];")
+            !ldmatrix_x4()
+                .matches("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2}, [%rd5];")
+                .unwrap()
         );
 
         let x2 = InstructionPattern::new(
@@ -673,9 +521,13 @@ mod tests {
                 OperandPattern::Address,
             ],
         );
-        assert!(x2.matches("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%r1, %r2}, [%rd5];"));
+        assert!(
+            x2.matches("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%r1, %r2}, [%rd5];")
+                .unwrap()
+        );
         assert!(
             !x2.matches("ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];")
+                .unwrap()
         );
     }
 
@@ -683,7 +535,7 @@ mod tests {
     fn accepts_tablegen_escaped_register_list_braces() {
         assert!(ldmatrix_x4().matches(
             "ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{$rx40, $rx41, $rx42, $rx43}}, [$src];"
-        ));
+        ).unwrap());
     }
 
     #[test]
@@ -698,8 +550,8 @@ mod tests {
                 },
             ],
         );
-        assert!(pattern.matches("/*x*/\nmov.u32 %r1, %tid.x;"));
-        assert!(pattern.matches("/*xy*/\nmov.u32 %r1, %tid.x;"));
+        assert!(pattern.matches("/*x*/\nmov.u32 %r1, %tid.x;").unwrap());
+        assert!(pattern.matches("/*xy*/\nmov.u32 %r1, %tid.x;").unwrap());
     }
 
     #[test]
@@ -713,7 +565,11 @@ mod tests {
                 OperandPattern::Address,
             ],
         );
-        assert!(pattern.matches("cp.async.bulk.tensor.shared [%rd1], [%rd2, {%r1, %r2}], [%rd3];"));
+        assert!(
+            pattern
+                .matches("cp.async.bulk.tensor.shared [%rd1], [%rd2, {%r1, %r2}], [%rd3];")
+                .unwrap()
+        );
     }
 
     #[test]
@@ -723,13 +579,13 @@ mod tests {
             &["sync"],
             vec![OperandPattern::Exact { value: "0".into() }],
         );
-        assert!(barrier.matches("bar.sync 0;"));
-        assert!(!barrier.matches("bar.sync %r0;"));
+        assert!(barrier.matches("bar.sync 0;").unwrap());
+        assert!(!barrier.matches("bar.sync %r0;").unwrap());
 
         let load = InstructionPattern::new("ld", &["shared", "u32"], vec![OperandPattern::Address]);
-        assert!(load.matches("ld.shared.u32 [%rd1 + 16];"));
-        assert!(!load.matches("ld.shared.u32 %rd1;"));
-        assert!(!load.matches("ld.shared.u32 [];"));
+        assert!(load.matches("ld.shared.u32 [%rd1 + 16];").unwrap());
+        assert!(!load.matches("ld.shared.u32 %rd1;").unwrap());
+        assert!(!load.matches("ld.shared.u32 [];").unwrap());
     }
 
     #[test]
@@ -746,7 +602,8 @@ mod tests {
 
         for member_mask in ["$mask", "%r3", "0", "-1", "+42", "0xFF", "-0X2a"] {
             assert!(
-                vote.matches(&format!("vote.sync.ballot.b32 %r1, %p2, {member_mask};")),
+                vote.matches(&format!("vote.sync.ballot.b32 %r1, %p2, {member_mask};"))
+                    .unwrap(),
                 "member mask {member_mask:?}"
             );
         }
@@ -768,7 +625,9 @@ mod tests {
             "+", "-", "0x", "-0x", "0xGG", "1.0", "1u", "0x1_0", "--1", "0b11",
         ] {
             assert!(
-                !vote.matches(&format!("vote.sync.ballot.b32 %r1, %p2, {member_mask};")),
+                !vote
+                    .matches(&format!("vote.sync.ballot.b32 %r1, %p2, {member_mask};"))
+                    .unwrap(),
                 "member mask {member_mask:?}"
             );
         }
@@ -810,13 +669,17 @@ mod tests {
 
         for operand in ["0", "3", "-1", "+42", "0x7"] {
             assert!(
-                wait_group.matches(&format!("cp.async.wait_group {operand};")),
+                wait_group
+                    .matches(&format!("cp.async.wait_group {operand};"))
+                    .unwrap(),
                 "immediate {operand:?}"
             );
         }
         for operand in ["$n", "%r1", "1.0", "0x", "-"] {
             assert!(
-                !wait_group.matches(&format!("cp.async.wait_group {operand};")),
+                !wait_group
+                    .matches(&format!("cp.async.wait_group {operand};"))
+                    .unwrap(),
                 "non-immediate {operand:?}"
             );
         }
@@ -848,9 +711,21 @@ mod tests {
             ],
         );
 
-        assert!(match_all.matches("match.all.sync.b32 %r1|%p2, %r3, %r4;"));
-        assert!(match_all.matches("match.all.sync.b32 $dest|$pred, $value, $mask;"));
-        assert!(match_all.matches("match.all.sync.b32 %r1 | %p2, 7, -1;"));
+        assert!(
+            match_all
+                .matches("match.all.sync.b32 %r1|%p2, %r3, %r4;")
+                .unwrap()
+        );
+        assert!(
+            match_all
+                .matches("match.all.sync.b32 $dest|$pred, $value, $mask;")
+                .unwrap()
+        );
+        assert!(
+            match_all
+                .matches("match.all.sync.b32 %r1 | %p2, 7, -1;")
+                .unwrap()
+        );
     }
 
     #[test]
@@ -874,7 +749,9 @@ mod tests {
             "{%r1, %p2}",
         ] {
             assert!(
-                !match_all.matches(&format!("match.all.sync.b32 {destination};")),
+                !match_all
+                    .matches(&format!("match.all.sync.b32 {destination};"))
+                    .unwrap(),
                 "destination {destination:?}"
             );
         }
@@ -919,14 +796,14 @@ mod tests {
             "/* ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5]; */";
         let quoted =
             ".file 1 \"ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5];\"";
-        assert!(!ldmatrix_x4().matches(line_comment));
-        assert!(!ldmatrix_x4().matches(block_comment));
-        assert!(!ldmatrix_x4().matches(quoted));
+        assert!(!ldmatrix_x4().matches(line_comment).unwrap());
+        assert!(!ldmatrix_x4().matches(block_comment).unwrap());
+        assert!(!ldmatrix_x4().matches(quoted).unwrap());
 
         let real_instruction = format!(
             "{line_comment}\nldmatrix.sync.aligned.m8n8.x4.shared.b16 {{%r1, %r2, %r3, %r4}}, [%rd5]; // real"
         );
-        assert!(ldmatrix_x4().matches(&real_instruction));
+        assert!(ldmatrix_x4().matches(&real_instruction).unwrap());
     }
 
     #[test]
@@ -949,7 +826,7 @@ mod tests {
             shfl.sync.idx.b32 lo, lo, %r3, 31, %r4;
         "#;
 
-        let matches = matching_instructions(source, &pattern);
+        let matches = matching_instructions(source, &pattern).unwrap();
         assert_eq!(matches.len(), 2);
         assert!(matches[0].offset < matches[1].offset);
         assert!(
@@ -961,7 +838,7 @@ mod tests {
         assert_eq!(matches[1].operands, ["lo", "lo", "%r3", "31", "%r4"]);
 
         let source = format!("{source}\nshfl.sync.idx.b32 hi, hi, %r5, 31, %r6;");
-        let head_matches = instructions_with_matching_head(&source, &pattern);
+        let head_matches = instructions_with_matching_head(&source, &pattern).unwrap();
         assert_eq!(head_matches.len(), 3);
         assert_eq!(head_matches[2].operands[0], "hi");
     }
@@ -980,7 +857,8 @@ mod tests {
             ],
         );
         let matches =
-            matching_instructions("@%p1 shfl.sync.idx.b32 lo, lo, %r1, 31, %r2;", &pattern);
+            matching_instructions("@%p1 shfl.sync.idx.b32 lo, lo, %r1, 31, %r2;", &pattern)
+                .unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].prefix, "@%p1");
     }
@@ -990,17 +868,19 @@ mod tests {
         assert!(
             !ldmatrix_x4()
                 .matches("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4], [%rd5];")
+                .unwrap()
         );
         assert!(
             !ldmatrix_x4()
                 .matches("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%r1, %r2, %r3, %r4}, [%rd5;")
+                .unwrap()
         );
     }
 
     #[test]
     fn an_empty_mnemonic_never_matches() {
         let pattern = InstructionPattern::new("", &[], vec![]);
-        assert!(!pattern.matches("ret;"));
+        assert!(!pattern.matches("ret;").unwrap());
     }
 
     #[test]

@@ -297,6 +297,7 @@ cargo oxide run gemm_sol_final
 | `cuda-async`        | Async execution layer (`DeviceOperation`, `DeviceFuture`, `DeviceBox<T>`) |
 | `libnvvm-sys`       | `dlopen` bindings to libNVVM (used by `cuda-host::ltoir`)                 |
 | `nvjitlink-sys`     | `dlopen` bindings to nvJitLink (used by `cuda-host::ltoir`)               |
+| `ptx-parse`         | Lossless structural views over PTX source text                            |
 
 ### Compiler Crates
 
@@ -310,6 +311,7 @@ cargo oxide run gemm_sol_final
 | `iket-lower`         | `dialect-iket` profiles + instrumentation lowering    |
 | `llvm-export`        | pliron-llvm shim + textual `.ll` exporter             |
 | `dialect-nvvm`       | pliron dialect modelling NVVM intrinsics              |
+| `dialect-ptx`        | pliron dialect modelling structured PTX               |
 | `mir-transforms`     | Optimization passes over the MIR dialect (loop unroll, ...) |
 | `nvvm-transforms`    | Target-aware LLVM dialect legalization for NVVM      |
 | `cuda-oxide-codegen` | Experimental rustc-independent PTX backend           |

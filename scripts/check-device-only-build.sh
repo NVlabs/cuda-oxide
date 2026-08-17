@@ -81,9 +81,21 @@ no_cuda_env() {
     env -u CUDA_HOME -u CUDA_TOOLKIT_PATH -u CUDA_TOOLKIT_TARGET_DIR "$@"
 }
 
-graph="$(no_cuda_env cargo metadata --format-version 1 \
+# `--locked` on both cargo invocations below, for the reason
+# check-dependency-licenses.sh gives for its own `cargo metadata`: a check that
+# can rewrite its own input is not a check. The fixture's Cargo.lock is
+# tracked, and without the flag this guard re-resolves it in passing --
+# verified by deleting the cuda-device package block from the committed lock,
+# after which the guard still printed "OK: device-only graph is host-free
+# (8 packages)" and left the lock silently repaired. That matters more here
+# than elsewhere: the assertion is about the *resolved* graph, so a resolution
+# free to move is not the one the repository committed.
+graph="$(no_cuda_env cargo metadata --locked --format-version 1 \
     --manifest-path "${MANIFEST}" 2>/dev/null)" || {
     echo "error: cargo metadata failed for ${MANIFEST}" >&2
+    echo "       if it reports a stale lock file, commit the updated" >&2
+    echo "       ${FIXTURE}/Cargo.lock rather than letting the guard" >&2
+    echo "       re-resolve it" >&2
     exit 1
 }
 
@@ -113,11 +125,11 @@ if present:
 print(f"OK: device-only graph is host-free ({len(names)} packages).")
 '
 
-if ! no_cuda_env cargo check --quiet --manifest-path "${MANIFEST}" 2>/dev/null; then
+if ! no_cuda_env cargo check --locked --quiet --manifest-path "${MANIFEST}" 2>/dev/null; then
     echo "error: the device-only fixture does not type-check without a CUDA" \
         "toolkit" >&2
     echo "       re-run without --quiet for the diagnostic:" >&2
-    echo "       cargo check --manifest-path ${MANIFEST}" >&2
+    echo "       cargo check --locked --manifest-path ${MANIFEST}" >&2
     exit 1
 fi
 

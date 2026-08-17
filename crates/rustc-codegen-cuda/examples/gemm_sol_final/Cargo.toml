@@ -16,3 +16,4 @@ cuda-device = { path = "../../../cuda-device" }
 cuda-host = { path = "../../../cuda-host" }
 cuda-core = { path = "../../../cuda-core" }
 half = "2.4"
+ptx-parse = { path = "../../../ptx-parse" }
