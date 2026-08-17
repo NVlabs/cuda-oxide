@@ -108,7 +108,7 @@ fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
     let catalog = crate::resolve::resolve(&repo_root).unwrap();
     validate_renderable(&catalog).unwrap();
     assert_eq!(packed_alus(&catalog).count(), 30);
-    assert_eq!(packed_conversions(&catalog).count(), 18);
+    assert_eq!(packed_conversions(&catalog).count(), 20);
 
     let dialect = render_dialect_packed_alu(&catalog, "test-hash");
     for op in [
@@ -154,6 +154,8 @@ fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
         "CvtRnSatfiniteReluE4m3x2F32Op",
         "CvtRnSatfiniteE5m2x2F32Op",
         "CvtRnSatfiniteReluE5m2x2F32Op",
+        "CvtRnF16x2E2m1x2Op",
+        "CvtRnBf16x2Ue8m0x2Op",
     ] {
         assert!(conversion_dialect.contains(&format!("pub struct {op}")));
         assert!(conversion_dialect.contains(&format!("{op}::register(ctx)")));
@@ -172,6 +174,8 @@ fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
     assert!(importer.contains("cuda_device::convert::cvt_rz_bf16x2_f32"));
     assert!(importer.contains("cuda_device::convert::cvt_rn_satfinite_e4m3x2_f32"));
     assert!(importer.contains("cuda_device::convert::cvt_rn_satfinite_relu_e5m2x2_f32"));
+    assert!(importer.contains("cuda_device::convert::cvt_rn_f16x2_e2m1x2"));
+    assert!(importer.contains("cuda_device::convert::cvt_rn_bf16x2_ue8m0x2"));
     assert!(importer.contains("FmaBf16x2Op::build(ctx, arg0, arg1, arg2)"));
     assert!(importer.contains("CvtF32x2Bf16x2Op::build(ctx, arg0, arg1)"));
 
@@ -200,6 +204,12 @@ fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
             "convert_generated_packed_alu(ctx, rewriter, self.get_operation(), \"{mnemonic}\", 32)"
         )));
     }
+    assert!(lowering.contains(
+        "convert_generated_packed_e2m1x2(ctx, rewriter, self.get_operation(), \"cvt.rn.f16x2.e2m1x2\")"
+    ));
+    assert!(lowering.contains(
+        "convert_generated_packed_unary(ctx, rewriter, self.get_operation(), \"cvt.rn.bf16x2.ue8m0x2\", 32, 16)"
+    ));
     for mnemonic in [
         "add.rn.f32x2",
         "add.rn.ftz.f32x2",
@@ -274,6 +284,11 @@ fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
                 packed_conversion_constraint(conversion),
             )));
             assert!(!probe.contains("declare "));
+        } else if packed_conversion_source(conversion) == PackedConversionSourceFormat::E2m1x2 {
+            assert!(probe.contains(
+                "asm \"{ .reg .b8 e2m1x2_byte; cvt.u8.u16 e2m1x2_byte, $1; cvt.rn.f16x2.e2m1x2 $0, e2m1x2_byte; }\", \"=r,h\"(i16 %packed)"
+            ));
+            assert!(!probe.contains("declare "));
         } else {
             // One packed source operand, so no high/low reordering.
             let source_ty = format!("i{}", packed_conversion_source_width(conversion));
@@ -297,6 +312,8 @@ fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
     assert!(raw.contains("pub fn i0262(_arg0: f32, _arg1: f32) -> u16"));
     assert!(raw.contains("pub fn i0995(_arg0: u64, _arg1: u64) -> u64"));
     assert!(raw.contains("pub fn i1002(_arg0: u64, _arg1: u64, _arg2: u64) -> u64"));
+    assert!(raw.contains("pub fn i1026(_arg0: u16) -> u32"));
+    assert!(raw.contains("pub fn i1027(_arg0: u16) -> u32"));
     assert!(!raw.contains("#[must_use]\n#[inline(never)]\npub fn i0062"));
     let f16_raw = raw.find("pub fn i0072").unwrap();
     assert!(raw[..f16_raw].ends_with("#[must_use]\n#[inline(never)]\n"));
@@ -328,6 +345,11 @@ fn packed_alu_and_conversion_render_exact_pure_inline_ptx_adapters() {
     assert!(reference.contains(
             "LLVM-NVPTX uses typed `llvm.nvvm.ff.to.e4m3x2.rn` with `[high, low]` inputs; libNVVM uses pure `cvt.rn.satfinite.e4m3x2.f32` inline PTX"
         ));
+    assert!(reference.contains("`cvt_rn_f16x2_e2m1x2` converts one packed `e2m1x2` `u16` carrier"));
+    assert!(reference.contains("lowering moves that byte to the PTX `.b8` source register"));
+    assert!(
+        reference.contains("`cvt_rn_bf16x2_ue8m0x2` converts one packed `ue8m0x2` `u16` carrier")
+    );
     let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();
     assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/bf16x2.rs")));
     assert!(outputs.contains_key(&PathBuf::from("crates/cuda-device/src/generated/f16x2.rs")));

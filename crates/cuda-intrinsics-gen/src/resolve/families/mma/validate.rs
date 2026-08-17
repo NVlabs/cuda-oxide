@@ -5,9 +5,9 @@
 
 use crate::model::{
     BackendLoweringMechanism, ImportedIntrinsic, IntrinsicBackend, OverlayIntrinsic, RegisterMma,
-    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaKind,
-    RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow, RegisterMmaParticipation,
-    RegisterMmaShape, RuntimeValidation,
+    RegisterMmaAccumulator, RegisterMmaAdapter, RegisterMmaCompatibilitySource, RegisterMmaElement,
+    RegisterMmaKind, RegisterMmaLayout, RegisterMmaOperation, RegisterMmaOverflow,
+    RegisterMmaParticipation, RegisterMmaShape, RuntimeValidation,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use anyhow::{Context, Result, bail, ensure};
@@ -30,6 +30,9 @@ pub(in crate::resolve) fn validate_register_mma_policy(
         }
         Some(RegisterMmaKind::F8f6f4) => {
             return validate_register_mma_f8f6f4_policy(policy, declaration, mma);
+        }
+        Some(RegisterMmaKind::Mxf4) => {
+            return validate_register_mma_mxf4_policy(policy, declaration, mma);
         }
         Some(RegisterMmaKind::Mxf8f6f4) => {
             return validate_register_mma_mxf8f6f4_policy(policy, declaration, mma);
@@ -556,6 +559,180 @@ pub(in crate::resolve) fn validate_register_mma_f8f6f4_policy(
         policy.id
     );
     ensure_no_other_family_contract(policy, "dense f8f6f4 register MMA")?;
+    Ok(())
+}
+
+pub(in crate::resolve) fn validate_register_mma_mxf4_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+    mma: &RegisterMma,
+) -> Result<()> {
+    const ID: &str = "mma_m16n8k64_mxf4_scale_2x_f32_e2m1_e2m1";
+    const SOURCE_RECORD: &str =
+        "int_nvvm_mma_block_scale_m16n8k64_row_col_mxf4_scale_2x_f32_e2m1_e2m1_f32_ue8m0";
+    const LLVM_SYMBOL: &str =
+        "llvm.nvvm.mma.block.scale.m16n8k64.row.col.mxf4.scale.2x.f32.e2m1.e2m1.f32.ue8m0";
+    let rust_arguments = [
+        "[f32; 4]", "[u32; 4]", "[u32; 2]", "u32", "u16", "u16", "u32", "u16", "u16",
+    ];
+    let dialect_operands = [
+        "f32", "f32", "f32", "f32", "i32", "i32", "i32", "i32", "i32", "i32", "i32", "i16", "i16",
+        "i32", "i16", "i16",
+    ];
+    let llvm_arguments = [
+        "i32", "i32", "i32", "i32", "i32", "i32", "f32", "f32", "f32", "f32", "i32", "i16", "i16",
+        "i32", "i16", "i16",
+    ];
+    let results = ["f32", "f32", "f32", "f32"];
+    ensure!(
+        policy.id == ID
+            && policy.abi_id == "i1028"
+            && policy.operation_key
+                == "matrix.mma.m16n8k64.row.col.kind_mxf4.scale_vec_2x.f32.e2m1.e2m1.f32.ue8m0"
+            && policy.source.is_none()
+            && policy.source_record.as_deref() == Some(SOURCE_RECORD)
+            && policy.llvm_symbol.as_deref() == Some(LLVM_SYMBOL)
+            && policy.resolved_llvm_symbol.is_none(),
+        "{} packed mxf4 MMA identity changed",
+        policy.id
+    );
+    ensure!(
+        policy.rust_module == "matrix"
+            && policy.rust_name == ID
+            && policy.rust_arguments == rust_arguments
+            && policy.rust_result == "[f32; 4]"
+            && !policy.safe
+            && policy.must_use
+            && policy.safe_allowlist_reason.is_none()
+            && policy.public_rust_path == format!("cuda_intrinsics::matrix::{ID}")
+            && policy.compatibility_rust_paths == [format!("cuda_device::wmma::{ID}")],
+        "{} must preserve the unsafe must-use packed mxf4 API",
+        policy.id
+    );
+    ensure!(
+        policy.dialect_op_type == "RegisterMmaOp"
+            && policy.dialect_op_name == "nvvm.register_mma"
+            && policy.dialect_operands == dialect_operands
+            && policy.dialect_results == results
+            && policy.llvm_arguments == llvm_arguments
+            && policy.llvm_results == results
+            && policy.ptx_result == "[f32; 4]"
+            && mma.shape == RegisterMmaShape::M16n8k64
+            && mma.kind == Some(RegisterMmaKind::Mxf4)
+            && mma.operation == RegisterMmaOperation::Multiply
+            && mma.accumulator == RegisterMmaAccumulator::F32
+            && mma.a_element == RegisterMmaElement::E2m1
+            && mma.b_element == RegisterMmaElement::E2m1
+            && mma.a_layout == RegisterMmaLayout::Row
+            && mma.b_layout == RegisterMmaLayout::Col
+            && mma.overflow == RegisterMmaOverflow::NotApplicable
+            && mma.participation
+                == RegisterMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes
+            && mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
+            && mma.compatibility_source == RegisterMmaCompatibilitySource::GeneratedStub
+            && mma.runtime_validation == RuntimeValidation::Unexecuted
+            && policy.lowering == "generated_register_mma",
+        "{} packed mxf4 MMA carrier or lowering changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "none"
+            && policy.convergent
+            && policy.execution_scope == "warp"
+            && policy.minimum_ptx == "8.7"
+            && policy.minimum_sm.is_none()
+            && policy.targets == REGISTER_MMA_F8F6F4_TARGETS,
+        "{} packed mxf4 effects or exact target set changed",
+        policy.id
+    );
+    ensure!(
+        policy.ptx_isa_version == "9.3"
+            && policy.ptx_isa_section == "9.7.15.5.14 Multiply-and-Accumulate Instruction: mma"
+            && policy.ptx_isa_url
+                == "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma",
+        "{} packed mxf4 PTX provenance changed",
+        policy.id
+    );
+    let [selection] = declaration.selections.as_slice() else {
+        bail!(
+            "{} must retain exactly one imported packed mxf4 instruction selection",
+            policy.id
+        );
+    };
+    ensure!(
+        declaration.classes == ["SDPatternOperator", "Intrinsic", "NVVM_MMA_BLOCK_SCALE"]
+            && declaration.properties == ["IntrNoCallback", "IntrNoMem"]
+            && selection_matches_policy(policy, selection)?
+            && selection.predicates == ["Subtarget->hasMMABlockScale()"]
+            && selection.constraints.is_empty(),
+        "{} imported packed mxf4 declaration or selection changed",
+        policy.id
+    );
+    ensure!(
+        policy.expected_ptx
+            == InstructionPattern {
+                mnemonic: "mma".into(),
+                modifiers: [
+                    "sync",
+                    "aligned",
+                    "m16n8k64",
+                    "row",
+                    "col",
+                    "kind::mxf4",
+                    "block_scale",
+                    "scale_vec::2X",
+                    "f32",
+                    "e2m1",
+                    "e2m1",
+                    "f32",
+                    "ue8m0",
+                ]
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+                operands: vec![
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::RegisterList { length: 2 },
+                    OperandPattern::RegisterList { length: 4 },
+                    OperandPattern::Register,
+                    OperandPattern::RegisterList { length: 2 },
+                    OperandPattern::Register,
+                    OperandPattern::RegisterList { length: 2 },
+                ],
+            },
+        "{} expected packed mxf4 PTX changed",
+        policy.id
+    );
+    let backend_pairs: BTreeSet<_> = policy
+        .backend_lowerings
+        .iter()
+        .map(|lowering| (lowering.backend, lowering.mechanism))
+        .collect();
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && backend_pairs
+                == BTreeSet::from([
+                    (
+                        IntrinsicBackend::LlvmNvptx,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                    (
+                        IntrinsicBackend::LibNvvm,
+                        BackendLoweringMechanism::InlinePtx,
+                    ),
+                ])
+            && policy.backend_lowerings.iter().all(|lowering| {
+                lowering.targets.is_none()
+                    && lowering.minimum_ptx.is_none()
+                    && lowering.minimum_sm.is_none()
+                    && !lowering.evidence_profile.trim().is_empty()
+            }),
+        "{} must inherit the exact reviewed target set on both inline-PTX routes",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "packed mxf4 register MMA")?;
     Ok(())
 }
 

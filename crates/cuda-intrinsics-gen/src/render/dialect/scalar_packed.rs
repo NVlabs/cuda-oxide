@@ -385,7 +385,9 @@ pub(in crate::render) fn render_dialect_packed_conversion(
             }
             PackedConversionSourceFormat::E4m3x2
             | PackedConversionSourceFormat::E5m2x2
-            | PackedConversionSourceFormat::F16x2 => {
+            | PackedConversionSourceFormat::F16x2
+            | PackedConversionSourceFormat::E2m1x2
+            | PackedConversionSourceFormat::Ue8m0x2 => {
                 let source_width = packed_conversion_source_width(record);
                 writeln!(
                     output,

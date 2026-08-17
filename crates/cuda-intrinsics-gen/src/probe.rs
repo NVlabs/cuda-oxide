@@ -6,7 +6,7 @@
 use crate::model::{
     BackendLoweringMechanism, CatalogFile, CatalogInputs, CatalogIntrinsic, CatalogLlvm,
     CatalogTargetRequirement, CpAsyncSourceSize, EvidenceStageKind, IntrinsicBackend,
-    IntrinsicSource, SparseMmaSelector, WarpShuffleAdapter,
+    IntrinsicSource, PackedConversionAdapter, SparseMmaSelector, WarpShuffleAdapter,
 };
 use crate::ptx::{
     InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
@@ -836,45 +836,81 @@ fn candidate_artifact(
 }
 
 fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<()> {
+    let mut expected_ptx = record.expected_ptx.clone();
+    if record
+        .packed_conversion
+        .as_ref()
+        .is_some_and(|conversion| conversion.adapter == PackedConversionAdapter::LowByteFromU16)
+    {
+        ensure!(
+            ptx.contains(".reg .b8 e2m1x2_byte;"),
+            "packed E2M1x2 probe did not retain its local .b8 register"
+        );
+        let carrier_move = InstructionPattern {
+            mnemonic: "cvt".into(),
+            modifiers: vec!["u8".into(), "u16".into()],
+            operands: vec![
+                OperandPattern::Exact {
+                    value: "e2m1x2_byte".into(),
+                },
+                OperandPattern::Register,
+            ],
+        };
+        ensure!(
+            matching_instructions(ptx, &carrier_move)?.len() == 1,
+            "packed E2M1x2 probe must contain one exact cvt.u8.u16 carrier move"
+        );
+        let source = expected_ptx
+            .operands
+            .last_mut()
+            .context("packed E2M1x2 expected PTX has no source operand")?;
+        ensure!(
+            matches!(source, OperandPattern::Register),
+            "packed E2M1x2 expected PTX source must remain a register"
+        );
+        *source = OperandPattern::Exact {
+            value: "e2m1x2_byte".into(),
+        };
+    }
     ensure!(
-        record.expected_ptx.matches(ptx)?,
+        expected_ptx.matches(ptx)?,
         "probe PTX has no instruction matching `{}`",
         record.expected_ptx
     );
     if record.vote.is_some() {
-        validate_register_and_immediate_forms(&record.expected_ptx, 2, "-1", ptx)?;
+        validate_register_and_immediate_forms(&expected_ptx, 2, "-1", ptx)?;
     }
     if record.warp_match.is_some() {
-        validate_two_register_and_immediate_forms(&record.expected_ptx, 1, "7", 2, "-1", ptx)?;
+        validate_two_register_and_immediate_forms(&expected_ptx, 1, "7", 2, "-1", ptx)?;
     }
     if record.family == "elect" {
-        validate_register_and_immediate_forms(&record.expected_ptx, 1, "-1", ptx)?;
+        validate_register_and_immediate_forms(&expected_ptx, 1, "-1", ptx)?;
     }
     if record.family == "counted_barrier" {
-        validate_two_register_and_immediate_forms(&record.expected_ptx, 0, "1", 1, "32", ptx)?;
+        validate_two_register_and_immediate_forms(&expected_ptx, 0, "1", 1, "32", ptx)?;
     }
     if record.warp_barrier.is_some() {
-        validate_register_and_immediate_forms(&record.expected_ptx, 0, "-1", ptx)?;
+        validate_register_and_immediate_forms(&expected_ptx, 0, "-1", ptx)?;
     }
     if record
         .cp_async_copy
         .as_ref()
         .is_some_and(|copy| copy.source_size == CpAsyncSourceSize::Runtime)
     {
-        validate_register_and_immediate_forms(&record.expected_ptx, 3, "3", ptx)?;
+        validate_register_and_immediate_forms(&expected_ptx, 3, "3", ptx)?;
     }
     if let Some(shuffle) = &record.warp_shuffle {
         match shuffle.adapter {
             WarpShuffleAdapter::MaskValueLaneOrDeltaInsertClamp => {
-                validate_warp_shuffle_forms(&record.expected_ptx, shuffle.clamp, ptx)?;
+                validate_warp_shuffle_forms(&expected_ptx, shuffle.clamp, ptx)?;
             }
             WarpShuffleAdapter::MaskValueLaneOrDeltaSplitI64LowHighB32InsertClampReassemble => {
-                validate_wide_warp_shuffle_recipe(&record.expected_ptx, shuffle.clamp, ptx)?;
+                validate_wide_warp_shuffle_recipe(&expected_ptx, shuffle.clamp, ptx)?;
             }
         }
     }
     if record.packed_alu.is_some() || record.packed_conversion.is_some() {
-        validate_exact_pure_instruction(&record.expected_ptx, ptx)?;
+        validate_exact_pure_instruction(&expected_ptx, ptx)?;
     }
     if let Some(mma) = &record.sparse_mma {
         let selectors: &[u32] = match mma.selector {
@@ -882,7 +918,7 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
             SparseMmaSelector::ImmediateZeroOrOne => &[0, 1],
             SparseMmaSelector::ImmediateZero => &[0],
         };
-        validate_sparse_mma_selectors(&record.expected_ptx, selectors, ptx)?;
+        validate_sparse_mma_selectors(&expected_ptx, selectors, ptx)?;
     }
     Ok(())
 }
@@ -2598,6 +2634,32 @@ attributes #0 = { speculatable memory(none) }
                 validate_exact_pure_instruction(&expected, &invalid).is_err(),
                 "{invalid}"
             );
+        }
+    }
+
+    #[test]
+    fn packed_e2m1_probe_requires_the_local_byte_adapter() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = resolve(&repo_root).unwrap();
+        let record = catalog
+            .intrinsics
+            .iter()
+            .find(|record| record.id == "cvt_rn_f16x2_e2m1x2")
+            .unwrap();
+        let valid = ".reg .b8 e2m1x2_byte;\n\
+                     cvt.u8.u16 e2m1x2_byte, %rs1;\n\
+                     cvt.rn.f16x2.e2m1x2 %r1, e2m1x2_byte;";
+        validate_probe_instructions(record, valid).unwrap();
+
+        for invalid in [
+            valid.replace(".reg .b8 e2m1x2_byte;\n", ""),
+            valid.replace("cvt.u8.u16 e2m1x2_byte, %rs1;\n", ""),
+            valid.replace(
+                "cvt.rn.f16x2.e2m1x2 %r1, e2m1x2_byte;",
+                "cvt.rn.f16x2.e2m1x2 %r1, %rs1;",
+            ),
+        ] {
+            assert!(validate_probe_instructions(record, &invalid).is_err());
         }
     }
 

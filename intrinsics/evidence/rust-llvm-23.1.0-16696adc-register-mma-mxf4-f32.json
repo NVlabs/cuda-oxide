@@ -1,0 +1,200 @@
+{
+ "schema": 6,
+ "backend_profile": "rust-llvm-23.1.0-16696adc",
+ "backend_kind": "llvm_nvptx",
+ "llvm_revision": "16696adcd119e6ba9cc175207d984d7021211acb",
+ "backend_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+ "backend_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+ "records": [
+  {
+   "id": "mma_m16n8k64_mxf4_scale_2x_f32_e2m1_e2m1",
+   "source_record": "int_nvvm_mma_block_scale_m16n8k64_row_col_mxf4_scale_2x_f32_e2m1_e2m1_f32_ue8m0",
+   "llvm_symbol": "llvm.nvvm.mma.block.scale.m16n8k64.row.col.mxf4.scale.2x.f32.e2m1.e2m1.f32.ue8m0",
+   "llvm_arguments": [
+    "i32",
+    "i32",
+    "i32",
+    "i32",
+    "i32",
+    "i32",
+    "f32",
+    "f32",
+    "f32",
+    "f32",
+    "i32",
+    "i16",
+    "i16",
+    "i32",
+    "i16",
+    "i16"
+   ],
+   "llvm_results": [
+    "f32",
+    "f32",
+    "f32",
+    "f32"
+   ],
+   "target_triple": "nvptx64-nvidia-cuda",
+   "gpu_target": "sm_120a",
+   "ptx_feature": "+ptx87",
+   "status": "validated",
+   "stages": [
+    {
+     "targets": [
+      "sm_120a",
+      "ptx87"
+     ],
+     "representation": "generated packed kind::mxf4 scale_vec::2X inline PTX",
+     "stage": "backend_codegen",
+     "mechanism": "inline_ptx",
+     "outcome": "succeeded",
+     "detail": "The candidate probe emitted the exact instruction in a 3,316-byte PTX module (SHA-256 b1719a8cf4d7248c54314398af377173fd83d92a67bbec317139b52418e6f316)."
+    },
+    {
+     "targets": [
+      "sm_120a",
+      "ptx87"
+     ],
+     "representation": "exact packed kind::mxf4 scale_vec::2X PTX",
+     "stage": "ptx_assembly",
+     "mechanism": "inline_ptx",
+     "outcome": "succeeded",
+     "artifact_kind": "cubin",
+     "detail": "CUDA 13.3 ptxas accepted the candidate probe as a 2,240-byte cubin (SHA-256 9da5f12601952bb54b8b757e61495eb86e824bb51088b0785afa27310760c7d1).",
+     "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+     "tool_version": "Cuda compilation tools, release 13.3, V13.3.33",
+     "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+    },
+    {
+     "targets": [
+      "sm_120f",
+      "ptx88"
+     ],
+     "representation": "generated packed kind::mxf4 scale_vec::2X inline PTX",
+     "stage": "backend_codegen",
+     "mechanism": "inline_ptx",
+     "outcome": "succeeded",
+     "detail": "The candidate probe emitted the exact instruction in a 3,316-byte PTX module (SHA-256 8ee1599dd86f0954b49d9c3326c485664acf08fcb12ecda6d949760b2e93ef0c)."
+    },
+    {
+     "targets": [
+      "sm_120f",
+      "ptx88"
+     ],
+     "representation": "exact packed kind::mxf4 scale_vec::2X PTX",
+     "stage": "ptx_assembly",
+     "mechanism": "inline_ptx",
+     "outcome": "succeeded",
+     "artifact_kind": "cubin",
+     "detail": "CUDA 13.3 ptxas accepted the candidate probe as a 2,240-byte cubin (SHA-256 9be687b81f3179f4ce921fef3507d4d4e3d8593ca668f2299e62d1985e85d255).",
+     "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+     "tool_version": "Cuda compilation tools, release 13.3, V13.3.33",
+     "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+    },
+    {
+     "targets": [
+      "sm_121a",
+      "ptx88"
+     ],
+     "representation": "generated packed kind::mxf4 scale_vec::2X inline PTX",
+     "stage": "backend_codegen",
+     "mechanism": "inline_ptx",
+     "outcome": "succeeded",
+     "detail": "The candidate probe emitted the exact instruction in a 3,316-byte PTX module (SHA-256 f69bd9fc22654c5ff8f415a0259c86c2194f2827fd3ea8bed0a448f17077f6cb)."
+    },
+    {
+     "targets": [
+      "sm_121a",
+      "ptx88"
+     ],
+     "representation": "exact packed kind::mxf4 scale_vec::2X PTX",
+     "stage": "ptx_assembly",
+     "mechanism": "inline_ptx",
+     "outcome": "succeeded",
+     "artifact_kind": "cubin",
+     "detail": "CUDA 13.3 ptxas accepted the candidate probe as a 2,240-byte cubin (SHA-256 c388839ac7be175dafe79159fc936a3dc9c9d827c836f42d8219e472b3d8773d).",
+     "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+     "tool_version": "Cuda compilation tools, release 13.3, V13.3.33",
+     "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+    },
+    {
+     "targets": [
+      "sm_121f",
+      "ptx88"
+     ],
+     "representation": "generated packed kind::mxf4 scale_vec::2X inline PTX",
+     "stage": "backend_codegen",
+     "mechanism": "inline_ptx",
+     "outcome": "succeeded",
+     "detail": "The candidate probe emitted the exact instruction in a 3,316-byte PTX module (SHA-256 d80910af3109ad32f79dc279d40b4e6614a03c9e72d3e525d4fe666c98d6f95b)."
+    },
+    {
+     "targets": [
+      "sm_121f",
+      "ptx88"
+     ],
+     "representation": "exact packed kind::mxf4 scale_vec::2X PTX",
+     "stage": "ptx_assembly",
+     "mechanism": "inline_ptx",
+     "outcome": "succeeded",
+     "artifact_kind": "cubin",
+     "detail": "CUDA 13.3 ptxas accepted the candidate probe as a 2,240-byte cubin (SHA-256 a09420d67fc46025b47f5ea0b60bd9c488060879e011b9e8c05eaa8f5debda21).",
+     "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+     "tool_version": "Cuda compilation tools, release 13.3, V13.3.33",
+     "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+    }
+   ],
+   "runtime_validation": "unexecuted",
+   "expected_ptx": {
+    "mnemonic": "mma",
+    "modifiers": [
+     "sync",
+     "aligned",
+     "m16n8k64",
+     "row",
+     "col",
+     "kind::mxf4",
+     "block_scale",
+     "scale_vec::2X",
+     "f32",
+     "e2m1",
+     "e2m1",
+     "f32",
+     "ue8m0"
+    ],
+    "operands": [
+     {
+      "kind": "register_list",
+      "length": 4
+     },
+     {
+      "kind": "register_list",
+      "length": 4
+     },
+     {
+      "kind": "register_list",
+      "length": 2
+     },
+     {
+      "kind": "register_list",
+      "length": 4
+     },
+     {
+      "kind": "register"
+     },
+     {
+      "kind": "register_list",
+      "length": 2
+     },
+     {
+      "kind": "register"
+     },
+     {
+      "kind": "register_list",
+      "length": 2
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -349,8 +349,26 @@ pub(in crate::resolve) fn is_sparse_f8f6f4_f16_policy(policy: &OverlayIntrinsic)
         })
 }
 
+pub(in crate::resolve) fn is_packed_mxf4_register_mma_policy(policy: &OverlayIntrinsic) -> bool {
+    policy.family == "register_mma"
+        && policy.targets == REGISTER_MMA_F8F6F4_TARGETS
+        && policy.register_mma.as_ref().is_some_and(|mma| {
+            mma.kind == Some(RegisterMmaKind::Mxf4)
+                && mma.shape == RegisterMmaShape::M16n8k64
+                && mma.operation == RegisterMmaOperation::Multiply
+                && mma.accumulator == RegisterMmaAccumulator::F32
+                && mma.a_element == RegisterMmaElement::E2m1
+                && mma.b_element == RegisterMmaElement::E2m1
+                && mma.a_layout == RegisterMmaLayout::Row
+                && mma.b_layout == RegisterMmaLayout::Col
+                && mma.overflow == RegisterMmaOverflow::NotApplicable
+        })
+}
+
 pub(in crate::resolve) fn is_f8f6f4_mma_target_matrix_policy(policy: &OverlayIntrinsic) -> bool {
-    is_dense_f8f6f4_register_mma_policy(policy) || is_sparse_f8f6f4_f16_policy(policy)
+    is_dense_f8f6f4_register_mma_policy(policy)
+        || is_sparse_f8f6f4_f16_policy(policy)
+        || is_packed_mxf4_register_mma_policy(policy)
 }
 
 #[derive(Clone, Copy)]

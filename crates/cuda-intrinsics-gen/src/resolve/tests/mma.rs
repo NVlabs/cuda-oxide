@@ -1097,7 +1097,7 @@ fn pinned_register_mma_records_match_the_closed_recipes_and_fail_closed() {
         .iter()
         .filter(|record| record.family == "register_mma")
         .collect();
-    assert_eq!(records.len(), 154);
+    assert_eq!(records.len(), 155);
 
     let dense_f8f6f4_records = records
         .iter()
@@ -1177,6 +1177,54 @@ fn pinned_register_mma_records_match_the_closed_recipes_and_fail_closed() {
                 .iter()
                 .any(|modifier| modifier == "kind::mxf8f6f4")
     }));
+
+    let mxf4_records = records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record
+                .register_mma
+                .as_ref()
+                .is_some_and(|mma| mma.kind == Some(RegisterMmaKind::Mxf4))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(mxf4_records.len(), 1);
+    let mxf4 = mxf4_records[0];
+    let mxf4_mma = mxf4.register_mma.as_ref().unwrap();
+    assert_eq!(mxf4.abi_id, "i1028");
+    assert_eq!(mxf4_mma.shape, RegisterMmaShape::M16n8k64);
+    assert_eq!(mxf4_mma.a_element, RegisterMmaElement::E2m1);
+    assert_eq!(mxf4_mma.b_element, RegisterMmaElement::E2m1);
+    assert_eq!(mxf4.minimum_ptx, "8.7");
+    assert!(mxf4.minimum_sm.is_none());
+    assert_eq!(mxf4.targets, REGISTER_MMA_F8F6F4_TARGETS);
+    assert!(
+        mxf4.expected_ptx
+            .modifiers
+            .iter()
+            .any(|modifier| modifier == "kind::mxf4")
+    );
+    assert!(
+        mxf4.expected_ptx
+            .modifiers
+            .iter()
+            .any(|modifier| modifier == "scale_vec::2X")
+    );
+    let mxf4_declaration = declarations[mxf4.source_record.as_deref().unwrap()];
+    validate_register_mma_policy(mxf4, mxf4_declaration).unwrap();
+
+    let mut wrong_scale_vec = mxf4.clone();
+    *wrong_scale_vec
+        .expected_ptx
+        .modifiers
+        .iter_mut()
+        .find(|modifier| modifier.as_str() == "scale_vec::2X")
+        .unwrap() = "scale_vec::1X".into();
+    assert!(validate_register_mma_policy(&wrong_scale_vec, mxf4_declaration).is_err());
+
+    let mut wrong_kind = mxf4.clone();
+    wrong_kind.register_mma.as_mut().unwrap().kind = Some(RegisterMmaKind::Mxf8f6f4);
+    assert!(validate_register_mma_policy(&wrong_kind, mxf4_declaration).is_err());
 
     let integer_records: Vec<_> = records
         .iter()

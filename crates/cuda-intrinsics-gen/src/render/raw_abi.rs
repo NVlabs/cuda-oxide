@@ -12,8 +12,9 @@ use crate::model::{
 };
 use crate::render::common::{hardware_target_label, rust_header, source_label};
 use crate::render::families::{
-    ClcSafetyArgNames, is_blackwell_ldmatrix, render_clc_safety_lines, sparse_mma_fragment_counts,
-    sparse_mma_metadata_rule, sparse_mma_selector_description, stmatrix_variant, tcgen05_is_commit,
+    ClcSafetyArgNames, is_blackwell_ldmatrix, register_mma_scale_selector_contract,
+    render_clc_safety_lines, sparse_mma_fragment_counts, sparse_mma_metadata_rule,
+    sparse_mma_selector_description, stmatrix_variant, tcgen05_is_commit,
     tcgen05_is_multicast_commit, tcgen05_is_shift, tcgen05_participation_doc,
 };
 use crate::render::reference::modules;
@@ -215,9 +216,14 @@ pub(super) fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> Result<String
                 if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
                 {
                     output.push_str(
-                        "/// `_arg3` and `_arg6` contain this lane's packed A and B scale data. `_arg4`/`_arg5` and `_arg7`/`_arg8` are the corresponding byte/thread selectors.\n\
-                         /// For `scale_vec::1X`, A and B byte selectors must be in `0..=3`, the A thread selector in `0..=1`, and the B thread selector in `0..=3`; other values make the PTX operation undefined.\n",
+                        "/// `_arg3` and `_arg6` contain this lane's packed A and B scale data. `_arg4`/`_arg5` and `_arg7`/`_arg8` are the corresponding byte/thread selectors.\n",
                     );
+                    writeln!(
+                        output,
+                        "/// {}",
+                        register_mma_scale_selector_contract(record)
+                    )
+                    .unwrap();
                 }
                 writeln!(
                     output,

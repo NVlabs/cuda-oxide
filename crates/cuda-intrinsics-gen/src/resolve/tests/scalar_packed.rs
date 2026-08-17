@@ -421,7 +421,7 @@ fn pinned_packed_conversion_records_match_the_closed_recipes() {
         .iter()
         .filter(|record| record.family == "packed_conversion")
         .collect();
-    assert_eq!(packed.len(), 18);
+    assert_eq!(packed.len(), 20);
     for policy in packed {
         let source = resolve_policy_source(policy).unwrap();
         let declaration = policy

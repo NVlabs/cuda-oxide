@@ -345,9 +345,9 @@ fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let catalog = crate::resolve::resolve(&repo_root).unwrap();
     validate_renderable(&catalog).unwrap();
-    assert_eq!(catalog.intrinsics.len(), 1025);
+    assert_eq!(catalog.intrinsics.len(), 1028);
     let records: Vec<_> = register_mmas(&catalog).collect();
-    assert_eq!(records.len(), 154);
+    assert_eq!(records.len(), 155);
     let generated_records = records
         .iter()
         .copied()
@@ -364,7 +364,7 @@ fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
                 == RegisterMmaCompatibilitySource::ExistingStub
         })
         .collect::<Vec<_>>();
-    assert_eq!(generated_records.len(), 149);
+    assert_eq!(generated_records.len(), 150);
     assert_eq!(existing_records.len(), 5);
 
     let raw = render_raw_abi(&catalog, "test-hash").unwrap();
@@ -374,9 +374,13 @@ fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
     assert!(raw.contains("no lane may have exited"));
     assert!(raw.contains("Signed accumulator overflow wraps"));
     assert!(raw.contains("Signed accumulator overflow clamps"));
+    assert!(raw.contains("For `scale_vec::1X`, A and B byte selectors"));
+    assert!(raw.contains(
+        "For `scale_vec::2X`, byte/thread selectors must identify the packed scale pair"
+    ));
 
     let compatibility = render_compat_register_mma(&catalog, "test-hash");
-    assert_eq!(compatibility.matches("pub unsafe fn ").count(), 149);
+    assert_eq!(compatibility.matches("pub unsafe fn ").count(), 150);
     for record in generated_records {
         let argument_names: &[&str] = if record.register_mma.as_ref().unwrap().adapter
             == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32
@@ -425,7 +429,7 @@ fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
     assert!(dialect.contains("RegisterMmaOperationAttr::Multiply"));
     assert!(dialect.contains("RegisterMmaOperationAttr::AndPopc"));
     assert!(dialect.contains("RegisterMmaOperationAttr::XorPopc"));
-    assert!(dialect.contains("pub enum RegisterMmaKindAttr { Standard, F8f6f4, Mxf8f6f4 }"));
+    assert!(dialect.contains("pub enum RegisterMmaKindAttr { Standard, F8f6f4, Mxf4, Mxf8f6f4 }"));
     assert!(dialect.contains("kind_or_inferred"));
     assert!(dialect.contains("RegisterMmaAccumulatorAttr::F16"));
     assert!(dialect.contains("operation_or_multiply"));
@@ -560,6 +564,9 @@ fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
     assert!(lowering.contains(
             r#"(GeneratedMmaResultType::F32, 4, 16, "mma.sync.aligned.m16n8k32.row.col.kind::mxf8f6f4.block_scale.f32.e2m1.e2m1.f32.ue8m0 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7}, $14, {$15, $16}, $17, {$18, $19};", "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r,r,h,h,r,h,h")"#
         ));
+    assert!(lowering.contains(
+            r#"(GeneratedMmaResultType::F32, 4, 16, "mma.sync.aligned.m16n8k64.row.col.kind::mxf4.block_scale.scale_vec::2X.f32.e2m1.e2m1.f32.ue8m0 {$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7}, $14, {$15, $16}, $17, {$18, $19};", "=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r,r,h,h,r,h,h")"#
+        ));
 
     let targets = render_targets(&catalog, "test-hash");
     assert!(targets.contains("GeneratedIntrinsicVariant::RegisterMma"));
@@ -590,13 +597,17 @@ fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
     assert!(targets.contains("GeneratedRegisterMmaOperation::Multiply"));
     assert!(targets.contains("GeneratedRegisterMmaOperation::AndPopc"));
     assert!(targets.contains("GeneratedRegisterMmaOperation::XorPopc"));
-    assert!(targets.contains("pub enum GeneratedRegisterMmaKind { Standard, F8f6f4, Mxf8f6f4 }"));
+    assert!(
+        targets.contains("pub enum GeneratedRegisterMmaKind { Standard, F8f6f4, Mxf4, Mxf8f6f4 }")
+    );
     assert!(targets.contains("kind: GeneratedRegisterMmaKind::Standard"));
     assert!(targets.contains("kind: GeneratedRegisterMmaKind::F8f6f4"));
+    assert!(targets.contains("kind: GeneratedRegisterMmaKind::Mxf4"));
     assert!(targets.contains("kind: GeneratedRegisterMmaKind::Mxf8f6f4"));
     assert!(targets.contains("kind_or_inferred"));
     assert!(targets.contains("RegisterMmaKindAttr::Standard"));
     assert!(targets.contains("RegisterMmaKindAttr::F8f6f4"));
+    assert!(targets.contains("RegisterMmaKindAttr::Mxf4"));
     assert!(targets.contains("RegisterMmaKindAttr::Mxf8f6f4"));
     assert!(targets.contains("GeneratedRegisterMmaAccumulator::F16"));
     assert!(targets.contains("operation: GeneratedRegisterMmaOperation::AndPopc"));
@@ -694,6 +705,10 @@ fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
 
     let reference = render_reference(&catalog, "test-hash");
     assert!(reference.contains("## Register-MMA contracts"));
+    assert!(reference.contains("For `scale_vec::1X`, A and B byte selectors"));
+    assert!(reference.contains(
+        "For `scale_vec::2X`, byte/thread selectors must identify the packed scale pair"
+    ));
     assert!(reference.contains("performs XOR, population count, and accumulate"));
     assert!(reference.contains("performs AND, population count, and accumulate"));
     assert!(reference.contains("runtime validation is not executed on a GPU"));

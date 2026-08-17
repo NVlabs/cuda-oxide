@@ -726,7 +726,7 @@ pub(super) fn packed_conversion_policy(
     record.execution_scope = "thread".into();
     let (minimum_ptx, minimum_sm) = packed_conversion_floor(&conversion);
     record.minimum_ptx = minimum_ptx.into();
-    record.minimum_sm = Some(minimum_sm.into());
+    record.minimum_sm = minimum_sm.map(Into::into);
     record.ptx_result = format!("u{result_width}");
     record.ptx_isa_section = "9.7.9.22 Data Movement and Conversion Instructions: cvt".into();
     record.ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cvt".into();
@@ -739,7 +739,7 @@ pub(super) fn packed_conversion_policy(
             evidence_profile: "test".into(),
             targets: None,
             minimum_ptx: Some(minimum_ptx.into()),
-            minimum_sm: Some(minimum_sm.into()),
+            minimum_sm: minimum_sm.map(Into::into),
         })
         .collect();
     let modifiers = packed_conversion_ptx_modifiers(&conversion);

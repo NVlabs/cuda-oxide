@@ -311,7 +311,8 @@ pub enum ExtendedMinMaxAdapter {
 /// Closed contract for converting between scalar and packed values.
 ///
 /// The source may be a scalar pair (`f32x2`, two operands) or an already-packed
-/// 16-bit or 32-bit register (`f16x2`, `e4m3x2`, `e5m2x2`, one operand), so the
+/// 16-bit or 32-bit register (`f16x2`, `e2m1x2`, `e4m3x2`, `e5m2x2`,
+/// `ue8m0x2`, one operand), so the
 /// operand arity follows [`PackedConversionSourceFormat`] rather than being
 /// fixed at two.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -327,10 +328,12 @@ pub struct PackedConversion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PackedConversionSourceFormat {
+    E2m1x2,
     E4m3x2,
     E5m2x2,
     F16x2,
     F32x2,
+    Ue8m0x2,
 }
 
 impl PackedConversionSourceFormat {
@@ -341,17 +344,19 @@ impl PackedConversionSourceFormat {
     pub fn operand_count(self) -> usize {
         match self {
             Self::F32x2 => 2,
-            Self::E4m3x2 | Self::E5m2x2 | Self::F16x2 => 1,
+            Self::E2m1x2 | Self::E4m3x2 | Self::E5m2x2 | Self::F16x2 | Self::Ue8m0x2 => 1,
         }
     }
 
     /// PTX source-type token, used as the trailing `cvt` modifier.
     pub fn ptx_token(self) -> &'static str {
         match self {
+            Self::E2m1x2 => "e2m1x2",
             Self::E4m3x2 => "e4m3x2",
             Self::E5m2x2 => "e5m2x2",
             Self::F16x2 => "f16x2",
             Self::F32x2 => "f32",
+            Self::Ue8m0x2 => "ue8m0x2",
         }
     }
 }
@@ -389,6 +394,11 @@ pub enum PackedConversionAdapter {
     /// PTX orders `cvt` operands as `d, a`, so a one-operand conversion needs no
     /// reordering to keep the Rust argument order.
     Identity,
+    /// Move the low byte of the `u16` carrier to a PTX `.b8` register.
+    ///
+    /// Packed E2M1x2 occupies eight bits, but LLVM exposes the intrinsic with
+    /// an `i16` carrier and Rust has no inline-assembly `u8` register class.
+    LowByteFromU16,
     /// Swap the two scalar operands.
     ///
     /// PTX writes the second source operand into the low half, so the operands

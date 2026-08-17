@@ -1085,9 +1085,19 @@ fn packed_conversion_impls(catalog: &CatalogFile) -> String {
                 )
                 .unwrap();
             }
+            PackedConversionSourceFormat::E2m1x2 => {
+                debug_assert_eq!(conversion.adapter, PackedConversionAdapter::LowByteFromU16);
+                writeln!(
+                    output,
+                    "        convert_generated_packed_e2m1x2(ctx, rewriter, self.get_operation(), {:?})",
+                    packed_conversion_ptx_mnemonic(record),
+                )
+                .unwrap();
+            }
             PackedConversionSourceFormat::E4m3x2
             | PackedConversionSourceFormat::E5m2x2
-            | PackedConversionSourceFormat::F16x2 => {
+            | PackedConversionSourceFormat::F16x2
+            | PackedConversionSourceFormat::Ue8m0x2 => {
                 debug_assert_eq!(conversion.adapter, PackedConversionAdapter::Identity);
                 writeln!(
                     output,
@@ -2073,6 +2083,10 @@ const LOWERING_INTRINSIC_HELPERS: &[(&str, &str)] = &[
     (
         "convert_generated_packed_alu",
         "packed::convert_generated_packed_alu",
+    ),
+    (
+        "convert_generated_packed_e2m1x2",
+        "packed::convert_generated_packed_e2m1x2",
     ),
     (
         "convert_generated_packed_f32x2",

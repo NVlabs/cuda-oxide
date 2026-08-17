@@ -35,9 +35,11 @@ pub(in crate::resolve) fn packed_conversion_recipe(
 ) -> Option<PackedConversionRecipe> {
     match conversion.source_format {
         PackedConversionSourceFormat::F32x2 => packed_conversion_recipe_f32x2(conversion),
-        PackedConversionSourceFormat::E4m3x2
+        PackedConversionSourceFormat::E2m1x2
+        | PackedConversionSourceFormat::E4m3x2
         | PackedConversionSourceFormat::E5m2x2
-        | PackedConversionSourceFormat::F16x2 => packed_conversion_recipe_fp8_f16x2(conversion),
+        | PackedConversionSourceFormat::F16x2
+        | PackedConversionSourceFormat::Ue8m0x2 => packed_conversion_recipe_fp8_f16x2(conversion),
     }
 }
 
@@ -55,6 +57,42 @@ pub(in crate::resolve) fn packed_conversion_recipe_fp8_f16x2(
         conversion.rounding,
         conversion.saturation,
     ) {
+        (
+            PackedConversionSourceFormat::E2m1x2,
+            PackedConversionDestinationFormat::F16x2,
+            PackedConversionRounding::NearestEven,
+            PackedConversionSaturation::None,
+        ) => Some(PackedConversionRecipe {
+            id: "cvt_rn_f16x2_e2m1x2",
+            abi_id: "i1026",
+            operation_key: "packed.convert.e2m1x2.f16x2.nearest_even",
+            rust_name: "cvt_rn_f16x2_e2m1x2",
+            compatibility_path: "cuda_device::convert::cvt_rn_f16x2_e2m1x2",
+            dialect_op_type: "CvtRnF16x2E2m1x2Op",
+            dialect_op_name: "nvvm.cvt_rn_f16x2_e2m1x2",
+            source_record: "int_nvvm_e2m1x2_to_f16x2_rn",
+            llvm_symbol: "llvm.nvvm.e2m1x2.to.f16x2.rn",
+            llvm_result: "v2f16",
+            summary: "Converts two packed e2m1 values from the low byte to packed f16x2.",
+        }),
+        (
+            PackedConversionSourceFormat::Ue8m0x2,
+            PackedConversionDestinationFormat::Bf16x2,
+            PackedConversionRounding::NearestEven,
+            PackedConversionSaturation::None,
+        ) => Some(PackedConversionRecipe {
+            id: "cvt_rn_bf16x2_ue8m0x2",
+            abi_id: "i1027",
+            operation_key: "packed.convert.ue8m0x2.bf16x2.nearest_even",
+            rust_name: "cvt_rn_bf16x2_ue8m0x2",
+            compatibility_path: "cuda_device::convert::cvt_rn_bf16x2_ue8m0x2",
+            dialect_op_type: "CvtRnBf16x2Ue8m0x2Op",
+            dialect_op_name: "nvvm.cvt_rn_bf16x2_ue8m0x2",
+            source_record: "int_nvvm_ue8m0x2_to_bf16x2",
+            llvm_symbol: "llvm.nvvm.ue8m0x2.to.bf16x2",
+            llvm_result: "v2bf16",
+            summary: "Converts two packed unsigned e8m0 scale values to packed bf16x2.",
+        }),
         (
             PackedConversionSourceFormat::F16x2,
             PackedConversionDestinationFormat::E4m3x2,
@@ -437,7 +475,10 @@ pub(in crate::resolve) fn packed_conversion_source_types(
         PackedConversionSourceFormat::F16x2 => {
             (vec!["u32".into()], vec!["i32".into()], vec!["v2f16".into()])
         }
-        PackedConversionSourceFormat::E4m3x2 | PackedConversionSourceFormat::E5m2x2 => {
+        PackedConversionSourceFormat::E2m1x2
+        | PackedConversionSourceFormat::E4m3x2
+        | PackedConversionSourceFormat::E5m2x2
+        | PackedConversionSourceFormat::Ue8m0x2 => {
             (vec!["u16".into()], vec!["i16".into()], vec!["i16".into()])
         }
     }
@@ -454,19 +495,38 @@ pub(in crate::resolve) fn packed_conversion_result_width(
 
 pub(in crate::resolve) fn packed_conversion_floor(
     conversion: &crate::model::PackedConversion,
-) -> (&'static str, &'static str) {
+) -> (&'static str, Option<&'static str>) {
+    if matches!(
+        conversion.source_format,
+        PackedConversionSourceFormat::E2m1x2 | PackedConversionSourceFormat::Ue8m0x2
+    ) {
+        return ("8.7", None);
+    }
     // FP8 on either side carries the Ada floor, including when FP8 is the
     // source and the destination is the older `f16x2`.
     if packed_conversion_uses_fp8(conversion) {
-        return ("8.1", "sm_89");
+        return ("8.1", Some("sm_89"));
     }
     match conversion.destination_format {
         PackedConversionDestinationFormat::Bf16x2 | PackedConversionDestinationFormat::F16x2 => {
-            ("7.0", "sm_80")
+            ("7.0", Some("sm_80"))
         }
         PackedConversionDestinationFormat::E4m3x2 | PackedConversionDestinationFormat::E5m2x2 => {
-            ("8.1", "sm_89")
+            ("8.1", Some("sm_89"))
         }
+    }
+}
+
+pub(in crate::resolve) fn packed_conversion_targets(
+    conversion: &crate::model::PackedConversion,
+) -> &'static str {
+    if matches!(
+        conversion.source_format,
+        PackedConversionSourceFormat::E2m1x2 | PackedConversionSourceFormat::Ue8m0x2
+    ) {
+        "sm_120a"
+    } else {
+        "all"
     }
 }
 
@@ -707,9 +767,9 @@ pub(in crate::resolve) fn packed_conversion_overlay_record(
         convergent: false,
         execution_scope: "thread".into(),
         minimum_ptx: minimum_ptx.into(),
-        minimum_sm: Some(minimum_sm.into()),
+        minimum_sm: minimum_sm.map(Into::into),
         ptx_result: rust_result,
-        targets: "all".into(),
+        targets: packed_conversion_targets(&conversion).into(),
         ptx_isa_version: "9.3".into(),
         ptx_isa_section: "9.7.9.22 Data Movement and Conversion Instructions: cvt".into(),
         ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#data-movement-and-conversion-instructions-cvt".into(),
@@ -723,9 +783,10 @@ pub(in crate::resolve) fn packed_conversion_overlay_record(
             backend,
             mechanism: packed_conversion_backend_mechanism(&conversion, backend),
             evidence_profile: evidence_profile.into(),
-            targets: None,
+            targets: (packed_conversion_targets(&conversion) != "all")
+                .then(|| packed_conversion_targets(&conversion).into()),
             minimum_ptx: Some(minimum_ptx.into()),
-            minimum_sm: Some(minimum_sm.into()),
+            minimum_sm: minimum_sm.map(Into::into),
         })
         .collect(),
         packed_atomic: None,
@@ -790,9 +851,11 @@ pub(in crate::resolve) fn validate_packed_conversion_policy(
     // packed operand is forwarded unchanged.
     let expected_adapter = match conversion.source_format {
         PackedConversionSourceFormat::F32x2 => PackedConversionAdapter::ReverseHighLowOperands,
+        PackedConversionSourceFormat::E2m1x2 => PackedConversionAdapter::LowByteFromU16,
         PackedConversionSourceFormat::E4m3x2
         | PackedConversionSourceFormat::E5m2x2
-        | PackedConversionSourceFormat::F16x2 => PackedConversionAdapter::Identity,
+        | PackedConversionSourceFormat::F16x2
+        | PackedConversionSourceFormat::Ue8m0x2 => PackedConversionAdapter::Identity,
     };
     ensure!(
         conversion.adapter == expected_adapter,
@@ -864,9 +927,9 @@ pub(in crate::resolve) fn validate_packed_conversion_policy(
             && !policy.convergent
             && policy.execution_scope == "thread"
             && policy.minimum_ptx == minimum_ptx
-            && policy.minimum_sm.as_deref() == Some(minimum_sm)
+            && policy.minimum_sm.as_deref() == minimum_sm
             && policy.ptx_result == rust_result
-            && policy.targets == "all"
+            && policy.targets == packed_conversion_targets(conversion)
             && policy.ptx_isa_version == "9.3"
             && policy.ptx_isa_section == "9.7.9.22 Data Movement and Conversion Instructions: cvt"
             && policy.ptx_isa_url
@@ -916,7 +979,10 @@ pub(in crate::resolve) fn validate_packed_conversion_policy(
     for lowering in &policy.backend_lowerings {
         ensure!(
             lowering.minimum_ptx.as_deref() == Some(minimum_ptx)
-                && lowering.minimum_sm.as_deref() == Some(minimum_sm)
+                && lowering.minimum_sm.as_deref() == minimum_sm
+                && lowering.targets.as_deref()
+                    == (packed_conversion_targets(conversion) != "all")
+                        .then(|| packed_conversion_targets(conversion))
                 && !lowering.evidence_profile.trim().is_empty(),
             "{} backend {:?} does not carry its exact packed-conversion floor",
             policy.id,

@@ -1,0 +1,92 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-13.3-libnvvm-13.3.33",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+  "backend_sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+  "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+  "build_id_prefix": "2330c0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "cvt_rn_f16x2_e2m1x2",
+      "source_record": "int_nvvm_e2m1x2_to_f16x2_rn",
+      "llvm_symbol": "llvm.nvvm.e2m1x2.to.f16x2.rn",
+      "llvm_arguments": ["i16"],
+      "llvm_results": ["v2f16"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_120a",
+      "ptx_feature": "PTX ISA 8.7 minimum; CUDA 13.3 profile",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_120a", "ptx93"],
+          "representation": "pure inline PTX with an explicit low-byte carrier adapter",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 685-byte NVVM IR 2.0 fixture (SHA-256 620b56271229797db66fd2971725aec3ac47ef2d0571083d2d7ae33ac725f1fb) to 2,600-byte compute_120a LTOIR (SHA-256 bb26ded1a37842edac60050148a9623eab9963db120501b8ddf530f6ed7182fc)."
+        },
+        {
+          "targets": ["sm_120a", "ptx93"],
+          "representation": "libNVVM LTOIR retaining both NVFP4 conversion forms",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 2,248-byte sm_120a cubin (SHA-256 1c1cc8723b081e03d1ece879615a4618064cab1d98918f3e1f0f57e64e1fc630).",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": ["rn", "f16x2", "e2m1x2"],
+        "operands": [{"kind": "register"}, {"kind": "register"}]
+      }
+    },
+    {
+      "id": "cvt_rn_bf16x2_ue8m0x2",
+      "source_record": "int_nvvm_ue8m0x2_to_bf16x2",
+      "llvm_symbol": "llvm.nvvm.ue8m0x2.to.bf16x2",
+      "llvm_arguments": ["i16"],
+      "llvm_results": ["v2bf16"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_120a",
+      "ptx_feature": "PTX ISA 8.7 minimum; CUDA 13.3 profile",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["compute_120a", "ptx93"],
+          "representation": "pure unary inline PTX",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the 685-byte NVVM IR 2.0 fixture (SHA-256 620b56271229797db66fd2971725aec3ac47ef2d0571083d2d7ae33ac725f1fb) to 2,600-byte compute_120a LTOIR (SHA-256 bb26ded1a37842edac60050148a9623eab9963db120501b8ddf530f6ed7182fc)."
+        },
+        {
+          "targets": ["sm_120a", "ptx93"],
+          "representation": "libNVVM LTOIR retaining both NVFP4 conversion forms",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 2,248-byte sm_120a cubin (SHA-256 1c1cc8723b081e03d1ece879615a4618064cab1d98918f3e1f0f57e64e1fc630).",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "CUDA 13.3 nvJitLink 13.3",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "cvt",
+        "modifiers": ["rn", "bf16x2", "ue8m0x2"],
+        "operands": [{"kind": "register"}, {"kind": "register"}]
+      }
+    }
+  ]
+}

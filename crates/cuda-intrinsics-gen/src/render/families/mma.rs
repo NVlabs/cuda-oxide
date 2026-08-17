@@ -121,6 +121,20 @@ pub(in crate::render) fn register_mma_effective_kind(record: &CatalogIntrinsic) 
     })
 }
 
+pub(in crate::render) fn register_mma_scale_selector_contract(
+    record: &CatalogIntrinsic,
+) -> &'static str {
+    match register_mma_effective_kind(record) {
+        RegisterMmaKind::Mxf4 => {
+            "For `scale_vec::2X`, byte/thread selectors must identify the packed scale pair in each scale register according to the PTX scale-factor A/B ID layout; invalid selectors make the PTX operation undefined."
+        }
+        RegisterMmaKind::Mxf8f6f4 => {
+            "For `scale_vec::1X`, A and B byte selectors must be in `0..=3`, the A thread selector in `0..=1`, and the B thread selector in `0..=3`; other values make the PTX operation undefined."
+        }
+        kind => panic!("scaled register-MMA adapter is unsupported for kind {kind:?}"),
+    }
+}
+
 pub(in crate::render) fn register_mma_attr_variants(
     record: &CatalogIntrinsic,
 ) -> (
@@ -156,6 +170,7 @@ pub(in crate::render) fn register_mma_attr_variants(
     let kind = match register_mma_effective_kind(record) {
         RegisterMmaKind::Standard => "RegisterMmaKindAttr::Standard",
         RegisterMmaKind::F8f6f4 => "RegisterMmaKindAttr::F8f6f4",
+        RegisterMmaKind::Mxf4 => "RegisterMmaKindAttr::Mxf4",
         RegisterMmaKind::Mxf8f6f4 => "RegisterMmaKindAttr::Mxf8f6f4",
     };
     let accumulator = match mma.accumulator {

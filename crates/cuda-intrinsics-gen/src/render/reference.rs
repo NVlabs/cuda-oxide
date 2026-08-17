@@ -7,9 +7,9 @@ use crate::model::{
     BackendLoweringMechanism, CatalogFile, ClusterBarrierOrdering, ClusterMemorySourceContract,
     CpAsyncMbarrierOperation, CpAsyncMbarrierStateSpace, EvidenceArtifactKind, IntrinsicBackend,
     MbarrierBasicOperation, MbarrierExtendedSourceContract, PackedAtomicFormat,
-    PackedConversionRounding, PackedConversionSaturation, RegisterMmaAdapter, RegisterMmaOperation,
-    RegisterMmaOverflow, RuntimeValidation, SparseMmaOverflow, WarpMatchAdapter,
-    WarpShuffleValueKind, WgmmaControlMode,
+    PackedConversionAdapter, PackedConversionRounding, PackedConversionSaturation,
+    PackedConversionSourceFormat, RegisterMmaAdapter, RegisterMmaOperation, RegisterMmaOverflow,
+    RuntimeValidation, SparseMmaOverflow, WarpMatchAdapter, WarpShuffleValueKind, WgmmaControlMode,
 };
 use crate::render::common::{
     backend_label, evidence_stage_label, hardware_target_label, llvm, lowering_mechanism_label,
@@ -20,12 +20,12 @@ use crate::render::families::{
     cp_async_mbarriers, expected_ptx_head, is_blackwell_ldmatrix, mbarrier_basics,
     mbarrier_extended, movmatrix, packed_alu_format_shape, packed_alu_ptx_mnemonic, packed_alus,
     packed_atomics, packed_conversion_destination, packed_conversion_ptx_mnemonic,
-    packed_conversion_typed_llvm_name, packed_conversions, redux, register_mmas,
-    scalar_arithmetic_llvm_mechanism, scalar_arithmetic_ptx_mnemonic, scalar_arithmetics,
-    scalar_conversion_ptx_mnemonic, scalar_conversions, sparse_mma_metadata_rule,
-    sparse_mma_ptx_head, sparse_mma_selector_description, sparse_mmas, sync_intrinsics,
-    threadfence_ptx_level, vote_intrinsics, warp_barriers, warp_matches, warp_shuffles,
-    wgmma_controls,
+    packed_conversion_typed_llvm_name, packed_conversions, redux,
+    register_mma_scale_selector_contract, register_mmas, scalar_arithmetic_llvm_mechanism,
+    scalar_arithmetic_ptx_mnemonic, scalar_arithmetics, scalar_conversion_ptx_mnemonic,
+    scalar_conversions, sparse_mma_metadata_rule, sparse_mma_ptx_head,
+    sparse_mma_selector_description, sparse_mmas, sync_intrinsics, threadfence_ptx_level,
+    vote_intrinsics, warp_barriers, warp_matches, warp_shuffles, wgmma_controls,
 };
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -120,9 +120,10 @@ pub(super) fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             RuntimeValidation::Executed => "executed on a GPU",
         };
         if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 {
+            let selector_contract = register_mma_scale_selector_contract(record);
             writeln!(
                 output,
-                "- `{}` takes C, A, B, scale-A data/selectors, and scale-B data/selectors in PTX operand order, performs {operation}, and lowers to one convergent, register-only `{}` instruction. For `scale_vec::1X`, byte selectors must be in `0..=3`, the A thread selector in `0..=1`, and the B thread selector in `0..=3`. Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
+                "- `{}` takes C, A, B, scale-A data/selectors, and scale-B data/selectors in PTX operand order, performs {operation}, and lowers to one convergent, register-only `{}` instruction. {selector_contract} Every non-exited warp lane must execute the same instruction and qualifiers. Integer overflow is {overflow}; runtime validation is {runtime}.",
                 record.id,
                 expected_ptx_head(record),
             )
@@ -238,11 +239,33 @@ pub(super) fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 packed_conversion_ptx_mnemonic(record),
             )
             .unwrap();
-        } else {
+        } else if conversion.source_format == PackedConversionSourceFormat::F32x2 {
             writeln!(
                 output,
                 "- `{}` converts two `f32` inputs to packed `{}` using {rounding} rounding {saturation}. It lowers to pure `{}` inline PTX. The first input becomes the low lane and the second becomes the high lane, so PTX prints the inputs in reverse order.",
                 record.id,
+                packed_conversion_destination(record),
+                packed_conversion_ptx_mnemonic(record),
+            )
+            .unwrap();
+        } else {
+            let carrier = &record.rust.arguments[0];
+            let adapter = match conversion.adapter {
+                PackedConversionAdapter::LowByteFromU16 => {
+                    "The two E2M1 values occupy the carrier's low byte; lowering moves that byte to the PTX `.b8` source register."
+                }
+                PackedConversionAdapter::Identity => {
+                    "The single carrier holds both lanes and lane order is preserved."
+                }
+                PackedConversionAdapter::ReverseHighLowOperands => {
+                    unreachable!("packed source cannot use the scalar-pair adapter")
+                }
+            };
+            writeln!(
+                output,
+                "- `{}` converts one packed `{}` `{carrier}` carrier to packed `{}` using {rounding} rounding {saturation}. It lowers to pure `{}` inline PTX. {adapter}",
+                record.id,
+                conversion.source_format.ptx_token(),
                 packed_conversion_destination(record),
                 packed_conversion_ptx_mnemonic(record),
             )

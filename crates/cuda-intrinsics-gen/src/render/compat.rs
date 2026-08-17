@@ -20,12 +20,13 @@ use crate::render::families::{
     expected_ptx_head, extended_minmax, extended_minmax_rust_type, integer_minmaxes,
     is_blackwell_ldmatrix, ldmatrix, mbarrier_basics, mbarrier_extended, movmatrix,
     packed_alu_format_shape, packed_alus, packed_atomics, packed_conversion_rust_arguments,
-    packed_conversion_source, packed_conversions, prmts, register_mmas, render_clc_safety_lines,
-    scalar_arithmetic_arity, scalar_arithmetic_rust_type, scalar_arithmetics, scalar_conversions,
-    scalar_math_contract, scalar_maths, sparse_mma_fragment_counts, sparse_mma_metadata_rule,
-    sparse_mma_ptx_head, sparse_mma_selector_description, sparse_mmas, sregs, stmatrices,
-    stmatrix_compatibility_name, stmatrix_variant, sync_intrinsics, tcgen05_intrinsics,
-    tcgen05_is_commit, tcgen05_is_multicast_commit, tcgen05_is_shift, tcgen05_ld_register_count,
+    packed_conversion_source, packed_conversions, prmts, register_mma_scale_selector_contract,
+    register_mmas, render_clc_safety_lines, scalar_arithmetic_arity, scalar_arithmetic_rust_type,
+    scalar_arithmetics, scalar_conversions, scalar_math_contract, scalar_maths,
+    sparse_mma_fragment_counts, sparse_mma_metadata_rule, sparse_mma_ptx_head,
+    sparse_mma_selector_description, sparse_mmas, sregs, stmatrices, stmatrix_compatibility_name,
+    stmatrix_variant, sync_intrinsics, tcgen05_intrinsics, tcgen05_is_commit,
+    tcgen05_is_multicast_commit, tcgen05_is_shift, tcgen05_ld_register_count,
     tcgen05_mma_runtime_parameters, tcgen05_mma_selector_parameters, tcgen05_participation_doc,
     tcgen05_st_register_count, threadfence_ptx_level, tma_intrinsics, wgmma_control,
     wgmma_controls,
@@ -102,10 +103,13 @@ pub(super) fn render_compat_register_mma(catalog: &CatalogFile, hash: &str) -> S
             "/// `c`, `a`, and `b` must contain this lane's fragments in the documented PTX layout.\n",
         );
         if mma.adapter == RegisterMmaAdapter::C4F32A4U32B2U32Scales2U32Selectors4U16ToD4F32 {
-            output.push_str(
-                "/// `scale_a` and `scale_b` contain this lane's packed scale data.\n\
-                 /// For `scale_vec::1X`, `byte_id_a` and `byte_id_b` must be in `0..=3`, `thread_id_a` in `0..=1`, and `thread_id_b` in `0..=3`; other values make the PTX operation undefined.\n",
-            );
+            output.push_str("/// `scale_a` and `scale_b` contain this lane's packed scale data.\n");
+            writeln!(
+                output,
+                "/// {}",
+                register_mma_scale_selector_contract(record)
+            )
+            .unwrap();
         }
         writeln!(
             output,
@@ -2094,7 +2098,9 @@ pub(super) fn render_compat_packed_conversion(
             PackedConversionSourceFormat::F32x2 => vec![argument_names.0, argument_names.1],
             PackedConversionSourceFormat::E4m3x2
             | PackedConversionSourceFormat::E5m2x2
-            | PackedConversionSourceFormat::F16x2 => vec!["packed"],
+            | PackedConversionSourceFormat::F16x2
+            | PackedConversionSourceFormat::E2m1x2
+            | PackedConversionSourceFormat::Ue8m0x2 => vec!["packed"],
         };
         let parameter_types = packed_conversion_rust_arguments(record);
         let parameters = parameter_names

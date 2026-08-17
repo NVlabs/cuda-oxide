@@ -1311,6 +1311,19 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 packed_conversion_constraint(record),
             )
             .unwrap();
+        } else if packed_conversion_source(record) == PackedConversionSourceFormat::E2m1x2 {
+            writeln!(
+                output,
+                "define {result_ty} @probe_{}(i16 %packed) {{",
+                record.id,
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "  %result = call {result_ty} asm \"{{ .reg .b8 e2m1x2_byte; cvt.u8.u16 e2m1x2_byte, $1; {} $0, e2m1x2_byte; }}\", \"=r,h\"(i16 %packed)",
+                packed_conversion_ptx_mnemonic(record),
+            )
+            .unwrap();
         } else {
             // A packed source arrives in one integer register, so the probe
             // takes a single operand and needs no reordering.

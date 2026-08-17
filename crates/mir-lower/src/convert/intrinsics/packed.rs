@@ -113,6 +113,40 @@ pub(crate) fn convert_generated_packed_unary(
     Ok(())
 }
 
+/// Widen packed E2M1x2 carried in the low byte of a `u16`.
+///
+/// PTX requires an 8-bit source register for this conversion, while LLVM
+/// inline assembly only exposes a 16-bit `h` input constraint. The local
+/// register move makes that carrier adaptation explicit.
+pub(crate) fn convert_generated_packed_e2m1x2(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    ptx_mnemonic: &str,
+) -> Result<()> {
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 1 || op.deref(ctx).get_num_results() != 1 {
+        return pliron::input_err_noloc!(
+            "generated packed E2M1x2 conversion requires one operand and one result"
+        );
+    }
+    let result_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let inline_asm = llvm::InlineAsmOp::build(
+        ctx,
+        result_ty.into(),
+        operands,
+        &format!(
+            "{{ .reg .b8 e2m1x2_byte; cvt.u8.u16 e2m1x2_byte, $1; {ptx_mnemonic} $0, e2m1x2_byte; }}"
+        ),
+        "=r,h",
+        AsmKind::Pure,
+    );
+    let asm_op = inline_asm.get_operation();
+    rewriter.insert_operation(ctx, asm_op);
+    rewriter.replace_operation(ctx, op, asm_op);
+    Ok(())
+}
+
 /// Pack two `f32` values, keeping the first argument in the low lane.
 pub(crate) fn convert_generated_packed_f32x2(
     ctx: &mut Context,
