@@ -727,10 +727,7 @@ mod kernels {
     /// Constant-index write through a mutable DST slice tail. The store must
     /// target the original tail element, not a materialized copy.
     #[kernel]
-    pub fn test_slice_tail_write_constant_index(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_slice_tail_write_constant_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
@@ -754,10 +751,7 @@ mod kernels {
 
     /// Runtime-index write through a mutable DST slice tail.
     #[kernel]
-    pub fn test_slice_tail_write_runtime_index(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_slice_tail_write_runtime_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
@@ -782,10 +776,7 @@ mod kernels {
 
     /// Constant-index shared borrow of a DST slice-tail element.
     #[kernel]
-    pub fn test_slice_tail_borrow_constant_index(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_slice_tail_borrow_constant_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
@@ -808,10 +799,7 @@ mod kernels {
 
     /// Runtime-index shared borrow of a DST slice-tail element.
     #[kernel]
-    pub fn test_slice_tail_borrow_runtime_index(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_slice_tail_borrow_runtime_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
@@ -836,10 +824,7 @@ mod kernels {
     /// Padded DST write regression. A literal index and a runtime index both
     /// target tail[1]; together their +2/+3 writes preserve the +5 oracle.
     #[kernel]
-    pub fn test_slice_tail_write_padded(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_slice_tail_write_padded(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
@@ -867,10 +852,7 @@ mod kernels {
     /// Padded DST borrow regression. Constant borrows contribute +5 while
     /// runtime borrows of equal tail elements contribute zero.
     #[kernel]
-    pub fn test_slice_tail_borrow_padded(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_slice_tail_borrow_padded(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
