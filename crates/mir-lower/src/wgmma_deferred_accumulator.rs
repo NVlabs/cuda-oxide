@@ -530,7 +530,7 @@ fn match_pipelined_counted_loop(
     let mut accumulators = Vec::with_capacity(2);
     let mut slot_types = Vec::with_capacity(2);
     let mut descriptor_args = Vec::with_capacity(4);
-    for mma in mmas.iter().copied() {
+    for &mma in &mmas {
         let mma_ref = mma.deref(ctx);
         let accumulator = mma_ref.get_operand(0);
         require_supported_accumulator(ctx, accumulator)?;
