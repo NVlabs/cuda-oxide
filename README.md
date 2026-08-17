@@ -311,6 +311,7 @@ cargo oxide run gemm_sol_final
 | `iket-lower`         | `dialect-iket` profiles + instrumentation lowering    |
 | `llvm-export`        | pliron-llvm shim + textual `.ll` exporter             |
 | `dialect-nvvm`       | pliron dialect modelling NVVM intrinsics              |
+| `dialect-ptx`        | pliron dialect modelling structured PTX               |
 | `mir-transforms`     | Optimization passes over the MIR dialect (loop unroll, ...) |
 | `nvvm-transforms`    | Target-aware LLVM dialect legalization for NVVM      |
 | `cuda-oxide-codegen` | Experimental rustc-independent PTX backend           |
