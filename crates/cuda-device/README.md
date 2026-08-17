@@ -120,7 +120,7 @@ Typestate-based async barrier for TMA and MMA synchronization (Hopper+). Tracks 
 
 Two kinds of atomics work on device:
 
-- **`cuda_device::atomic::*`** -- 18 scoped GPU atomic types across three scopes (`Device`/`.gpu`, `Block`/`.cta`, `System`/`.sys`) and six value types (u32, i32, u64, i64, f32, f64). These give explicit control over scope and ordering.
+- **`cuda_device::atomic::*`** -- 21 scoped GPU atomic types across three scopes (`Device`/`.gpu`, `Block`/`.cta`, `System`/`.sys`) and seven value types (u32, i32, u64, i64, f16, f32, f64). These give explicit control over scope and ordering.
 - **`core::sync::atomic::*`** -- standard library atomics (`AtomicU32`, `AtomicBool`, etc.) also compile to GPU code, defaulting to device scope.
 
 Both paths emit the same NVVM atomic ops and share the full lowering pipeline to PTX.

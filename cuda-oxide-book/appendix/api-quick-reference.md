@@ -410,11 +410,16 @@ COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
 let old = COUNTER.load(AtomicOrdering::Acquire);
 ```
 
-| Scope                                    | Types                         |
-|:-----------------------------------------|:------------------------------|
-| `DeviceAtomic{U32,I32,U64,I64,F32,F64}`  | `.gpu` scope                  |
-| `BlockAtomic{U32,I32,U64,I64,F32,F64}`   | `.cta` scope                  |
-| `SystemAtomic{U32,I32,U64,I64,F32,F64}`  | `.sys` scope (CPU-GPU shared) |
+| Scope                                        | Types                         |
+|:---------------------------------------------|:------------------------------|
+| `DeviceAtomic{U32,I32,U64,I64,F16,F32,F64}`  | `.gpu` scope                  |
+| `BlockAtomic{U32,I32,U64,I64,F16,F32,F64}`   | `.cta` scope                  |
+| `SystemAtomic{U32,I32,U64,I64,F16,F32,F64}`  | `.sys` scope (CPU-GPU shared) |
+
+Twenty-one types: seven value widths in each of the three scopes. The `F16`
+variants take the same surface as `F32`/`F64` -- `load`, `store`, `fetch_add`,
+`fetch_sub`, `swap` -- with `fetch_add`/`fetch_sub` lowering to hardware
+`atom.add.noftz.f16`.
 
 `core::sync::atomic` types (`AtomicU32`, `AtomicBool`, etc.) also compile to
 GPU code, defaulting to system scope.

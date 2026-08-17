@@ -164,9 +164,9 @@ constant nested inside another constant's field.
 
 | Feature | Status | Description |
 |:--------|:-------|:------------|
-| Device-Scope Atomics | **Full** | `DeviceAtomic{U32,I32,U64,I64,F32,F64}` with `.gpu` scope. All 5 orderings. |
-| Block-Scope Atomics | **Full** | `BlockAtomic{U32,I32,U64,I64,F32,F64}` with `.cta` scope. |
-| System-Scope Atomics | **Full** | `SystemAtomic{U32,I32,U64,I64,F32,F64}` with `.sys` scope. For CPU-GPU shared data. |
+| Device-Scope Atomics | **Full** | `DeviceAtomic{U32,I32,U64,I64,F16,F32,F64}` with `.gpu` scope. All 5 orderings. |
+| Block-Scope Atomics | **Full** | `BlockAtomic{U32,I32,U64,I64,F16,F32,F64}` with `.cta` scope. |
+| System-Scope Atomics | **Full** | `SystemAtomic{U32,I32,U64,I64,F16,F32,F64}` with `.sys` scope. For CPU-GPU shared data. |
 | `core::sync::atomic` Support | **Full** | Standard library atomic types lowered to PTX `atom.sys` instructions. |
 
 ## Runtime Library: Shared Memory
