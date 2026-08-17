@@ -32,6 +32,7 @@ mod prep;
 mod ptx;
 mod target;
 mod verify;
+mod warp_aggregate_constant_fp_atomics;
 
 /// Experimental standalone code-generation API.
 ///

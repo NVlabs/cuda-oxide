@@ -144,7 +144,13 @@ impl MirPassRegistry {
 
 /// Build the registry of supported optional CUDA Oxide MIR passes.
 pub fn registry() -> MirPassRegistry {
-    MirPassRegistry { entries: vec![] }
+    MirPassRegistry {
+        entries: vec![OptEntry {
+            name: "warp-aggregate-constant-fp-atomics",
+            stage: MirPassStage::PostMem2Reg,
+            build: crate::warp_aggregate_constant_fp_atomics::build_pass,
+        }],
+    }
 }
 
 struct BoxedPass(Box<dyn Pass>);
@@ -248,10 +254,15 @@ mod tests {
     }
 
     #[test]
-    fn empty_registry_accepts_only_the_empty_pipeline() {
+    fn production_registry_selects_the_warp_aggregated_fp_atomic_pass() {
         assert!(registry().select("").is_ok());
+        assert!(
+            registry()
+                .select("warp-aggregate-constant-fp-atomics")
+                .is_ok()
+        );
         assert!(matches!(
-            registry().select("first"),
+            registry().select("missing"),
             Err(MirPassPipelineError::UnknownName { .. })
         ));
     }
