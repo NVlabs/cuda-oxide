@@ -55,7 +55,9 @@ use pliron::{
 use rustc_hash::{FxHashMap, FxHashSet};
 
 const DYNAMIC_SHARED_ALIGNMENT_ATTR: &str = "dynamic_shared_alignment";
-const KERNEL_PARAM_ABI_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_kernel_param_abi_align_";
+// Pliron op-attribute key, not a reserved link symbol; the name stays
+// outside the reserved-oxide-symbols kernel prefix family on purpose.
+const KERNEL_PARAM_ABI_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_param_abi_align_";
 const RETURN_ABI_ALIGN_ATTR: &str = "cuda_oxide_return_abi_align";
 
 // ============================================================================

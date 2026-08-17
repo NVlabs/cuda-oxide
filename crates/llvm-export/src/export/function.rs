@@ -647,7 +647,7 @@ impl<'a> ModuleExportState<'a> {
 
         if is_kernel {
             for index in 0..func_ty.arg_types().len() {
-                let key = format!("cuda_oxide_kernel_param_abi_align_{index}");
+                let key = format!("cuda_oxide_param_abi_align_{index}");
                 let Some(alignment) = read_abi_alignment(&key)? else {
                     continue;
                 };
