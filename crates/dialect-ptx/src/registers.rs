@@ -207,6 +207,17 @@ pub enum RegisterAlphaError {
         second: StatementId,
         name: String,
     },
+    /// A binding scheduled for renaming is also spelled with a vector-element
+    /// suffix (`v.x`). The suffixed spelling lexes as one word, so a rename of
+    /// `v` would leave `v.x` behind, silently rebinding it to any same-named
+    /// outer register.
+    VectorElementUse {
+        callable: StatementId,
+        scope: ScopeId,
+        name: String,
+        token: String,
+        span: Range<usize>,
+    },
 }
 
 impl fmt::Display for RegisterAlphaError {
@@ -226,6 +237,22 @@ impl fmt::Display for RegisterAlphaError {
                 scope.index(),
                 first.index(),
                 second.index()
+            ),
+            Self::VectorElementUse {
+                callable,
+                scope,
+                name,
+                token,
+                span,
+            } => write!(
+                formatter,
+                "PTX callable statement {} cannot rename register {name:?} in scope {}: \
+                 vector-element token {token:?} at bytes {}..{} lexes as one word and would \
+                 not be rewritten",
+                callable.index(),
+                scope.index(),
+                span.start,
+                span.end
             ),
         }
     }
@@ -325,7 +352,7 @@ fn analyze_callable(
         }
     }
 
-    let occupied = tokens_in(document.tokens(), body)
+    let occupied = tokens_in(document.tokens(), body.clone())
         .filter(|token| token.kind() == TokenKind::Word)
         .map(|token| token.text(document.source()).to_string())
         .collect::<HashSet<_>>();
@@ -335,6 +362,35 @@ fn analyze_callable(
         .filter(|(_, definition)| definition.scope != callable_scope)
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
+
+    // '.' is a word byte, so a vector-element use such as `v.x` lexes as one
+    // token and never resolves to the binding `v`. Renaming the binding would
+    // leave the element use behind, silently rebinding it to any same-named
+    // outer register. Fail closed before planning any rename.
+    let element_uses = tokens_in(document.tokens(), body.clone())
+        .filter(|token| token.kind() == TokenKind::Word)
+        .filter_map(|token| {
+            let text = token.text(document.source());
+            let (base, suffix) = text.split_once('.')?;
+            (!base.is_empty() && !suffix.is_empty()).then(|| (base, text, token.span()))
+        })
+        .collect::<Vec<_>>();
+    for index in &nested {
+        let definition = &definitions[*index];
+        if let Some((_, token, span)) = element_uses
+            .iter()
+            .find(|(base, _, _)| binding_matches(definition, base))
+        {
+            return Err(RegisterAlphaError::VectorElementUse {
+                callable,
+                scope: definition.scope,
+                name: definition.name.clone(),
+                token: (*token).to_string(),
+                span: span.clone(),
+            });
+        }
+    }
+
     let mut generated = Vec::<BindingName>::new();
     let mut renames = Vec::with_capacity(nested.len());
     for index in nested {
@@ -575,6 +631,56 @@ mod tests {
             RegisterAlphaPlan::analyze(&document),
             Err(RegisterAlphaError::DuplicateBinding { .. })
         ));
+    }
+
+    #[test]
+    fn rejects_vector_element_uses_of_renamed_bindings() {
+        let source = "\
+.version 9.3
+.entry kernel() {
+    .reg .v4 .f32 v;
+    {
+        .reg .v4 .f32 v;
+        mov.f32 v.x, 0f00000000;
+        ret;
+    }
+}
+";
+        let document = Document::parse(source).unwrap();
+        let error = RegisterAlphaPlan::analyze(&document).unwrap_err();
+        let RegisterAlphaError::VectorElementUse {
+            name, token, span, ..
+        } = &error
+        else {
+            panic!("expected a vector-element rejection, got {error}");
+        };
+        assert_eq!(name, "v");
+        assert_eq!(token, "v.x");
+        assert_eq!(&source[span.clone()], "v.x");
+    }
+
+    #[test]
+    fn plans_nested_vector_bindings_without_element_uses() {
+        let source = "\
+.version 9.3
+.entry kernel() {
+    .reg .v4 .f32 v;
+    {
+        .reg .v4 .f32 v;
+        mov.v4.f32 v, {0f00000000, 0f00000000, 0f00000000, 0f00000000};
+        ret;
+    }
+}
+";
+        let document = Document::parse(source).unwrap();
+        let plan = RegisterAlphaPlan::analyze(&document).unwrap();
+        let renames = plan.callables()[0].renames();
+        assert_eq!(renames.len(), 1);
+        assert_eq!(renames[0].old_name(), "v");
+        assert_eq!(renames[0].new_name(), "__oxide_s2_v");
+        let rewritten = plan.apply(source).unwrap();
+        assert!(rewritten.contains("mov.v4.f32 __oxide_s2_v, {"));
+        Document::parse(&rewritten).unwrap();
     }
 
     #[test]
