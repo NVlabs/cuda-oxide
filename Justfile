@@ -62,7 +62,8 @@ test:
         -p dialect-mir -p dialect-nvvm -p mir-importer -p mir-lower \
         -p mir-transforms -p nvvm-transforms -p reserved-oxide-symbols \
         -p cuda-device -p libnvvm-sys -p nvjitlink-sys \
-        -p cuda-artifact-finalizer -p cargo-oxide
+        -p cuda-artifact-finalizer -p cargo-oxide \
+        -p dialect-iket -p iket-lower -p ptx-parse -p dialect-ptx
     # `default = []`, but every consumer turns the object features on, and the
     # default set alone skips the eight ELF emit/extract tests.
     cargo test -p oxide-artifacts --all-targets --features object

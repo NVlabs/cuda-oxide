@@ -30,7 +30,23 @@ jobs:
         #   * `fuzzer` — differential-testing infra with no unit tests.
         #   * `rustc-codegen-cuda` — its own [workspace] that links against
         #     `rustc-private` dylibs; covered by the separate job below.
+        #
+        # Everything else is here on purpose. This list is the whole
+        # justification for a member being absent, so a member that is neither
+        # in the matrix below nor named above is an omission, not a decision —
+        # which is how `dialect-iket`, `iket-lower`, `dialect-ptx` and
+        # `ptx-parse` came to carry 107 tests that no CI job ran.
         include:
+          # In-kernel event tracing: the semantic dialect and its lowering to a
+          # runtime compatibility profile. Pure pliron, no CUDA.
+          - package: dialect-iket
+          - package: iket-lower
+          # The PTX stack from #914-#917: a lossless CST over PTX source and the
+          # structured dialect projected from it. Pure Rust, no CUDA, and the
+          # dialect's CFG verification is exactly the kind of invariant a unit
+          # test is the only cheap way to keep.
+          - package: ptx-parse
+          - package: dialect-ptx
           - package: cuda-intrinsics-gen
           - package: cuda-intrinsics
           - package: llvm-export
