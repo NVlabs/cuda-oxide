@@ -137,7 +137,10 @@ VENDORED_WORKSPACE_ROOTS=(
 #   Cargo.toml -> Cargo workspace root
 #                      |-- named first-party or vendored root
 #                      `-- example root with a tracked Cargo.lock
-EXAMPLES_ROOT=crates/rustc-codegen-cuda/examples
+EXAMPLE_ROOTS=(
+    crates/rustc-codegen-cuda/examples
+    cuteir/examples
+)
 all_workspace_roots="$(
     git ls-files -z -- '*Cargo.toml' |
         while IFS= read -r -d '' manifest; do
@@ -162,7 +165,7 @@ fi
 
 on_disk_roots="$(
     printf '%s\n' "${all_workspace_roots}" |
-        grep -v "^${EXAMPLES_ROOT}/" |
+        grep -v -e "^${EXAMPLE_ROOTS[0]}/" -e "^${EXAMPLE_ROOTS[1]}/" |
         LC_ALL=C sort
 )"
 named_roots="$(
@@ -198,7 +201,7 @@ fi
 # the two sets before reading any package names so a new nested workspace
 # cannot disappear merely because it has not committed a lock yet.
 mapfile -d '' -t EXAMPLE_LOCKFILES < <(
-    git ls-files -z -- "${EXAMPLES_ROOT}/**/Cargo.lock"
+    git ls-files -z -- "${EXAMPLE_ROOTS[0]}/**/Cargo.lock" "${EXAMPLE_ROOTS[1]}/**/Cargo.lock"
 )
 if [[ ${#EXAMPLE_LOCKFILES[@]} -lt 20 ]]; then
     echo "error: found only ${#EXAMPLE_LOCKFILES[@]} tracked example lock files;" >&2
@@ -207,7 +210,7 @@ if [[ ${#EXAMPLE_LOCKFILES[@]} -lt 20 ]]; then
 fi
 example_roots="$(
     printf '%s\n' "${all_workspace_roots}" |
-        grep "^${EXAMPLES_ROOT}/" |
+        grep -e "^${EXAMPLE_ROOTS[0]}/" -e "^${EXAMPLE_ROOTS[1]}/" |
         LC_ALL=C sort
 )"
 example_lock_roots="$(
@@ -258,7 +261,7 @@ echo "OK: ${CSV} records all $(printf '%s\n' "${required}" | grep -c .) declared
 # ---------------------------------------------------------------------------
 # Second half: the example workspaces.
 #
-# Every example under crates/rustc-codegen-cuda/examples/ sets its own
+# Every example under the ordinary and CuTe example roots sets its own
 # [workspace], so neither `cargo deny check` nor the check above resolves any
 # of them -- both stop at the root workspace boundary.  Most examples declare
 # only path dependencies on first-party crates and so bring nothing new, but a
@@ -325,11 +328,14 @@ locks = sorted(sys.argv[separator + 1:])
 if len(locks) < 20:
     sys.exit("parse self-test failed: found %d example lock files" % len(locks))
 
-examples_root = "crates/rustc-codegen-cuda/examples"
+example_roots = ("crates/rustc-codegen-cuda/examples", "cuteir/examples")
 
 def example_of(lock):
     """Top-level example directory a lockfile belongs to, however deep it sits."""
-    return os.path.relpath(lock, examples_root).split(os.sep)[0]
+    for root in example_roots:
+        if lock.startswith(root + os.sep):
+            return os.path.relpath(lock, root).split(os.sep)[0]
+    sys.exit("lockfile outside every configured example root: " + lock)
 
 present = {example_of(lock) for lock in locks}
 unknown = sorted(exempt - present)

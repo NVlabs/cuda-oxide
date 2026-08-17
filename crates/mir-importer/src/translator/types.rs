@@ -662,6 +662,29 @@ pub fn translate_type(
             translate_pointer_like(ctx, &pointee, origin)
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, substs)) => {
+            if let Some(result) =
+                crate::translator::cute::pipeline::try_translate_tma_load_pipeline_type(
+                    ctx, rust_ty,
+                )
+            {
+                return result;
+            }
+            if let Some(result) =
+                crate::translator::cute::scheduler::try_translate_work_tile_type(ctx, rust_ty)
+            {
+                return result;
+            }
+            if let Some(result) =
+                crate::translator::cute::block_scaled::try_translate_block_scaled_type(ctx, rust_ty)
+            {
+                return result;
+            }
+            if let Some(result) =
+                crate::translator::cute::tensor::try_translate_tensor_view_type(ctx, rust_ty)
+            {
+                return result;
+            }
+
             // Get the trimmed name (just the type name without path)
             let trimmed_name = adt_def.trimmed_name();
 

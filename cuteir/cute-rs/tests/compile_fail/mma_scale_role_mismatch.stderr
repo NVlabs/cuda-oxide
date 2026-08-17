@@ -1,0 +1,27 @@
+error[E0308]: arguments to this method are incorrect
+  --> tests/compile_fail/mma_scale_role_mismatch.rs:16:13
+   |
+16 |         mma.gemm(
+   |             ^^^^
+17 |             FragA([0; 4]),
+18 |             vector.load_scale_pair(0, 0),
+   |             ---------------------------- expected `MmaScalePair<Mkl>`, found `MmaScalePair<Nkl>`
+19 |             FragB([0; 2]),
+20 |             matrix.load_scale_pair(0, 0),
+   |             ---------------------------- expected `MmaScalePair<Nkl>`, found `MmaScalePair<Mkl>`
+   |
+note: method defined here
+  --> src/block_scaled_mma.rs
+   |
+   |     pub unsafe fn gemm(
+   |                   ^^^^
+help: swap these arguments
+   |
+16 ~         mma.gemm(
+17 +             FragA([0; 4]),
+18 +             matrix.load_scale_pair(0, 0),
+19 +             FragB([0; 2]),
+20 +             vector.load_scale_pair(0, 0),
+21 +             AccC::ZERO,
+22 +         )
+   |

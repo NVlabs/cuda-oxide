@@ -259,6 +259,15 @@ pub fn compile_translated_module(
             .emit(format!("{}", module.deref(ctx).disp(ctx)));
     }
 
+    // This is the shared CuTe backend seam. Validate the complete semantic
+    // story once, before either a native lowering or an external compiler
+    // translation is allowed to consume it.
+    dialect_cute::verify::verify_cute_semantics(ctx, module).map_err(|error| {
+        PipelineError::Lowering(format!(
+            "dialect-cute semantic verification failed: {error}"
+        ))
+    })?;
+
     // After the pinning above, `backend.target_arch` is exactly the target
     // the rest of the pipeline will compile for (or `None`, in which case
     // materialization fails with its explicit-target requirement).
