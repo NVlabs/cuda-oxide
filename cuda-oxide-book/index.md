@@ -150,6 +150,7 @@ async-programming/the-device-operation-model
 async-programming/combinators-and-composition
 async-programming/scheduling-and-streams
 async-programming/concurrent-execution
+async-programming/overlapping-transfers-and-compute
 ```
 
 ```{toctree}
