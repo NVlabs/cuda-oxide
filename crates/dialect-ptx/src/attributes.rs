@@ -17,6 +17,15 @@ pub enum CallableKindAttr {
     Function,
 }
 
+impl From<ptx_parse::CallableKind> for CallableKindAttr {
+    fn from(kind: ptx_parse::CallableKind) -> Self {
+        match kind {
+            ptx_parse::CallableKind::Entry => Self::Entry,
+            ptx_parse::CallableKind::Function => Self::Function,
+        }
+    }
+}
+
 pub fn register(ctx: &mut Context) {
     CallableKindAttr::register(ctx);
 }

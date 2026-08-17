@@ -12,8 +12,8 @@ use pliron::context::{Context, Ptr};
 use pliron::op::Op;
 use pliron::operation::Operation;
 use ptx_parse::{
-    Callable, CallableKind, Directive, Document, Instruction, Label, LabelId, ParseError, ScopeId,
-    StatementId, StatementKind,
+    Callable, Directive, Document, Instruction, Label, LabelId, ParseError, ScopeId, StatementId,
+    StatementKind,
 };
 use std::collections::HashMap;
 use std::ops::Range;
@@ -336,10 +336,7 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
     ) {
         self.project_labels(statement, destination);
         if let Some(callable) = self.callables.get(&statement).copied() {
-            let kind = match callable.kind() {
-                CallableKind::Entry => CallableKindAttr::Entry,
-                CallableKind::Function => CallableKindAttr::Function,
-            };
+            let kind = CallableKindAttr::from(callable.kind());
             let statement_node = self
                 .document
                 .statement(statement)
@@ -428,10 +425,7 @@ impl<'ctx, 'document, 'source> Projector<'ctx, 'document, 'source> {
                 .get_operation()
             }),
             StatementKind::CallableHeader => self.callables.get(&statement).map(|callable| {
-                let kind = match callable.kind() {
-                    CallableKind::Entry => CallableKindAttr::Entry,
-                    CallableKind::Function => CallableKindAttr::Function,
-                };
+                let kind = CallableKindAttr::from(callable.kind());
                 PtxCallableOp::build_declaration(
                     self.ctx,
                     callable.name(),
