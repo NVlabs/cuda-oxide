@@ -156,6 +156,7 @@ dependencies = [
  "cuda-core",
  "cuda-macros",
  "half",
+ "ptx-parse",
  "sha2",
  "thiserror",
 ]
@@ -365,6 +366,10 @@ dependencies = [
  "cuda-device",
  "cuda-host",
 ]
+
+[[package]]
+name = "ptx-parse"
+version = "0.1.0"
 
 [[package]]
 name = "quote"
