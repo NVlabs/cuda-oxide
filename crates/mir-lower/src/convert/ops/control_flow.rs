@@ -23,6 +23,7 @@
 //! With `DialectConversion` + `inline_region`, blocks are the ORIGINALS (moved,
 //! not copied). Successor pointers are already valid — no block map lookup needed.
 
+use dialect_mir::types::MirStructType;
 use llvm_export::ops as llvm;
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::CallOpCallable;
@@ -45,21 +46,47 @@ pub(crate) fn convert_return(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    operands_info: &OperandsInfo,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
 
     let ret_val = match operands.as_slice() {
         [] => None,
         [val] => {
-            let ty = val.get_type(ctx);
+            let mir_ty = operands_info.lookup_most_recent_type(*val);
+            let is_transparent_scalar = mir_ty.is_some_and(|mir_ty| {
+                let ty_ref = mir_ty.deref(ctx);
+                ty_ref
+                    .downcast_ref::<MirStructType>()
+                    .is_some_and(MirStructType::is_transparent_scalar)
+            });
 
-            if ty.deref(ctx).is::<llvm_export::types::VoidType>()
-                || crate::convert::types::is_zero_sized_type(ctx, ty)
-            {
-                None
+            if is_transparent_scalar {
+                let mir_ty = mir_ty.expect("transparent scalar check requires a MIR type");
+                let abi = match crate::convert::types::transparent_scalar_abi_info(ctx, mir_ty) {
+                    Ok(abi) => abi,
+                    Err(error) => {
+                        return pliron::input_err_noloc!(
+                            "failed to lower transparent scalar return ABI: {error}"
+                        );
+                    }
+                };
+                let mut scalar = *val;
+                for layer in &abi.layers {
+                    let extract = llvm::ExtractValueOp::new(ctx, scalar, vec![layer.field_slot])?;
+                    rewriter.insert_operation(ctx, extract.get_operation());
+                    scalar = extract.get_operation().deref(ctx).get_result(0);
+                }
+                Some(scalar)
             } else {
-                Some(*val)
+                let ty = val.get_type(ctx);
+                if ty.deref(ctx).is::<llvm_export::types::VoidType>()
+                    || crate::convert::types::is_zero_sized_type(ctx, ty)
+                {
+                    None
+                } else {
+                    Some(*val)
+                }
             }
         }
         _ => {
@@ -272,18 +299,35 @@ mod tests {
 
     use crate::convert::ops::test_util::*;
     use dialect_mir::ops as mir;
-    use dialect_mir::types::MirTupleType;
+    use dialect_mir::types::{MirStructType, MirTupleType, StructAbiKind};
     use llvm_export::ops as llvm;
     use pliron::builtin::op_interfaces::{
         BranchOpInterface, CallOpCallable, CallOpInterface, OperandSegmentInterface,
         SymbolOpInterface,
     };
     use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::context::Context;
     use pliron::linked_list::ContainsLinkedList;
     use pliron::location::{Located, Location};
     use pliron::op::Op;
     use pliron::operation::Operation;
-    use pliron::r#type::TypeHandle;
+    use pliron::r#type::{TypeHandle, Typed};
+
+    fn transparent_u32(ctx: &mut Context, name: &str) -> TypeHandle {
+        let u32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
+        MirStructType::get_with_full_layout_and_abi(
+            ctx,
+            name.into(),
+            vec!["value".into()],
+            vec![u32_ty],
+            vec![0],
+            vec![0],
+            4,
+            4,
+            StructAbiKind::TransparentScalar,
+        )
+        .into()
+    }
 
     #[test]
     fn convert_return_void_lowers_to_llvm_return_without_value() {
@@ -343,6 +387,120 @@ mod tests {
             1,
             "scalar return must carry one value operand"
         );
+    }
+
+    #[test]
+    fn convert_return_transparent_scalar_extracts_underlying_value() {
+        let mut ctx = make_ctx();
+        let wrapper = transparent_u32(&mut ctx, "Scalar");
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![], vec![wrapper]);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, wrapper);
+        undef.get_operation().insert_at_back(entry, &ctx);
+        let value = undef.get_operation().deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, entry, vec![value]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let ret = find_first::<llvm::ReturnOp>(&ctx, &body).expect("expected llvm.return");
+        let operand = ret
+            .get_operation()
+            .deref(&ctx)
+            .operands()
+            .next()
+            .expect("transparent return must carry the scalar");
+        let operand_ty = operand.get_type(&ctx);
+        let operand_ty_ref = operand_ty.deref(&ctx);
+        let integer = operand_ty_ref
+            .downcast_ref::<IntegerType>()
+            .expect("transparent u32 return must become i32");
+        assert_eq!(integer.width(), 32);
+        assert_eq!(count_ops::<llvm::ExtractValueOp>(&ctx, &body), 1);
+    }
+
+    #[test]
+    fn convert_return_nested_transparent_scalar_extracts_all_layers() {
+        let mut ctx = make_ctx();
+        let inner = transparent_u32(&mut ctx, "Inner");
+        let outer: TypeHandle = MirStructType::get_with_full_layout_and_abi(
+            &mut ctx,
+            "Outer".into(),
+            vec!["inner".into()],
+            vec![inner],
+            vec![0],
+            vec![0],
+            4,
+            4,
+            StructAbiKind::TransparentScalar,
+        )
+        .into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![], vec![outer]);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, outer);
+        undef.get_operation().insert_at_back(entry, &ctx);
+        let value = undef.get_operation().deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, entry, vec![value]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let ret = find_first::<llvm::ReturnOp>(&ctx, &body).expect("expected llvm.return");
+        let operand = ret
+            .get_operation()
+            .deref(&ctx)
+            .operands()
+            .next()
+            .expect("nested transparent return must carry the scalar");
+        let operand_ty = operand.get_type(&ctx);
+        let operand_ty_ref = operand_ty.deref(&ctx);
+        let integer = operand_ty_ref
+            .downcast_ref::<IntegerType>()
+            .expect("nested transparent u32 return must become i32");
+        assert_eq!(integer.width(), 32);
+        assert_eq!(count_ops::<llvm::ExtractValueOp>(&ctx, &body), 2);
+    }
+
+    #[test]
+    fn convert_return_ordinary_one_field_struct_stays_aggregate() {
+        let mut ctx = make_ctx();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let ordinary: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Ordinary".into(),
+            vec!["value".into()],
+            vec![u32_ty],
+            vec![0],
+            vec![0],
+            4,
+            4,
+        )
+        .into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![], vec![ordinary]);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, ordinary);
+        undef.get_operation().insert_at_back(entry, &ctx);
+        let value = undef.get_operation().deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, entry, vec![value]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let ret = find_first::<llvm::ReturnOp>(&ctx, &body).expect("expected llvm.return");
+        let operand = ret
+            .get_operation()
+            .deref(&ctx)
+            .operands()
+            .next()
+            .expect("ordinary aggregate return must keep its value");
+        assert!(
+            operand
+                .get_type(&ctx)
+                .deref(&ctx)
+                .is::<llvm_export::types::StructType>(),
+            "ordinary one-field struct return must remain aggregate"
+        );
+        assert_eq!(count_ops::<llvm::ExtractValueOp>(&ctx, &body), 0);
     }
 
     #[test]

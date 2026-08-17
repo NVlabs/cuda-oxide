@@ -14,10 +14,11 @@ use llvm_export::{
     op_interfaces::CastOpInterface,
     ops::{
         AddrSpaceCastOp, AddressOfOp, AllocaOp, BitcastOp, BrOp, CallOp, CondBrOp, ConstantOp,
-        DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourcePosition, DebugSourceScope,
-        DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueOp, FuncOp, GepIndex,
-        GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp,
-        ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
+        DebugEnumDiscriminant, DebugEnumVariant, DebugLocalTypeKind, DebugLocalVariableInfo,
+        DebugSourcePosition, DebugSourceScope, DebugSourceScopeLocation, DebugSourceScopeMap,
+        DebugValueOp, FuncOp, GepIndex, GetElementPtrOp, GlobalInitializerRelocation, GlobalOp,
+        GlobalOpExt, InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp, UndefOp,
+        encode_global_initializer_relocations,
     },
     types::{ArrayType, FuncType, HalfType, PointerType, StructLayout, StructType, VoidType},
 };
@@ -2760,6 +2761,188 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
             "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*mut f32\", baseType: null, size: 64)"
         ),
         "pointer variables should get a pointer DIType:\n{ir}"
+    );
+}
+
+#[test]
+fn full_debug_metadata_emits_rust_enum_variant_parts() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "enum_debug".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let func = FuncOp::new(&mut ctx, "enum_debug_kernel".try_into().unwrap(), func_ty);
+    let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 10, 1);
+    func.get_operation().deref_mut(&ctx).set_loc(func_loc);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
+    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    one.get_operation().insert_at_back(entry, &ctx);
+    let one_val = one.get_operation().deref(&ctx).get_result(0);
+
+    let direct = AllocaOp::new(&mut ctx, i64_ty.into(), one_val);
+    let direct_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 11, 9);
+    direct.get_operation().deref_mut(&ctx).set_loc(direct_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        direct.get_operation(),
+        DebugLocalVariableInfo {
+            name: "direct".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::Enum {
+                name: "Direct".to_string(),
+                size_bits: 64,
+                discriminant: Some(DebugEnumDiscriminant {
+                    offset_bits: 0,
+                    ty: Box::new(DebugLocalTypeKind::Basic {
+                        name: "u8".to_string(),
+                        size_bits: 8,
+                        encoding: "DW_ATE_unsigned",
+                    }),
+                }),
+                variants: vec![
+                    DebugEnumVariant {
+                        name: "Small".to_string(),
+                        discriminant: Some(3),
+                        members: vec![llvm_export::ops::DebugTypeMember {
+                            name: "0".to_string(),
+                            offset_bits: 32,
+                            ty: DebugLocalTypeKind::Basic {
+                                name: "u32".to_string(),
+                                size_bits: 32,
+                                encoding: "DW_ATE_unsigned",
+                            },
+                        }],
+                    },
+                    DebugEnumVariant {
+                        name: "Empty".to_string(),
+                        discriminant: Some(9),
+                        members: vec![],
+                    },
+                ],
+            },
+        },
+    );
+    direct.get_operation().insert_at_back(entry, &ctx);
+
+    let niche = AllocaOp::new(&mut ctx, i64_ty.into(), one_val);
+    let niche_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 12, 9);
+    niche.get_operation().deref_mut(&ctx).set_loc(niche_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        niche.get_operation(),
+        DebugLocalVariableInfo {
+            name: "niche".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::Enum {
+                name: "OptionRef".to_string(),
+                size_bits: 64,
+                discriminant: Some(DebugEnumDiscriminant {
+                    offset_bits: 0,
+                    ty: Box::new(DebugLocalTypeKind::Basic {
+                        name: "usize".to_string(),
+                        size_bits: 64,
+                        encoding: "DW_ATE_unsigned",
+                    }),
+                }),
+                variants: vec![
+                    DebugEnumVariant {
+                        name: "None".to_string(),
+                        discriminant: Some(0),
+                        members: vec![],
+                    },
+                    DebugEnumVariant {
+                        name: "Some".to_string(),
+                        discriminant: None,
+                        members: vec![llvm_export::ops::DebugTypeMember {
+                            name: "0".to_string(),
+                            offset_bits: 0,
+                            ty: DebugLocalTypeKind::Pointer {
+                                name: "&u32".to_string(),
+                                size_bits: 64,
+                            },
+                        }],
+                    },
+                ],
+            },
+        },
+    );
+    niche.get_operation().insert_at_back(entry, &ctx);
+
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = DebugConfig {
+        inner: PtxExportConfig,
+        debug_kind: DebugKind::Full,
+    };
+    let ir =
+        export_module_to_string_with_config(&ctx, &module, &config).expect("enum debug export");
+
+    assert!(
+        ir.contains("!DICompositeType(tag: DW_TAG_variant_part"),
+        "Rust enums must contain a DW_TAG_variant_part:\n{ir}"
+    );
+    assert!(
+        ir.contains("flags: DIFlagArtificial"),
+        "the physical enum carrier must be marked artificial:\n{ir}"
+    );
+    let discriminator_member = ir
+        .lines()
+        .find(|line| {
+            line.contains("!DIDerivedType(tag: DW_TAG_member")
+                && line.contains("flags: DIFlagArtificial")
+        })
+        .expect("enum discriminator member");
+    assert!(
+        discriminator_member.contains("scope: !"),
+        "the physical enum carrier must be scoped to its enum object:\n{discriminator_member}\n{ir}"
+    );
+    let variant_part = ir
+        .lines()
+        .find(|line| line.contains("!DICompositeType(tag: DW_TAG_variant_part"))
+        .expect("enum variant part");
+    assert!(
+        variant_part.contains("scope: !"),
+        "the variant part must be scoped to its enum object:\n{variant_part}\n{ir}"
+    );
+    let direct_variant_member = ir
+        .lines()
+        .find(|line| {
+            line.contains("!DIDerivedType(tag: DW_TAG_member, name: \"Small\"")
+                && line.contains("extraData: i8 3")
+        })
+        .expect("direct enum variant member");
+    assert!(
+        direct_variant_member.contains("scope: !"),
+        "variant members must be scoped to their DW_TAG_variant_part:\n{direct_variant_member}\n{ir}"
+    );
+    assert!(
+        ir.contains("extraData: i8 3") && ir.contains("extraData: i8 9"),
+        "direct-tag variants must carry their physical discriminant values:\n{ir}"
+    );
+    assert!(
+        ir.contains("extraData: i64 0"),
+        "the tagged niche variant must carry the niche value:\n{ir}"
+    );
+
+    let some_variant_member = ir
+        .lines()
+        .find(|line| {
+            line.contains("!DIDerivedType(tag: DW_TAG_member, name: \"Some\"")
+                && line.contains("baseType:")
+        })
+        .expect("Some variant member");
+    assert!(
+        !some_variant_member.contains("extraData:"),
+        "the untagged niche variant must be the default branch:\n{some_variant_member}\n{ir}"
     );
 }
 

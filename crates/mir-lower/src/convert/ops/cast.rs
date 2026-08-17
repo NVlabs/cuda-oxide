@@ -330,6 +330,36 @@ fn convert_float_to_int(
     Ok(llvm_call.get_operation())
 }
 
+/// Return the element count of the sized array that becomes a slice tail
+/// during an unsize coercion.
+///
+/// The array may be the direct pointee (`&[T; N] -> &[T]`) or may sit behind
+/// one or more trailing struct fields (`&Outer<Inner<[T; N]>> ->
+/// &Outer<Inner<[T]>>`). Rust DST unsizing follows that trailing-field chain,
+/// so mirror it here instead of assuming the array is only one field deep.
+fn unsize_array_tail_len(ctx: &Context, mut ty: pliron::r#type::TypeHandle) -> Option<u64> {
+    loop {
+        let next = {
+            let ty_ref = ty.deref(ctx);
+
+            if let Some(array_ty) = ty_ref.downcast_ref::<MirArrayType>() {
+                return Some(array_ty.size());
+            }
+
+            let struct_ty = ty_ref.downcast_ref::<dialect_mir::types::MirStructType>()?;
+            let field_types = struct_ty.field_types();
+            let last_decl_idx = match struct_ty.memory_order().last().copied() {
+                Some(idx) => idx,
+                None => field_types.len().checked_sub(1)?,
+            };
+
+            *field_types.get(last_decl_idx)?
+        };
+
+        ty = next;
+    }
+}
+
 /// Emit an Unsize coercion: `&[T; N]` → `&[T]` (or `*[T; N]` → `[T]`).
 ///
 /// When the MIR source is a pointer to an array and the LLVM destination is a
@@ -349,33 +379,9 @@ fn emit_unsize_cast(
 ) -> Result<Ptr<Operation>> {
     let array_len = {
         let mir_ref = mir_opd_ty.deref(ctx);
-        mir_ref.downcast_ref::<MirPtrType>().and_then(|ptr_ty| {
-            let pointee_ref = ptr_ty.pointee.deref(ctx);
-            if let Some(arr) = pointee_ref.downcast_ref::<MirArrayType>() {
-                // `&[T; N] -> &[T]`: the classic array unsize.
-                Some(arr.size())
-            } else if let Some(struct_ty) =
-                pointee_ref.downcast_ref::<dialect_mir::types::MirStructType>()
-            {
-                // `&S<[T; N]> -> &S<[T]>` where the struct's LAST field is
-                // the array that becomes the unsized tail (e.g. the
-                // `PolymorphicIter` inside `core::array::IntoIter`, which
-                // every `for x in arr` loop unsizes; issue #138). The fat
-                // pointer's metadata is that array's element count.
-                let field_types = struct_ty.field_types();
-                let last_decl_idx = match struct_ty.memory_order().last().copied() {
-                    Some(idx) => idx,
-                    None => field_types.len().checked_sub(1)?,
-                };
-                field_types.get(last_decl_idx).and_then(|t| {
-                    t.deref(ctx)
-                        .downcast_ref::<MirArrayType>()
-                        .map(|a| a.size())
-                })
-            } else {
-                None
-            }
-        })
+        mir_ref
+            .downcast_ref::<MirPtrType>()
+            .and_then(|ptr_ty| unsize_array_tail_len(ctx, ptr_ty.pointee))
     };
 
     if let Some(len) = array_len {

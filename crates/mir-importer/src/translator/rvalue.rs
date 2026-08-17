@@ -2976,11 +2976,15 @@ fn classify_place_read_strategy(
 
                     match &place.projection[proj_idx + 1] {
                         mir::ProjectionElem::Field(_, field_rust_ty) => {
-                            if rust_ty_is_slice(field_rust_ty) {
-                                // Borrow/read of an unsized tail constructs a
-                                // fat value, not a thin final address.
+                            if rust_ty_is_slice(field_rust_ty)
+                                || types::slice_tail_element_ty(field_rust_ty).is_some()
+                            {
+                                // A direct slice tail or a nested slice-tailed DST needs
+                                // fat-pointer metadata that the address read path does not carry
+                                // across fields. Keep it on the value path.
                                 return Ok(PlaceReadStrategy::ValueFallback);
                             }
+
                             current_ptr_ty = dialect_mir::types::MirPtrType::get_generic(
                                 ctx, elem_ty, /* is_mutable */ false,
                             )
@@ -4604,6 +4608,10 @@ fn translate_place_addr_from_slot(
     // a following Index/ConstantIndex.
     let mut consumed_slice_subslice = false;
     let mut current_slice_len: Option<Value> = None;
+    // A fat reference to a slice-tailed struct carries the runtime length of
+    // its final slice field. Preserve that metadata while walking nested
+    // slice-tailed struct fields until the actual `[T]` field is reached.
+    let mut carried_slice_tail_len: Option<Value> = None;
     // Set by a `Downcast` and consumed by the `Field` that follows it, which
     // is the only projection pair that can name an enum payload.
     let mut pending_variant: Option<usize> = None;
@@ -4859,8 +4867,22 @@ fn translate_place_addr_from_slot(
 
                         match &projection[proj_idx + 1] {
                             // Sized field access: hand the data pointer to
-                            // the field arm below.
-                            mir::ProjectionElem::Field(..) => {
+                            // the field arm below. If the field is itself a
+                            // slice-tailed DST, preserve the fat reference's
+                            // metadata until the walk reaches the actual `[T]`
+                            // tail field.
+                            mir::ProjectionElem::Field(_, field_rust_ty) => {
+                                if types::slice_tail_element_ty(field_rust_ty).is_some() {
+                                    let (len, len_op) = emit_slice_len_extract(
+                                        ctx,
+                                        fat_val,
+                                        block_ptr,
+                                        current_prev_op,
+                                        loc.clone(),
+                                    );
+                                    current_prev_op = Some(len_op);
+                                    carried_slice_tail_len = Some(len);
+                                }
                                 current = data_ptr;
                                 continue;
                             }
@@ -4934,6 +4956,77 @@ fn translate_place_addr_from_slot(
             }
 
             mir::ProjectionElem::Field(field_idx, field_ty) => {
+                let tail_elem_rust_ty = match field_ty.kind() {
+                    rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(elem)) => {
+                        Some(elem)
+                    }
+                    _ => None,
+                };
+
+                if let Some(tail_len) = carried_slice_tail_len.take() {
+                    if let Some(tail_elem_rust_ty) = tail_elem_rust_ty {
+                        // Element-address traversal through an unsized tail is
+                        // intentionally left to #881. For #880 the address path
+                        // only needs to materialize the whole nested slice tail.
+                        if proj_idx + 1 != projection.len() || pending_variant.is_some() {
+                            return Ok(None);
+                        }
+
+                        let tail_elem_ty = types::translate_type(ctx, &tail_elem_rust_ty)?;
+                        let Some(tail_ptr_ty) = projected_pointer_type(
+                            ctx,
+                            current.get_type(ctx),
+                            tail_elem_ty,
+                            is_mutable,
+                        ) else {
+                            return Ok(None);
+                        };
+
+                        // The physical struct stores an unsized slice tail as
+                        // its element type, so the field address must be `*T`,
+                        // not `*[T]`.
+                        let tail_addr = Operation::new(
+                            ctx,
+                            MirFieldAddrOp::get_concrete_op_info(),
+                            vec![tail_ptr_ty],
+                            vec![current],
+                            vec![],
+                            0,
+                        );
+                        tail_addr.deref_mut(ctx).set_loc(loc.clone());
+                        MirFieldAddrOp::new(tail_addr).set_attr_field_index(
+                            ctx,
+                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+                        );
+                        match current_prev_op {
+                            Some(previous) => tail_addr.insert_after(ctx, previous),
+                            None => tail_addr.insert_at_front(block_ptr, ctx),
+                        }
+                        let tail_ptr = tail_addr.deref(ctx).get_result(0);
+
+                        let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
+                        use dialect_mir::ops::MirConstructSliceOp;
+                        let construct = Operation::new(
+                            ctx,
+                            MirConstructSliceOp::get_concrete_op_info(),
+                            vec![slice_ty.into()],
+                            vec![tail_ptr, tail_len],
+                            vec![],
+                            0,
+                        );
+                        construct.deref_mut(ctx).set_loc(loc.clone());
+                        construct.insert_after(ctx, tail_addr);
+                        return Ok(Some((construct.deref(ctx).get_result(0), Some(construct))));
+                    }
+
+                    // Metadata remains relevant only while descending through
+                    // another slice-tailed DST field. A sized field projects
+                    // away from the unsized tail, so discard it there.
+                    if types::slice_tail_element_ty(field_ty).is_some() {
+                        carried_slice_tail_len = Some(tail_len);
+                    }
+                }
+
                 let field_type = types::translate_type(ctx, field_ty)?;
 
                 // After a `Downcast`, the field belongs to that variant, and an
@@ -5199,7 +5292,7 @@ fn translate_place_addr_from_slot(
     // A chain that ENDS on a `Downcast` never occurs in valid MIR (the
     // validator requires a `Field` after it). Punt rather than hand back the
     // enum's own address as if it were the variant's payload place.
-    if pending_variant.is_some() {
+    if pending_variant.is_some() || carried_slice_tail_len.is_some() {
         return Ok(None);
     }
 
@@ -5629,9 +5722,11 @@ pub fn translate_place_iterative(
     let mut preserved_slice_deref_mutability: Option<bool> = None;
 
     // A fat reference to a slice-tailed struct carries the runtime length of
-    // that tail in field 1. Deref scalarizes the fat value to the struct data
-    // pointer, so preserve the length for the immediately following tail Field.
-    let mut preserved_slice_tail_len: Option<Value> = None;
+    // that tail in field 1. Keep the metadata alongside the projected address
+    // until the walk reaches the actual slice field. This mirrors rustc's
+    // `llextra` model and lets metadata survive through nested slice-tailed
+    // struct fields such as `outer.inner.tail[k]`.
+    let mut carried_slice_tail_len: Option<Value> = None;
 
     // Process each projection element iteratively
     for (proj_idx, projection) in place.projection.iter().enumerate() {
@@ -5653,10 +5748,6 @@ pub fn translate_place_iterative(
                 let current_is_slice_tail_ref = pointer_info
                     .as_ref()
                     .is_some_and(|(pointee, _)| types::slice_tail_element_ty(pointee).is_some());
-                let next_is_slice_tail_field = matches!(
-                    place.projection.get(proj_idx + 1),
-                    Some(ProjectionElem::Field(_, field_ty)) if rust_ty_is_slice(field_ty)
-                );
 
                 if next_is_slice_subslice
                     && current_is_fat_slice
@@ -5665,16 +5756,16 @@ pub fn translate_place_iterative(
                     // Preserve the fat pair. The following Subslice consumes
                     // both data and len and advances `current_rust_ty` normally.
                     preserved_slice_deref_mutability = slice_deref_mutability;
-                    preserved_slice_tail_len = None;
+                    carried_slice_tail_len = None;
                 } else {
                     // `&S<[T]>` uses the same fat-pair carrier as a slice, but
                     // field 0 points at the struct prefix while field 1 is the
-                    // trailing slice length. Save that metadata before Deref
-                    // reduces the value to the struct data pointer.
-                    preserved_slice_tail_len = if next_is_slice_tail_field
-                        && current_is_fat_slice
-                        && current_is_slice_tail_ref
-                    {
+                    // trailing slice length. Extract that metadata before Deref
+                    // reduces the value to the struct data pointer. Unlike the
+                    // old one-step handoff, keep it alive across any nested
+                    // slice-tailed struct fields until the real `[T]` field is
+                    // reached.
+                    carried_slice_tail_len = if current_is_fat_slice && current_is_slice_tail_ref {
                         let (len, len_op) = emit_slice_len_extract(
                             ctx,
                             current_value,
@@ -5701,9 +5792,19 @@ pub fn translate_place_iterative(
             }
 
             ProjectionElem::Field(field_idx, field_ty) => {
-                // Check if this is a field access on an enum (preceded by Downcast)
+                // Check if this is a field access on an enum (preceded by Downcast).
                 if let Some(variant_idx) = pending_downcast.take() {
-                    // Enum variant field access - use MirEnumPayloadOp
+                    if carried_slice_tail_len.is_some() {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(
+                                "slice-tail metadata cannot cross an enum Downcast/Field projection"
+                                    .to_string()
+                            )
+                        );
+                    }
+
+                    // Enum variant field access - use MirEnumPayloadOp.
                     (current_value, current_prev_op) = apply_enum_field_projection(
                         ctx,
                         current_value,
@@ -5715,105 +5816,165 @@ pub fn translate_place_iterative(
                         current_prev_op,
                         loc.clone(),
                     )?;
-                } else if let Some(tail_len) = preserved_slice_tail_len.take() {
-                    let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(
-                        tail_elem_rust_ty,
-                    )) = field_ty.kind()
-                    else {
-                        return input_err!(
-                            loc,
-                            TranslationErr::unsupported(
-                                "preserved slice-tail metadata was not consumed by a slice Field"
-                                    .to_string()
-                            )
-                        );
-                    };
-                    let tail_elem_ty = types::translate_type(ctx, &tail_elem_rust_ty)?;
-
-                    // The struct model stores an unsized `[T]` tail as the
-                    // element type `T`, because the elements live inline after
-                    // the sized prefix. Address the field as `*T`, not `*[T]`.
-                    use dialect_mir::ops::{MirConstructSliceOp, MirFieldAddrOp};
-                    let tail_ptr_ty: TypeHandle =
-                        dialect_mir::types::MirPtrType::get_generic(ctx, tail_elem_ty, false)
-                            .into();
-                    let tail_addr = Operation::new(
-                        ctx,
-                        MirFieldAddrOp::get_concrete_op_info(),
-                        vec![tail_ptr_ty],
-                        vec![current_value],
-                        vec![],
-                        0,
-                    );
-                    tail_addr.deref_mut(ctx).set_loc(loc.clone());
-                    MirFieldAddrOp::new(tail_addr).set_attr_field_index(
-                        ctx,
-                        dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                    );
-                    match current_prev_op {
-                        Some(prev) => tail_addr.insert_after(ctx, prev),
-                        None => tail_addr.insert_at_front(block_ptr, ctx),
-                    }
-                    let tail_ptr = tail_addr.deref(ctx).get_result(0);
-
-                    // Reconstruct the semantic `[T]` value from the inline tail
-                    // address plus the metadata saved from the outer fat reference.
-                    // A following Index or ConstantIndex can scalarize this
-                    // MirSliceType to field 0 and reuse the existing pointer-offset
-                    // + load path.
-                    let tail_slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
-                    let construct_tail = Operation::new(
-                        ctx,
-                        MirConstructSliceOp::get_concrete_op_info(),
-                        vec![tail_slice_ty.into()],
-                        vec![tail_ptr, tail_len],
-                        vec![],
-                        0,
-                    );
-                    construct_tail.deref_mut(ctx).set_loc(loc.clone());
-                    construct_tail.insert_after(ctx, tail_addr);
-                    current_value = construct_tail.deref(ctx).get_result(0);
-                    current_prev_op = Some(construct_tail);
                 } else {
-                    let current_is_ptr = current_value
-                        .get_type(ctx)
-                        .deref(ctx)
-                        .is::<dialect_mir::types::MirPtrType>();
-                    if current_is_ptr {
-                        // `current_value` is an ADDRESS, not an aggregate
-                        // value. This happens after dereferencing a fat
-                        // pointer: `apply_deref_projection` cannot load an
-                        // unsized pointee, so it hands back the data
-                        // pointer instead (e.g. reading
-                        // `(*iter).alive.start` through the fat
-                        // `&mut PolymorphicIter<[MaybeUninit<T>]>` inside
-                        // `core::array::IntoIter::next`, issue #138).
-                        // Compute the field's address and load the field.
-                        (current_value, current_prev_op) = apply_field_addr_and_load(
+                    let tail_elem_rust_ty = match field_ty.kind() {
+                        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(
+                            elem,
+                        )) => Some(elem),
+                        _ => None,
+                    };
+                    let field_is_slice_tailed_adt =
+                        types::slice_tail_element_ty(field_ty).is_some();
+
+                    if let Some(tail_elem_rust_ty) = tail_elem_rust_ty
+                        && let Some(tail_len) = carried_slice_tail_len.take()
+                    {
+                        let tail_elem_ty = types::translate_type(ctx, &tail_elem_rust_ty)?;
+
+                        // The struct model stores an unsized `[T]` tail as the
+                        // element type `T`, because the elements live inline after
+                        // the sized prefix. Address the field as `*T`, not `*[T]`.
+                        use dialect_mir::ops::{MirConstructSliceOp, MirFieldAddrOp};
+                        let tail_ptr_ty: TypeHandle =
+                            dialect_mir::types::MirPtrType::get_generic(ctx, tail_elem_ty, false)
+                                .into();
+                        let tail_addr = Operation::new(
                             ctx,
-                            current_value,
-                            *field_idx,
-                            field_ty,
-                            block_ptr,
-                            current_prev_op,
-                            loc.clone(),
-                        )?;
+                            MirFieldAddrOp::get_concrete_op_info(),
+                            vec![tail_ptr_ty],
+                            vec![current_value],
+                            vec![],
+                            0,
+                        );
+                        tail_addr.deref_mut(ctx).set_loc(loc.clone());
+                        MirFieldAddrOp::new(tail_addr).set_attr_field_index(
+                            ctx,
+                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+                        );
+                        match current_prev_op {
+                            Some(prev) => tail_addr.insert_after(ctx, prev),
+                            None => tail_addr.insert_at_front(block_ptr, ctx),
+                        }
+                        let tail_ptr = tail_addr.deref(ctx).get_result(0);
+
+                        // Reconstruct the semantic `[T]` value from the inline tail
+                        // address plus the metadata carried from the outer fat reference.
+                        // A following Index or ConstantIndex can scalarize this
+                        // MirSliceType to field 0 and reuse the existing pointer-offset
+                        // + load path.
+                        let tail_slice_ty =
+                            dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
+                        let construct_tail = Operation::new(
+                            ctx,
+                            MirConstructSliceOp::get_concrete_op_info(),
+                            vec![tail_slice_ty.into()],
+                            vec![tail_ptr, tail_len],
+                            vec![],
+                            0,
+                        );
+                        construct_tail.deref_mut(ctx).set_loc(loc.clone());
+                        construct_tail.insert_after(ctx, tail_addr);
+                        current_value = construct_tail.deref(ctx).get_result(0);
+                        current_prev_op = Some(construct_tail);
+                    } else if carried_slice_tail_len.is_some() && field_is_slice_tailed_adt {
+                        // The selected field is itself an unsized struct whose final
+                        // field eventually contains the same slice tail. Such a field
+                        // cannot be loaded as an SSA aggregate. Advance only the
+                        // address and keep the metadata riding alongside it for the
+                        // next projection step.
+                        if !current_value
+                            .get_type(ctx)
+                            .deref(ctx)
+                            .is::<dialect_mir::types::MirPtrType>()
+                        {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "slice-tail metadata reached nested DST field {:?}, but the current value is not an address",
+                                    field_ty
+                                ))
+                            );
+                        }
+
+                        use dialect_mir::ops::MirFieldAddrOp;
+                        let field_type = types::translate_type(ctx, field_ty)?;
+                        let field_ptr_ty: TypeHandle =
+                            dialect_mir::types::MirPtrType::get_generic(ctx, field_type, false)
+                                .into();
+                        let field_addr = Operation::new(
+                            ctx,
+                            MirFieldAddrOp::get_concrete_op_info(),
+                            vec![field_ptr_ty],
+                            vec![current_value],
+                            vec![],
+                            0,
+                        );
+                        field_addr.deref_mut(ctx).set_loc(loc.clone());
+                        MirFieldAddrOp::new(field_addr).set_attr_field_index(
+                            ctx,
+                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
+                        );
+                        match current_prev_op {
+                            Some(prev) => field_addr.insert_after(ctx, prev),
+                            None => field_addr.insert_at_front(block_ptr, ctx),
+                        }
+                        current_value = field_addr.deref(ctx).get_result(0);
+                        current_prev_op = Some(field_addr);
                     } else {
-                        // Regular struct/tuple field access
-                        (current_value, current_prev_op) = apply_field_projection(
-                            ctx,
-                            current_value,
-                            *field_idx,
-                            field_ty,
-                            block_ptr,
-                            current_prev_op,
-                            loc.clone(),
-                        )?;
+                        // A sized field does not inherit DST metadata. Once the
+                        // projection leaves the unsized-tail path, drop the
+                        // metadata and lower the field normally.
+                        carried_slice_tail_len = None;
+
+                        let current_is_ptr = current_value
+                            .get_type(ctx)
+                            .deref(ctx)
+                            .is::<dialect_mir::types::MirPtrType>();
+                        if current_is_ptr {
+                            // `current_value` is an ADDRESS, not an aggregate
+                            // value. This happens after dereferencing a fat
+                            // pointer: `apply_deref_projection` cannot load an
+                            // unsized pointee, so it hands back the data
+                            // pointer instead (e.g. reading
+                            // `(*iter).alive.start` through the fat
+                            // `&mut PolymorphicIter<[MaybeUninit<T>]>` inside
+                            // `core::array::IntoIter::next`, issue #138).
+                            // Compute the field's address and load the field.
+                            (current_value, current_prev_op) = apply_field_addr_and_load(
+                                ctx,
+                                current_value,
+                                *field_idx,
+                                field_ty,
+                                block_ptr,
+                                current_prev_op,
+                                loc.clone(),
+                            )?;
+                        } else {
+                            // Regular struct/tuple field access.
+                            (current_value, current_prev_op) = apply_field_projection(
+                                ctx,
+                                current_value,
+                                *field_idx,
+                                field_ty,
+                                block_ptr,
+                                current_prev_op,
+                                loc.clone(),
+                            )?;
+                        }
                     }
                 }
             }
 
             ProjectionElem::Downcast(variant_idx) => {
+                if carried_slice_tail_len.is_some() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(
+                            "slice-tail metadata reached Downcast before the unsized slice field"
+                                .to_string()
+                        )
+                    );
+                }
                 // Downcast is a no-op - it just narrows the type for the next Field access
                 // Store the variant index for use by the next Field projection
                 pending_downcast = Some(*variant_idx);
@@ -5821,6 +5982,15 @@ pub fn translate_place_iterative(
             }
 
             ProjectionElem::Index(index_local) => {
+                if carried_slice_tail_len.is_some() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(
+                            "slice-tail metadata reached Index before the unsized slice field"
+                                .to_string()
+                        )
+                    );
+                }
                 let index_place = mir::Place {
                     local: *index_local,
                     projection: vec![],
@@ -5965,6 +6135,15 @@ pub fn translate_place_iterative(
                 min_length: _,
                 from_end,
             } => {
+                if carried_slice_tail_len.is_some() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(
+                            "slice-tail metadata reached ConstantIndex before the unsized slice field"
+                                .to_string()
+                        )
+                    );
+                }
                 if *from_end {
                     return input_err!(
                         loc,
@@ -6133,6 +6312,15 @@ pub fn translate_place_iterative(
             }
 
             ProjectionElem::Subslice { from, to, from_end } => {
+                if carried_slice_tail_len.is_some() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(
+                            "slice-tail metadata reached Subslice before the unsized slice field"
+                                .to_string()
+                        )
+                    );
+                }
                 if *from_end {
                     let Some(is_mutable) = preserved_slice_deref_mutability.take() else {
                         return input_err!(
@@ -6245,6 +6433,16 @@ pub fn translate_place_iterative(
                 ))
             )
         })?;
+    }
+
+    if carried_slice_tail_len.is_some() {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "place projection ended on a slice-tailed DST before its metadata was attached to the slice field"
+                    .to_string()
+            )
+        );
     }
 
     Ok((current_value, current_prev_op))

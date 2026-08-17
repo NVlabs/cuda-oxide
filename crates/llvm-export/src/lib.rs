@@ -505,6 +505,19 @@ pub mod ops {
             size_bits: u64,
             members: Vec<DebugTypeMember>,
         },
+        /// A Rust enum represented with DWARF variant-part metadata.
+        ///
+        /// The top-level enum is a `DW_TAG_structure_type` containing one
+        /// `DW_TAG_variant_part`. Each source variant is described by an
+        /// artificial struct containing its payload fields. `discriminant` is
+        /// absent for single/empty layouts and is the physical tag or niche
+        /// carrier for multi-variant layouts.
+        Enum {
+            name: String,
+            size_bits: u64,
+            discriminant: Option<DebugEnumDiscriminant>,
+            variants: Vec<DebugEnumVariant>,
+        },
         /// A fixed-length array `DICompositeType` (`DW_TAG_array_type`).
         Array {
             name: String,
@@ -523,6 +536,29 @@ pub mod ops {
         pub ty: DebugLocalTypeKind,
     }
 
+    /// Physical enum tag/niche carrier used by `DW_TAG_variant_part`.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    pub struct DebugEnumDiscriminant {
+        /// Bit offset of the physical carrier within the enum storage.
+        pub offset_bits: u64,
+        /// The physical carrier type. Niche pointer carriers are intentionally
+        /// represented as an unsigned integer of the same width, matching
+        /// rustc's native DWARF strategy.
+        pub ty: Box<DebugLocalTypeKind>,
+    }
+
+    /// One Rust enum source variant.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    pub struct DebugEnumVariant {
+        pub name: String,
+        /// Physical discriminant value selecting this variant. `None` is used
+        /// for single/empty layouts and for the untagged niche variant.
+        pub discriminant: Option<u64>,
+        /// Payload members at their rustc-reported offsets within the complete
+        /// enum object.
+        pub members: Vec<DebugTypeMember>,
+    }
+
     impl DebugLocalTypeKind {
         /// Size of this type in bits, used to fill `DIDerivedType`/member sizes.
         pub fn size_bits(&self) -> u64 {
@@ -530,6 +566,7 @@ pub mod ops {
                 DebugLocalTypeKind::Basic { size_bits, .. }
                 | DebugLocalTypeKind::Pointer { size_bits, .. }
                 | DebugLocalTypeKind::Struct { size_bits, .. }
+                | DebugLocalTypeKind::Enum { size_bits, .. }
                 | DebugLocalTypeKind::Array { size_bits, .. } => *size_bits,
             }
         }
@@ -590,6 +627,41 @@ pub mod ops {
                     put_str(out, &member.name);
                     put_u64(out, member.offset_bits);
                     serialize_debug_type(&member.ty, out);
+                }
+            }
+            DebugLocalTypeKind::Enum {
+                name,
+                size_bits,
+                discriminant,
+                variants,
+            } => {
+                out.push('e');
+                put_u64(out, *size_bits);
+                put_str(out, name);
+                match discriminant {
+                    Some(discriminant) => {
+                        put_u64(out, 1);
+                        put_u64(out, discriminant.offset_bits);
+                        serialize_debug_type(&discriminant.ty, out);
+                    }
+                    None => put_u64(out, 0),
+                }
+                put_u64(out, variants.len() as u64);
+                for variant in variants {
+                    put_str(out, &variant.name);
+                    match variant.discriminant {
+                        Some(value) => {
+                            put_u64(out, 1);
+                            put_u64(out, value);
+                        }
+                        None => put_u64(out, 0),
+                    }
+                    put_u64(out, variant.members.len() as u64);
+                    for member in &variant.members {
+                        put_str(out, &member.name);
+                        put_u64(out, member.offset_bits);
+                        serialize_debug_type(&member.ty, out);
+                    }
                 }
             }
             DebugLocalTypeKind::Array {
@@ -669,6 +741,52 @@ pub mod ops {
                     name,
                     size_bits,
                     members,
+                })
+            }
+            b'e' => {
+                let size_bits = take_u64(bytes, pos)?;
+                let name = take_str(bytes, pos)?;
+                let discriminant = match take_u64(bytes, pos)? {
+                    0 => None,
+                    1 => {
+                        let offset_bits = take_u64(bytes, pos)?;
+                        let ty = Box::new(deserialize_debug_type(bytes, pos)?);
+                        Some(DebugEnumDiscriminant { offset_bits, ty })
+                    }
+                    _ => return None,
+                };
+                let variant_count = take_u64(bytes, pos)? as usize;
+                let mut variants = Vec::with_capacity(variant_count);
+                for _ in 0..variant_count {
+                    let variant_name = take_str(bytes, pos)?;
+                    let discriminant_value = match take_u64(bytes, pos)? {
+                        0 => None,
+                        1 => Some(take_u64(bytes, pos)?),
+                        _ => return None,
+                    };
+                    let member_count = take_u64(bytes, pos)? as usize;
+                    let mut members = Vec::with_capacity(member_count);
+                    for _ in 0..member_count {
+                        let member_name = take_str(bytes, pos)?;
+                        let offset_bits = take_u64(bytes, pos)?;
+                        let ty = deserialize_debug_type(bytes, pos)?;
+                        members.push(DebugTypeMember {
+                            name: member_name,
+                            offset_bits,
+                            ty,
+                        });
+                    }
+                    variants.push(DebugEnumVariant {
+                        name: variant_name,
+                        discriminant: discriminant_value,
+                        members,
+                    });
+                }
+                Some(DebugLocalTypeKind::Enum {
+                    name,
+                    size_bits,
+                    discriminant,
+                    variants,
                 })
             }
             b'a' => {
@@ -1437,9 +1555,9 @@ pub mod ops {
     #[cfg(test)]
     mod tests {
         use super::{
-            DebugLocalTypeKind, DebugTypeMember, GlobalInitializerRelocation,
-            decode_global_initializer_relocations, deserialize_debug_type,
-            encode_global_initializer_relocations, serialize_debug_type,
+            DebugEnumDiscriminant, DebugEnumVariant, DebugLocalTypeKind, DebugTypeMember,
+            GlobalInitializerRelocation, decode_global_initializer_relocations,
+            deserialize_debug_type, encode_global_initializer_relocations, serialize_debug_type,
         };
 
         fn round_trip(ty: &DebugLocalTypeKind) -> DebugLocalTypeKind {
@@ -1493,6 +1611,43 @@ pub mod ops {
                     },
                 ],
             };
+            assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn round_trips_enum_variant_metadata() {
+            let ty = DebugLocalTypeKind::Enum {
+                name: "Option<&u32>".to_string(),
+                size_bits: 64,
+                discriminant: Some(DebugEnumDiscriminant {
+                    offset_bits: 0,
+                    ty: Box::new(DebugLocalTypeKind::Basic {
+                        name: "usize".to_string(),
+                        size_bits: 64,
+                        encoding: "DW_ATE_unsigned",
+                    }),
+                }),
+                variants: vec![
+                    DebugEnumVariant {
+                        name: "None".to_string(),
+                        discriminant: Some(0),
+                        members: vec![],
+                    },
+                    DebugEnumVariant {
+                        name: "Some".to_string(),
+                        discriminant: None,
+                        members: vec![DebugTypeMember {
+                            name: "0".to_string(),
+                            offset_bits: 0,
+                            ty: DebugLocalTypeKind::Pointer {
+                                name: "&u32".to_string(),
+                                size_bits: 64,
+                            },
+                        }],
+                    },
+                ],
+            };
+
             assert_eq!(round_trip(&ty), ty);
         }
 

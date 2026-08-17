@@ -44,14 +44,17 @@ raw-pointer shapes the unified `translate_place_address` walker must lower:
 | 19 | `test_inline_never_node_fn`          | Exact issue #120 `node()` MIR shape            |
 | 20 | `test_holder_deref_tail`             | `&hr.0[k]` with Deref inside the tail          |
 
-plus **3 slice-value regression kernels** that pin the two indexing forms on
-a projected unsized slice tail, and the tail byte offset behind padding:
+plus **6 slice-value regression kernels** that pin direct and nested indexing
+of projected unsized slice tails, including padded layouts:
 
-| #  | Variant                              | Shape pinned                                   |
-|:---|:-------------------------------------|:-----------------------------------------------|
-| 21 | `test_slice_tail_constant_index`     | `Field(tail) -> MirSliceType -> ConstantIndex` |
-| 22 | `test_slice_tail_runtime_index`      | `Field(tail) -> MirSliceType -> Index`         |
-| 23 | `test_slice_tail_padded_offset`      | `[u16]` tail at byte offset 10 behind padding  |
+| #  | Variant                                  | Shape pinned                                           |
+|:---|:-----------------------------------------|:-------------------------------------------------------|
+| 21 | `test_slice_tail_constant_index`         | `Field(tail) -> MirSliceType -> ConstantIndex`         |
+| 22 | `test_slice_tail_runtime_index`          | `Field(tail) -> MirSliceType -> Index`                 |
+| 23 | `test_slice_tail_padded_offset`          | `[u16]` tail at byte offset 10 behind padding          |
+| 24 | `test_nested_slice_tail_constant_index`  | `Field(inner) -> Field(tail) -> ConstantIndex`         |
+| 25 | `test_nested_slice_tail_runtime_index`   | `Field(inner) -> Field(tail) -> Index`                 |
+| 26 | `test_nested_slice_tail_padded_offset`   | Nested padded DST tail with constant + runtime indexes |
 
 Each kernel writes a difference (`r1 - r0`, or original-local readback for
 the write-through variants) for inputs chosen so a correct implementation
@@ -59,18 +62,27 @@ must produce `+5.0` for every element. The harness prints `PASS` per kernel,
 tracks failures, prints a final `SUCCESS` marker when every kernel passes,
 and exits non-zero if any kernel reports a wrong diff.
 
-The slice-value regressions construct a `SliceTail<[f32; 2]>` and unsize it to
-`&SliceTail<[f32]>`. Deref of the fat struct reference must preserve the
-runtime tail length long enough for `Field(tail)` to reconstruct a
-`MirSliceType` value. `test_slice_tail_constant_index` then exercises a literal
-`ConstantIndex`, while `test_slice_tail_runtime_index` uses a data-derived
-runtime `Index`. Both normalize the semantic slice value to its data pointer
-before reusing the existing pointer-offset + load lowering.
-`test_slice_tail_padded_offset` repeats both indexing forms on the
-issue #870 repro layout (`head: u64`, `tag: u8`, `tail: [u16]`), whose
-tail sits at byte offset 10 behind a padding byte: `SliceTail` places its
-tail at offset 4 with no padding, so only the padded variant can catch a
-wrong-tail-offset bug in the `Field(tail)` address computation.
+The direct slice-value regressions construct a `SliceTail<[f32; 2]>` and
+unsize it to `&SliceTail<[f32]>`. Deref of the fat struct reference must
+preserve the runtime tail length long enough for `Field(tail)` to reconstruct
+a `MirSliceType` value. `test_slice_tail_constant_index` then exercises a
+literal `ConstantIndex`, while `test_slice_tail_runtime_index` uses a
+data-derived runtime `Index`. Both normalize the semantic slice value to its
+data pointer before reusing the existing pointer-offset + load lowering.
+`test_slice_tail_padded_offset` repeats both indexing forms on the issue #870
+repro layout (`head: u64`, `tag: u8`, `tail: [u16]`), whose tail sits at byte
+offset 10 behind a padding byte: `SliceTail` places its tail at offset 4 with
+no padding, so only the padded variant can catch a wrong-tail-offset bug in the
+`Field(tail)` address computation.
+
+The nested issue #880 regressions push that same slice tail one struct field
+deeper. `NestedOuter<T>` ends in `NestedInner<T>`, so a value read walks
+`Deref -> Field(inner) -> Field(tail) -> Index/ConstantIndex`. The outer fat
+pointer's length metadata must remain paired with the projected address across
+`Field(inner)` instead of being handed only to the immediately following
+field. `test_nested_slice_tail_padded_offset` nests `PaddedTail<T>` as the final
+field of another struct so the walk must preserve metadata while also honoring
+both aggregate field offsets.
 
 ## Trigger conditions
 
@@ -120,8 +132,17 @@ the fix, the same MIR lowers to
 %v9 = load float, ptr %v8                                              ; correct
 ```
 
-and all 23 kernels report `PASS` (the harness prints a final `SUCCESS`
-marker and exits non-zero if any kernel reports a wrong diff).
+and all 26 kernels report `PASS` (the harness prints a final `SUCCESS` marker
+and exits non-zero if any kernel reports a wrong diff).
+
+Issue #880 exposes a separate value-walker gap after the direct DST-tail
+support from #873. The old `preserved_slice_tail_len` logic used a one-step
+lookahead at `Deref`, so `Field(inner)` caused the fat pointer's length to be
+dropped before `Field(tail)` could reconstruct the slice. The updated walker
+carries that metadata alongside the projected address through nested
+slice-tailed struct fields, only consuming it when the actual `[T]` tail field
+is reached. Sized fields drop the metadata, and structurally inconsistent
+projection shapes fail loudly.
 
 ## Build & run
 

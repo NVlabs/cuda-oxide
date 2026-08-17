@@ -14,6 +14,7 @@
 //! - 64-bit arithmetic
 //! - Parallel for loop patterns
 //! - Full-debug closure environments
+//! - Full-debug Rust enum variants (direct and niche layouts)
 //!
 //! Run: cargo oxide run compiler_features
 
@@ -28,6 +29,13 @@ use cuda_host::cuda_module;
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    /// Direct-tag enum used by the full-debug DWARF smoke test.
+    #[repr(u8)]
+    enum DebugDirectEnum {
+        Small(u32) = 3,
+        Wide(u64) = 9,
+    }
 
     /// Test multi-way match on u32
     #[kernel]
@@ -56,6 +64,50 @@ mod kernels {
             let maybe: Option<u32> = if val > 0 { Some(val) } else { None };
             let result = maybe.unwrap_or_default();
             *out_elem = result;
+        }
+    }
+
+    /// Full-debug fixture for direct-tag and niche-layout Rust enums.
+    ///
+    /// The breakpoint is after all four locals are initialized so cuda-gdb can
+    /// inspect both the active variant and its payload.
+    // The explicit match on each enum is the fixture: all four variant
+    // reads stay spelled out the same way for cuda-gdb inspection.
+    #[allow(clippy::manual_unwrap_or, clippy::manual_unwrap_or_default)]
+    #[kernel]
+    pub fn test_enum_debug(seed: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let option_value: Option<u32> = Some(seed + 1);
+            let result_value: Result<u32, u64> = Err(0x1_0000_0009u64);
+            let direct_value = if seed == 0 {
+                DebugDirectEnum::Small(17)
+            } else {
+                DebugDirectEnum::Wide(0x2_0000_000Bu64)
+            };
+            let pointee = seed + 5;
+            let niche_value: Option<&u32> = Some(&pointee);
+
+            *out_elem = seed; // CUDA_OXIDE_DEBUG_ENUM_BREAKPOINT
+
+            let option_part = match option_value {
+                Some(value) => value,
+                None => 0,
+            };
+            let result_part = match result_value {
+                Ok(value) => value,
+                Err(value) => value as u32,
+            };
+            let direct_part = match direct_value {
+                DebugDirectEnum::Small(value) => value,
+                DebugDirectEnum::Wide(value) => value as u32,
+            };
+            let niche_part = match niche_value {
+                Some(value) => *value,
+                None => 0,
+            };
+
+            *out_elem = option_part + result_part + direct_part + niche_part;
         }
     }
 
@@ -580,6 +632,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             assert_eq!(result[0], expected, "test_option({}) failed", val);
             println!("  ✓ val={}: {} (expected {})", val, result[0], expected);
         }
+    }
+
+    // Test enum lowering and keep deterministic direct/niche debug fixtures live.
+    println!("Testing: test_enum_debug");
+    {
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        // seed=7: Some(8) + Err(...09) + Wide(...0B) + Some(&12) = 40.
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_enum_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
+        let result = out_dev.to_host_vec(&stream)?;
+        assert_eq!(result[0], 40, "test_enum_debug failed");
+        println!("  ✓ Result: {} (expected 40)", result[0]);
     }
 
     // Test closure lowering and keep a deterministic full-debug fixture live.

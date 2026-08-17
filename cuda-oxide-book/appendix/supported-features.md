@@ -140,7 +140,7 @@ constant nested inside another constant's field.
 | Local Clean | **Full** | `cargo oxide clean` removes project-local `target/` directories and generated device artifacts (`.ptx`, `.ll`, `.opt.ll`, `.ltoir`, `.cubin`, `.target`, `.options`, `.cubin.target`), never the shared `~/.cargo/cuda-oxide/` cache. |
 | Compute Sanitizer Wrapper | **Full** | `cargo oxide sanitize <example>` builds the example and runs the host binary under NVIDIA Compute Sanitizer (`memcheck`, `racecheck`, `initcheck`, or `synccheck`). |
 | cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug information on the PTX path and launches `cuda-gdb`. Legacy NVVM IR does not yet support debug metadata. |
-| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, and structs/tuples/arrays with their fields. Enums, ABI-split bare slices, closures, and projections (`x.0`) are not yet described. |
+| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, structs/tuples/arrays, closure environments, and Rust enums with direct-tag or niche layouts, including active variants and payload fields. ABI-split bare slices and projections (`x.0`) are not yet described. |
 
 ## Compiler: Inline PTX
 

@@ -398,6 +398,10 @@ impl<'a> ModuleExportState<'a> {
             return id;
         }
 
+        if matches!(ty, DebugLocalTypeKind::Enum { .. }) {
+            return self.ensure_enum_debug_type(ty);
+        }
+
         let node = match ty {
             DebugLocalTypeKind::Basic {
                 name,
@@ -471,6 +475,9 @@ impl<'a> ModuleExportState<'a> {
                      size: {size_bits}, elements: !{elements_id})"
                 )
             }
+            DebugLocalTypeKind::Enum { .. } => {
+                unreachable!("enum debug types use ensure_enum_debug_type")
+            }
         };
 
         let id = self.alloc_metadata_id();
@@ -478,6 +485,148 @@ impl<'a> ModuleExportState<'a> {
         self.debug_types.insert(ty.clone(), id);
 
         id
+    }
+
+    /// Emit a Rust enum using the same parent/child scope relationships rustc
+    /// gives LLVM's native DWARF enum builder.
+    ///
+    /// Reserving the top-level and variant-part metadata IDs first lets child
+    /// nodes reference their semantic parents even though LLVM metadata is
+    /// serialized as a flat numbered list. This matters for discriminator
+    /// members at non-zero offsets: the member must be tied to the enum object
+    /// whose address `llvm.dbg.declare` describes, not emitted as an orphan.
+    fn ensure_enum_debug_type(&mut self, ty: &DebugLocalTypeKind) -> usize {
+        if let Some(id) = self.debug_types.get(ty).copied() {
+            return id;
+        }
+
+        let DebugLocalTypeKind::Enum {
+            name,
+            size_bits,
+            discriminant,
+            variants,
+        } = ty
+        else {
+            unreachable!("ensure_enum_debug_type requires an enum")
+        };
+
+        // rustc creates a recursive metadata graph. Reserve the parent IDs and
+        // cache the top-level type before emitting children so forward metadata
+        // references are well-defined and recursive type discovery terminates.
+        let enum_type_id = self.alloc_metadata_id();
+        let variant_part_id = self.alloc_metadata_id();
+        self.debug_types.insert(ty.clone(), enum_type_id);
+
+        let discriminator_member_id = discriminant.as_ref().map(|discriminant| {
+            let base = self.ensure_debug_type(&discriminant.ty);
+            let id = self.alloc_metadata_id();
+            self.debug_nodes.push((
+                id,
+                format!(
+                    "!DIDerivedType(tag: DW_TAG_member, scope: !{enum_type_id}, \
+                     baseType: !{base}, size: {}, offset: {}, flags: DIFlagArtificial)",
+                    discriminant.ty.size_bits(),
+                    discriminant.offset_bits
+                ),
+            ));
+            id
+        });
+        let discriminant_width = discriminant
+            .as_ref()
+            .map(|discriminant| discriminant.ty.size_bits())
+            .unwrap_or(64);
+
+        let mut variant_member_ids = Vec::with_capacity(variants.len());
+        for variant in variants {
+            // The variant struct is a sibling of the variant part under the
+            // enum type. Reserve its ID before its fields so each field can
+            // carry the correct struct scope, matching rustc native debuginfo.
+            let variant_struct_id = self.alloc_metadata_id();
+            let mut payload_member_ids = Vec::with_capacity(variant.members.len());
+            for member in &variant.members {
+                let base = self.ensure_debug_type(&member.ty);
+                let member_name = escape_debug_string(&member.name);
+                let member_size = member.ty.size_bits();
+                let id = self.alloc_metadata_id();
+                self.debug_nodes.push((
+                    id,
+                    format!(
+                        "!DIDerivedType(tag: DW_TAG_member, name: \"{member_name}\", \
+                         scope: !{variant_struct_id}, baseType: !{base}, \
+                         size: {member_size}, offset: {})",
+                        member.offset_bits
+                    ),
+                ));
+                payload_member_ids.push(id);
+            }
+
+            let payload_elements = payload_member_ids
+                .iter()
+                .map(|id| format!("!{id}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let payload_elements_id = self.alloc_metadata_id();
+            self.debug_nodes
+                .push((payload_elements_id, format!("!{{{payload_elements}}}")));
+
+            let variant_name = escape_debug_string(&variant.name);
+            self.debug_nodes.push((
+                variant_struct_id,
+                format!(
+                    "!DICompositeType(tag: DW_TAG_structure_type, name: \"{variant_name}\", \
+                     scope: !{enum_type_id}, size: {size_bits}, elements: !{payload_elements_id})"
+                ),
+            ));
+
+            let extra_data = variant
+                .discriminant
+                .map(|value| format!(", extraData: i{discriminant_width} {value}"))
+                .unwrap_or_default();
+            let variant_member_id = self.alloc_metadata_id();
+            self.debug_nodes.push((
+                variant_member_id,
+                format!(
+                    "!DIDerivedType(tag: DW_TAG_member, name: \"{variant_name}\", \
+                     scope: !{variant_part_id}, baseType: !{variant_struct_id}, \
+                     size: {size_bits}, offset: 0{extra_data})"
+                ),
+            ));
+            variant_member_ids.push(variant_member_id);
+        }
+
+        let variant_elements = variant_member_ids
+            .iter()
+            .map(|id| format!("!{id}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let variant_elements_id = self.alloc_metadata_id();
+        self.debug_nodes
+            .push((variant_elements_id, format!("!{{{variant_elements}}}")));
+
+        let discriminator = discriminator_member_id
+            .map(|id| format!(", discriminator: !{id}"))
+            .unwrap_or_default();
+        self.debug_nodes.push((
+            variant_part_id,
+            format!(
+                "!DICompositeType(tag: DW_TAG_variant_part, scope: !{enum_type_id}, \
+                 size: {size_bits}, elements: !{variant_elements_id}{discriminator})"
+            ),
+        ));
+
+        let enum_elements_id = self.alloc_metadata_id();
+        self.debug_nodes
+            .push((enum_elements_id, format!("!{{!{variant_part_id}}}")));
+        let name = escape_debug_string(name);
+        self.debug_nodes.push((
+            enum_type_id,
+            format!(
+                "!DICompositeType(tag: DW_TAG_structure_type, name: \"{name}\", \
+                 size: {size_bits}, elements: !{enum_elements_id})"
+            ),
+        ));
+
+        enum_type_id
     }
 
     fn debug_location_for_scope(&mut self, scope: usize, loc: &Location) -> Option<usize> {
