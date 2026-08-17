@@ -71,6 +71,9 @@ mod kernels {
     ///
     /// The breakpoint is after all four locals are initialized so cuda-gdb can
     /// inspect both the active variant and its payload.
+    // The explicit match on each enum is the fixture: all four variant
+    // reads stay spelled out the same way for cuda-gdb inspection.
+    #[allow(clippy::manual_unwrap_or, clippy::manual_unwrap_or_default)]
     #[kernel]
     pub fn test_enum_debug(seed: u32, mut out: DisjointSlice<u32>) {
         let idx = thread::index_1d();
