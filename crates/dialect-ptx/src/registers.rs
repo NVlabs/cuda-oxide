@@ -218,6 +218,27 @@ pub enum RegisterAlphaError {
         token: String,
         span: Range<usize>,
     },
+    /// A generated rename target spells a label of this callable or a
+    /// callable name of this module. The rewritten register would capture
+    /// branch or call targets, producing PTX that ptxas rejects or, worse,
+    /// assembles with wrong semantics.
+    RenameTargetCollision {
+        callable: StatementId,
+        scope: ScopeId,
+        old_name: String,
+        new_name: String,
+        symbol: String,
+        kind: RenameCollisionKind,
+    },
+}
+
+/// The namespace a colliding rename target belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RenameCollisionKind {
+    /// A label defined in the callable body.
+    Label,
+    /// A callable declared or defined in the module.
+    Callable,
 }
 
 impl fmt::Display for RegisterAlphaError {
@@ -253,6 +274,24 @@ impl fmt::Display for RegisterAlphaError {
                 scope.index(),
                 span.start,
                 span.end
+            ),
+            Self::RenameTargetCollision {
+                callable,
+                scope,
+                old_name,
+                new_name,
+                symbol,
+                kind,
+            } => write!(
+                formatter,
+                "PTX callable statement {} cannot rename register {old_name:?} in scope {} \
+                 to {new_name:?}: it collides with {} {symbol:?}",
+                callable.index(),
+                scope.index(),
+                match kind {
+                    RenameCollisionKind::Label => "label",
+                    RenameCollisionKind::Callable => "callable",
+                }
             ),
         }
     }
@@ -391,6 +430,26 @@ fn analyze_callable(
         }
     }
 
+    // Rename targets must not spell a label of this callable or a callable
+    // name of this module. The occupied-token check avoids everything spelled
+    // in the body, but a module callable that is never referenced in this
+    // body, or a label equal to a bank base name, would slip through and
+    // capture branch or call targets in the rewritten PTX.
+    let labels = document
+        .labels()
+        .iter()
+        .filter(|label| {
+            let span = label.span();
+            span.start >= body.start && span.end <= body.end
+        })
+        .map(|label| label.name())
+        .collect::<Vec<_>>();
+    let callable_names = document
+        .callables()
+        .iter()
+        .map(|callable| callable.name())
+        .collect::<Vec<_>>();
+
     let mut generated = Vec::<BindingName>::new();
     let mut renames = Vec::with_capacity(nested.len());
     for index in nested {
@@ -401,6 +460,21 @@ fn analyze_callable(
         while !binding_name_available(&candidate, definition.bank_size, &occupied, &generated) {
             discriminator += 1;
             candidate = format!("{base}_{discriminator}");
+        }
+        for (symbols, kind) in [
+            (&labels, RenameCollisionKind::Label),
+            (&callable_names, RenameCollisionKind::Callable),
+        ] {
+            if let Some(symbol) = colliding_symbol(&candidate, definition.bank_size, symbols) {
+                return Err(RegisterAlphaError::RenameTargetCollision {
+                    callable,
+                    scope: definition.scope,
+                    old_name: definition.name.clone(),
+                    new_name: candidate,
+                    symbol: symbol.to_string(),
+                    kind,
+                });
+            }
         }
         generated.push(BindingName {
             name: candidate.clone(),
@@ -544,6 +618,20 @@ fn binding_name_available(
         .all(|binding| !binding_names_overlap(name, bank_size, &binding.name, binding.bank_size))
 }
 
+/// Find a symbol which a rename to `candidate` would capture: the exact name,
+/// or for a bank binding any name the bank expands to (`candidate` + index).
+fn colliding_symbol<'symbols>(
+    candidate: &str,
+    bank_size: Option<u32>,
+    symbols: &[&'symbols str],
+) -> Option<&'symbols str> {
+    symbols.iter().copied().find(|symbol| {
+        *symbol == candidate
+            || bank_size
+                .is_some_and(|size| bank_index(candidate, symbol).is_some_and(|index| index < size))
+    })
+}
+
 fn renamed_use(old_base: &str, new_base: &str, old_use: &str) -> String {
     let suffix = old_use
         .strip_prefix(old_base)
@@ -681,6 +769,78 @@ mod tests {
         let rewritten = plan.apply(source).unwrap();
         assert!(rewritten.contains("mov.v4.f32 __oxide_s2_v, {"));
         Document::parse(&rewritten).unwrap();
+    }
+
+    #[test]
+    fn rejects_rename_targets_that_capture_module_callable_names() {
+        let source = "\
+.version 9.3
+.extern .func __oxide_s2_x ();
+.entry kernel() {
+    .reg .b32 x;
+    {
+        .reg .b32 x;
+        mov.u32 x, 1;
+    }
+    ret;
+}
+";
+        let document = Document::parse(source).unwrap();
+        let error = RegisterAlphaPlan::analyze(&document).unwrap_err();
+        let RegisterAlphaError::RenameTargetCollision {
+            old_name,
+            new_name,
+            symbol,
+            kind,
+            ..
+        } = &error
+        else {
+            panic!("expected a rename-target collision, got {error}");
+        };
+        assert_eq!(old_name, "x");
+        assert_eq!(new_name, "__oxide_s2_x");
+        assert_eq!(symbol, "__oxide_s2_x");
+        assert_eq!(*kind, RenameCollisionKind::Callable);
+
+        let harmless = source.replace("__oxide_s2_x", "helper");
+        let document = Document::parse(&harmless).unwrap();
+        let plan = RegisterAlphaPlan::analyze(&document).unwrap();
+        assert_eq!(plan.callables()[0].renames()[0].new_name(), "__oxide_s2_x");
+    }
+
+    #[test]
+    fn rejects_bank_rename_targets_that_capture_labels() {
+        let source = "\
+.version 9.3
+.entry kernel() {
+    {
+        .reg .b32 r<2>;
+        mov.u32 r0, 1;
+    }
+    bra __oxide_s2_r;
+__oxide_s2_r:
+    ret;
+}
+";
+        let document = Document::parse(source).unwrap();
+        let error = RegisterAlphaPlan::analyze(&document).unwrap_err();
+        let RegisterAlphaError::RenameTargetCollision {
+            new_name,
+            symbol,
+            kind,
+            ..
+        } = &error
+        else {
+            panic!("expected a rename-target collision, got {error}");
+        };
+        assert_eq!(new_name, "__oxide_s2_r");
+        assert_eq!(symbol, "__oxide_s2_r");
+        assert_eq!(*kind, RenameCollisionKind::Label);
+
+        let harmless = source.replace("__oxide_s2_r", "Done");
+        let document = Document::parse(&harmless).unwrap();
+        let plan = RegisterAlphaPlan::analyze(&document).unwrap();
+        assert_eq!(plan.callables()[0].renames()[0].new_name(), "__oxide_s2_r");
     }
 
     #[test]
