@@ -751,10 +751,7 @@ mod kernels {
     /// `NestedOuter<[f32]>`, while the indexed slice lives one struct field
     /// deeper at `inner.tail`. Metadata must survive `Field(inner)`.
     #[kernel]
-    pub fn test_nested_slice_tail_constant_index(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_nested_slice_tail_constant_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
@@ -781,10 +778,7 @@ mod kernels {
     /// Issue #880 runtime-index repro. The data-derived index prevents MIR
     /// from folding the final projection into a ConstantIndex.
     #[kernel]
-    pub fn test_nested_slice_tail_runtime_index(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_nested_slice_tail_runtime_index(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
@@ -814,10 +808,7 @@ mod kernels {
     /// `NestedPaddedOuter`. Both constant and runtime indexing must retain
     /// the outer fat pointer's length while computing the two field offsets.
     #[kernel]
-    pub fn test_nested_slice_tail_padded_offset(
-        input: &[[f32; 2]],
-        mut out: DisjointSlice<f32>,
-    ) {
+    pub fn test_nested_slice_tail_padded_offset(input: &[[f32; 2]], mut out: DisjointSlice<f32>) {
         let idx = thread::index_1d();
         let i = idx.get();
         if i >= input.len() {
