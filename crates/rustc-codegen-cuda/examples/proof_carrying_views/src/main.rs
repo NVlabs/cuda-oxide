@@ -310,6 +310,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("proof_carrying_views.ptx");
     let ptx = std::fs::read_to_string(&path)?;
+    let document = ptx_parse::Document::parse(&ptx)?;
 
     for marker in [
         "__launch_contract_config",
@@ -324,24 +325,25 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let safe_element = entry_body(&ptx, "safe_element")?;
-    let raw_element = entry_body(&ptx, "raw_element")?;
-    let safe_tile = entry_body(&ptx, "safe_tile")?;
-    let raw_tile = entry_body(&ptx, "raw_tile")?;
-    let legacy_rank_guard = entry_body(&ptx, "legacy_rank_guard")?;
-    let safe_epilogue = entry_body(&ptx, "safe_epilogue")?;
-    let raw_epilogue = entry_body(&ptx, "raw_epilogue")?;
+    let safe_element = entry(&document, "safe_element")?;
+    let raw_element = entry(&document, "raw_element")?;
+    let safe_tile = entry(&document, "safe_tile")?;
+    let raw_tile = entry(&document, "raw_tile")?;
+    let legacy_rank_guard = entry(&document, "legacy_rank_guard")?;
+    let safe_epilogue = entry(&document, "safe_epilogue")?;
+    let raw_epilogue = entry(&document, "raw_epilogue")?;
 
-    for (name, body) in [
+    for (name, definition) in [
         ("safe_element", safe_element),
         ("raw_element", raw_element),
         ("safe_tile", safe_tile),
         ("raw_tile", raw_tile),
     ] {
+        let body = definition.text();
         verify_exact_block(name, body, ".reqntid 64, 1, 1")?;
         verify_u32_coordinates(name, body)?;
-        verify_no_calls(name, body)?;
-        let branches = conditional_branches(body);
+        verify_no_calls(name, definition)?;
+        let branches = conditional_branches(definition);
         let expected_branches = 1;
         if branches != expected_branches {
             return Err(format!(
@@ -349,7 +351,7 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
             )
             .into());
         }
-        verify_no_interior_branches(name, body)?;
+        verify_no_interior_branches(name, definition)?;
     }
 
     compare_memory_widths("element", safe_element, raw_element)?;
@@ -358,22 +360,23 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     compare_memory_operations("tile", safe_tile, raw_tile)?;
     verify_legacy_rank_guard(legacy_rank_guard)?;
 
-    for (name, body) in [
+    for (name, definition) in [
         ("safe_epilogue", safe_epilogue),
         ("raw_epilogue", raw_epilogue),
     ] {
+        let body = definition.text();
         // A 2-D contract records its real shape. A thread maximum bounds the
         // product alone, so its per-axis fields would claim one thread on Y
         // for a block that has eight.
         verify_exact_block(name, body, ".reqntid 8, 8, 1")?;
         verify_u32_coordinates(name, body)?;
-        verify_no_calls(name, body)?;
+        verify_no_calls(name, definition)?;
         for register in ["%ctaid.y", "%ntid.y", "%tid.y"] {
             if !body.contains(register) {
                 return Err(format!("{name} does not read {register}").into());
             }
         }
-        verify_no_interior_branches(name, body)?;
+        verify_no_interior_branches(name, definition)?;
     }
     let safe_epilogue_branches = conditional_branches(safe_epilogue);
     let raw_epilogue_branches = conditional_branches(raw_epilogue);
@@ -390,20 +393,24 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn verify_legacy_rank_guard(body: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn verify_legacy_rank_guard(
+    definition: ptx_parse::CallableDefinition<'_, '_>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let body = definition.text();
     for register in ["%ntid.y", "%nctaid.y", "%ntid.z", "%nctaid.z"] {
         if !body.contains(register) {
             return Err(format!("legacy 1D witness does not validate {register}").into());
         }
     }
-    let first_store = body
-        .lines()
-        .position(|line| data_memory_width(line, "st").is_some())
+    let instructions = definition.instructions().collect::<Vec<_>>();
+    let first_store = instructions
+        .iter()
+        .position(|instruction| data_memory_width(instruction, "st").is_some())
         .ok_or("legacy rank-guard entry has no data store")?;
-    if !body.lines().take(first_store).any(|line| {
-        let line = line.trim_start();
-        line.starts_with("@%p") && line.split_whitespace().any(|word| word == "bra")
-    }) {
+    if !instructions[..first_store]
+        .iter()
+        .any(|instruction| instruction.base_opcode() == "bra" && instruction.predicate().is_some())
+    {
         return Err("legacy 1D store is not dominated by a rank guard".into());
     }
     Ok(())
@@ -411,8 +418,8 @@ fn verify_legacy_rank_guard(body: &str) -> Result<(), Box<dyn std::error::Error>
 
 fn compare_memory_operations(
     pair: &str,
-    safe: &str,
-    raw: &str,
+    safe: ptx_parse::CallableDefinition<'_, '_>,
+    raw: ptx_parse::CallableDefinition<'_, '_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for operation in ["ld", "st"] {
         let safe_ops = data_memory_operations(safe, operation);
@@ -427,21 +434,26 @@ fn compare_memory_operations(
     Ok(())
 }
 
-fn data_memory_operations(body: &str, operation: &str) -> Vec<String> {
-    let mut operations: Vec<String> = body
-        .lines()
-        .filter_map(|line| data_memory_operation(line, operation))
+fn data_memory_operations(
+    definition: ptx_parse::CallableDefinition<'_, '_>,
+    operation: &str,
+) -> Vec<String> {
+    let mut operations: Vec<String> = definition
+        .instructions()
+        .filter_map(|instruction| data_memory_operation(instruction, operation))
         .collect();
     operations.sort();
     operations
 }
 
-fn data_memory_operation(line: &str, operation: &str) -> Option<String> {
-    let prefix = format!("{operation}.");
-    let mnemonic = line
-        .split_whitespace()
-        .find(|word| word.starts_with(&prefix))?
-        .trim_end_matches([';', ',']);
+fn data_memory_operation(
+    instruction: &ptx_parse::Instruction<'_>,
+    operation: &str,
+) -> Option<String> {
+    if instruction.base_opcode() != operation {
+        return None;
+    }
+    let mnemonic = instruction.head();
     if mnemonic.contains(".param.") || mnemonic.contains(".shared.") || mnemonic.contains(".local.")
     {
         return None;
@@ -449,19 +461,14 @@ fn data_memory_operation(line: &str, operation: &str) -> Option<String> {
     Some(mnemonic.to_owned())
 }
 
-fn entry_body<'a>(ptx: &'a str, name: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
-    let start = ptx
-        .find(&format!(".visible .entry {name}("))
-        .ok_or_else(|| format!("missing PTX entry `{name}`"))?;
-    let rest = &ptx[start..];
-    let open = rest
-        .find('{')
-        .ok_or_else(|| format!("PTX entry `{name}` has no body"))?;
-    let close = rest[open + 1..]
-        .find("\n}")
-        .map(|offset| open + 1 + offset + 2)
-        .ok_or_else(|| format!("PTX entry `{name}` has no closing brace"))?;
-    Ok(&rest[..close])
+fn entry<'document, 'source>(
+    document: &'document ptx_parse::Document<'source>,
+    name: &str,
+) -> Result<ptx_parse::CallableDefinition<'document, 'source>, Box<dyn std::error::Error>> {
+    document
+        .definitions_named(name)
+        .find(|definition| definition.callable().kind() == ptx_parse::CallableKind::Entry)
+        .ok_or_else(|| format!("missing or incomplete PTX entry `{name}`").into())
 }
 
 /// A kernel declaring an exact `block` in its launch contract carries that
@@ -504,38 +511,40 @@ fn verify_u32_coordinates(name: &str, body: &str) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-fn conditional_branches(body: &str) -> usize {
-    body.lines()
-        .filter(|line| line.trim_start().starts_with('@') && is_branch_instruction(line))
+fn conditional_branches(definition: ptx_parse::CallableDefinition<'_, '_>) -> usize {
+    definition
+        .instructions()
+        .filter(|instruction| {
+            instruction.base_opcode() == "bra" && instruction.predicate().is_some()
+        })
         .count()
 }
 
-fn verify_no_calls(name: &str, body: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if body.lines().any(is_call_instruction) {
+fn verify_no_calls(
+    name: &str,
+    definition: ptx_parse::CallableDefinition<'_, '_>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if definition
+        .instructions()
+        .any(|instruction| instruction.base_opcode() == "call")
+    {
         return Err(format!("{name} contains an out-of-line device call").into());
     }
     Ok(())
 }
 
-fn is_call_instruction(line: &str) -> bool {
-    line.split_whitespace()
-        .any(|word| word == "call" || word.starts_with("call."))
-}
-
-fn is_branch_instruction(line: &str) -> bool {
-    line.split_whitespace()
-        .any(|word| word == "bra" || word.starts_with("bra."))
-}
-
-fn verify_no_interior_branches(name: &str, body: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let lines: Vec<&str> = body.lines().collect();
-    let first_load = lines
+fn verify_no_interior_branches(
+    name: &str,
+    definition: ptx_parse::CallableDefinition<'_, '_>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let instructions = definition.instructions().collect::<Vec<_>>();
+    let first_load = instructions
         .iter()
-        .position(|line| data_memory_width(line, "ld").is_some())
+        .position(|instruction| data_memory_width(instruction, "ld").is_some())
         .ok_or_else(|| format!("{name} has no data load"))?;
-    if lines[first_load..]
+    if instructions[first_load..]
         .iter()
-        .any(|line| is_branch_instruction(line))
+        .any(|instruction| instruction.base_opcode() == "bra")
     {
         return Err(format!("{name} repeats a bounds branch inside its proven data range").into());
     }
@@ -544,8 +553,8 @@ fn verify_no_interior_branches(name: &str, body: &str) -> Result<(), Box<dyn std
 
 fn compare_memory_widths(
     pair: &str,
-    safe: &str,
-    raw: &str,
+    safe: ptx_parse::CallableDefinition<'_, '_>,
+    raw: ptx_parse::CallableDefinition<'_, '_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for operation in ["ld", "st"] {
         let safe_widths = data_memory_widths(safe, operation);
@@ -563,21 +572,23 @@ fn compare_memory_widths(
     Ok(())
 }
 
-fn data_memory_widths(body: &str, operation: &str) -> Vec<String> {
-    let mut widths: Vec<String> = body
-        .lines()
-        .filter_map(|line| data_memory_width(line, operation))
+fn data_memory_widths(
+    definition: ptx_parse::CallableDefinition<'_, '_>,
+    operation: &str,
+) -> Vec<String> {
+    let mut widths: Vec<String> = definition
+        .instructions()
+        .filter_map(|instruction| data_memory_width(instruction, operation))
         .collect();
     widths.sort();
     widths
 }
 
-fn data_memory_width(line: &str, operation: &str) -> Option<String> {
-    let prefix = format!("{operation}.");
-    let mnemonic = line
-        .split_whitespace()
-        .find(|word| word.starts_with(&prefix))?
-        .trim_end_matches([';', ',']);
+fn data_memory_width(instruction: &ptx_parse::Instruction<'_>, operation: &str) -> Option<String> {
+    if instruction.base_opcode() != operation {
+        return None;
+    }
+    let mnemonic = instruction.head();
     if mnemonic.contains(".param.") || mnemonic.contains(".shared.") || mnemonic.contains(".local.")
     {
         return None;
@@ -600,9 +611,20 @@ mod tests {
 
     #[test]
     fn ptx_control_flow_parser_handles_suffixes_and_inverted_predicates() {
-        let ptx = "@!%p1 bra L1;\n@%p2 bra.uni L2;\nbra.uni L3;\ncall.uni helper;";
-        assert_eq!(conditional_branches(ptx), 2);
-        assert!(is_branch_instruction("bra.uni L3;"));
-        assert!(is_call_instruction("call.uni helper;"));
+        let ptx = ".visible .entry test() {\n\
+                   @!%p1 bra L1;\n@%p2 bra.uni L2;\nbra.uni L3;\ncall.uni helper;\n}";
+        let document = ptx_parse::Document::parse(ptx).unwrap();
+        let definition = entry(&document, "test").unwrap();
+        assert_eq!(conditional_branches(definition), 2);
+        assert!(
+            definition
+                .instructions()
+                .any(|instruction| instruction.head() == "bra.uni")
+        );
+        assert!(
+            definition
+                .instructions()
+                .any(|instruction| instruction.head() == "call.uni")
+        );
     }
 }

@@ -523,36 +523,29 @@ fn can_execute_tcgen05_ptx(major: i32, minor: i32) -> bool {
 
 fn verify_tcgen05_ptx_contract(ptx: &str) -> Result<(), String> {
     const TARGETS: [&str; 8] = [
-        ".target sm_100a",
-        ".target sm_101a",
-        ".target sm_103a",
-        ".target sm_110a",
-        ".target sm_100f",
-        ".target sm_101f",
-        ".target sm_103f",
-        ".target sm_110f",
+        "sm_100a", "sm_101a", "sm_103a", "sm_110a", "sm_100f", "sm_101f", "sm_103f", "sm_110f",
     ];
     const ENTRIES: [&str; 2] = [
-        ".visible .entry gemm_sol_clc_multicast_4_stage_pipeline(",
-        ".visible .entry gemm_sol_clc_multicast_4_stage_pipeline_large(",
+        "gemm_sol_clc_multicast_4_stage_pipeline",
+        "gemm_sol_clc_multicast_4_stage_pipeline_large",
     ];
 
-    let has_target = ptx.lines().map(str::trim).any(|line| {
-        TARGETS.iter().any(|target| {
-            line == *target
-                || line
-                    .strip_prefix(target)
-                    .is_some_and(|suffix| suffix.starts_with(','))
-        })
+    let document = ptx_parse::Document::parse(ptx).map_err(|error| error.to_string())?;
+    let has_target = document.directives().iter().any(|directive| {
+        directive.name() == ".target"
+            && directive
+                .arguments()
+                .split(',')
+                .next()
+                .is_some_and(|target| TARGETS.contains(&target.trim()))
     });
     if !has_target {
         return Err("missing a supported datacenter tcgen05 target".to_string());
     }
     for entry in ENTRIES {
-        if !ptx
-            .lines()
-            .map(str::trim_start)
-            .any(|line| line.starts_with(entry))
+        if !document
+            .callables_named(entry)
+            .any(|callable| callable.kind() == ptx_parse::CallableKind::Entry)
         {
             return Err(format!("missing expected kernel entry `{entry}`"));
         }

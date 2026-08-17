@@ -76,12 +76,14 @@ fn verify_generated_ptx() {
     let ptx = std::str::from_utf8(ptx)
         .expect("embedded PTX payload is not valid UTF-8")
         .trim_end_matches('\0');
+    let document = ptx_parse::Document::parse(ptx).expect("parse embedded PTX");
 
     for name in specialization_names() {
-        let entry = format!(".visible .entry {name}(");
         assert!(
-            ptx.contains(&entry),
-            "missing cross-crate PTX entry `{name}`"
+            document.callables_named(name).any(|callable| {
+                callable.kind() == ptx_parse::CallableKind::Entry && callable.body_text().is_some()
+            }),
+            "missing or incomplete cross-crate PTX entry `{name}`"
         );
     }
 }

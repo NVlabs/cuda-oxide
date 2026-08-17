@@ -747,6 +747,7 @@ fn max_abs_diff(x: &[f32], y: &[f32]) -> f32 {
 fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("gemm_views.ptx");
     let ptx = std::fs::read_to_string(&path)?;
+    let document = ptx_parse::Document::parse(&ptx)?;
 
     for marker in [
         "__launch_contract_config",
@@ -761,17 +762,18 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let safe_naive = entry_body(&ptx, "sgemm_naive_views")?;
-    let raw_naive = entry_body(&ptx, "sgemm_naive_raw")?;
-    let safe_tiled = entry_body(&ptx, "sgemm_tiled_views")?;
-    let raw_tiled = entry_body(&ptx, "sgemm_tiled_raw")?;
+    let safe_naive = entry(&document, "sgemm_naive_views")?;
+    let raw_naive = entry(&document, "sgemm_naive_raw")?;
+    let safe_tiled = entry(&document, "sgemm_tiled_views")?;
+    let raw_tiled = entry(&document, "sgemm_tiled_raw")?;
 
-    for (name, body) in [
+    for (name, definition) in [
         ("sgemm_naive_views", safe_naive),
         ("sgemm_naive_raw", raw_naive),
         ("sgemm_tiled_views", safe_tiled),
         ("sgemm_tiled_raw", raw_tiled),
     ] {
+        let body = definition.text();
         // These kernels declare `block = (16, 16, 1)`, so the exact shape
         // reaches the device compiler as `.reqntid` and the driver rejects any
         // other block on any axis. A thread maximum cannot express this shape:
@@ -786,10 +788,10 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
                 format!("{name} declares both .maxntid and .reqntid, which ptxas rejects").into(),
             );
         }
-        verify_no_calls(name, body)?;
+        verify_no_calls(name, definition)?;
         // Every bounds fact is proven through sentinel scalar checks; nothing
         // in these kernels may lower to a panic trap.
-        let traps = trap_count(body);
+        let traps = trap_count(definition);
         if traps != 0 {
             return Err(format!("{name} contains {traps} trap instructions").into());
         }
@@ -813,10 +815,11 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
 
     // The tiled pair must actually stage through shared memory and keep the
     // same global-memory traffic as the raw twin.
-    for (name, body) in [
+    for (name, definition) in [
         ("sgemm_tiled_views", safe_tiled),
         ("sgemm_tiled_raw", raw_tiled),
     ] {
+        let body = definition.text();
         for operation in ["ld.shared", "st.shared"] {
             if !body.contains(operation) {
                 return Err(format!("{name} has no {operation} traffic").into());
@@ -832,48 +835,40 @@ fn verify_ptx() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn entry_body<'a>(ptx: &'a str, name: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
-    let start = ptx
-        .find(&format!(".visible .entry {name}("))
-        .ok_or_else(|| format!("missing PTX entry `{name}`"))?;
-    let rest = &ptx[start..];
-    let open = rest
-        .find('{')
-        .ok_or_else(|| format!("PTX entry `{name}` has no body"))?;
-    let close = rest[open + 1..]
-        .find("\n}")
-        .map(|offset| open + 1 + offset + 2)
-        .ok_or_else(|| format!("PTX entry `{name}` has no closing brace"))?;
-    Ok(&rest[..close])
+fn entry<'document, 'source>(
+    document: &'document ptx_parse::Document<'source>,
+    name: &str,
+) -> Result<ptx_parse::CallableDefinition<'document, 'source>, Box<dyn std::error::Error>> {
+    document
+        .definitions_named(name)
+        .find(|definition| definition.callable().kind() == ptx_parse::CallableKind::Entry)
+        .ok_or_else(|| format!("missing or incomplete PTX entry `{name}`").into())
 }
 
-fn trap_count(body: &str) -> usize {
-    body.lines()
-        .filter(|line| {
-            line.split_whitespace()
-                .any(|word| word == "trap;" || word == "trap")
+fn trap_count(definition: ptx_parse::CallableDefinition<'_, '_>) -> usize {
+    definition
+        .instructions()
+        .filter(|instruction| instruction.base_opcode() == "trap")
+        .count()
+}
+
+fn conditional_branches(definition: ptx_parse::CallableDefinition<'_, '_>) -> usize {
+    definition
+        .instructions()
+        .filter(|instruction| {
+            instruction.base_opcode() == "bra" && instruction.predicate().is_some()
         })
         .count()
 }
 
-fn conditional_branches(body: &str) -> usize {
-    body.lines()
-        .filter(|line| line.trim_start().starts_with('@') && is_branch_instruction(line))
-        .count()
-}
-
-fn is_branch_instruction(line: &str) -> bool {
-    line.split_whitespace()
-        .any(|word| word == "bra" || word.starts_with("bra."))
-}
-
-fn is_call_instruction(line: &str) -> bool {
-    line.split_whitespace()
-        .any(|word| word == "call" || word.starts_with("call."))
-}
-
-fn verify_no_calls(name: &str, body: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if body.lines().any(is_call_instruction) {
+fn verify_no_calls(
+    name: &str,
+    definition: ptx_parse::CallableDefinition<'_, '_>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if definition
+        .instructions()
+        .any(|instruction| instruction.base_opcode() == "call")
+    {
         return Err(format!("{name} contains an out-of-line device call").into());
     }
     Ok(())
@@ -881,8 +876,8 @@ fn verify_no_calls(name: &str, body: &str) -> Result<(), Box<dyn std::error::Err
 
 fn compare_memory_operations(
     pair: &str,
-    safe: &str,
-    raw: &str,
+    safe: ptx_parse::CallableDefinition<'_, '_>,
+    raw: ptx_parse::CallableDefinition<'_, '_>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for operation in ["ld", "st"] {
         let safe_ops = data_memory_operations(safe, operation);
@@ -900,21 +895,26 @@ fn compare_memory_operations(
     Ok(())
 }
 
-fn data_memory_operations(body: &str, operation: &str) -> Vec<String> {
-    let mut operations: Vec<String> = body
-        .lines()
-        .filter_map(|line| data_memory_operation(line, operation))
+fn data_memory_operations(
+    definition: ptx_parse::CallableDefinition<'_, '_>,
+    operation: &str,
+) -> Vec<String> {
+    let mut operations: Vec<String> = definition
+        .instructions()
+        .filter_map(|instruction| data_memory_operation(instruction, operation))
         .collect();
     operations.sort();
     operations
 }
 
-fn data_memory_operation(line: &str, operation: &str) -> Option<String> {
-    let prefix = format!("{operation}.");
-    let mnemonic = line
-        .split_whitespace()
-        .find(|word| word.starts_with(&prefix))?
-        .trim_end_matches([';', ',']);
+fn data_memory_operation(
+    instruction: &ptx_parse::Instruction<'_>,
+    operation: &str,
+) -> Option<String> {
+    if instruction.base_opcode() != operation {
+        return None;
+    }
+    let mnemonic = instruction.head();
     if mnemonic.contains(".param.") || mnemonic.contains(".shared.") || mnemonic.contains(".local.")
     {
         return None;
@@ -928,17 +928,30 @@ mod tests {
 
     #[test]
     fn ptx_parser_counts_traps_branches_and_data_operations() {
-        let body = "@%p1 bra $L__BB0_2;\n\
+        let ptx = ".visible .entry test() {\n\
+                    @%p1 bra $L__BB0_2;\n\
                     ld.global.f32 %f1, [%rd1];\n\
                     ld.shared.f32 %f2, [%r1];\n\
                     st.global.f32 [%rd2], %f3;\n\
                     trap;\n\
                     @!%p2 bra.uni $L__BB0_3;\n\
-                    call.uni helper;";
-        assert_eq!(trap_count(body), 1);
-        assert_eq!(conditional_branches(body), 2);
-        assert!(body.lines().any(is_call_instruction));
-        assert_eq!(data_memory_operations(body, "ld"), vec!["ld.global.f32"]);
-        assert_eq!(data_memory_operations(body, "st"), vec!["st.global.f32"]);
+                    call.uni helper;\n}";
+        let document = ptx_parse::Document::parse(ptx).unwrap();
+        let definition = entry(&document, "test").unwrap();
+        assert_eq!(trap_count(definition), 1);
+        assert_eq!(conditional_branches(definition), 2);
+        assert!(
+            definition
+                .instructions()
+                .any(|instruction| instruction.base_opcode() == "call")
+        );
+        assert_eq!(
+            data_memory_operations(definition, "ld"),
+            vec!["ld.global.f32"]
+        );
+        assert_eq!(
+            data_memory_operations(definition, "st"),
+            vec!["st.global.f32"]
+        );
     }
 }

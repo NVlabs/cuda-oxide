@@ -331,6 +331,7 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
     let ptx_path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("cuda_module_contract.ptx");
     let ptx = std::fs::read_to_string(&ptx_path)?;
+    let document = ptx_parse::Document::parse(&ptx)?;
     let aligned_symbol = ".extern .shared .align 128 .b8 __dynamic_smem_aligned_dynamic_shared[];";
     if !ptx.contains(aligned_symbol) {
         return Err(format!(
@@ -375,12 +376,13 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
         ("helper_contract_256", ".reqntid 32, 1, 1"),
         ("explicit_aligned_u32", ".reqntid 32, 1, 1"),
     ] {
-        verify_entry_geometry(&ptx, &format!(".visible .entry {entry}("), entry, geometry)?;
+        verify_entry_geometry(&document, entry, false, entry, geometry)?;
     }
 
     verify_entry_geometry(
-        &ptx,
-        ".visible .entry generic_aligned_TID_",
+        &document,
+        "generic_aligned_TID_",
+        true,
         "generic_aligned specialization",
         ".reqntid 64, 1, 1",
     )?;
@@ -398,19 +400,26 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
 /// maximum. Every kernel here declares `#[launch_bounds]`, so this is the case
 /// that would regress if the exporter stopped suppressing one of them.
 fn verify_entry_geometry(
-    ptx: &str,
-    anchor: &str,
+    document: &ptx_parse::Document<'_>,
+    symbol: &str,
+    match_prefix: bool,
     entry: &str,
     expected: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let start = ptx
-        .find(anchor)
-        .ok_or_else(|| format!("missing PTX entry {entry}"))?;
-    let rest = &ptx[start..];
-    let end = rest[1..]
-        .find(".visible .entry ")
-        .map_or(rest.len(), |offset| offset + 1);
-    let body = &rest[..end];
+    let definition = document
+        .callables()
+        .iter()
+        .find(|callable| {
+            callable.body_text().is_some()
+                && callable.kind() == ptx_parse::CallableKind::Entry
+                && if match_prefix {
+                    callable.name().starts_with(symbol)
+                } else {
+                    callable.name() == symbol
+                }
+        })
+        .ok_or_else(|| format!("missing or incomplete PTX entry {entry}"))?;
+    let body = definition.text();
 
     if !body.contains(expected) {
         return Err(format!("PTX entry {entry} lost its launch geometry `{expected}`").into());

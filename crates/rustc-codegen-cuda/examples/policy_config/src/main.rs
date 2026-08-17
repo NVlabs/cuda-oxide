@@ -98,16 +98,12 @@ fn specialization_names() -> [&'static str; 2] {
     ]
 }
 
-fn entry_body<'a>(ptx: &'a str, name: &str) -> &'a str {
-    let start_marker = format!(".visible .entry {name}(");
-    let start = ptx
-        .find(&start_marker)
-        .unwrap_or_else(|| panic!("missing PTX entry `{name}`"));
-    let rest = &ptx[start..];
-    let end = rest
-        .find("\n}")
-        .unwrap_or_else(|| panic!("unterminated PTX entry `{name}`"));
-    &rest[..end]
+fn entry_body<'source>(document: &ptx_parse::Document<'source>, name: &str) -> &'source str {
+    document
+        .callables_named(name)
+        .find(|callable| callable.kind() == ptx_parse::CallableKind::Entry)
+        .and_then(|callable| callable.body_text().map(|_| callable.text()))
+        .unwrap_or_else(|| panic!("missing or incomplete PTX entry `{name}`"))
 }
 
 fn is_generic_entry_name(name: &str) -> bool {
@@ -185,6 +181,7 @@ fn verify_generated_ptx() {
         .expect("read policy_config.ll; run `cargo oxide build policy_config` first");
     let ptx = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/policy_config.ptx"))
         .expect("read policy_config.ptx; run `cargo oxide build policy_config` first");
+    let document = ptx_parse::Document::parse(&ptx).expect("parse generated PTX");
     for marker in ["__launch_bounds_config", "__unroll_config"] {
         assert!(
             !ptx.contains(marker),
@@ -217,8 +214,8 @@ fn verify_generated_ptx() {
     verify_raw_unroll_factor::<SmallTilePolicy>(&llvm_ir);
     verify_raw_unroll_factor::<WideTilePolicy>(&llvm_ir);
 
-    let small = entry_body(&ptx, small_name);
-    let wide = entry_body(&ptx, wide_name);
+    let small = entry_body(&document, small_name);
+    let wide = entry_body(&document, wide_name);
     assert!(small.contains(".maxntid 64, 1, 1"), "{small}");
     assert!(small.contains(".minnctapersm 2"), "{small}");
     assert!(wide.contains(".maxntid 256, 1, 1"), "{wide}");

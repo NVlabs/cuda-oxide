@@ -235,12 +235,13 @@ fn main() {
     }
 
     if let Some(ptx) = &ptx {
+        let document = ptx_parse::Document::parse(ptx).expect("parse embedded PTX");
         println!(
             "{:<11} {:<14} {:>4} {:>5}  {:<22} vectorized",
             "rust", "cuda", "size", "align", "ptx load"
         );
         for r in &rows {
-            let body = kernel_body(ptx, r.kernel);
+            let body = kernel_body(&document, r.kernel);
             let load = first_mem_op(body);
             let vectorized =
                 load.contains(".v2.") || load.contains(".v4.") || load.contains(".v8.");
@@ -267,7 +268,7 @@ fn main() {
         // The in-kernel `as_vectors::<F32x4>` view over a flat `&[f32]` parameter
         // must reach the same 128-bit transactions as the over-aligned parameter
         // types above: this is the checked-view path the `vector` module ships.
-        let view_body = kernel_body(ptx, "f32x4_view_copy");
+        let view_body = kernel_body(&document, "f32x4_view_copy");
         for dir in ["ld", "st"] {
             match find_128bit_global(view_body, dir) {
                 Some(line) => println!("f32x4_view_copy: {line}"),
@@ -335,14 +336,13 @@ fn embedded_ptx_text() -> Option<String> {
     )
 }
 
-/// PTX text of a `.visible .entry <name>` kernel, header to closing `}`.
-fn kernel_body<'a>(ptx: &'a str, name: &str) -> &'a str {
-    let start = ptx
-        .find(&format!(".visible .entry {name}("))
-        .unwrap_or_else(|| panic!("kernel `{name}` not found in PTX"));
-    let body = &ptx[start..];
-    let end = body.find("\n}").map_or(body.len(), |e| e + 2);
-    &body[..end]
+/// PTX text of a `.entry <name>` kernel, header through closing brace.
+fn kernel_body<'source>(document: &ptx_parse::Document<'source>, name: &str) -> &'source str {
+    document
+        .callables_named(name)
+        .find(|callable| callable.kind() == ptx_parse::CallableKind::Entry)
+        .and_then(|callable| callable.body_text().map(|_| callable.text()))
+        .unwrap_or_else(|| panic!("kernel `{name}` not found or incomplete in PTX"))
 }
 
 /// First 128-bit vector global memory op of direction `dir` (`ld`/`st`) in a

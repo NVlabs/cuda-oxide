@@ -79,24 +79,23 @@ mod kernels {
     }
 }
 
-fn entry_header<'a>(ptx: &'a str, name: &str) -> Result<&'a str, Box<dyn std::error::Error>> {
-    let marker = format!(".visible .entry {name}(");
-    let start = ptx
-        .find(&marker)
-        .ok_or_else(|| format!("missing PTX entry `{name}`"))?;
-    let rest = &ptx[start..];
-    let end = rest
-        .find('{')
-        .ok_or_else(|| format!("unterminated PTX entry header `{name}`"))?;
-    Ok(&rest[..end])
+fn entry_header<'source>(
+    document: &ptx_parse::Document<'source>,
+    name: &str,
+) -> Result<&'source str, Box<dyn std::error::Error>> {
+    document
+        .callables_named(name)
+        .find(|callable| callable.kind() == ptx_parse::CallableKind::Entry)
+        .and_then(ptx_parse::Callable::definition_header_text)
+        .ok_or_else(|| format!("missing or incomplete PTX entry `{name}`").into())
 }
 
 fn require_scalar_header(
-    ptx: &str,
+    document: &ptx_parse::Document<'_>,
     name: &str,
     scalar_token: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let header = entry_header(ptx, name)?;
+    let header = entry_header(document, name)?;
     if header.contains(".b8") {
         return Err(
             format!("kernel `{name}` still exposes an aggregate PTX parameter:\n{header}").into(),
@@ -114,14 +113,15 @@ fn require_scalar_header(
 fn verify_generated_ptx() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("repr_transparent_abi.ptx");
     let ptx = std::fs::read_to_string(&path)?;
+    let document = ptx_parse::Document::parse(&ptx)?;
 
-    require_scalar_header(&ptx, "scalar", ".param .u32")?;
-    require_scalar_header(&ptx, "pointer", ".param .u64")?;
-    require_scalar_header(&ptx, "marked", ".param .u32")?;
-    require_scalar_header(&ptx, "nested", ".param .u32")?;
-    require_scalar_header(&ptx, "uniform", ".param .u32")?;
+    require_scalar_header(&document, "scalar", ".param .u32")?;
+    require_scalar_header(&document, "pointer", ".param .u64")?;
+    require_scalar_header(&document, "marked", ".param .u32")?;
+    require_scalar_header(&document, "nested", ".param .u32")?;
+    require_scalar_header(&document, "uniform", ".param .u32")?;
 
-    let ordinary = entry_header(&ptx, "ordinary")?;
+    let ordinary = entry_header(&document, "ordinary")?;
     if !ordinary.contains(".b8") {
         return Err(format!(
             "ordinary one-field struct was incorrectly scalarized at the kernel boundary:\n{ordinary}"
