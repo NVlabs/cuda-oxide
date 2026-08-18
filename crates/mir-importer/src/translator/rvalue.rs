@@ -11651,13 +11651,15 @@ fn translate_constant_value_from_alloc(
     if is_enum {
         let size = rust_type_layout_size(*rust_ty, loc.clone())?;
         if alloc_has_provenance_in_range(alloc, absolute_byte_offset, size) {
-            return input_err!(
+            return translate_enum_constant_from_alloc(
+                ctx,
+                alloc,
+                absolute_byte_offset,
+                rust_ty,
+                ty_ptr,
+                block_ptr,
+                prev_op,
                 loc,
-                TranslationErr::unsupported(
-                    "Nested enum constant contains pointer relocation(s); cuda-oxide cannot yet \
-                     preserve nested enum pointer provenance"
-                        .to_string()
-                )
             );
         }
     }

@@ -74,9 +74,9 @@ relocations in device-global union initializers remain rejected.
 Enum constants preserve payload relocations to device statics, including
 non-zero byte addends. This includes niche-encoded `Option<&T>` and
 direct-tagged enum layouts, both for direct thin-reference payloads and for
-pointers nested inside tuple, struct, or array payload fields. Anonymous
-promoted allocations remain unsupported, as does a relocation-carrying enum
-constant nested inside another constant's field.
+pointers nested inside tuple, struct, or array payload fields. Relocation-carrying
+enum constants can also be nested inside tuple, struct, and array constants.
+Anonymous promoted allocations remain unsupported.
 
 ## Compiler: Closures
 
