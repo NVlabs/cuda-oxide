@@ -326,7 +326,7 @@ cargo oxide pipeline device_ffi_test --emit-nvvm-ir --arch sm_120
 
 ### `cargo oxide inspect [example]`
 
-Builds the example or project and prints the generated PTX to stdout. Where `pipeline` shows every stage verbosely, this prints just the finished device code, which makes it the quick way to diff codegen across a change. Takes `--arch`, `--features`, `--materialize-cubin`, `--no-fmad`, `--lineinfo` and `-v`. The example name is required inside the workspace and optional for a standalone project.
+Builds the example or project and prints the generated PTX to stdout. Where `pipeline` shows every stage verbosely, this prints just the finished device code, which makes it the quick way to diff codegen across a change. Takes `--arch`, `--features`, `--no-fmad`, `--lineinfo`, `--device-debug`, `--unchecked-indexing` and `-v`. The example name is required inside the workspace and optional for a standalone project.
 
 ### `cargo oxide debug <example>`
 
