@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Verify README.md's Crate Overview still lists every workspace member.
+# Verify both crate inventories still list every workspace member: README.md's
+# Crate Overview and the book's Crate Map.
 #
 # The overview is the only map of the tree a newcomer gets, and a crate absent
 # from it is invisible: nothing else in the repo enumerates the members for a
@@ -20,6 +21,13 @@
 # the question is which crates the workspace declares, which is exactly what
 # that list says, and reading it needs no cargo, no lockfile and no network.
 #
+# The book's Crate Map is the second inventory and it claims completeness in
+# so many words -- "cuda-oxide is split into focused crates. Here is every one
+# and its role" -- while sitting outside this guard's reach.  It listed 15 of 28
+# when #970 found it, missing `dialect-iket` and `iket-lower` among eleven
+# others: the same two crates whose absence from README.md is why this script
+# exists.  One guard, both tables, so a new member cannot be absent from either.
+#
 # Run this after adding or removing a workspace member.
 set -euo pipefail
 
@@ -29,6 +37,7 @@ cd "$(dirname "$0")/.."
 
 MANIFEST=Cargo.toml
 README=README.md
+BOOK_MAP=cuda-oxide-book/compiler/architecture-overview.md
 
 if ! command -v python3 >/dev/null 2>&1; then
     echo "error: python3 is required to verify the crate inventory" >&2
@@ -38,12 +47,13 @@ fi
 
 test -s "${MANIFEST}"
 test -s "${README}"
+test -s "${BOOK_MAP}"
 
-python3 - "${MANIFEST}" "${README}" <<'PY'
+python3 - "${MANIFEST}" "${README}" "${BOOK_MAP}" <<'PY'
 import re
 import sys
 
-manifest_path, readme_path = sys.argv[1], sys.argv[2]
+manifest_path, readme_path, book_map_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
 
 def read(path):
@@ -53,6 +63,7 @@ def read(path):
 
 manifest = read(manifest_path)
 readme = read(readme_path)
+book_map = read(book_map_path)
 
 members_block = re.search(r"^members\s*=\s*\[(.*?)\]", manifest, re.M | re.S)
 if not members_block:
@@ -82,43 +93,66 @@ if len(members) < 20:
         f"parse self-test failed: read {len(members)} members from {manifest_path}"
     )
 
-# Only the Crate Overview section counts.  A crate named in passing elsewhere in
-# the README -- a command line, the pipeline diagram, a prose aside -- is not an
+# Only a section that is an inventory counts.  A crate named in passing
+# elsewhere -- a command line, the pipeline diagram, a prose aside -- is not an
 # inventory row, and accepting one would let a crate stay unlisted forever.
-overview = re.search(r"^## Crate Overview$(.*?)^## ", readme, re.M | re.S)
-if not overview:
-    sys.exit(
-        f"parse self-test failed: no `## Crate Overview` section in {readme_path}; "
-        "it was renamed or removed, so fix this script"
+def rows_in_section(text, path, heading, stop, label):
+    """First-column backticked names of every table row under `heading`."""
+    section = re.search(
+        rf"^## {re.escape(heading)}$(.*?)^{stop}", text, re.M | re.S
     )
+    if not section:
+        sys.exit(
+            f"parse self-test failed: no `## {heading}` section in {path}; "
+            "it was renamed or removed, so fix this script"
+        )
+    found = set(re.findall(r"^\|\s*`([^`]+)`\s*\|", section.group(1), re.M))
+    if len(found) < 20:
+        sys.exit(
+            f"parse self-test failed: read {len(found)} crate rows from the "
+            f"{label} in {path}"
+        )
+    return found
 
-# First column of every table row in that section.
-listed = set(re.findall(r"^\|\s*`([^`]+)`\s*\|", overview.group(1), re.M))
-if len(listed) < 20:
-    sys.exit(
-        f"parse self-test failed: read {len(listed)} crate rows from the "
-        f"Crate Overview in {readme_path}"
-    )
 
-missing = [member for member in members if member not in listed]
+inventories = [
+    (
+        readme_path,
+        rows_in_section(readme, readme_path, "Crate Overview", "## ", "Crate Overview"),
+        "Crate Overview",
+        "Add it to the table that fits (User-Facing, Compiler, or Build\n"
+        "Tooling) and copy the column layout from a neighbouring row.",
+    ),
+    (
+        book_map_path,
+        rows_in_section(
+            book_map, book_map_path, "Crate Map", "### ", "Crate Map"
+        ),
+        "Crate Map",
+        'That table says "Here is every one and its role", so a member absent\n'
+        "from it makes the page wrong as well as short.  Copy the role text\n"
+        "from README.md's Crate Overview so the two inventories agree.",
+    ),
+]
 
-if missing:
-    print(
-        f"error: {readme_path}'s Crate Overview has no row for:",
-        file=sys.stderr,
-    )
+failed = False
+for path, listed, label, remedy in inventories:
+    missing = [member for member in members if member not in listed]
+    if not missing:
+        continue
+    failed = True
+    print(f"error: {path}'s {label} has no row for:", file=sys.stderr)
     for member in missing:
         print(f"  {member}", file=sys.stderr)
     print(file=sys.stderr)
-    print(
-        "Every workspace member needs a row. Add it to the table that fits "
-        "(User-Facing,\nCompiler, or Build Tooling) and copy the column layout "
-        "from a neighbouring row.",
-        file=sys.stderr,
-    )
+    print(remedy, file=sys.stderr)
+    print(file=sys.stderr)
+
+if failed:
     sys.exit(1)
 
 print(
-    f"OK: {readme_path}'s Crate Overview lists all {len(members)} workspace members."
+    f"OK: all {len(members)} workspace members are listed in "
+    f"{readme_path}'s Crate Overview and {book_map_path}'s Crate Map."
 )
 PY
