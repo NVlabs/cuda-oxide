@@ -12,8 +12,8 @@ which later optimisation could then fold into a single path.
 
 ## What the example does
 
-`src/main.rs` contains **14 kernel variants** that bisect the trigger
-conditions:
+`src/main.rs` contains **32 kernels in four groups**. The first group's
+**14 variants** bisect the trigger conditions:
 
 | #  | Variant                              | Purpose                                        |
 |:---|:-------------------------------------|:-----------------------------------------------|
