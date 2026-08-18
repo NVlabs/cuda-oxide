@@ -457,9 +457,15 @@ let rank = cluster::block_rank();        // This block's rank in the cluster
 let size = cluster::cluster_size();      // Number of blocks in cluster
 cluster::cluster_sync();                 // Barrier across all cluster blocks
 
-// Distributed Shared Memory
-let remote_ptr = cluster::map_shared_rank(local_ptr, target_rank);
-let val = cluster::dsmem_read_u32(remote_ptr);
+// Distributed Shared Memory. Both are `unsafe fn`, and both take the *local*
+// pointer plus the target rank -- they do the rank mapping themselves, so a
+// pointer already returned by `map_shared_rank` must not be passed to
+// `dsmem_read_u32`.
+let val = unsafe { cluster::dsmem_read_u32(local_ptr, target_rank) };
+
+// `map_shared_rank` is for reading through the mapped pointer yourself.
+let remote_ptr = unsafe { cluster::map_shared_rank(local_ptr, target_rank) };
+let same_val = unsafe { *remote_ptr };
 ```
 
 ---
