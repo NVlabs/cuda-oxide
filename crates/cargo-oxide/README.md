@@ -324,6 +324,10 @@ cargo oxide pipeline vecadd
 cargo oxide pipeline device_ffi_test --emit-nvvm-ir --arch sm_120
 ```
 
+### `cargo oxide inspect [example]`
+
+Builds the example or project and prints the generated PTX to stdout. Where `pipeline` shows every stage verbosely, this prints just the finished device code, which makes it the quick way to diff codegen across a change. Takes `--arch`, `--features`, `--materialize-cubin`, `--no-fmad`, `--lineinfo` and `-v`. The example name is required inside the workspace and optional for a standalone project.
+
 ### `cargo oxide debug <example>`
 
 Builds with debug info (`-C debuginfo=2`) and launches cuda-gdb. Supports
@@ -343,6 +347,10 @@ cargo oxide new my_kernel
 cd my_kernel
 cargo oxide run
 ```
+
+### `cargo oxide clean`
+
+Removes project-local build outputs and the generated cuda-oxide artifacts beside them. This is the `cargo clean` equivalent that also knows about the device-side files the backend writes, so a stale `.ptx`, `.ll` or embedded artifact cannot survive into the next build.
 
 ### `cargo oxide fmt [--check]`
 
@@ -434,6 +442,7 @@ crates/cargo-oxide/
 └── src/
     ├── main.rs       # CLI definitions (clap) + dispatch
     ├── backend.rs    # Backend discovery + build logic
+    ├── artifact_identity.rs  # Embedded artifact identity/provenance
     └── commands.rs   # All command implementations
 ```
 
