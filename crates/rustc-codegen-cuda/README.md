@@ -88,6 +88,28 @@ These are set automatically by `cargo oxide`. For manual invocations, all four a
 | `CUDA_OXIDE_SHOW_RUSTC_MIR`          | Dump raw rustc MIR                          |
 | `CUDA_OXIDE_EMIT_NVVM_IR`            | Emit NVVM IR for libNVVM                    |
 | `CUDA_OXIDE_DEVICE_CODEGEN_CRATE`    | Comma-separated device owner crate filter   |
+| `CUDA_OXIDE_DEVICE_ARCH`             | Detected GPU arch, used as a floor hint     |
+| `CUDA_OXIDE_DEBUG`                   | Device DWARF level override                 |
+| `CUDA_OXIDE_NO_FMA`                  | Disable FMA contraction (presence only)     |
+| `CUDA_OXIDE_NO_SPILL_WARN`           | Silence the register-spill warning          |
+
+`CUDA_OXIDE_DEBUG` overrides the DWARF level rustc's `-C debuginfo` would
+imply: `0`/`off`/`none`, `1`/`line`/`lines`/`line-tables`/`line-tables-only`,
+or `2`/`full` (case-insensitive). Any other value is ignored and the rustc
+level applies. `cargo oxide --device-debug` sets it, and the alias table lives
+in `cuda-artifact-finalizer` so the build policy and the emitted DWARF cannot
+disagree about what a value means.
+
+`CUDA_OXIDE_DEVICE_ARCH` is a hint rather than an override: `cargo oxide`
+sets it to the detected GPU's arch only when `--arch` was *not* passed, and
+the backend raises the target above it when a kernel needs more (tcgen05 or
+cta_group TMA multicast need `sm_100a`, which a consumer `sm_120` lacks). An
+explicit `--arch` goes to `CUDA_OXIDE_TARGET` instead and wins.
+
+`CUDA_OXIDE_NO_FMA` and `CUDA_OXIDE_NO_SPILL_WARN` are presence-only: any
+value, including the empty string, enables them. The first backs
+`cargo oxide --no-fmad`; the second suppresses the post-`ptxas` register-spill
+warning, which only fires when a native cubin is materialized.
 
 `cargo oxide --arch <sm_XX>` sets `CUDA_OXIDE_TARGET`. When it is unset,
 PTX output auto-detects the required target from generated LLVM IR.
