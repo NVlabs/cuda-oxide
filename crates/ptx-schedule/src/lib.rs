@@ -1,0 +1,541 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+//! Structural PTX schedule analysis and deterministic perturbation.
+//!
+//! The analyzer owns neither CUDA execution nor a fuzzer input generator. It
+//! turns a PTX module into stable schedule-sensitive sites and can then apply
+//! a seeded perturbation to those sites. Static site discovery, mutation, and
+//! triage therefore use the same source model.
+
+use dialect_ptx::cfg::ControlFlow;
+use ptx_parse::{Document, EditScript, Instruction, ParseError};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::ops::Range;
+use thiserror::Error;
+
+pub mod campaign;
+
+pub const DEFAULT_MAX_SLEEP_NS: u32 = 64_000;
+
+#[derive(Debug, Error)]
+pub enum ScheduleError {
+    #[error("could not parse PTX: {0}")]
+    Parse(#[from] ParseError),
+    #[error("could not recover PTX control flow: {0}")]
+    ControlFlow(#[from] dialect_ptx::cfg::CfgError),
+    #[error("PTX edit failed: {0}")]
+    Edit(#[from] ptx_parse::EditError),
+    #[error("intensity must be finite and non-negative, got {0}")]
+    InvalidIntensity(f64),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum SiteKind {
+    Atomic,
+    Reduction,
+    Barrier,
+    Fence,
+    OrderedMemory,
+    WarpCollective,
+    Backedge,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ScheduleSite {
+    pub ordinal: usize,
+    pub callable: String,
+    pub kind: SiteKind,
+    pub span: Range<usize>,
+    pub block: Option<usize>,
+    pub head: String,
+    pub text: String,
+    pub predicate: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ScheduleAnalysis {
+    sites: Vec<ScheduleSite>,
+}
+
+impl ScheduleAnalysis {
+    pub fn sites(&self) -> &[ScheduleSite] {
+        &self.sites
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InjectionDecision {
+    pub site: ScheduleSite,
+    pub before_ns: u32,
+    pub after_ns: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RewriteReport {
+    pub seed: u64,
+    pub intensity: f64,
+    pub sites_total: usize,
+    pub sites_injected: usize,
+    pub injected_ns_per_visit: u64,
+    pub decisions: Vec<InjectionDecision>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Rewrite {
+    pub ptx: String,
+    pub report: RewriteReport,
+}
+
+#[derive(Clone, Debug)]
+pub struct InjectionOptions {
+    pub seed: u64,
+    pub intensity: f64,
+    pub max_sleep_ns: u32,
+    pub focus: Option<String>,
+}
+
+impl Default for InjectionOptions {
+    fn default() -> Self {
+        Self {
+            seed: 0,
+            intensity: 1.0,
+            max_sleep_ns: DEFAULT_MAX_SLEEP_NS,
+            focus: None,
+        }
+    }
+}
+
+/// Analyze all executable callables and return schedule-sensitive sites in
+/// source order. Control-flow recovery is fail-closed: malformed branches
+/// are reported instead of being silently treated as non-loops.
+pub fn analyze_ptx(source: &str) -> Result<ScheduleAnalysis, ScheduleError> {
+    let document = Document::parse(source)?;
+    let control_flow = ControlFlow::analyze(&document)?;
+    let mut sites = Vec::new();
+    let mut seen = HashMap::<usize, usize>::new();
+
+    for instruction in document.instructions() {
+        let Some(kind) = classify_instruction(instruction) else {
+            continue;
+        };
+        let callable = callable_name(&document, instruction.span().start);
+        add_site(&mut sites, &mut seen, instruction, callable, kind, None);
+    }
+
+    // The CFG is source ordered, so an edge to the same or an earlier block
+    // is a conservative intraprocedural back-edge. This catches spin loops
+    // even when their labels, predicates, or branch spelling are unusual.
+    for callable_cfg in control_flow.callables() {
+        for block in callable_cfg.blocks() {
+            let Some(&statement) = block.instructions().last() else {
+                continue;
+            };
+            let has_backedge = block
+                .successors()
+                .iter()
+                .any(|edge| edge.block().index() <= block.id().index());
+            if !has_backedge {
+                continue;
+            }
+            let Some(instruction) = document.instruction_for_statement(statement) else {
+                continue;
+            };
+            if !matches!(instruction.base_opcode(), "bra" | "brx") {
+                continue;
+            }
+            add_site(
+                &mut sites,
+                &mut seen,
+                instruction,
+                callable_cfg.name().to_string(),
+                SiteKind::Backedge,
+                Some(block.id().index()),
+            );
+        }
+    }
+
+    sites.sort_by_key(|site| site.span.start);
+    for (ordinal, site) in sites.iter_mut().enumerate() {
+        site.ordinal = ordinal;
+    }
+    Ok(ScheduleAnalysis { sites })
+}
+
+/// Analyze and rewrite a PTX module with deterministic per-site sleeps.
+pub fn perturb_ptx(source: &str, options: &InjectionOptions) -> Result<Rewrite, ScheduleError> {
+    if !options.intensity.is_finite() || options.intensity < 0.0 {
+        return Err(ScheduleError::InvalidIntensity(options.intensity));
+    }
+    let analysis = analyze_ptx(source)?;
+    let intensity = options.intensity;
+    let max_sleep_ns = options.max_sleep_ns.max(1);
+    let mut rng = SplitMix64::new(options.seed);
+    let mut decisions = Vec::with_capacity(analysis.sites.len());
+    let mut edits = EditScript::new();
+    let mut injected_sites = 0;
+    let mut total_ns = 0u64;
+
+    for site in &analysis.sites {
+        let (before_point, after_point) = injection_points(source, site);
+        let placement = rng.unit();
+        let hit = options
+            .focus
+            .as_deref()
+            .is_some_and(|focus| site.head.contains(focus) || site.text.contains(focus));
+        let selected = if intensity == 0.0 {
+            false
+        } else if options.focus.is_some() {
+            rng.unit()
+                < if hit {
+                    (0.95 * intensity).min(1.0)
+                } else {
+                    (0.15 * intensity).min(1.0)
+                }
+        } else {
+            rng.unit() < (0.75 * intensity).min(1.0)
+        };
+
+        let (before_ns, after_ns) = if !selected {
+            (0, 0)
+        } else if site.kind == SiteKind::Backedge {
+            // A delay after a branch is unreachable. Bias loop perturbations
+            // before the back-edge so the scheduler observes the delay.
+            (draw_delay(&mut rng, intensity, max_sleep_ns), 0)
+        } else if hit {
+            (0, draw_long(&mut rng, intensity, max_sleep_ns))
+        } else if placement < 0.4 {
+            (draw_delay(&mut rng, intensity, max_sleep_ns), 0)
+        } else if placement < 0.8 {
+            (0, draw_delay(&mut rng, intensity, max_sleep_ns))
+        } else {
+            (
+                draw_delay(&mut rng, intensity, max_sleep_ns),
+                draw_delay(&mut rng, intensity, max_sleep_ns),
+            )
+        };
+
+        if before_ns > 0 {
+            edits.insert(
+                before_point,
+                format!(
+                    "{}nanosleep.u32 {before_ns}; // ptx_schedule before\n",
+                    line_indent(source, before_point)
+                ),
+            )?;
+        }
+        if after_ns > 0 {
+            edits.insert(
+                after_point,
+                format!("\nnanosleep.u32 {after_ns}; // ptx_schedule after"),
+            )?;
+        }
+        if before_ns > 0 || after_ns > 0 {
+            injected_sites += 1;
+            total_ns += u64::from(before_ns) + u64::from(after_ns);
+        }
+        decisions.push(InjectionDecision {
+            site: site.clone(),
+            before_ns,
+            after_ns,
+        });
+    }
+
+    let body = edits.apply(source)?;
+    let header = format!(
+        "// ptx_schedule: seed={} intensity={} sites_total={} sites_injected={} injected_ns_per_visit={}\n",
+        options.seed,
+        intensity,
+        analysis.sites.len(),
+        injected_sites,
+        total_ns
+    );
+    Ok(Rewrite {
+        ptx: format!("{header}{body}"),
+        report: RewriteReport {
+            seed: options.seed,
+            intensity,
+            sites_total: analysis.sites.len(),
+            sites_injected: injected_sites,
+            injected_ns_per_visit: total_ns,
+            decisions,
+        },
+    })
+}
+
+/// Return edit points that remain outside PTX inline-assembly blocks.
+///
+/// The parser intentionally exposes the instruction inside `{ ... }` inline
+/// assembly because it is useful for analysis. Inserting text at that
+/// instruction's span would nevertheless corrupt the assembly statement. The
+/// codegen backend emits stable begin/end comments around these blocks, so use
+/// the surrounding line boundaries as safe insertion points.
+fn injection_points(source: &str, site: &ScheduleSite) -> (usize, usize) {
+    let before_start = source[..site.span.start].rfind("// begin inline asm");
+    let before_end = source[..site.span.start].rfind("// end inline asm");
+    if before_start.is_none_or(|start| before_end.is_some_and(|end| end > start)) {
+        return (site.span.start, site.span.end);
+    }
+
+    let begin = before_start.expect("checked above");
+    let begin_line = source[..begin].rfind('\n').map_or(0, |newline| newline + 1);
+    let end_marker = source[site.span.end..]
+        .find("// end inline asm")
+        .map_or(site.span.end, |offset| {
+            site.span.end + offset + "// end inline asm".len()
+        });
+    (begin_line, end_marker)
+}
+
+fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
+    let head = instruction.head();
+    if head.starts_with("atom.") {
+        return Some(SiteKind::Atomic);
+    }
+    if head.starts_with("red.") {
+        return Some(SiteKind::Reduction);
+    }
+    if [
+        "bar.sync",
+        "bar.arrive",
+        "bar.red",
+        "bar.warp",
+        "barrier.",
+        "mbarrier.",
+    ]
+    .iter()
+    .any(|prefix| head.starts_with(prefix))
+    {
+        return Some(SiteKind::Barrier);
+    }
+    if head.starts_with("membar.") || head.starts_with("fence.") {
+        return Some(SiteKind::Fence);
+    }
+    if [
+        "activemask",
+        "match.any",
+        "match.all",
+        "vote.",
+        "elect.",
+        "shfl.",
+    ]
+    .iter()
+    .any(|prefix| head.starts_with(prefix))
+    {
+        return Some(SiteKind::WarpCollective);
+    }
+
+    let mut parts = head.split('.');
+    let base = parts.next()?;
+    if !matches!(base, "ld" | "st") {
+        return None;
+    }
+    let ordered = parts.any(|part| {
+        matches!(
+            part,
+            "volatile" | "acquire" | "release" | "relaxed" | "acq_rel" | "mmio"
+        )
+    });
+    if ordered && !head.starts_with("ld.global.nc") {
+        Some(SiteKind::OrderedMemory)
+    } else {
+        None
+    }
+}
+
+fn add_site(
+    sites: &mut Vec<ScheduleSite>,
+    seen: &mut HashMap<usize, usize>,
+    instruction: &Instruction<'_>,
+    callable: String,
+    kind: SiteKind,
+    block: Option<usize>,
+) {
+    let span = instruction.span();
+    if let Some(index) = seen.get(&span.start).copied() {
+        if kind == SiteKind::Backedge {
+            sites[index].kind = kind;
+            sites[index].block = block;
+        }
+        return;
+    }
+    let index = sites.len();
+    seen.insert(span.start, index);
+    sites.push(ScheduleSite {
+        ordinal: index,
+        callable,
+        kind,
+        span,
+        block,
+        head: instruction.head().to_string(),
+        text: instruction.text().to_string(),
+        predicate: instruction
+            .predicate()
+            .map(|predicate| predicate.text().to_string()),
+    });
+}
+
+fn callable_name(document: &Document<'_>, offset: usize) -> String {
+    document
+        .definitions()
+        .find(|definition| {
+            definition
+                .callable()
+                .body_span()
+                .is_some_and(|body| body.start <= offset && offset < body.end)
+        })
+        .map_or_else(
+            || "<module>".to_string(),
+            |definition| definition.callable().name().to_string(),
+        )
+}
+
+fn line_indent(source: &str, offset: usize) -> &str {
+    let line_start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
+    let indent_end = source[line_start..]
+        .char_indices()
+        .find(|(_, character)| *character != ' ' && *character != '\t')
+        .map_or(offset, |(index, _)| line_start + index)
+        .min(offset);
+    &source[line_start..indent_end]
+}
+
+fn draw_delay(rng: &mut SplitMix64, intensity: f64, max_sleep_ns: u32) -> u32 {
+    if rng.unit() < 0.25 {
+        return 0;
+    }
+    let high = scaled_max(intensity, max_sleep_ns);
+    if rng.unit() < 0.5 {
+        rng.range(1, high.min(2_000))
+    } else {
+        rng.range(2_000.min(high), high)
+    }
+}
+
+fn draw_long(rng: &mut SplitMix64, intensity: f64, max_sleep_ns: u32) -> u32 {
+    let high = scaled_max(intensity, max_sleep_ns);
+    rng.range(2_000.min(high), high)
+}
+
+fn scaled_max(intensity: f64, max_sleep_ns: u32) -> u32 {
+    ((f64::from(max_sleep_ns) * intensity.min(1.0)).round() as u32).max(1)
+}
+
+#[derive(Clone, Debug)]
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        Self(seed)
+    }
+
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut value = self.0;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+
+    fn unit(&mut self) -> f64 {
+        (self.next() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    fn range(&mut self, low: u32, high: u32) -> u32 {
+        if low >= high {
+            return low;
+        }
+        low + (self.next() % (u64::from(high) - u64::from(low) + 1)) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PTX: &str = r#".version 8.9
+.target sm_80
+.address_size 64
+
+.visible .entry race(
+    .param .u64 data
+)
+{
+    .reg .pred %p0;
+    .reg .b32 %r0;
+L_loop:
+    atom.global.add.u32 %r0, [%rd1], 1;
+    red.global.add.u32 [%rd1], %r0;
+    ld.global.acquire.u32 %r0, [%rd1];
+    st.shared.release.u32 [%r2], %r0;
+    bar.sync 0;
+    membar.gl;
+    shfl.sync.idx.b32 %r0, %r0, 0, 31;
+    @%p0 bra L_loop;
+    ret;
+}
+"#;
+
+    #[test]
+    fn discovers_structural_sites_and_extra_ordered_memory_forms() {
+        let analysis = analyze_ptx(PTX).unwrap();
+        let kinds: Vec<_> = analysis.sites().iter().map(|site| site.kind).collect();
+        // The recovered Python classifier reports six of these sites: it
+        // misses ld.global.acquire and st.shared.release because its regex
+        // only accepts an ordering qualifier immediately after ld./st.
+        assert_eq!(kinds.len(), 8);
+        assert!(kinds.len() > 6);
+        assert!(kinds.contains(&SiteKind::Atomic));
+        assert!(kinds.contains(&SiteKind::Reduction));
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|kind| **kind == SiteKind::OrderedMemory)
+                .count(),
+            2
+        );
+        assert!(kinds.contains(&SiteKind::Backedge));
+        assert!(analysis.sites().iter().all(|site| site.callable == "race"));
+    }
+
+    #[test]
+    fn rewrite_is_deterministic_and_preserves_site_report() {
+        let options = InjectionOptions {
+            seed: 42,
+            intensity: 1.0,
+            ..InjectionOptions::default()
+        };
+        let first = perturb_ptx(PTX, &options).unwrap();
+        let second = perturb_ptx(PTX, &options).unwrap();
+        assert_eq!(first.ptx, second.ptx);
+        assert_eq!(first.report.decisions.len(), first.report.sites_total);
+        assert_eq!(
+            first.report.sites_injected,
+            first
+                .report
+                .decisions
+                .iter()
+                .filter(|decision| decision.before_ns > 0 || decision.after_ns > 0)
+                .count()
+        );
+        assert!(first.ptx.contains("nanosleep.u32"));
+        assert!(first.ptx.starts_with("// ptx_schedule: seed=42"));
+    }
+
+    #[test]
+    fn zero_intensity_is_a_valid_noop() {
+        let rewrite = perturb_ptx(
+            PTX,
+            &InjectionOptions {
+                intensity: 0.0,
+                ..InjectionOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rewrite.report.sites_injected, 0);
+        assert!(!rewrite.ptx.contains("nanosleep.u32"));
+    }
+}

@@ -18,6 +18,7 @@
 //! cargo oxide sanitize vecadd         # run under NVIDIA Compute Sanitizer
 //! cargo oxide debug vecadd --tui      # build + cuda-gdb
 //! cargo oxide inspect vecadd          # build + print generated PTX
+//! cargo oxide fuzz-schedule barrier   # perturb generated PTX and watchdog it
 //! cargo oxide new my_kernel           # scaffold a standalone project
 //! cargo oxide new my_kernel --async   # scaffold with async template
 //! cargo oxide list                    # list bundled examples
@@ -211,6 +212,45 @@ enum Commands {
         /// Cargo build arguments for passthrough mode. Use after `--`.
         #[arg(last = true, num_args = 0.., allow_hyphen_values = true)]
         cargo_args: Vec<String>,
+    },
+    /// Find schedule-sensitive failures by perturbing an example's generated PTX.
+    #[command(name = "fuzz-schedule")]
+    FuzzSchedule {
+        /// Example name under crates/rustc-codegen-cuda/examples
+        example: String,
+        /// Half-open seed interval, for example 0..100 runs 100 variants.
+        #[arg(long, default_value = "0..100")]
+        seeds: String,
+        /// Probability/intensity of site selection and delay magnitude.
+        #[arg(long, default_value_t = 1.0)]
+        intensity: f64,
+        /// Maximum nanosleep delay inserted at one site.
+        #[arg(long, default_value_t = ptx_schedule::DEFAULT_MAX_SLEEP_NS)]
+        max_sleep_ns: u32,
+        /// Per-variant watchdog timeout in seconds.
+        #[arg(long, default_value_t = 10)]
+        timeout_secs: u64,
+        /// Total executions for each finding, including the initial run.
+        #[arg(long, default_value_t = 3)]
+        confirm_runs: u32,
+        /// Treat changed stdout as a finding when no explicit failure marker is present.
+        #[arg(long)]
+        compare_output: bool,
+        /// Target architecture used while building the example.
+        #[arg(long)]
+        arch: Option<String>,
+        /// Prefer sites whose opcode/text contains this substring.
+        #[arg(long)]
+        focus: Option<String>,
+        /// Artifact directory for mutated PTX, reports, and logs.
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+        /// Continue after a device-wedging timeout.
+        #[arg(long)]
+        keep_going: bool,
+        /// Exit with failure when any schedule-sensitive finding is observed.
+        #[arg(long)]
+        fail_on_finding: bool,
     },
     /// Run Cargo tests through the cuda-oxide backend
     Test {
@@ -520,6 +560,7 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
         Commands::Run { .. }
         | Commands::Sanitize { .. }
         | Commands::Build { .. }
+        | Commands::FuzzSchedule { .. }
         | Commands::Test { .. }
         | Commands::Pipeline { .. }
         | Commands::Debug { .. } => Ok(()),
@@ -751,6 +792,69 @@ fn main() {
                     },
                     &cargo_args,
                 );
+            }
+        }
+        Commands::FuzzSchedule {
+            example,
+            seeds,
+            intensity,
+            max_sleep_ns,
+            timeout_secs,
+            confirm_runs,
+            compare_output,
+            arch,
+            focus,
+            output_dir,
+            keep_going,
+            fail_on_finding,
+        } => {
+            let ctx = commands::resolve_context();
+            let (seed_start, seed_end) = ptx_schedule::campaign::parse_seed_range(&seeds)
+                .unwrap_or_else(|error| {
+                    eprintln!("Error: {error}");
+                    std::process::exit(2);
+                });
+            let oxide_binary = std::env::current_exe().unwrap_or_else(|error| {
+                eprintln!("Error: could not locate cargo-oxide executable: {error}");
+                std::process::exit(1);
+            });
+            let options = ptx_schedule::campaign::CampaignOptions {
+                workspace_root: ctx.workspace_root,
+                oxide_binary,
+                example,
+                seed_start,
+                seed_end,
+                intensity,
+                max_sleep_ns,
+                timeout: std::time::Duration::from_secs(timeout_secs),
+                arch,
+                focus,
+                output_dir,
+                keep_going,
+                confirm_runs,
+                compare_output,
+            };
+            match ptx_schedule::campaign::run_campaign(&options) {
+                Ok(summary)
+                    if !matches!(summary.baseline.kind, ptx_schedule::campaign::RunKind::Pass) =>
+                {
+                    eprintln!(
+                        "Error: baseline example did not pass; no schedule variants were run"
+                    );
+                    std::process::exit(1);
+                }
+                Ok(summary) if fail_on_finding && summary.finding_count() > 0 => {
+                    eprintln!(
+                        "Error: {} schedule-sensitive finding(s) detected",
+                        summary.finding_count()
+                    );
+                    std::process::exit(1);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    std::process::exit(1);
+                }
             }
         }
         Commands::Test {
