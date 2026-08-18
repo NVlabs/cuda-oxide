@@ -574,9 +574,9 @@ struct CollectedDebugLocals {
 /// Build full-debug bindings for whole locals and statically-addressable projections.
 ///
 /// Whole-local records keep the existing path. A `VarDebugInfoContents::Place`
-/// with only `Field` and forward `ConstantIndex` elements is instead attached
-/// to the base local together with its rustc-layout byte offset. Dereferences,
-/// dynamic indices, slices, enum downcasts, opaque casts, and composite fragments
+/// with `Field`, forward `ConstantIndex`, and enum `Downcast -> Field` elements is
+/// instead attached to the base local together with its rustc-layout byte offset.
+/// Dereferences, dynamic indices, slices, opaque casts, and composite fragments
 /// stay unsupported here and are skipped rather than approximated.
 fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLocals {
     let mut collected = CollectedDebugLocals::default();
@@ -656,16 +656,41 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
 fn static_debug_projection(body: &mir::Body, place: &mir::Place) -> Option<(u64, Ty)> {
     let mut current_ty = body.local_decl(place.local)?.ty;
     let mut offset_bytes = 0u64;
+    let mut enum_variant = None;
 
     for elem in &place.projection {
         match elem {
+            mir::ProjectionElem::Downcast(variant) => {
+                if enum_variant.is_some() {
+                    return None;
+                }
+                let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = current_ty.kind() else {
+                    return None;
+                };
+                if !matches!(adt_def.kind(), rustc_public::ty::AdtKind::Enum) {
+                    return None;
+                }
+                enum_variant = Some(variant.to_index());
+            }
             mir::ProjectionElem::Field(field_idx, field_ty) => {
                 let layout = current_ty.layout().ok()?;
                 let shape = layout.shape();
-                let rustc_public::abi::FieldsShape::Arbitrary { offsets } = &shape.fields else {
-                    return None;
+                let field_offset = if let Some(variant) = enum_variant.take() {
+                    crate::translator::layout::enum_variant_field_offsets(
+                        &shape,
+                        variant,
+                        pliron::location::Location::Unknown,
+                    )
+                    .ok()?
+                    .get(*field_idx)
+                    .copied()? as u64
+                } else {
+                    let rustc_public::abi::FieldsShape::Arbitrary { offsets } = &shape.fields
+                    else {
+                        return None;
+                    };
+                    offsets.get(*field_idx)?.bytes() as u64
                 };
-                let field_offset = offsets.get(*field_idx)?.bytes() as u64;
                 offset_bytes = offset_bytes.checked_add(field_offset)?;
                 current_ty = *field_ty;
             }
@@ -674,6 +699,9 @@ fn static_debug_projection(body: &mir::Body, place: &mir::Place) -> Option<(u64,
                 min_length: _,
                 from_end: false,
             } => {
+                if enum_variant.is_some() {
+                    return None;
+                }
                 let layout = current_ty.layout().ok()?;
                 let shape = layout.shape();
                 let rustc_public::abi::FieldsShape::Array { stride, count } = &shape.fields else {
@@ -691,6 +719,10 @@ fn static_debug_projection(body: &mir::Body, place: &mir::Place) -> Option<(u64,
             }
             _ => return None,
         }
+    }
+
+    if enum_variant.is_some() {
+        return None;
     }
 
     Some((offset_bytes, current_ty))
