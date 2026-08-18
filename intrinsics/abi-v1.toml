@@ -6984,3 +6984,59 @@ status = "active"
 catalog_id = "fma_ftz_f32x2"
 operation_key = "packed.alu.f32x2.fma.ftz"
 raw_rust_signature = { safe = true, arguments = ["u64", "u64", "u64"], result = "u64" }
+
+[[entry]]
+abi_id = "i1003"
+status = "active"
+catalog_id = "redux_sync_min_f32"
+operation_key = "warp.redux.sync.min.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i1004"
+status = "active"
+catalog_id = "redux_sync_min_nan_f32"
+operation_key = "warp.redux.sync.min.nan.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i1005"
+status = "active"
+catalog_id = "redux_sync_min_abs_f32"
+operation_key = "warp.redux.sync.min.abs.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i1006"
+status = "active"
+catalog_id = "redux_sync_min_abs_nan_f32"
+operation_key = "warp.redux.sync.min.abs.nan.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i1007"
+status = "active"
+catalog_id = "redux_sync_max_f32"
+operation_key = "warp.redux.sync.max.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i1008"
+status = "active"
+catalog_id = "redux_sync_max_nan_f32"
+operation_key = "warp.redux.sync.max.nan.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i1009"
+status = "active"
+catalog_id = "redux_sync_max_abs_f32"
+operation_key = "warp.redux.sync.max.abs.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i1010"
+status = "active"
+catalog_id = "redux_sync_max_abs_nan_f32"
+operation_key = "warp.redux.sync.max.abs.nan.f32"
+raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }

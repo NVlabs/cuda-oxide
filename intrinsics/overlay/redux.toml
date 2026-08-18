@@ -298,3 +298,291 @@ lowering = "generated_redux"
 redux = { operation = "xor", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
 expected_ptx = { mnemonic = "redux", modifiers = ["sync", "xor", "b32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
 summary = "Synchronizes the named warp lanes, reduces their 32-bit values with bitwise XOR, and broadcasts the result."
+
+[[intrinsic]]
+id = "redux_sync_min_f32"
+abi_id = "i1003"
+operation_key = "warp.redux.sync.min.f32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_fmin"
+rust_module = "warp"
+rust_name = "redux_sync_min_f32"
+rust_arguments = ["u32", "f32"]
+rust_result = "f32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_min_f32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_min_f32"]
+dialect_op_type = "ReduxSyncFminOp"
+dialect_op_name = "nvvm.redux_sync_fmin"
+dialect_operands = ["i32", "f32"]
+dialect_results = ["f32"]
+llvm_symbol = "llvm.nvvm.redux.sync.fmin"
+llvm_arguments = ["f32", "i32"]
+llvm_results = ["f32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "8.6"
+ptx_result = "f32"
+targets = "sm_100a|sm_100f|sm_103a|sm_103f"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "fmin", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "min", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects their f32 minimum while ignoring NaN inputs, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_min_nan_f32"
+abi_id = "i1004"
+operation_key = "warp.redux.sync.min.nan.f32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_fmin_NaN"
+rust_module = "warp"
+rust_name = "redux_sync_min_nan_f32"
+rust_arguments = ["u32", "f32"]
+rust_result = "f32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_min_nan_f32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_min_nan_f32"]
+dialect_op_type = "ReduxSyncFminNanOp"
+dialect_op_name = "nvvm.redux_sync_fmin_nan"
+dialect_operands = ["i32", "f32"]
+dialect_results = ["f32"]
+llvm_symbol = "llvm.nvvm.redux.sync.fmin.NaN"
+llvm_arguments = ["f32", "i32"]
+llvm_results = ["f32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "8.6"
+ptx_result = "f32"
+targets = "sm_100a|sm_100f|sm_103a|sm_103f"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "fmin_nan", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "min", "NaN", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects their f32 minimum while propagating NaN when any lane contributes one, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_min_abs_f32"
+abi_id = "i1005"
+operation_key = "warp.redux.sync.min.abs.f32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_fmin_abs"
+rust_module = "warp"
+rust_name = "redux_sync_min_abs_f32"
+rust_arguments = ["u32", "f32"]
+rust_result = "f32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_min_abs_f32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_min_abs_f32"]
+dialect_op_type = "ReduxSyncFminAbsOp"
+dialect_op_name = "nvvm.redux_sync_fmin_abs"
+dialect_operands = ["i32", "f32"]
+dialect_results = ["f32"]
+llvm_symbol = "llvm.nvvm.redux.sync.fmin.abs"
+llvm_arguments = ["f32", "i32"]
+llvm_results = ["f32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "8.6"
+ptx_result = "f32"
+targets = "sm_100a|sm_100f|sm_103a|sm_103f"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "fmin_abs", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "min", "abs", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects the minimum of their absolute f32 values while ignoring NaN inputs, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_min_abs_nan_f32"
+abi_id = "i1006"
+operation_key = "warp.redux.sync.min.abs.nan.f32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_fmin_abs_NaN"
+rust_module = "warp"
+rust_name = "redux_sync_min_abs_nan_f32"
+rust_arguments = ["u32", "f32"]
+rust_result = "f32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_min_abs_nan_f32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_min_abs_nan_f32"]
+dialect_op_type = "ReduxSyncFminAbsNanOp"
+dialect_op_name = "nvvm.redux_sync_fmin_abs_nan"
+dialect_operands = ["i32", "f32"]
+dialect_results = ["f32"]
+llvm_symbol = "llvm.nvvm.redux.sync.fmin.abs.NaN"
+llvm_arguments = ["f32", "i32"]
+llvm_results = ["f32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "8.6"
+ptx_result = "f32"
+targets = "sm_100a|sm_100f|sm_103a|sm_103f"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "fmin_abs_nan", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "min", "abs", "NaN", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects the minimum of their absolute f32 values while propagating NaN when any lane contributes one, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_max_f32"
+abi_id = "i1007"
+operation_key = "warp.redux.sync.max.f32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_fmax"
+rust_module = "warp"
+rust_name = "redux_sync_max_f32"
+rust_arguments = ["u32", "f32"]
+rust_result = "f32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_max_f32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_max_f32"]
+dialect_op_type = "ReduxSyncFmaxOp"
+dialect_op_name = "nvvm.redux_sync_fmax"
+dialect_operands = ["i32", "f32"]
+dialect_results = ["f32"]
+llvm_symbol = "llvm.nvvm.redux.sync.fmax"
+llvm_arguments = ["f32", "i32"]
+llvm_results = ["f32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "8.6"
+ptx_result = "f32"
+targets = "sm_100a|sm_100f|sm_103a|sm_103f"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "fmax", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "max", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects their f32 maximum while ignoring NaN inputs, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_max_nan_f32"
+abi_id = "i1008"
+operation_key = "warp.redux.sync.max.nan.f32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_fmax_NaN"
+rust_module = "warp"
+rust_name = "redux_sync_max_nan_f32"
+rust_arguments = ["u32", "f32"]
+rust_result = "f32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_max_nan_f32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_max_nan_f32"]
+dialect_op_type = "ReduxSyncFmaxNanOp"
+dialect_op_name = "nvvm.redux_sync_fmax_nan"
+dialect_operands = ["i32", "f32"]
+dialect_results = ["f32"]
+llvm_symbol = "llvm.nvvm.redux.sync.fmax.NaN"
+llvm_arguments = ["f32", "i32"]
+llvm_results = ["f32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "8.6"
+ptx_result = "f32"
+targets = "sm_100a|sm_100f|sm_103a|sm_103f"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "fmax_nan", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "max", "NaN", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects their f32 maximum while propagating NaN when any lane contributes one, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_max_abs_f32"
+abi_id = "i1009"
+operation_key = "warp.redux.sync.max.abs.f32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_fmax_abs"
+rust_module = "warp"
+rust_name = "redux_sync_max_abs_f32"
+rust_arguments = ["u32", "f32"]
+rust_result = "f32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_max_abs_f32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_max_abs_f32"]
+dialect_op_type = "ReduxSyncFmaxAbsOp"
+dialect_op_name = "nvvm.redux_sync_fmax_abs"
+dialect_operands = ["i32", "f32"]
+dialect_results = ["f32"]
+llvm_symbol = "llvm.nvvm.redux.sync.fmax.abs"
+llvm_arguments = ["f32", "i32"]
+llvm_results = ["f32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "8.6"
+ptx_result = "f32"
+targets = "sm_100a|sm_100f|sm_103a|sm_103f"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "fmax_abs", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "max", "abs", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects the maximum of their absolute f32 values while ignoring NaN inputs, and broadcasts it to each participating lane."
+
+[[intrinsic]]
+id = "redux_sync_max_abs_nan_f32"
+abi_id = "i1010"
+operation_key = "warp.redux.sync.max.abs.nan.f32"
+family = "redux"
+source_record = "int_nvvm_redux_sync_fmax_abs_NaN"
+rust_module = "warp"
+rust_name = "redux_sync_max_abs_nan_f32"
+rust_arguments = ["u32", "f32"]
+rust_result = "f32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::warp::redux_sync_max_abs_nan_f32"
+compatibility_rust_paths = ["cuda_device::warp::redux_sync_max_abs_nan_f32"]
+dialect_op_type = "ReduxSyncFmaxAbsNanOp"
+dialect_op_name = "nvvm.redux_sync_fmax_abs_nan"
+dialect_operands = ["i32", "f32"]
+dialect_results = ["f32"]
+llvm_symbol = "llvm.nvvm.redux.sync.fmax.abs.NaN"
+llvm_arguments = ["f32", "i32"]
+llvm_results = ["f32"]
+pure = false
+memory = "inaccessible_read_write"
+convergent = true
+execution_scope = "warp"
+minimum_ptx = "8.6"
+ptx_result = "f32"
+targets = "sm_100a|sm_100f|sm_103a|sm_103f"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.13 Parallel Synchronization and Communication Instructions: redux.sync"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-redux-sync"
+lowering = "generated_redux"
+redux = { operation = "fmax_abs_nan", participation = "executing_lane_named_all_named_lanes_same_instruction_and_mask", adapter = "mask_value_to_source_member_mask" }
+expected_ptx = { mnemonic = "redux", modifiers = ["sync", "max", "abs", "NaN", "f32"], operands = [{ kind = "register" }, { kind = "register" }, { kind = "register" }] }
+summary = "Synchronizes the named warp lanes, selects the maximum of their absolute f32 values while propagating NaN when any lane contributes one, and broadcasts it to each participating lane."

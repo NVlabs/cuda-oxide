@@ -840,6 +840,93 @@ pub fn redux_sync_xor(mask: u32, value: u32) -> u32 {
     unreachable!("redux_sync_xor called outside CUDA kernel context")
 }
 
+// -----------------------------------------------------------------------------
+// f32 min/max reductions (Blackwell family 10x: sm_100a/f, sm_103a/f).
+//
+// Same shape and convergence rules as `redux_sync_add`. Base forms ignore NaN
+// inputs; `_nan` forms propagate NaN; `_abs` forms reduce absolute values.
+// -----------------------------------------------------------------------------
+
+/// Warp-wide f32 minimum (single instruction, Blackwell family 10x).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.fmin` → PTX `redux.sync.min.f32`.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
+#[inline(never)]
+pub fn redux_sync_min_f32(mask: u32, value: f32) -> f32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_min_f32 called outside CUDA kernel context")
+}
+
+/// Warp-wide f32 minimum, propagating NaN (single instruction, Blackwell family 10x).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.fmin.NaN` → PTX `redux.sync.min.NaN.f32`.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
+#[inline(never)]
+pub fn redux_sync_min_nan_f32(mask: u32, value: f32) -> f32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_min_nan_f32 called outside CUDA kernel context")
+}
+
+/// Warp-wide minimum of absolute f32 values (single instruction, Blackwell family 10x).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.fmin.abs` → PTX `redux.sync.min.abs.f32`.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
+#[inline(never)]
+pub fn redux_sync_min_abs_f32(mask: u32, value: f32) -> f32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_min_abs_f32 called outside CUDA kernel context")
+}
+
+/// Warp-wide minimum of absolute f32 values, propagating NaN (single instruction, Blackwell family 10x).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.fmin.abs.NaN` → PTX `redux.sync.min.abs.NaN.f32`.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
+#[inline(never)]
+pub fn redux_sync_min_abs_nan_f32(mask: u32, value: f32) -> f32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_min_abs_nan_f32 called outside CUDA kernel context")
+}
+
+/// Warp-wide f32 maximum (single instruction, Blackwell family 10x).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.fmax` → PTX `redux.sync.max.f32`.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
+#[inline(never)]
+pub fn redux_sync_max_f32(mask: u32, value: f32) -> f32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_max_f32 called outside CUDA kernel context")
+}
+
+/// Warp-wide f32 maximum, propagating NaN (single instruction, Blackwell family 10x).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.fmax.NaN` → PTX `redux.sync.max.NaN.f32`.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
+#[inline(never)]
+pub fn redux_sync_max_nan_f32(mask: u32, value: f32) -> f32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_max_nan_f32 called outside CUDA kernel context")
+}
+
+/// Warp-wide maximum of absolute f32 values (single instruction, Blackwell family 10x).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.fmax.abs` → PTX `redux.sync.max.abs.f32`.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
+#[inline(never)]
+pub fn redux_sync_max_abs_f32(mask: u32, value: f32) -> f32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_max_abs_f32 called outside CUDA kernel context")
+}
+
+/// Warp-wide maximum of absolute f32 values, propagating NaN (single instruction, Blackwell family 10x).
+///
+/// Lowered to `@llvm.nvvm.redux.sync.fmax.abs.NaN` → PTX `redux.sync.max.abs.NaN.f32`.
+/// Convergent; see [`redux_sync_add`] for the participation contract.
+#[inline(never)]
+pub fn redux_sync_max_abs_nan_f32(mask: u32, value: f32) -> f32 {
+    let _ = (mask, value);
+    unreachable!("redux_sync_max_abs_nan_f32 called outside CUDA kernel context")
+}
+
 // =============================================================================
 // Leader election (sm_90+)
 // =============================================================================
