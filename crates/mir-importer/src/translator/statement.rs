@@ -1156,7 +1156,7 @@ fn store_through_place_address(
 /// to an array.
 ///
 /// Used by the statement-level element write helpers. Returns a structured
-/// error when the pointer's pointee isn't a [`MirArrayType`], which signals
+/// error when the pointer's pointee isn't a [`MirArrayType`](dialect_mir::types::MirArrayType), which signals
 /// a structural mismatch (most likely the wrong MIR projection reaching
 /// this path).
 pub(crate) fn slot_array_element_ty(
@@ -1237,7 +1237,7 @@ pub(crate) fn emit_array_element_store(
     store_op
 }
 
-/// Return `true` if the pointer value's type is a mutable [`MirPtrType`].
+/// Return `true` if the pointer value's type is a mutable [`MirPtrType`](dialect_mir::types::MirPtrType).
 ///
 /// Slots emitted by the entry-block alloca loop are always mutable, but
 /// callers of the statement module sometimes thread pointers coming from
@@ -1253,7 +1253,7 @@ pub(crate) fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> 
 }
 
 /// Return the address space of a pointer value. Defaults to 0 (the generic
-/// address space) if the value is not a [`MirPtrType`].
+/// address space) if the value is not a [`MirPtrType`](dialect_mir::types::MirPtrType).
 pub(crate) fn pointer_address_space(ctx: &pliron::context::Context, ptr: Value) -> u32 {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);
