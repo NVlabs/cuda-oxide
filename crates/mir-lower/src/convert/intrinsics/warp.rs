@@ -41,6 +41,7 @@ use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
+use pliron::r#type::Typed;
 
 /// Convert i32 shuffle operation to LLVM intrinsic call.
 ///
@@ -264,7 +265,8 @@ pub(crate) fn convert_match_any(
 ///
 /// Op operand layout is `[mask, value]` (matching the other `*_sync`
 /// collectives), but the LLVM intrinsic signature is `(src, membermask)`, so
-/// we forward the operands flipped as `[value, mask]`. Result is i32.
+/// we forward the operands flipped as `[value, mask]`. The value and result
+/// types are carried by the dialect record.
 pub(crate) fn convert_redux(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -280,12 +282,9 @@ pub(crate) fn convert_redux(
     }
     let (mask, value) = (operands[0], operands[1]);
 
-    let func_ty = llvm_types::FuncType::get(
-        ctx,
-        i32_ty.into(),
-        vec![i32_ty.into(), i32_ty.into()],
-        false,
-    );
+    let value_ty = value.get_type(ctx);
+    let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    let func_ty = llvm_types::FuncType::get(ctx, result_ty, vec![value_ty, i32_ty.into()], false);
 
     // LLVM intrinsic wants (src, membermask): flip to [value, mask].
     let call_op = call_intrinsic(

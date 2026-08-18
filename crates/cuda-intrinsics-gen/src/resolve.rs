@@ -11729,6 +11729,7 @@ fn validate_selected_target_predicates(
     let mut has_tcgen05_mma_i8_support = false;
     let mut has_ldstmatrix_blackwell_support = false;
     let mut has_mma_block_scale_support = false;
+    let mut has_redux_sync_f32_support = false;
     for predicate in &selection.predicates {
         if let Some(value) = predicate.strip_prefix("Subtarget->getPTXVersion() >= ") {
             let value = value.parse::<u16>().with_context(|| {
@@ -11914,6 +11915,22 @@ fn validate_selected_target_predicates(
                 policy.id
             );
             has_mma_block_scale_support = true;
+        } else if predicate == "Subtarget->hasReduxSyncF32()" {
+            ensure!(
+                policy.family == "redux"
+                    && policy
+                        .redux
+                        .as_ref()
+                        .is_some_and(|redux| redux_recipe(redux.operation).value_type == "f32"),
+                "{} uses the f32 redux target predicate outside an f32 redux operation",
+                policy.id
+            );
+            ensure!(
+                !has_redux_sync_f32_support && imported_ptx.is_none() && imported_sm.is_none(),
+                "{} has duplicate or conflicting f32 redux target predicates",
+                policy.id
+            );
+            has_redux_sync_f32_support = true;
         } else {
             bail!(
                 "{} selected instruction has unsupported target predicate {predicate:?}; target gates must fail closed",
@@ -11976,6 +11993,17 @@ fn validate_selected_target_predicates(
         ensure!(
             minimum_ptx_matches && target_matches,
             "{} MMA block-scale predicate requires its reviewed Blackwell target matrix",
+            policy.id
+        );
+        return Ok(());
+    }
+    if has_redux_sync_f32_support {
+        ensure!(
+            selection.predicates.len() == 1
+                && overlay_ptx == 86
+                && policy.targets == REDUX_F32_TARGETS
+                && policy.minimum_sm.is_none(),
+            "{} f32 redux selection must carry only the hasReduxSyncF32 predicate and its reviewed Blackwell target matrix",
             policy.id
         );
         return Ok(());
@@ -13637,10 +13665,10 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
     ensure!(
         policy.dialect_op_type == recipe.dialect_op_type
             && policy.dialect_op_name == recipe.dialect_op_name
-            && policy.dialect_operands == ["i32", "i32"]
-            && policy.dialect_results == ["i32"]
-            && policy.llvm_arguments == ["i32", "i32"]
-            && policy.llvm_results == ["i32"]
+            && policy.dialect_operands == ["i32", recipe.value_type]
+            && policy.dialect_results == [recipe.value_type]
+            && policy.llvm_arguments == [recipe.value_type, "i32"]
+            && policy.llvm_results == [recipe.value_type]
             && policy.lowering == "generated_redux",
         "{} is outside the generated two-operand redux recipe",
         policy.id
@@ -13650,10 +13678,10 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
             && policy.memory == "inaccessible_read_write"
             && policy.convergent
             && policy.execution_scope == "warp"
-            && policy.minimum_ptx == "7.0"
-            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == recipe.minimum_sm
             && policy.ptx_result == recipe.rust_value
-            && policy.targets == "all",
+            && policy.targets == recipe.targets,
         "{} redux effects, carrier, or target floor disagree with its operation recipe",
         policy.id
     );
@@ -13700,7 +13728,7 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
     );
     ensure!(
         policy.expected_ptx.mnemonic == "redux"
-            && policy.expected_ptx.modifiers == ["sync", recipe.ptx_operation, recipe.ptx_type]
+            && policy.expected_ptx.modifiers == recipe.ptx_modifiers
             && policy.expected_ptx.operands
                 == [
                     OperandPattern::Register,
@@ -13713,6 +13741,10 @@ fn validate_redux_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrin
     Ok(())
 }
 
+// Pinned LLVM's hasReduxSyncF32(): accel {100} at PTX 8.6, family {100} at
+// PTX 8.8. The catalog carries the accel floor with the a/f target union.
+const REDUX_F32_TARGETS: &str = "sm_100a|sm_100f|sm_103a|sm_103f";
+
 struct ReduxRecipe {
     id: &'static str,
     operation_key: &'static str,
@@ -13720,10 +13752,13 @@ struct ReduxRecipe {
     llvm_symbol: &'static str,
     rust_name: &'static str,
     rust_value: &'static str,
+    value_type: &'static str,
     dialect_op_type: &'static str,
     dialect_op_name: &'static str,
-    ptx_operation: &'static str,
-    ptx_type: &'static str,
+    ptx_modifiers: &'static [&'static str],
+    minimum_ptx: &'static str,
+    minimum_sm: Option<&'static str>,
+    targets: &'static str,
 }
 
 fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
@@ -13735,10 +13770,13 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             llvm_symbol: "llvm.nvvm.redux.sync.add",
             rust_name: "redux_sync_add",
             rust_value: "u32",
+            value_type: "i32",
             dialect_op_type: "ReduxSyncAddOp",
             dialect_op_name: "nvvm.redux_sync_add",
-            ptx_operation: "add",
-            ptx_type: "s32",
+            ptx_modifiers: &["sync", "add", "s32"],
+            minimum_ptx: "7.0",
+            minimum_sm: Some("sm_80"),
+            targets: "all",
         },
         ReduxOperation::Umin => ReduxRecipe {
             id: "redux_sync_min_u32",
@@ -13747,10 +13785,13 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             llvm_symbol: "llvm.nvvm.redux.sync.umin",
             rust_name: "redux_sync_min_u32",
             rust_value: "u32",
+            value_type: "i32",
             dialect_op_type: "ReduxSyncUminOp",
             dialect_op_name: "nvvm.redux_sync_umin",
-            ptx_operation: "min",
-            ptx_type: "u32",
+            ptx_modifiers: &["sync", "min", "u32"],
+            minimum_ptx: "7.0",
+            minimum_sm: Some("sm_80"),
+            targets: "all",
         },
         ReduxOperation::Min => ReduxRecipe {
             id: "redux_sync_min_i32",
@@ -13759,10 +13800,13 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             llvm_symbol: "llvm.nvvm.redux.sync.min",
             rust_name: "redux_sync_min_i32",
             rust_value: "i32",
+            value_type: "i32",
             dialect_op_type: "ReduxSyncMinOp",
             dialect_op_name: "nvvm.redux_sync_min",
-            ptx_operation: "min",
-            ptx_type: "s32",
+            ptx_modifiers: &["sync", "min", "s32"],
+            minimum_ptx: "7.0",
+            minimum_sm: Some("sm_80"),
+            targets: "all",
         },
         ReduxOperation::Umax => ReduxRecipe {
             id: "redux_sync_max_u32",
@@ -13771,10 +13815,13 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             llvm_symbol: "llvm.nvvm.redux.sync.umax",
             rust_name: "redux_sync_max_u32",
             rust_value: "u32",
+            value_type: "i32",
             dialect_op_type: "ReduxSyncUmaxOp",
             dialect_op_name: "nvvm.redux_sync_umax",
-            ptx_operation: "max",
-            ptx_type: "u32",
+            ptx_modifiers: &["sync", "max", "u32"],
+            minimum_ptx: "7.0",
+            minimum_sm: Some("sm_80"),
+            targets: "all",
         },
         ReduxOperation::Max => ReduxRecipe {
             id: "redux_sync_max_i32",
@@ -13783,10 +13830,13 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             llvm_symbol: "llvm.nvvm.redux.sync.max",
             rust_name: "redux_sync_max_i32",
             rust_value: "i32",
+            value_type: "i32",
             dialect_op_type: "ReduxSyncMaxOp",
             dialect_op_name: "nvvm.redux_sync_max",
-            ptx_operation: "max",
-            ptx_type: "s32",
+            ptx_modifiers: &["sync", "max", "s32"],
+            minimum_ptx: "7.0",
+            minimum_sm: Some("sm_80"),
+            targets: "all",
         },
         ReduxOperation::And => ReduxRecipe {
             id: "redux_sync_and",
@@ -13795,10 +13845,13 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             llvm_symbol: "llvm.nvvm.redux.sync.and",
             rust_name: "redux_sync_and",
             rust_value: "u32",
+            value_type: "i32",
             dialect_op_type: "ReduxSyncAndOp",
             dialect_op_name: "nvvm.redux_sync_and",
-            ptx_operation: "and",
-            ptx_type: "b32",
+            ptx_modifiers: &["sync", "and", "b32"],
+            minimum_ptx: "7.0",
+            minimum_sm: Some("sm_80"),
+            targets: "all",
         },
         ReduxOperation::Or => ReduxRecipe {
             id: "redux_sync_or",
@@ -13807,10 +13860,13 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             llvm_symbol: "llvm.nvvm.redux.sync.or",
             rust_name: "redux_sync_or",
             rust_value: "u32",
+            value_type: "i32",
             dialect_op_type: "ReduxSyncOrOp",
             dialect_op_name: "nvvm.redux_sync_or",
-            ptx_operation: "or",
-            ptx_type: "b32",
+            ptx_modifiers: &["sync", "or", "b32"],
+            minimum_ptx: "7.0",
+            minimum_sm: Some("sm_80"),
+            targets: "all",
         },
         ReduxOperation::Xor => ReduxRecipe {
             id: "redux_sync_xor",
@@ -13819,10 +13875,133 @@ fn redux_recipe(operation: ReduxOperation) -> ReduxRecipe {
             llvm_symbol: "llvm.nvvm.redux.sync.xor",
             rust_name: "redux_sync_xor",
             rust_value: "u32",
+            value_type: "i32",
             dialect_op_type: "ReduxSyncXorOp",
             dialect_op_name: "nvvm.redux_sync_xor",
-            ptx_operation: "xor",
-            ptx_type: "b32",
+            ptx_modifiers: &["sync", "xor", "b32"],
+            minimum_ptx: "7.0",
+            minimum_sm: Some("sm_80"),
+            targets: "all",
+        },
+        ReduxOperation::Fmin => ReduxRecipe {
+            id: "redux_sync_min_f32",
+            operation_key: "warp.redux.sync.min.f32",
+            source_record: "int_nvvm_redux_sync_fmin",
+            llvm_symbol: "llvm.nvvm.redux.sync.fmin",
+            rust_name: "redux_sync_min_f32",
+            rust_value: "f32",
+            value_type: "f32",
+            dialect_op_type: "ReduxSyncFminOp",
+            dialect_op_name: "nvvm.redux_sync_fmin",
+            ptx_modifiers: &["sync", "min", "f32"],
+            minimum_ptx: "8.6",
+            minimum_sm: None,
+            targets: REDUX_F32_TARGETS,
+        },
+        ReduxOperation::FminNan => ReduxRecipe {
+            id: "redux_sync_min_nan_f32",
+            operation_key: "warp.redux.sync.min.nan.f32",
+            source_record: "int_nvvm_redux_sync_fmin_NaN",
+            llvm_symbol: "llvm.nvvm.redux.sync.fmin.NaN",
+            rust_name: "redux_sync_min_nan_f32",
+            rust_value: "f32",
+            value_type: "f32",
+            dialect_op_type: "ReduxSyncFminNanOp",
+            dialect_op_name: "nvvm.redux_sync_fmin_nan",
+            ptx_modifiers: &["sync", "min", "NaN", "f32"],
+            minimum_ptx: "8.6",
+            minimum_sm: None,
+            targets: REDUX_F32_TARGETS,
+        },
+        ReduxOperation::FminAbs => ReduxRecipe {
+            id: "redux_sync_min_abs_f32",
+            operation_key: "warp.redux.sync.min.abs.f32",
+            source_record: "int_nvvm_redux_sync_fmin_abs",
+            llvm_symbol: "llvm.nvvm.redux.sync.fmin.abs",
+            rust_name: "redux_sync_min_abs_f32",
+            rust_value: "f32",
+            value_type: "f32",
+            dialect_op_type: "ReduxSyncFminAbsOp",
+            dialect_op_name: "nvvm.redux_sync_fmin_abs",
+            ptx_modifiers: &["sync", "min", "abs", "f32"],
+            minimum_ptx: "8.6",
+            minimum_sm: None,
+            targets: REDUX_F32_TARGETS,
+        },
+        ReduxOperation::FminAbsNan => ReduxRecipe {
+            id: "redux_sync_min_abs_nan_f32",
+            operation_key: "warp.redux.sync.min.abs.nan.f32",
+            source_record: "int_nvvm_redux_sync_fmin_abs_NaN",
+            llvm_symbol: "llvm.nvvm.redux.sync.fmin.abs.NaN",
+            rust_name: "redux_sync_min_abs_nan_f32",
+            rust_value: "f32",
+            value_type: "f32",
+            dialect_op_type: "ReduxSyncFminAbsNanOp",
+            dialect_op_name: "nvvm.redux_sync_fmin_abs_nan",
+            ptx_modifiers: &["sync", "min", "abs", "NaN", "f32"],
+            minimum_ptx: "8.6",
+            minimum_sm: None,
+            targets: REDUX_F32_TARGETS,
+        },
+        ReduxOperation::Fmax => ReduxRecipe {
+            id: "redux_sync_max_f32",
+            operation_key: "warp.redux.sync.max.f32",
+            source_record: "int_nvvm_redux_sync_fmax",
+            llvm_symbol: "llvm.nvvm.redux.sync.fmax",
+            rust_name: "redux_sync_max_f32",
+            rust_value: "f32",
+            value_type: "f32",
+            dialect_op_type: "ReduxSyncFmaxOp",
+            dialect_op_name: "nvvm.redux_sync_fmax",
+            ptx_modifiers: &["sync", "max", "f32"],
+            minimum_ptx: "8.6",
+            minimum_sm: None,
+            targets: REDUX_F32_TARGETS,
+        },
+        ReduxOperation::FmaxNan => ReduxRecipe {
+            id: "redux_sync_max_nan_f32",
+            operation_key: "warp.redux.sync.max.nan.f32",
+            source_record: "int_nvvm_redux_sync_fmax_NaN",
+            llvm_symbol: "llvm.nvvm.redux.sync.fmax.NaN",
+            rust_name: "redux_sync_max_nan_f32",
+            rust_value: "f32",
+            value_type: "f32",
+            dialect_op_type: "ReduxSyncFmaxNanOp",
+            dialect_op_name: "nvvm.redux_sync_fmax_nan",
+            ptx_modifiers: &["sync", "max", "NaN", "f32"],
+            minimum_ptx: "8.6",
+            minimum_sm: None,
+            targets: REDUX_F32_TARGETS,
+        },
+        ReduxOperation::FmaxAbs => ReduxRecipe {
+            id: "redux_sync_max_abs_f32",
+            operation_key: "warp.redux.sync.max.abs.f32",
+            source_record: "int_nvvm_redux_sync_fmax_abs",
+            llvm_symbol: "llvm.nvvm.redux.sync.fmax.abs",
+            rust_name: "redux_sync_max_abs_f32",
+            rust_value: "f32",
+            value_type: "f32",
+            dialect_op_type: "ReduxSyncFmaxAbsOp",
+            dialect_op_name: "nvvm.redux_sync_fmax_abs",
+            ptx_modifiers: &["sync", "max", "abs", "f32"],
+            minimum_ptx: "8.6",
+            minimum_sm: None,
+            targets: REDUX_F32_TARGETS,
+        },
+        ReduxOperation::FmaxAbsNan => ReduxRecipe {
+            id: "redux_sync_max_abs_nan_f32",
+            operation_key: "warp.redux.sync.max.abs.nan.f32",
+            source_record: "int_nvvm_redux_sync_fmax_abs_NaN",
+            llvm_symbol: "llvm.nvvm.redux.sync.fmax.abs.NaN",
+            rust_name: "redux_sync_max_abs_nan_f32",
+            rust_value: "f32",
+            value_type: "f32",
+            dialect_op_type: "ReduxSyncFmaxAbsNanOp",
+            dialect_op_name: "nvvm.redux_sync_fmax_abs_nan",
+            ptx_modifiers: &["sync", "max", "abs", "NaN", "f32"],
+            minimum_ptx: "8.6",
+            minimum_sm: None,
+            targets: REDUX_F32_TARGETS,
         },
     }
 }
@@ -29774,6 +29953,78 @@ mod tests {
     use super::*;
     use crate::model::{ImportedSelection, ScalarConversionAdmissionVariant};
 
+    #[test]
+    fn f32_redux_recipes_match_pinned_llvm_records() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let imported: ImportedFile =
+            read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
+        let declarations: BTreeMap<_, _> = imported
+            .intrinsics
+            .iter()
+            .map(|record| (record.source_record.as_str(), record))
+            .collect();
+        let cases = [
+            (
+                ReduxOperation::Fmin,
+                "redux.sync.min.f32 \t$dst, $src, $mask;",
+                &["sync", "min", "f32"][..],
+            ),
+            (
+                ReduxOperation::FminNan,
+                "redux.sync.min.NaN.f32 \t$dst, $src, $mask;",
+                &["sync", "min", "NaN", "f32"],
+            ),
+            (
+                ReduxOperation::FminAbs,
+                "redux.sync.min.abs.f32 \t$dst, $src, $mask;",
+                &["sync", "min", "abs", "f32"],
+            ),
+            (
+                ReduxOperation::FminAbsNan,
+                "redux.sync.min.abs.NaN.f32 \t$dst, $src, $mask;",
+                &["sync", "min", "abs", "NaN", "f32"],
+            ),
+            (
+                ReduxOperation::Fmax,
+                "redux.sync.max.f32 \t$dst, $src, $mask;",
+                &["sync", "max", "f32"],
+            ),
+            (
+                ReduxOperation::FmaxNan,
+                "redux.sync.max.NaN.f32 \t$dst, $src, $mask;",
+                &["sync", "max", "NaN", "f32"],
+            ),
+            (
+                ReduxOperation::FmaxAbs,
+                "redux.sync.max.abs.f32 \t$dst, $src, $mask;",
+                &["sync", "max", "abs", "f32"],
+            ),
+            (
+                ReduxOperation::FmaxAbsNan,
+                "redux.sync.max.abs.NaN.f32 \t$dst, $src, $mask;",
+                &["sync", "max", "abs", "NaN", "f32"],
+            ),
+        ];
+
+        for (operation, expected_asm, expected_modifiers) in cases {
+            let recipe = redux_recipe(operation);
+            let declaration = declarations[recipe.source_record];
+            assert_eq!(declaration.llvm_name, recipe.llvm_symbol);
+            assert_eq!(declaration.arguments, ["f32", "i32"]);
+            assert_eq!(declaration.results, ["f32"]);
+            assert_eq!(declaration.selections.len(), 1);
+            assert_eq!(declaration.selections[0].asm, expected_asm);
+            assert_eq!(
+                declaration.selections[0].predicates,
+                ["Subtarget->hasReduxSyncF32()"]
+            );
+            assert_eq!(recipe.ptx_modifiers, expected_modifiers);
+            assert_eq!(recipe.minimum_ptx, "8.6");
+            assert_eq!(recipe.minimum_sm, None);
+            assert_eq!(recipe.targets, REDUX_F32_TARGETS);
+        }
+    }
+
     fn sreg_pattern(special_register: &str) -> InstructionPattern {
         InstructionPattern::new(
             "mov",
@@ -31301,7 +31552,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 64);
-        assert_eq!(overlay.intrinsics.len(), 1002);
+        assert_eq!(overlay.intrinsics.len(), 1010);
         assert_eq!(
             overlay
                 .intrinsics
@@ -38905,7 +39156,7 @@ scope = "system"
     }
 
     #[test]
-    fn every_integer_redux_variant_matches_its_closed_recipe() {
+    fn every_redux_variant_matches_its_closed_recipe() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let (overlay, _) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
@@ -38922,7 +39173,7 @@ scope = "system"
             .iter()
             .filter(|record| record.family == "redux")
             .collect();
-        assert_eq!(redux.len(), 8);
+        assert_eq!(redux.len(), 16);
 
         for policy in redux {
             let declaration = declarations
@@ -39765,6 +40016,45 @@ scope = "system"
         conflicting
             .predicates
             .push("Subtarget->getPTXVersion() >= 86".into());
+        assert!(validate_selected_target_predicates(&record, &conflicting).is_err());
+    }
+
+    #[test]
+    fn f32_redux_predicate_requires_the_reviewed_exact_target_matrix() {
+        let mut record = policy();
+        record.family = "redux".into();
+        record.minimum_ptx = "8.6".into();
+        record.minimum_sm = None;
+        record.targets = REDUX_F32_TARGETS.into();
+        record.redux = Some(crate::model::Redux {
+            operation: ReduxOperation::Fmin,
+            participation:
+                ReduxParticipation::ExecutingLaneNamedAllNamedLanesSameInstructionAndMask,
+            adapter: ReduxAdapter::MaskValueToSourceMemberMask,
+        });
+        let selection = ImportedSelection {
+            source_record: "selection".into(),
+            asm: "redux.sync.min.f32 \t$dst, $src, $mask;".into(),
+            predicates: vec!["Subtarget->hasReduxSyncF32()".into()],
+            constraints: Default::default(),
+        };
+
+        validate_selected_target_predicates(&record, &selection).unwrap();
+
+        record.targets =
+            "sm_100a|sm_100f|sm_103a|sm_103f|sm_110a|sm_110f|sm_120a|sm_120f|sm_121a|sm_121f"
+                .into();
+        assert!(validate_selected_target_predicates(&record, &selection).is_err());
+
+        record.targets = REDUX_F32_TARGETS.into();
+        record.minimum_ptx = "8.8".into();
+        assert!(validate_selected_target_predicates(&record, &selection).is_err());
+
+        record.minimum_ptx = "8.6".into();
+        let mut conflicting = selection;
+        conflicting
+            .predicates
+            .push("Subtarget->getPTXVersion() >= 88".into());
         assert!(validate_selected_target_predicates(&record, &conflicting).is_err());
     }
 

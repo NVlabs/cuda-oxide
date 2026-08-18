@@ -623,13 +623,15 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                 record.rust.module == "warp"
                     && matches!(record.rust.arguments.as_slice(), [mask, value]
                         if mask == "u32" && value == &record.rust.result)
-                    && matches!(record.rust.result.as_str(), "u32" | "i32")
+                    && matches!(record.rust.result.as_str(), "u32" | "i32" | "f32")
                     && !record.rust.safe
-                    && record.llvm.as_ref().is_some_and(|llvm| {
-                        llvm.arguments == ["i32", "i32"] && llvm.results == ["i32"]
-                    })
-                    && record.dialect.operands == ["i32", "i32"]
-                    && record.dialect.results == ["i32"]
+                    && matches!(record.dialect.results.as_slice(), [result]
+                        if matches!(result.as_str(), "i32" | "f32"))
+                    && matches!(record.dialect.results.as_slice(), [result]
+                        if record.llvm.as_ref().is_some_and(|llvm| {
+                            llvm.arguments == [result.as_str(), "i32"]
+                                && llvm.results == [result.as_str()]
+                        }) && record.dialect.operands == ["i32", result.as_str()])
                     && record.lowering == "generated_redux"
                     && record.redux.is_some(),
                 "{} is outside the closed generated redux recipe",
@@ -8659,9 +8661,16 @@ fn render_dialect_dotprod(catalog: &CatalogFile, hash: &str) -> String {
 
 fn render_dialect_redux(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
-    output.push_str(
-        "//! Structural NVVM operations for the closed generated `redux.sync` family.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
-    );
+    let has_f32 = redux(catalog).any(|record| record.dialect.results == ["f32"]);
+    if has_f32 {
+        output.push_str(
+            "//! Structural NVVM operations for the closed generated `redux.sync` family.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{FP32Type, IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\nfn is_f32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx).downcast_ref::<FP32Type>().is_some()\n}\n\n",
+        );
+    } else {
+        output.push_str(
+            "//! Structural NVVM operations for the closed generated `redux.sync` family.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::{IntegerType, Signedness},\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::Typed,\n    value::Value,\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\nfn is_i32(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == 32)\n}\n\n",
+        );
+    }
     for record in redux(catalog) {
         writeln!(output, "/// {}", record.summary).unwrap();
         output.push_str(
@@ -8675,28 +8684,47 @@ fn render_dialect_redux(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
-        let result_signedness = match record.rust.result.as_str() {
-            "u32" => "Unsigned",
-            "i32" => "Signed",
+        let (result_type, value_predicate, type_error) = match record.rust.result.as_str() {
+            "u32" => (
+                "IntegerType::get(ctx, 32, Signedness::Unsigned)",
+                "is_i32",
+                format!(
+                    "{} member mask, value, and result must be 32-bit integers",
+                    record.dialect.op_name
+                ),
+            ),
+            "i32" => (
+                "IntegerType::get(ctx, 32, Signedness::Signed)",
+                "is_i32",
+                format!(
+                    "{} member mask, value, and result must be 32-bit integers",
+                    record.dialect.op_name
+                ),
+            ),
+            "f32" => (
+                "FP32Type::get(ctx)",
+                "is_f32",
+                format!(
+                    "{} member mask must be a 32-bit integer and value and result must be f32",
+                    record.dialect.op_name
+                ),
+            ),
             result => panic!("unsupported redux result {result}"),
         };
         writeln!(
             output,
-            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, member_mask: Value, value: Value) -> Ptr<Operation> {{\n        let result_ty = IntegerType::get(ctx, 32, Signedness::{result_signedness});\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![member_mask, value],\n            vec![],\n            0,\n        )\n    }}\n}}"
+            "    pub fn new(op: Ptr<Operation>) -> Self {{\n        Self {{ op }}\n    }}\n\n    pub fn build(ctx: &mut Context, member_mask: Value, value: Value) -> Ptr<Operation> {{\n        let result_ty = {result_type};\n        Operation::new(\n            ctx,\n            Self::get_concrete_op_info(),\n            vec![result_ty.into()],\n            vec![member_mask, value],\n            vec![],\n            0,\n        )\n    }}\n}}"
         )
         .unwrap();
         writeln!(output, "\nimpl Verify for {} {{", record.dialect.op_type).unwrap();
         writeln!(
             output,
-            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 2 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_i32(ctx, op.get_operand(0).get_type(ctx))\n            || !is_i32(ctx, op.get_operand(1).get_type(ctx))\n            || !is_i32(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 2 || op.get_num_results() != 1 {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        if !is_i32(ctx, op.get_operand(0).get_type(ctx))\n            || !{value_predicate}(ctx, op.get_operand(1).get_type(ctx))\n            || !{value_predicate}(ctx, op.get_result(0).get_type(ctx))\n        {{\n            return verify_err!(op.loc(), {:?});\n        }}\n        Ok(())\n    }}\n}}\n",
             format!(
                 "{} requires exactly two operands [member_mask, value] and one result",
                 record.dialect.op_name
             ),
-            format!(
-                "{} member mask, value, and result must be 32-bit integers",
-                record.dialect.op_name
-            ),
+            type_error,
         )
         .unwrap();
     }
@@ -19494,21 +19522,31 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
         }
     } else if let Some(redux) = &record.redux {
         debug_assert_eq!(redux.adapter, ReduxAdapter::MaskValueToSourceMemberMask);
-        writeln!(output, "declare i32 @{}(i32, i32)", llvm(record).symbol).unwrap();
+        let value_type = match llvm(record).results[0].as_str() {
+            "i32" => "i32",
+            "f32" => "float",
+            other => panic!("unsupported redux value type {other}"),
+        };
+        writeln!(
+            output,
+            "declare {value_type} @{}({value_type}, i32)",
+            llvm(record).symbol
+        )
+        .unwrap();
         output.push('\n');
         writeln!(
             output,
-            "define i32 @probe_{}(i32 %member_mask, i32 %value) {{",
+            "define {value_type} @probe_{}(i32 %member_mask, {value_type} %value) {{",
             record.id
         )
         .unwrap();
         writeln!(
             output,
-            "  %result = call i32 @{}(i32 %value, i32 %member_mask)",
+            "  %result = call {value_type} @{}({value_type} %value, i32 %member_mask)",
             llvm(record).symbol
         )
         .unwrap();
-        output.push_str("  ret i32 %result\n}\n");
+        writeln!(output, "  ret {value_type} %result\n}}").unwrap();
     } else if let Some(sparse_mma) = &record.sparse_mma {
         let accumulator = match sparse_mma.accumulator {
             SparseMmaAccumulator::F16 => "i32",
@@ -21804,7 +21842,7 @@ mod tests {
         assert_eq!(catalog.schema, crate::resolve::CATALOG_SCHEMA);
         validate_renderable(&catalog).unwrap();
 
-        assert_eq!(redux(&catalog).count(), 8);
+        assert_eq!(redux(&catalog).count(), 16);
         let record = redux(&catalog).next().unwrap();
         assert_eq!(
             record.redux.as_ref().unwrap().adapter,
@@ -21817,6 +21855,12 @@ mod tests {
         assert!(dialect.contains("vec![member_mask, value]"));
         assert!(dialect.contains("ReduxSyncAddOp::register(ctx)"));
         assert!(dialect.contains("Signedness::Signed"));
+
+        assert!(dialect.contains("name = \"nvvm.redux_sync_fmin\""));
+        assert!(dialect.contains("types::{FP32Type, IntegerType, Signedness}"));
+        assert!(dialect.contains("let result_ty = FP32Type::get(ctx);"));
+        assert!(dialect.contains("is_f32(ctx, op.get_operand(1).get_type(ctx))"));
+        assert!(dialect.contains("is_f32(ctx, op.get_result(0).get_type(ctx))"));
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("cuda_device::warp::redux_sync_add"));
@@ -21837,12 +21881,26 @@ mod tests {
         assert!(probe.contains("define i32 @probe_redux_sync_add(i32 %member_mask, i32 %value)"));
         assert!(probe.contains("call i32 @llvm.nvvm.redux.sync.add(i32 %value, i32 %member_mask)"));
 
+        let f32_record = redux(&catalog)
+            .find(|record| record.id == "redux_sync_min_f32")
+            .unwrap();
+        let f32_probe = render_probe(&catalog, f32_record, "test-hash");
+        assert!(
+            f32_probe
+                .contains("define float @probe_redux_sync_min_f32(i32 %member_mask, float %value)")
+        );
+        assert!(
+            f32_probe
+                .contains("call float @llvm.nvvm.redux.sync.fmin(float %value, i32 %member_mask)")
+        );
+
         let raw = render_raw_abi(&catalog, "test-hash");
         let signature = "pub unsafe fn i0017(_arg0: u32, _arg1: u32) -> u32";
         let index = raw.find(signature).unwrap();
         assert!(raw[..index].ends_with("#[must_use]\n#[inline(never)]\n"));
         assert!(raw.contains("pub unsafe fn i0019(_arg0: u32, _arg1: i32) -> i32"));
         assert!(raw.contains("pub unsafe fn i0024(_arg0: u32, _arg1: u32) -> u32"));
+        assert!(raw.contains("pub unsafe fn i1003(_arg0: u32, _arg1: f32) -> f32"));
         assert!(raw.contains("The executing lane must be named in `mask`"));
     }
 
@@ -22643,7 +22701,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 1002);
+        assert_eq!(catalog.intrinsics.len(), 1010);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 154);
         let generated_records = records

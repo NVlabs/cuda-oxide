@@ -2356,8 +2356,8 @@ pub enum LdmatrixAdapter {
     MultipleResultsToArray,
 }
 
-/// Closed semantic and lowering contract for the generated integer
-/// `redux.sync` family.
+/// Closed semantic and lowering contract for the generated `redux.sync`
+/// family.
 ///
 /// The Rust and NVVM dialect APIs intentionally put the participation mask
 /// first, while LLVM's NVVM intrinsic puts the lane value first. Keeping that
@@ -2382,6 +2382,14 @@ pub enum ReduxOperation {
     And,
     Or,
     Xor,
+    Fmin,
+    FminNan,
+    FminAbs,
+    FminAbsNan,
+    Fmax,
+    FmaxNan,
+    FmaxAbs,
+    FmaxAbsNan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
