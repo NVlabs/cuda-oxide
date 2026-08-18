@@ -47,5 +47,6 @@ mod generated_intrinsics;
 pub mod interface_impls;
 pub mod intrinsics;
 pub mod ops;
+pub(crate) mod target_stable_storage;
 pub mod type_interface_impls;
 pub mod types;
