@@ -7615,8 +7615,8 @@ fn translate_array_value_constant_inner(
 /// its fields.
 ///
 /// Aggregate **const** values with thin pointers to device statics are
-/// materialized per field; device-global *initializer* relocations remain a
-/// separate unsupported gap.
+/// materialized per field; device-global initializers use a separate
+/// allocation-level relocation path instead of this value reconstruction.
 fn translate_struct_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -8217,6 +8217,124 @@ fn classify_union_constant_storage(
         field_index,
         field_ty,
     })
+}
+
+/// Admit only the device-static union shape whose complete storage can be
+/// represented by one provenance-preserving thin-pointer relocation.
+///
+/// Device-global initializers do not retain a source-level active union field,
+/// so this path must prove the physical storage without guessing one. Keep the
+/// scope deliberately narrower than ordinary union SSA lowering: one top-level
+/// pointer-sized union, naturally aligned, one relocation at byte zero, and
+/// every non-ZST alternative a representation-compatible thin pointer.
+fn validate_device_static_union_initializer(
+    ctx: &Context,
+    static_def: &rustc_public::mir::mono::StaticDef,
+    union_ty: TypeHandle,
+    initializer: &GlobalInitializerData,
+    loc: Location,
+) -> TranslationResult<()> {
+    let (union_name, union_size, union_align) = {
+        let ty_ref = union_ty.deref(ctx);
+        let union_ty = ty_ref
+            .downcast_ref::<dialect_mir::types::MirUnionType>()
+            .ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(
+                    "validate_device_static_union_initializer called on non-union type"
+                ))
+            })?;
+        (
+            union_ty.name().to_string(),
+            union_ty.total_size(),
+            union_ty.abi_align(),
+        )
+    };
+
+    let storage_kind = classify_union_constant_storage(ctx, union_ty).map_err(|message| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "device static {} contains union `{union_name}` whose initializer cannot preserve pointer provenance: {message}",
+                static_def.name()
+            ))
+        )
+    })?;
+    if !matches!(storage_kind, UnionConstantStorageKind::ThinPointer { .. }) {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} contains union `{union_name}` without thin-pointer storage; \
+                 device-global union initializers are supported only when every non-ZST \
+                 alternative is a representation-compatible thin pointer",
+                static_def.name()
+            ))
+        );
+    }
+
+    let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+    if pointer_width != 8 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} contains union `{union_name}`, but cuda-oxide currently \
+                 supports device-global union relocations only for 8-byte NVPTX pointers",
+                static_def.name()
+            ))
+        );
+    }
+    let pointer_width_u64 = pointer_width as u64;
+
+    if union_size != pointer_width_u64 || union_align != pointer_width_u64 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} contains union `{union_name}` with size/alignment \
+                 {union_size}/{union_align}; device-global union relocations require exactly \
+                 one naturally aligned {pointer_width}-byte pointer word",
+                static_def.name()
+            ))
+        );
+    }
+    if initializer.bytes.len() as u64 != pointer_width_u64
+        || initializer.alignment != pointer_width_u64
+    {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} union `{union_name}` has evaluated initializer \
+                 size/alignment {}/{}, expected {pointer_width}/{pointer_width}",
+                static_def.name(),
+                initializer.bytes.len(),
+                initializer.alignment
+            ))
+        );
+    }
+
+    let [relocation] = initializer.relocations.as_slice() else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} union `{union_name}` has {} initializer relocations; \
+                 exactly one thin-pointer relocation is required",
+                static_def.name(),
+                initializer.relocations.len()
+            ))
+        );
+    };
+    if relocation.source_offset != 0 || u64::from(relocation.width_bytes) != pointer_width_u64 {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} union `{union_name}` relocation occupies byte {} with \
+                 width {}, expected one {pointer_width}-byte slot at byte zero",
+                static_def.name(),
+                relocation.source_offset,
+                relocation.width_bytes
+            ))
+        );
+    }
+
+    Ok(())
 }
 
 /// Verify that rustc and the MIR union agree on the exact stored size.
@@ -12142,19 +12260,33 @@ fn ensure_static_global_alloc(
     let allocation_size = initializer.bytes.len() as u64;
     let initializer_hex = bytes_to_hex(&initializer.bytes);
     let static_ty = static_def.ty();
-
-    if let Some(union_name) = stored_type_union_name(static_ty, &mut Vec::new()) {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "device static {} contains union `{union_name}`; initialized union storage is not yet supported",
-                static_def.name()
-            ))
-        );
-    }
-
     let is_constant = is_constant_wrapper_type(&static_ty);
     let global_ty = types::translate_type(ctx, &static_ty)?;
+
+    if let Some(union_name) = stored_type_union_name(static_ty, &mut Vec::new()) {
+        if global_ty
+            .deref(ctx)
+            .is::<dialect_mir::types::MirUnionType>()
+        {
+            validate_device_static_union_initializer(
+                ctx,
+                static_def,
+                global_ty,
+                &initializer,
+                loc.clone(),
+            )?;
+        } else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "device static {} contains nested union `{union_name}`; device-global \
+                     union initializer relocations are supported only for a top-level \
+                     thin-pointer union",
+                    static_def.name()
+                ))
+            );
+        }
+    }
     let global_ptr_ty: TypeHandle = if is_constant {
         dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
     } else {

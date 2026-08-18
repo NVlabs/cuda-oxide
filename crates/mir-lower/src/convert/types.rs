@@ -5024,6 +5024,27 @@ mod tests {
     }
 
     #[test]
+    fn relocated_initialized_global_layout_accepts_thin_pointer_union() {
+        let mut ctx = make_ctx();
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let u8_ty = mir_uint(&mut ctx, 8);
+        let word_ptr: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let byte_ptr: TypeHandle = MirPtrType::get_generic(&mut ctx, u8_ty, false).into();
+        let union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "RelocatedPointerUnion".into(),
+            vec!["word".into(), "byte".into()],
+            vec![word_ptr, byte_ptr],
+            8,
+            8,
+        )
+        .into();
+
+        validate_relocated_initialized_global_layout(&mut ctx, union_ty, 8, 8)
+            .expect("one pointer-word union must be valid relocated global storage");
+    }
+
+    #[test]
     fn relocated_initialized_global_layout_rejects_malformed_memory_order() {
         let mut ctx = make_ctx();
         let byte = mir_uint(&mut ctx, 8);
