@@ -240,7 +240,7 @@ If you need to install it manually:
 
 ```bash
 rustup toolchain install nightly-2026-04-03
-rustup component add rust-src rustc-dev rust-analyzer llvm-tools --toolchain nightly-2026-04-03
+rustup component add rust-src rustc-dev rust-analyzer clippy rustfmt llvm-tools --toolchain nightly-2026-04-03
 ```
 
 These components are required by the codegen backend and doctor:
