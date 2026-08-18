@@ -6,9 +6,9 @@
 //! Proves that the codegen pipeline can carry thirty-two tied `f32` values
 //! through one inline-PTX operation and produce spill-free `sm_90a` code.
 //!
-//! The probe covers both group shapes the value-form lowering emits: a
-//! single `wgmma.mma_async` and a chain of several under one
-//! fence/commit/wait sequence in the same asm region.
+//! The probe covers both BF16 and F16 value-form lowering, for a single
+//! `wgmma.mma_async` and a chain of several under one fence/commit/wait
+//! sequence in the same asm region.
 
 #![cfg(unix)]
 
@@ -36,7 +36,26 @@ use std::num::NonZeroUsize;
 
 const ACCUMULATOR_LEN: usize = 32;
 
-fn build_wgmma_value_carrier_kernel(module: &mut CodegenModule, mma_count: usize) {
+#[derive(Clone, Copy, Debug)]
+enum WgmmaInputKind {
+    Bf16,
+    F16,
+}
+
+impl WgmmaInputKind {
+    fn ptx_suffix(self) -> &'static str {
+        match self {
+            Self::Bf16 => "bf16.bf16",
+            Self::F16 => "f16.f16",
+        }
+    }
+}
+
+fn build_wgmma_value_carrier_kernel(
+    module: &mut CodegenModule,
+    mma_count: usize,
+    input_kind: WgmmaInputKind,
+) {
     module.edit(|ctx, module| {
         let module_region = module.get_operation().deref(ctx).get_region(0);
         let module_block = module_region
@@ -114,12 +133,13 @@ fn build_wgmma_value_carrier_kernel(module: &mut CodegenModule, mma_count: usize
         const DESC_OPERAND_BASE: usize = ACCUMULATOR_LEN * 2;
 
         let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
+        let ptx_suffix = input_kind.ptx_suffix();
 
         for mma_index in 0..mma_count {
             let desc_a = DESC_OPERAND_BASE + mma_index * 2;
             let desc_b = desc_a + 1;
             template.push_str(&format!(
-                "    wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
+                "    wgmma.mma_async.sync.aligned.m64n64k16.f32.{ptx_suffix} \
                  {{{accumulator_registers}}}, ${desc_a}, ${desc_b}, 1, 1, 1, 0, 0;\n"
             ));
         }
@@ -246,9 +266,9 @@ fn used_register_count(ptxas_stderr: &str) -> Option<u32> {
     })
 }
 
-fn assert_spill_free_value_carrier(mma_count: usize) {
+fn assert_spill_free_value_carrier(input_kind: WgmmaInputKind, mma_count: usize) {
     let mut module = CodegenModule::new("wgmma_value_carrier").unwrap();
-    build_wgmma_value_carrier_kernel(&mut module, mma_count);
+    build_wgmma_value_carrier_kernel(&mut module, mma_count, input_kind);
 
     let compiler = Compiler::discover().expect("LLVM 21+ llc/opt must be installed");
     let options = CompileOptions::new(Target::parse("sm_90a").unwrap());
@@ -278,11 +298,14 @@ fn assert_spill_free_value_carrier(mma_count: usize) {
         "the WGMMA carrier must contain exactly one fence:\n{text}",
     );
 
+    let expected_mma = format!(
+        "wgmma.mma_async.sync.aligned.m64n64k16.f32.{}",
+        input_kind.ptx_suffix()
+    );
     assert_eq!(
-        text.matches("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
-            .count(),
+        text.matches(&expected_mma).count(),
         mma_count,
-        "the WGMMA carrier must chain exactly {mma_count} BF16 MMAs:\n{text}",
+        "the WGMMA carrier must chain exactly {mma_count} {input_kind:?} MMAs:\n{text}",
     );
 
     assert_eq!(
@@ -307,7 +330,8 @@ fn assert_spill_free_value_carrier(mma_count: usize) {
         .unwrap_or(0);
 
     let directory = std::env::temp_dir().join(format!(
-        "wgmma_value_carrier_ptx_{}_{}_{}",
+        "wgmma_value_carrier_ptx_{:?}_{}_{}_{}",
+        input_kind,
         mma_count,
         std::process::id(),
         unique,
@@ -343,7 +367,7 @@ fn assert_spill_free_value_carrier(mma_count: usize) {
 
     assert!(
         output.status.success(),
-        "ptxas rejected the 32-value carrier:\n{stderr}\n\nPTX:\n{text}",
+        "ptxas rejected the 32-value {input_kind:?} carrier:\n{stderr}\n\nPTX:\n{text}",
     );
     assert!(
         stderr.contains("0 bytes spill stores"),
@@ -368,10 +392,20 @@ fn assert_spill_free_value_carrier(mma_count: usize) {
 
 #[test]
 fn bf16_wgmma_uses_thirty_two_tied_f32_values_without_spills() {
-    assert_spill_free_value_carrier(1);
+    assert_spill_free_value_carrier(WgmmaInputKind::Bf16, 1);
 }
 
 #[test]
 fn bf16_wgmma_chains_two_mma_async_under_one_commit_without_spills() {
-    assert_spill_free_value_carrier(2);
+    assert_spill_free_value_carrier(WgmmaInputKind::Bf16, 2);
+}
+
+#[test]
+fn f16_wgmma_uses_thirty_two_tied_f32_values_without_spills() {
+    assert_spill_free_value_carrier(WgmmaInputKind::F16, 1);
+}
+
+#[test]
+fn f16_wgmma_chains_two_mma_async_under_one_commit_without_spills() {
+    assert_spill_free_value_carrier(WgmmaInputKind::F16, 2);
 }

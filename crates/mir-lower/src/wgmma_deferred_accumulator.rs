@@ -3,32 +3,39 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Fuse sound BF16 WGMMA sequences before MIR-to-LLVM conversion.
+//! Fuse sound BF16 WGMMA sequences and canonical F16 full-drain regions before
+//! MIR-to-LLVM conversion.
 //!
 //! The public MMA operation exposes its accumulator through a pointer, but PTX
 //! requires all 32 accumulator registers to remain inaccessible until the
 //! corresponding `wgmma.wait_group` completes. This pass recognizes both closed
 //! straight-line regions and one deliberately narrow counted K-loop shape. The
 //! canonical `[[f32; 8]; 4]` accumulator is adapted through 32 scalar SSA values;
-//! unsupported accumulator shapes retain the existing deferred pointer fallback.
+//! unsupported BF16 accumulator shapes retain the existing deferred pointer
+//! fallback.
+//! F16 is accepted only for the canonical accumulator in a linear full-drain
+//! region; counted loops, partial waits, and pointer fallback remain BF16-only.
 //!
 //! Straight-line regions keep the existing shape:
 //!
 //! ```text
 //! wgmma.fence
-//! one or more m64n64k16.f32.bf16.bf16 MMA operations on one accumulator
+//! one or more homogeneous m64n64k16.f32.bf16.bf16 or
+//! m64n64k16.f32.f16.f16 MMA operations on one accumulator
 //! wgmma.commit_group
 //! wgmma.wait_group<0>
 //! ```
 //!
-//! A counted K-loop may place the fence in the loop preheader, one pointer-form
+//! A BF16 counted K-loop may place the fence in the loop preheader, one
+//! pointer-form
 //! MMA in the unique latch, and the commit/final `wait_group<0>` in the unique
 //! exit. The loop must have a compile-time trip count and two `u64` descriptor
 //! block arguments whose back-edge values are either unchanged or `arg + const`.
 //! The complete asynchronous lifetime is then represented by one value-form loop
 //! operation so LLVM never sees an in-flight accumulator between iterations.
 //!
-//! Straight-line partial-wait pipelines are recognized separately. A static
+//! Straight-line BF16 partial-wait pipelines are recognized separately. A
+//! static
 //! `wait_group<N>` with `N > 0` requires `N + 1` canonical accumulator slots.
 //! Groups are committed and the slots are reused round-robin only after the
 //! corresponding partial wait has made the oldest slot safe. Every accepted
@@ -50,8 +57,9 @@ use dialect_mir::{
 };
 use dialect_nvvm::ops::{
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
-    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op,
-    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op,
+    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32F16Op,
+    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
+    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
     WgmmaMmaPipelineValuesM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
 };
 use mir_transforms::analyses::{induction, loop_info::LoopInfo};
@@ -87,6 +95,12 @@ const ACCUMULATOR_ROWS: usize = 4;
 const ACCUMULATOR_COLUMNS: usize = 8;
 const ACCUMULATOR_LEN: usize = ACCUMULATOR_ROWS * ACCUMULATOR_COLUMNS;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinearMmaKind {
+    Bf16,
+    F16,
+}
+
 struct FusionPlan {
     fence: Ptr<Operation>,
     mmas: Vec<Ptr<Operation>>,
@@ -94,6 +108,7 @@ struct FusionPlan {
     wait: Ptr<Operation>,
     accumulator: Value,
     descriptors: Vec<Value>,
+    kind: LinearMmaKind,
 }
 
 struct PipelinePlan {
@@ -833,6 +848,16 @@ fn require_pointer_mma_shape(ctx: &Context, operation: Ptr<Operation>) -> Result
     Ok(())
 }
 
+fn linear_mma_kind(ctx: &Context, operation: Ptr<Operation>) -> Option<LinearMmaKind> {
+    if Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some() {
+        Some(LinearMmaKind::Bf16)
+    } else if Operation::get_op::<WgmmaMmaM64N64K16F32F16Op>(operation, ctx).is_some() {
+        Some(LinearMmaKind::F16)
+    } else {
+        None
+    }
+}
+
 fn require_wait_shape(ctx: &Context, operation: Ptr<Operation>) -> Result<()> {
     let operation_ref = operation.deref(ctx);
     if operation_ref.get_num_operands() != 1 || operation_ref.get_num_results() != 0 {
@@ -1081,6 +1106,7 @@ fn apply_value_plan(
     wait: Ptr<Operation>,
     accumulator: Value,
     descriptors: Vec<Value>,
+    kind: LinearMmaKind,
     row_type: TypeHandle,
     element_type: TypeHandle,
 ) {
@@ -1088,7 +1114,14 @@ fn apply_value_plan(
     let (element_pointers, accumulator_values) =
         load_accumulator_values_before(ctx, wait, accumulator, row_type, element_type, loc.clone());
 
-    let group = WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(ctx, accumulator_values, descriptors);
+    let group = match kind {
+        LinearMmaKind::Bf16 => {
+            WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(ctx, accumulator_values, descriptors)
+        }
+        LinearMmaKind::F16 => {
+            WgmmaMmaGroupValuesM64N64K16F32F16Op::build(ctx, accumulator_values, descriptors)
+        }
+    };
     group.deref_mut(ctx).set_loc(loc.clone());
     let accumulator_results = (0..ACCUMULATOR_LEN)
         .map(|index| group.deref(ctx).get_result(index))
@@ -1632,6 +1665,7 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
     let mut commit = None;
     let mut accumulator = None;
     let mut descriptors = Vec::new();
+    let mut kind = None;
 
     loop {
         let operations: Vec<_> = block.deref(ctx).iter(ctx).collect();
@@ -1650,16 +1684,33 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
                 );
             }
 
-            if Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some() {
+            if let Some(current_kind) = linear_mma_kind(ctx, operation) {
                 require_pointer_mma_shape(ctx, operation)?;
                 if commit.is_some() {
                     return pliron::input_err_noloc!(
                         "WGMMA MMA cannot appear after commit_group in a deferred accumulator region"
                     );
                 }
+                match kind {
+                    Some(expected) if expected != current_kind => {
+                        return pliron::input_err_noloc!(
+                            "one linear WGMMA full-drain region cannot mix BF16 and F16 MMA variants"
+                        );
+                    }
+                    None => kind = Some(current_kind),
+                    _ => {}
+                }
+
                 let operation_ref = operation.deref(ctx);
                 let current_accumulator = operation_ref.get_operand(0);
                 require_supported_accumulator(ctx, current_accumulator)?;
+                if current_kind == LinearMmaKind::F16
+                    && value_accumulator_shape(ctx, current_accumulator).is_none()
+                {
+                    return pliron::input_err_noloc!(
+                        "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
+                    );
+                }
                 match accumulator {
                     Some(expected) if expected != current_accumulator => {
                         return pliron::input_err_noloc!(
@@ -1711,6 +1762,7 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
                     wait: operation,
                     accumulator: accumulator.expect("MMA list is non-empty"),
                     descriptors,
+                    kind: kind.expect("MMA list is non-empty"),
                 }));
             }
 
@@ -1810,7 +1862,7 @@ fn apply_pipeline_plan(ctx: &mut Context, plan: PipelinePlan) {
     }
 }
 
-fn apply_plan(ctx: &mut Context, plan: FusionPlan) {
+fn apply_plan(ctx: &mut Context, plan: FusionPlan) -> Result<()> {
     let FusionPlan {
         fence,
         mmas,
@@ -1818,6 +1870,7 @@ fn apply_plan(ctx: &mut Context, plan: FusionPlan) {
         wait,
         accumulator,
         descriptors,
+        kind,
     } = plan;
 
     if let Some((row_type, element_type)) = value_accumulator_shape(ctx, accumulator) {
@@ -1829,12 +1882,19 @@ fn apply_plan(ctx: &mut Context, plan: FusionPlan) {
             wait,
             accumulator,
             descriptors,
+            kind,
             row_type,
             element_type,
         );
-    } else {
+    } else if kind == LinearMmaKind::Bf16 {
         apply_pointer_fallback(ctx, fence, mmas, commit, wait, accumulator, descriptors);
+    } else {
+        return pliron::input_err_noloc!(
+            "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
+        );
     }
+
+    Ok(())
 }
 
 /// Return whether every block in `region` is reachable from its entry.
@@ -1946,7 +2006,7 @@ pub(crate) fn fuse_deferred_accumulators(
             continue;
         }
         if let Some(plan) = match_sequence(ctx, fence)? {
-            apply_plan(ctx, plan);
+            apply_plan(ctx, plan)?;
         }
     }
     Ok(())
