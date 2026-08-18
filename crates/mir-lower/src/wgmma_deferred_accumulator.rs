@@ -34,11 +34,13 @@
 //! corresponding partial wait has made the oldest slot safe. Every accepted
 //! pipeline ends with `wait_group<0>` before any accumulator value escapes.
 //!
-//! A second narrow loop form composes these properties for exactly two
-//! canonical accumulator slots. Its latch must contain two
-//! `MMA -> commit_group -> wait_group<1>` stages, followed by affine recurrences
-//! for four descriptor block arguments. The exit contains the final
-//! `wait_group<0>`. This form is selected before the single-slot counted loop.
+//! A second narrow loop form composes these properties for the production
+//! counted-pipeline depths validated on Hopper: two canonical accumulator slots
+//! with `wait_group<1>` or three slots with `wait_group<2>`. Its latch must
+//! contain one `MMA -> commit_group -> wait_group<N>` stage per slot, followed
+//! by affine recurrences for two descriptor block arguments per slot. The exit
+//! contains the final `wait_group<0>`. This form is selected before the
+//! single-slot counted loop.
 
 use dialect_mir::{
     ops::{
@@ -152,6 +154,7 @@ struct PipelinedCountedLoopPlan {
     desc_steps: Vec<u64>,
     trip_count: u64,
     slot_types: Vec<(TypeHandle, TypeHandle)>,
+    max_pending_groups: u8,
 }
 
 fn collect_blocks(ctx: &Context, root: Ptr<Operation>) -> Vec<Ptr<BasicBlock>> {
@@ -483,32 +486,57 @@ fn match_pipelined_counted_loop(
     for (index, operation) in latch_operations.iter().copied().enumerate() {
         if Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some() {
             require_pointer_mma_shape(ctx, operation)?;
-            pipeline_events.push((index, 0u8, operation));
+            pipeline_events.push((index, 0u8, operation, 0u64));
         } else if Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_some() {
             require_nullary_control_op(ctx, operation, "WGMMA commit_group")?;
-            pipeline_events.push((index, 1u8, operation));
+            pipeline_events.push((index, 1u8, operation, 0u64));
         } else if Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some() {
             require_wait_shape(ctx, operation)?;
             let wait_operand = operation.deref(ctx).get_operand(0);
-            if integer_constant_u64(ctx, wait_operand) != Some(1) {
+            let Some(max_pending) = integer_constant_u64(ctx, wait_operand) else {
+                return Ok(None);
+            };
+            if !(1..=2).contains(&max_pending) {
                 return Ok(None);
             }
-            pipeline_events.push((index, 2u8, operation));
+            pipeline_events.push((index, 2u8, operation, max_pending));
         }
     }
 
-    if pipeline_events.len() != 6
-        || pipeline_events
-            .iter()
-            .map(|(_, kind, _)| *kind)
-            .collect::<Vec<_>>()
-            != [0, 1, 2, 0, 1, 2]
+    let wait_depths = pipeline_events
+        .iter()
+        .filter(|(_, kind, _, _)| *kind == 2)
+        .map(|(_, _, _, max_pending)| *max_pending)
+        .collect::<Vec<_>>();
+    let Some(&max_pending_groups) = wait_depths.first() else {
+        return Ok(None);
+    };
+    if wait_depths
+        .iter()
+        .any(|wait_depth| *wait_depth != max_pending_groups)
     {
         return Ok(None);
     }
 
-    let first_event_index = pipeline_events[0].0;
-    let last_event_index = pipeline_events[5].0;
+    let max_pending_groups = u8::try_from(max_pending_groups)
+        .expect("supported counted-pipeline wait depth must fit u8");
+    let slot_count = usize::from(max_pending_groups) + 1;
+    if pipeline_events.len() != slot_count * 3
+        || !pipeline_events
+            .chunks_exact(3)
+            .all(|chunk| chunk[0].1 == 0 && chunk[1].1 == 1 && chunk[2].1 == 2)
+    {
+        return Ok(None);
+    }
+
+    let first_event_index = pipeline_events
+        .first()
+        .expect("counted pipeline has at least one stage")
+        .0;
+    let last_event_index = pipeline_events
+        .last()
+        .expect("counted pipeline has at least one stage")
+        .0;
     for operation in latch_operations
         .iter()
         .copied()
@@ -523,13 +551,22 @@ fn match_pipelined_counted_loop(
         }
     }
 
-    let mmas = vec![pipeline_events[0].2, pipeline_events[3].2];
-    let commits = vec![pipeline_events[1].2, pipeline_events[4].2];
-    let partial_waits = vec![pipeline_events[2].2, pipeline_events[5].2];
+    let mmas = pipeline_events
+        .chunks_exact(3)
+        .map(|chunk| chunk[0].2)
+        .collect::<Vec<_>>();
+    let commits = pipeline_events
+        .chunks_exact(3)
+        .map(|chunk| chunk[1].2)
+        .collect::<Vec<_>>();
+    let partial_waits = pipeline_events
+        .chunks_exact(3)
+        .map(|chunk| chunk[2].2)
+        .collect::<Vec<_>>();
 
-    let mut accumulators = Vec::with_capacity(2);
-    let mut slot_types = Vec::with_capacity(2);
-    let mut descriptor_args = Vec::with_capacity(4);
+    let mut accumulators = Vec::with_capacity(slot_count);
+    let mut slot_types = Vec::with_capacity(slot_count);
+    let mut descriptor_args = Vec::with_capacity(slot_count * 2);
     for &mma in &mmas {
         let mma_ref = mma.deref(ctx);
         let accumulator = mma_ref.get_operand(0);
@@ -547,15 +584,15 @@ fn match_pipelined_counted_loop(
         {
             return Ok(None);
         }
+        if accumulators.contains(&accumulator) {
+            return Ok(None);
+        }
         accumulators.push(accumulator);
         slot_types.push(shape);
         descriptor_args.extend([mma_ref.get_operand(1), mma_ref.get_operand(2)]);
     }
-    if accumulators[0] == accumulators[1] {
-        return Ok(None);
-    }
 
-    let mut descriptor_indices = Vec::with_capacity(4);
+    let mut descriptor_indices = Vec::with_capacity(slot_count * 2);
     for descriptor in descriptor_args {
         if !is_u64_value(ctx, descriptor) {
             return Ok(None);
@@ -569,8 +606,8 @@ fn match_pipelined_counted_loop(
         descriptor_indices.push(index);
     }
 
-    let mut desc_bases = Vec::with_capacity(4);
-    let mut desc_steps = Vec::with_capacity(4);
+    let mut desc_bases = Vec::with_capacity(slot_count * 2);
+    let mut desc_steps = Vec::with_capacity(slot_count * 2);
     for index in descriptor_indices {
         let base = init_operands[index];
         if !is_u64_value(ctx, base) {
@@ -602,6 +639,7 @@ fn match_pipelined_counted_loop(
         desc_steps,
         trip_count,
         slot_types,
+        max_pending_groups,
     }))
 }
 
@@ -1131,12 +1169,18 @@ fn apply_pipelined_counted_loop_plan(ctx: &mut Context, plan: PipelinedCountedLo
         desc_steps,
         trip_count,
         slot_types,
+        max_pending_groups,
     } = plan;
 
-    debug_assert_eq!(accumulators.len(), 2);
-    debug_assert_eq!(desc_bases.len(), 4);
-    debug_assert_eq!(desc_steps.len(), 4);
-    debug_assert_eq!(slot_types.len(), 2);
+    let slot_count = usize::from(max_pending_groups) + 1;
+    debug_assert!((1..=2).contains(&max_pending_groups));
+    debug_assert_eq!(accumulators.len(), slot_count);
+    debug_assert_eq!(desc_bases.len(), slot_count * 2);
+    debug_assert_eq!(desc_steps.len(), slot_count * 2);
+    debug_assert_eq!(slot_types.len(), slot_count);
+    debug_assert_eq!(mmas.len(), slot_count);
+    debug_assert_eq!(commits.len(), slot_count);
+    debug_assert_eq!(partial_waits.len(), slot_count);
     debug_assert_eq!(
         preheader.deref(ctx).get_terminator(ctx),
         Some(preheader_terminator)
@@ -1144,9 +1188,9 @@ fn apply_pipelined_counted_loop_plan(ctx: &mut Context, plan: PipelinedCountedLo
     debug_assert_eq!(exit.deref(ctx).get_num_arguments(), 0);
 
     let loc = fence.deref(ctx).loc();
-    let mut element_pointers = Vec::with_capacity(2);
-    let mut all_accumulator_values = Vec::with_capacity(2 * ACCUMULATOR_LEN);
-    for slot in 0..2 {
+    let mut element_pointers = Vec::with_capacity(slot_count);
+    let mut all_accumulator_values = Vec::with_capacity(slot_count * ACCUMULATOR_LEN);
+    for slot in 0..slot_count {
         let (row_type, element_type) = slot_types[slot];
         let (pointers, values) = load_accumulator_values_before(
             ctx,
@@ -1169,23 +1213,18 @@ fn apply_pipelined_counted_loop_plan(ctx: &mut Context, plan: PipelinedCountedLo
     let pipeline = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
         ctx,
         all_accumulator_values,
-        desc_bases[0],
-        desc_bases[1],
-        desc_bases[2],
-        desc_bases[3],
-        step_values[0],
-        step_values[1],
-        step_values[2],
-        step_values[3],
+        desc_bases,
+        step_values,
         trip_count,
+        max_pending_groups,
     );
     pipeline.deref_mut(ctx).set_loc(loc.clone());
-    let accumulator_results = (0..2 * ACCUMULATOR_LEN)
+    let accumulator_results = (0..slot_count * ACCUMULATOR_LEN)
         .map(|index| pipeline.deref(ctx).get_result(index))
         .collect::<Vec<_>>();
     pipeline.insert_before(ctx, preheader_terminator);
 
-    for slot in 0..2 {
+    for slot in 0..slot_count {
         let begin = slot * ACCUMULATOR_LEN;
         let end = begin + ACCUMULATOR_LEN;
         store_accumulator_values_before(

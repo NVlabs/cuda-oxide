@@ -24,9 +24,7 @@ use pliron::r#type::TypeHandle;
 
 const VALUE_ACCUMULATOR_COUNT: usize = 32;
 const COUNTED_LOOP_CONTROL_COUNT: usize = 5;
-const COUNTED_PIPELINE_SLOT_COUNT: usize = 2;
-const COUNTED_PIPELINE_RESULT_COUNT: usize = COUNTED_PIPELINE_SLOT_COUNT * VALUE_ACCUMULATOR_COUNT;
-const COUNTED_PIPELINE_CONTROL_COUNT: usize = 9;
+const COUNTED_PIPELINE_MAX_PENDING_GROUPS: u8 = 2;
 
 /// Convert WGMMA make_smem_desc to inline PTX.
 pub(crate) fn convert_make_smem_desc(
@@ -171,56 +169,54 @@ fn counted_loop_template() -> String {
     template
 }
 
-fn counted_pipeline_template() -> String {
-    let slot0 = pipeline_accumulator_operand_list(0);
-    let slot1 = pipeline_accumulator_operand_list(1);
-    let control_base = COUNTED_PIPELINE_RESULT_COUNT * 2;
-    let desc_a0_base = control_base;
-    let desc_b0_base = control_base + 1;
-    let desc_a1_base = control_base + 2;
-    let desc_b1_base = control_base + 3;
-    let desc_a0_step = control_base + 4;
-    let desc_b0_step = control_base + 5;
-    let desc_a1_step = control_base + 6;
-    let desc_b1_step = control_base + 7;
-    let trip_count = control_base + 8;
+fn counted_pipeline_template(slot_count: usize, max_pending_groups: u8) -> String {
+    let result_count = slot_count * VALUE_ACCUMULATOR_COUNT;
+    let control_base = result_count * 2;
+    let step_base = control_base + slot_count * 2;
+    let trip_count = control_base + slot_count * 4;
 
-    let mut template = String::from(
-        "{\n    .reg .u64 %desc_a0;\n    .reg .u64 %desc_b0;\n    .reg .u64 %desc_a1;\n    .reg .u64 %desc_b1;\n    .reg .u64 %remaining;\n    .reg .pred %loop_more;\n",
-    );
-    template.push_str(&format!("    mov.u64 %desc_a0, ${desc_a0_base};\n"));
-    template.push_str(&format!("    mov.u64 %desc_b0, ${desc_b0_base};\n"));
-    template.push_str(&format!("    mov.u64 %desc_a1, ${desc_a1_base};\n"));
-    template.push_str(&format!("    mov.u64 %desc_b1, ${desc_b1_base};\n"));
+    let mut template = String::from("{\n");
+    for slot in 0..slot_count {
+        template.push_str(&format!("    .reg .u64 %desc_a{slot};\n"));
+        template.push_str(&format!("    .reg .u64 %desc_b{slot};\n"));
+    }
+    template.push_str("    .reg .u64 %remaining;\n    .reg .pred %loop_more;\n");
+
+    for slot in 0..slot_count {
+        let desc_a_base = control_base + slot * 2;
+        let desc_b_base = desc_a_base + 1;
+        template.push_str(&format!("    mov.u64 %desc_a{slot}, ${desc_a_base};\n"));
+        template.push_str(&format!("    mov.u64 %desc_b{slot}, ${desc_b_base};\n"));
+    }
     template.push_str(&format!("    mov.u64 %remaining, ${trip_count};\n"));
     template.push_str("    wgmma.fence.sync.aligned;\n");
     template.push_str("    setp.eq.u64 %loop_more, %remaining, 0;\n");
     template.push_str("    @%loop_more bra.uni L__wgmma_pipeline_done_${:uid};\n");
     template.push_str("L__wgmma_pipeline_loop_${:uid}:\n");
-    template.push_str(&format!(
-        "    wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
-         {{{slot0}}}, %desc_a0, %desc_b0, 1, 1, 1, 0, 0;\n"
-    ));
-    template.push_str("    wgmma.commit_group.sync.aligned;\n");
-    template.push_str("    wgmma.wait_group.sync.aligned 1;\n");
-    template.push_str(&format!(
-        "    wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
-         {{{slot1}}}, %desc_a1, %desc_b1, 1, 1, 1, 0, 0;\n"
-    ));
-    template.push_str("    wgmma.commit_group.sync.aligned;\n");
-    template.push_str("    wgmma.wait_group.sync.aligned 1;\n");
-    template.push_str(&format!(
-        "    add.u64 %desc_a0, %desc_a0, ${desc_a0_step};\n"
-    ));
-    template.push_str(&format!(
-        "    add.u64 %desc_b0, %desc_b0, ${desc_b0_step};\n"
-    ));
-    template.push_str(&format!(
-        "    add.u64 %desc_a1, %desc_a1, ${desc_a1_step};\n"
-    ));
-    template.push_str(&format!(
-        "    add.u64 %desc_b1, %desc_b1, ${desc_b1_step};\n"
-    ));
+
+    for slot in 0..slot_count {
+        let accumulators = pipeline_accumulator_operand_list(slot);
+        template.push_str(&format!(
+            "    wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
+             {{{accumulators}}}, %desc_a{slot}, %desc_b{slot}, 1, 1, 1, 0, 0;\n"
+        ));
+        template.push_str("    wgmma.commit_group.sync.aligned;\n");
+        template.push_str(&format!(
+            "    wgmma.wait_group.sync.aligned {max_pending_groups};\n"
+        ));
+    }
+
+    for slot in 0..slot_count {
+        let desc_a_step = step_base + slot * 2;
+        let desc_b_step = desc_a_step + 1;
+        template.push_str(&format!(
+            "    add.u64 %desc_a{slot}, %desc_a{slot}, ${desc_a_step};\n"
+        ));
+        template.push_str(&format!(
+            "    add.u64 %desc_b{slot}, %desc_b{slot}, ${desc_b_step};\n"
+        ));
+    }
+
     template.push_str("    sub.u64 %remaining, %remaining, 1;\n");
     template.push_str("    setp.ne.u64 %loop_more, %remaining, 0;\n");
     template.push_str("    @%loop_more bra.uni L__wgmma_pipeline_loop_${:uid};\n");
@@ -230,10 +226,10 @@ fn counted_pipeline_template() -> String {
     template
 }
 
-fn counted_pipeline_constraints() -> String {
-    let mut constraints = vec!["=f".to_owned(); COUNTED_PIPELINE_RESULT_COUNT];
-    constraints.extend((0..COUNTED_PIPELINE_RESULT_COUNT).map(|index| index.to_string()));
-    constraints.extend((0..COUNTED_PIPELINE_CONTROL_COUNT).map(|_| "l".to_owned()));
+fn counted_pipeline_constraints(result_count: usize, control_count: usize) -> String {
+    let mut constraints = vec!["=f".to_owned(); result_count];
+    constraints.extend((0..result_count).map(|index| index.to_string()));
+    constraints.extend((0..control_count).map(|_| "l".to_owned()));
     constraints.push("~{memory}".to_owned());
     constraints.join(",")
 }
@@ -465,12 +461,12 @@ pub(crate) fn convert_mma_loop_values(
     Ok(())
 }
 
-/// Lower the fixed two-slot counted WGMMA pipeline to one convergent inline-PTX scope.
+/// Lower a counted WGMMA pipeline to one convergent inline-PTX scope.
 ///
-/// Both 32-value accumulator slots are tied across the same asm statement. The
-/// four descriptor recurrences, trip counter, commits, partial waits, and final
-/// full drain all remain internal so LLVM never observes a live asynchronous
-/// accumulator value.
+/// The production counted-loop carrier supports the validated `wait_group<1>`
+/// two-slot and `wait_group<2>` three-slot forms. Every accumulator slot is tied
+/// across the same asm statement together with its descriptor recurrence and the
+/// trip counter, so LLVM never observes a live asynchronous accumulator value.
 pub(crate) fn convert_mma_loop_pipeline_values(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -481,27 +477,38 @@ pub(crate) fn convert_mma_loop_pipeline_values(
     let result_count = op.deref(ctx).get_num_results();
     let operands: Vec<_> = op.deref(ctx).operands().collect();
 
-    Operation::get_op::<WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op>(op, ctx)
+    let pipeline = Operation::get_op::<WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op>(op, ctx)
         .expect("counted-pipeline conversion must be invoked for the counted-pipeline WGMMA op");
-
-    if result_count != COUNTED_PIPELINE_RESULT_COUNT {
+    let Some(max_pending_groups) = pipeline.max_pending_groups(ctx) else {
+        return pliron::input_err_noloc!("counted-pipeline WGMMA is missing max_pending_groups");
+    };
+    if !(1..=COUNTED_PIPELINE_MAX_PENDING_GROUPS).contains(&max_pending_groups) {
         return pliron::input_err_noloc!(
-            "counted-pipeline value-form WGMMA requires exactly 64 accumulator results"
-        );
-    }
-    if operands.len() != COUNTED_PIPELINE_RESULT_COUNT + COUNTED_PIPELINE_CONTROL_COUNT {
-        return pliron::input_err_noloc!(
-            "counted-pipeline value-form WGMMA requires 64 accumulator inputs and nine loop-control operands"
+            "counted-pipeline WGMMA supports only max_pending_groups 1 or 2"
         );
     }
 
-    let template = counted_pipeline_template();
-    let constraints = counted_pipeline_constraints();
+    let slot_count = usize::from(max_pending_groups) + 1;
+    let expected_result_count = slot_count * VALUE_ACCUMULATOR_COUNT;
+    let control_count = slot_count * 4 + 1;
+    if result_count != expected_result_count {
+        return pliron::input_err_noloc!(
+            "counted-pipeline WGMMA requires max_pending_groups + 1 accumulator slots"
+        );
+    }
+    if operands.len() != result_count + control_count {
+        return pliron::input_err_noloc!(
+            "counted-pipeline WGMMA requires two descriptor bases and two descriptor steps per accumulator slot plus one trip count"
+        );
+    }
+
+    let template = counted_pipeline_template(slot_count, max_pending_groups);
+    let constraints = counted_pipeline_constraints(result_count, control_count);
     let f32_ty = FP32Type::get(ctx);
     let struct_ty: TypeHandle = llvm_types::StructType::get_unnamed(
         ctx,
         (
-            vec![f32_ty.into(); COUNTED_PIPELINE_RESULT_COUNT],
+            vec![f32_ty.into(); result_count],
             llvm_types::StructLayout::Unpacked,
         ),
     )
@@ -518,8 +525,8 @@ pub(crate) fn convert_mma_loop_pipeline_values(
     );
     let aggregate = asm_op.deref(ctx).get_result(0);
 
-    let mut extracted_values = Vec::with_capacity(COUNTED_PIPELINE_RESULT_COUNT);
-    for index in 0..COUNTED_PIPELINE_RESULT_COUNT {
+    let mut extracted_values = Vec::with_capacity(result_count);
+    for index in 0..result_count {
         let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
             .map_err(|error| pliron::input_error!(loc.clone(), "{}", error))?;
         rewriter.insert_operation(ctx, extract.get_operation());
@@ -628,7 +635,7 @@ pub(crate) fn convert_mma(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     pliron::input_err_noloc!(
-        "WGMMA MMA reached lowering without deferred accumulator fusion; expected a supported linear wait_group<0> region, a proven partial-wait pipeline, a canonical counted K-loop, or the fixed two-slot counted pipeline"
+        "WGMMA MMA reached lowering without deferred accumulator fusion; expected a supported linear wait_group<0> region, a proven partial-wait pipeline, a canonical counted K-loop, or a supported counted pipeline"
     )
 }
 
@@ -746,56 +753,104 @@ mod tests {
     }
 
     #[test]
-    fn counted_pipeline_template_keeps_two_slots_and_partial_waits_inside_loop() {
-        let template = counted_pipeline_template();
-        assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
-        assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+    fn counted_pipeline_template_supports_two_and_three_slot_wait_depths() {
+        let two_slot = counted_pipeline_template(2, 1);
+        assert_eq!(two_slot.matches("wgmma.fence.sync.aligned").count(), 1);
+        assert_eq!(two_slot.matches("wgmma.mma_async").count(), 2);
         assert_eq!(
-            template.matches("wgmma.commit_group.sync.aligned").count(),
+            two_slot.matches("wgmma.commit_group.sync.aligned").count(),
             2
         );
         assert_eq!(
-            template.matches("wgmma.wait_group.sync.aligned 1").count(),
+            two_slot.matches("wgmma.wait_group.sync.aligned 1").count(),
             2
         );
         assert_eq!(
-            template.matches("wgmma.wait_group.sync.aligned 0").count(),
+            two_slot.matches("wgmma.wait_group.sync.aligned 0").count(),
             1
         );
-        assert!(template.contains("L__wgmma_pipeline_loop_${:uid}:"));
-        assert!(template.contains("L__wgmma_pipeline_done_${:uid}:"));
-        assert!(template.contains("{$0, $1, $2"));
-        assert!(template.contains("{$32, $33, $34"));
-        assert!(template.contains("mov.u64 %desc_a0, $128;"));
-        assert!(template.contains("mov.u64 %desc_b0, $129;"));
-        assert!(template.contains("mov.u64 %desc_a1, $130;"));
-        assert!(template.contains("mov.u64 %desc_b1, $131;"));
-        assert!(template.contains("add.u64 %desc_a0, %desc_a0, $132;"));
-        assert!(template.contains("add.u64 %desc_b0, %desc_b0, $133;"));
-        assert!(template.contains("add.u64 %desc_a1, %desc_a1, $134;"));
-        assert!(template.contains("add.u64 %desc_b1, %desc_b1, $135;"));
-        assert!(template.contains("mov.u64 %remaining, $136;"));
-        assert!(!template.contains("ld.f32"));
-        assert!(!template.contains("st.f32"));
-        assert!(!template.contains(".reg .f32"));
-        assert!(
-            !template.contains("\\\n"),
-            "counted-pipeline PTX must not contain a literal line-continuation backslash: {template}"
-        );
+        assert!(two_slot.contains("{$0, $1, $2"));
+        assert!(two_slot.contains("{$32, $33, $34"));
+        assert!(two_slot.contains("mov.u64 %desc_a0, $128;"));
+        assert!(two_slot.contains("mov.u64 %desc_b1, $131;"));
+        assert!(two_slot.contains("add.u64 %desc_a0, %desc_a0, $132;"));
+        assert!(two_slot.contains("add.u64 %desc_b1, %desc_b1, $135;"));
+        assert!(two_slot.contains("mov.u64 %remaining, $136;"));
 
-        let constraints = counted_pipeline_constraints();
+        let three_slot = counted_pipeline_template(3, 2);
+        assert_eq!(three_slot.matches("wgmma.fence.sync.aligned").count(), 1);
+        assert_eq!(three_slot.matches("wgmma.mma_async").count(), 3);
         assert_eq!(
-            constraints
+            three_slot
+                .matches("wgmma.commit_group.sync.aligned")
+                .count(),
+            3
+        );
+        assert_eq!(
+            three_slot
+                .matches("wgmma.wait_group.sync.aligned 2")
+                .count(),
+            3
+        );
+        assert_eq!(
+            three_slot
+                .matches("wgmma.wait_group.sync.aligned 0")
+                .count(),
+            1
+        );
+        assert!(three_slot.contains("{$0, $1, $2"));
+        assert!(three_slot.contains("{$32, $33, $34"));
+        assert!(three_slot.contains("{$64, $65, $66"));
+        assert!(three_slot.contains("mov.u64 %desc_a0, $192;"));
+        assert!(three_slot.contains("mov.u64 %desc_b2, $197;"));
+        assert!(three_slot.contains("add.u64 %desc_a0, %desc_a0, $198;"));
+        assert!(three_slot.contains("add.u64 %desc_b2, %desc_b2, $203;"));
+        assert!(three_slot.contains("mov.u64 %remaining, $204;"));
+
+        for template in [&two_slot, &three_slot] {
+            assert!(template.contains("L__wgmma_pipeline_loop_${:uid}:"));
+            assert!(template.contains("L__wgmma_pipeline_done_${:uid}:"));
+            assert!(!template.contains("ld.f32"));
+            assert!(!template.contains("st.f32"));
+            assert!(!template.contains(".reg .f32"));
+            assert!(
+                !template.contains("\\\n"),
+                "counted-pipeline PTX must not contain a literal line-continuation backslash: {template}"
+            );
+        }
+
+        let two_slot_constraints = counted_pipeline_constraints(64, 9);
+        assert_eq!(
+            two_slot_constraints
                 .split(',')
                 .filter(|value| *value == "=f")
                 .count(),
             64
         );
         assert_eq!(
-            constraints.split(',').filter(|value| *value == "l").count(),
+            two_slot_constraints
+                .split(',')
+                .filter(|value| *value == "l")
+                .count(),
             9
         );
-        assert!(constraints.ends_with("~{memory}"));
+
+        let three_slot_constraints = counted_pipeline_constraints(96, 13);
+        assert_eq!(
+            three_slot_constraints
+                .split(',')
+                .filter(|value| *value == "=f")
+                .count(),
+            96
+        );
+        assert_eq!(
+            three_slot_constraints
+                .split(',')
+                .filter(|value| *value == "l")
+                .count(),
+            13
+        );
+        assert!(three_slot_constraints.ends_with("~{memory}"));
     }
 
     #[test]
