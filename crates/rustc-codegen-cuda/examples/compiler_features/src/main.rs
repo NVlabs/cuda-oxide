@@ -15,6 +15,7 @@
 //! - Parallel for loop patterns
 //! - Full-debug closure environments
 //! - Full-debug Rust enum variants (direct and niche layouts)
+//! - Full-debug static and dereference projections
 //!
 //! Run: cargo oxide run compiler_features
 
@@ -147,6 +148,34 @@ mod kernels {
                 (seed, 0x1_0000_0021u64),
                 [3u32, 5, 37, 11],
             );
+        }
+    }
+
+    /// Helper whose destructured references produce MIR `Deref` and
+    /// `Deref -> Field` debug projections.
+    #[inline(never)]
+    fn debug_deref_projection_values(
+        &DebugProjectionStruct {
+            projected_field: deref_field,
+            ..
+        }: &DebugProjectionStruct,
+        &deref_value: &u32,
+    ) -> u32 {
+        let field_part = deref_field as u32; // CUDA_OXIDE_DEBUG_DEREF_BREAKPOINT
+        field_part.wrapping_add(deref_value)
+    }
+
+    /// Full-debug fixture for one thin-reference dereference followed by fields.
+    #[kernel]
+    pub fn test_deref_projection_debug(seed: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let aggregate = DebugProjectionStruct {
+                prefix: 0xA5,
+                projected_field: seed as u64 + 11,
+            };
+            let value = 41u32;
+            *out_elem = debug_deref_projection_values(&aggregate, &value);
         }
     }
 
@@ -695,6 +724,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let result = out_dev.to_host_vec(&stream)?;
         assert_eq!(result[0], 88, "test_projection_debug failed");
         println!("  ✓ Result: {} (expected 88)", result[0]);
+    }
+
+    // Test dereference debug bindings and keep deterministic values live.
+    println!("Testing: test_deref_projection_debug");
+    {
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        // seed=7: deref_field=18 and deref_value=41.
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_deref_projection_debug((stream).as_ref(), cfg, 7u32, &mut out_dev)
+        }?;
+        let result = out_dev.to_host_vec(&stream)?;
+        assert_eq!(result[0], 59, "test_deref_projection_debug failed");
+        println!("  ✓ Result: {} (expected 59)", result[0]);
     }
 
     // Test closure lowering and keep a deterministic full-debug fixture live.

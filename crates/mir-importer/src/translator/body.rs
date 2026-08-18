@@ -571,13 +571,14 @@ struct CollectedDebugLocals {
     projected: FxHashMap<mir::Local, Vec<DebugProjectedVariableInfo>>,
 }
 
-/// Build full-debug bindings for whole locals and statically-addressable projections.
+/// Build full-debug bindings for whole locals and supported place projections.
 ///
 /// Whole-local records keep the existing path. A `VarDebugInfoContents::Place`
-/// with only `Field` and forward `ConstantIndex` elements is instead attached
-/// to the base local together with its rustc-layout byte offset. Dereferences,
-/// dynamic indices, slices, enum downcasts, opaque casts, and composite fragments
-/// stay unsupported here and are skipped rather than approximated.
+/// can describe either a projection that stays inside the base local (`Field` and
+/// forward `ConstantIndex`) or one leading thin-pointer/reference `Deref` followed
+/// only by static `Field` projections. Dynamic indices, dereference-index chains,
+/// repeated dereferences, fat pointers, slices, enum downcasts, opaque casts, and
+/// composite fragments stay unsupported and are skipped rather than approximated.
 fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLocals {
     let mut collected = CollectedDebugLocals::default();
 
@@ -622,10 +623,10 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
             continue;
         }
 
-        let Some((offset_bytes, projected_ty)) = static_debug_projection(body, place) else {
+        let Some(projection) = debug_projection(body, place) else {
             continue;
         };
-        let Some(ty) = debug_type_for_ty(&projected_ty) else {
+        let Some(ty) = debug_type_for_ty(&projection.ty) else {
             continue;
         };
 
@@ -642,7 +643,8 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
                     argument_index: None,
                     ty,
                 },
-                offset_bytes,
+                dereference_base: projection.dereference_base,
+                offset_bytes: projection.offset_bytes,
                 source_scope: Some(info.source_info.scope),
                 declaration: debug_source_position(info.source_info.span),
             });
@@ -651,14 +653,41 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
     collected
 }
 
-/// Resolve the byte offset and final type of a projection that never leaves
-/// the base local's storage object.
-fn static_debug_projection(body: &mir::Body, place: &mir::Place) -> Option<(u64, Ty)> {
+#[derive(Clone, Copy)]
+struct ResolvedDebugProjection {
+    dereference_base: bool,
+    offset_bytes: u64,
+    ty: Ty,
+}
+
+/// Resolve the location expression and final type of a supported MIR projection.
+///
+/// Static `Field`/forward-`ConstantIndex` chains retain the #939 behavior. A
+/// single leading `Deref` is additionally accepted when the base has one pointer
+/// word of storage; after that dereference only `Field` projections are allowed.
+/// This deliberately rejects fat references/raw pointers, repeated dereferences,
+/// and dereference-plus-index chains instead of emitting an approximate location.
+fn debug_projection(body: &mir::Body, place: &mir::Place) -> Option<ResolvedDebugProjection> {
     let mut current_ty = body.local_decl(place.local)?.ty;
+    let mut dereference_base = false;
     let mut offset_bytes = 0u64;
 
-    for elem in &place.projection {
+    for (index, elem) in place.projection.iter().enumerate() {
         match elem {
+            mir::ProjectionElem::Deref if index == 0 && !dereference_base => {
+                // CUDA device pointers are one 64-bit word. Requiring the source
+                // pointer/reference layout to match rejects fat pointers such as
+                // `&[T]`/`&str` before we model them with the wrong DWARF stack op.
+                if current_ty.layout().ok()?.shape().size.bytes() != 8 {
+                    return None;
+                }
+                current_ty = match current_ty.kind() {
+                    TyKind::RigidTy(RigidTy::RawPtr(pointee, _)) => pointee,
+                    TyKind::RigidTy(RigidTy::Ref(_, pointee, _)) => pointee,
+                    _ => return None,
+                };
+                dereference_base = true;
+            }
             mir::ProjectionElem::Field(field_idx, field_ty) => {
                 let layout = current_ty.layout().ok()?;
                 let shape = layout.shape();
@@ -673,7 +702,7 @@ fn static_debug_projection(body: &mir::Body, place: &mir::Place) -> Option<(u64,
                 offset,
                 min_length: _,
                 from_end: false,
-            } => {
+            } if !dereference_base => {
                 let layout = current_ty.layout().ok()?;
                 let shape = layout.shape();
                 let rustc_public::abi::FieldsShape::Array { stride, count } = &shape.fields else {
@@ -693,7 +722,11 @@ fn static_debug_projection(body: &mir::Body, place: &mir::Place) -> Option<(u64,
         }
     }
 
-    Some((offset_bytes, current_ty))
+    Some(ResolvedDebugProjection {
+        dereference_base,
+        offset_bytes,
+        ty: current_ty,
+    })
 }
 
 fn debug_source_position(span: rustc_public::ty::Span) -> Option<DebugSourcePosition> {
