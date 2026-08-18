@@ -77,24 +77,37 @@ artifact; a missing required sidecar is an error rather than a silent fallback.
 | `rvalue`    | Expression translation (binops, casts, etc.)   |
 | `types`     | Rust type → `dialect-mir` type conversion      |
 | `values`    | MIR local → alloca-slot mapping + load/store   |
+| `layout`    | Shared readers over rustc's aggregate layout   |
+| `location`  | Source-location helpers for MIR translation    |
+| `payload_store` | Enum-payload stores whose storage type differs from its usage |
 
-### `terminator/intrinsics/` — GPU Intrinsics
+### `terminator/intrinsics/` — intrinsic handlers
 
-| Module     | Intrinsics                                         | GPU       |
-|------------|----------------------------------------------------|-----------|
-| `generated`| Admitted generated intrinsics, including barriers  | Varies    |
-| `indexing` | `threadIdx`, `blockIdx`, `blockDim`, `gridDim`,    | All       |
-|            | `index_1d`/`index_2d`, DisjointSlice helpers       |           |
-| `sync`     | mbarrier ops and fences                            | All       |
-| `warp`     | Shuffle operations, `lane_id`, warp vote           | All       |
-| `atomic`   | Scoped GPU atomics, `core::sync::atomic` support   | sm_70+    |
-| `memory`   | Shared memory, address space casts, stmatrix       | All       |
-| `debug`    | `vprintf`, clock, trap, breakpoint                 | All       |
-| `cluster`  | Thread Block Clusters, DSMEM                       | sm_90+    |
-| `tma`      | Tensor Memory Accelerator bulk copies              | sm_90+    |
-| `wgmma`    | Warpgroup MMA                                      | sm_90     |
-| `tcgen05`  | 5th-gen Tensor Cores, TMEM                         | sm_100+   |
-| `clc`      | Cluster Launch Control                             | sm_100+   |
+Anything `intrinsics/catalog.json` describes is dispatched by `generated`;
+the modules beside it hold the cases the catalog does not cover. One row per
+file:
+
+| Module        | Purpose (from each module's own doc comment)                                |
+|---------------|-----------------------------------------------------------------------------|
+| `asm`         | Inline PTX marker-call translation                                          |
+| `atomic`      | Atomic operation intrinsic handlers                                         |
+| `bigint`      | Rust compiler bigint helper intrinsics                                      |
+| `bitops`      | Rust compiler bit-manipulation intrinsics                                   |
+| `debug`       | Debug and profiling intrinsics                                              |
+| `exact_div`   | Rust compiler `exact_div` intrinsic                                         |
+| `float_math`  | Rust compiler floating-point math intrinsics                                |
+| `generated`   | Generated raw/compatibility path dispatch for CUDA intrinsics               |
+| `iket`        | Translation of `cuda_device::iket` compiler markers                         |
+| `indexing`    | Thread and block indexing intrinsics                                        |
+| `layout`      | Rust dynamic-layout intrinsics for slices, `str`, and slice-tailed structs  |
+| `memory`      | Memory access and conversion intrinsics                                     |
+| `saturating`  | Rust compiler saturating integer intrinsics                                 |
+| `tma`         | Tensor Memory Access (TMA) intrinsics                                       |
+| `wgmma`       | Hopper WGMMA (Warpgroup Matrix Multiply-Accumulate) intrinsics              |
+
+Per-intrinsic PTX and minimum-SM requirements live in the catalog and are
+rendered into `intrinsics/generated-reference.md`, so they are not restated
+here.
 
 ### `pipeline.rs` — Compilation Orchestration
 
@@ -161,6 +174,13 @@ let result = run_pipeline(&functions, &device_externs, &config)?;
 
 ### Error Types
 
+`PipelineError` is defined in `cuda-oxide-codegen` and re-exported here
+(`pipeline.rs`), so this is the full set of variants `run_pipeline` can
+return. The crate's own `TranslationErr` (`error.rs`) is the narrower
+per-function error the translator raises: `Unsupported`, `TypeError` and
+`InvalidOp`.
+
+
 | Variant          | When                                             |
 |------------------|--------------------------------------------------|
 | `NoBody`         | Function has no MIR body                         |
@@ -170,6 +190,11 @@ let result = run_pipeline(&functions, &device_externs, &config)?;
 | `LoweredVerification` | Lowered LLVM-dialect invariant failed       |
 | `Export`         | LLVM IR export failed                            |
 | `PtxGeneration`  | `llc` invocation failed                          |
+| `Optimization`   | `opt` invocation failed                          |
+| `TargetSelection` | No target satisfied the module's requirements   |
+| `UnsupportedLinking` | Device symbols could not be linked           |
+| `LibdeviceUnavailable` | libdevice was needed but not found         |
+| `InvalidMirPassPipeline` | `CUDA_OXIDE_MIR_PASSES` named an unknown pass |
 
 ## Translation Flow
 
