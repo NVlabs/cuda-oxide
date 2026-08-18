@@ -68,7 +68,7 @@ unsafe {
     module.increment(&streams[slot], config, &mut devices[slot])?;
     devices[slot].copy_to_pinned_host_async(&streams[slot], &mut stagers[slot])?;
 }
-completion[slot] = Some(streams[slot].record_event(None)?);
+completions[slot] = Some(streams[slot].record_event(None)?);
 ```
 
 The complete setup, slot-reuse wait, and final drain are in the

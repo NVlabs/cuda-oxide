@@ -122,6 +122,9 @@ fn benchmark_bandwidth(
 
         let pinned_source = PinnedHostBuffer::from_slice(ctx, &source)?;
         let mut pinned_device = DeviceBuffer::<f32>::zeroed(stream, len)?;
+        // Drops before the two buffers above: an early `?` return drains the
+        // stream before pinned or device memory is freed under a live copy.
+        let _drain_htod = DrainOnDrop(std::slice::from_ref(stream));
         for _ in 0..WARMUP_ITERS {
             // SAFETY: `pinned_source` and `pinned_device` remain alive and
             // unchanged until the stream is synchronized below.
@@ -150,6 +153,8 @@ fn benchmark_bandwidth(
         })?;
 
         let mut pinned_output = PinnedHostBuffer::<f32>::zeroed(ctx, len)?;
+        // Same guard for the download destination: drops before `pinned_output`.
+        let _drain_dtoh = DrainOnDrop(std::slice::from_ref(stream));
         for _ in 0..WARMUP_ITERS {
             // SAFETY: `pinned_output` is not read or dropped until the stream
             // synchronization completes the download.
@@ -225,6 +230,18 @@ fn run_serialized(
     Ok((start.elapsed(), output))
 }
 
+/// Synchronizes streams on drop so an early error return cannot free pinned
+/// or device memory that an in-flight async transfer still references.
+struct DrainOnDrop<'a>(&'a [Arc<CudaStream>]);
+
+impl Drop for DrainOnDrop<'_> {
+    fn drop(&mut self) {
+        for stream in self.0 {
+            let _ = stream.synchronize();
+        }
+    }
+}
+
 fn run_overlapped(
     ctx: &Arc<CudaContext>,
     main_stream: &Arc<CudaStream>,
@@ -245,6 +262,10 @@ fn run_overlapped(
         .collect::<Result<Vec<_>, _>>()?;
     let mut completions: Vec<Option<(usize, CudaEvent)>> = (0..SLOTS).map(|_| None).collect();
     let mut output = vec![0.0f32; input.len()];
+    // Declared after the buffers so it drops before them: an early `?` return
+    // drains the forked streams before any stager or device buffer is freed
+    // under an in-flight transfer.
+    let _drain = DrainOnDrop(&streams);
 
     let start = Instant::now();
     for chunk in 0..chunks {

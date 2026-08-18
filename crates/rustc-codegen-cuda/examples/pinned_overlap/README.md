@@ -19,7 +19,10 @@ The program verifies every transformed element before printing its `SUCCESS`
 marker. It reports median CUDA-event bandwidth and wall-clock pipeline time so
 the result shows both the transfer improvement and the end-to-end overlap
 speedup. The benchmark allocates its staging buffers before timing; ring slots
-are only refilled after their completion event has fired.
+are only refilled after their completion event has fired. The pageable
+bandwidth columns time the simple helper path, which allocates a fresh
+destination each iteration; the pinned columns reuse persistent buffers, so
+the gap reflects both the data path and the allocation cost.
 
 ## Results
 
