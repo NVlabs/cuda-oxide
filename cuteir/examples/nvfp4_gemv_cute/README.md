@@ -86,13 +86,24 @@ L > 0
 
 `L` is the batch count. The default problem is `M=512`, `K=256`, `L=1`.
 
-## Run it
+## Build and run it
 
-From the repository root:
+From the repository root, install the pinned official CUTLASS 4.7 compiler
+once:
 
 ```bash
-cargo oxide run nvfp4_gemv_cute --arch sm_120a -- \
-  --m 512 --k 256 --l 1
+cargo oxide toolchain install cutlass
+```
+
+Build or run this example through the translation backend:
+
+```bash
+CUDA_OXIDE_DEVICE_BACKEND=cutlass-mlir \
+  cargo oxide build nvfp4_gemv_cute --arch sm_120a
+
+CUDA_OXIDE_DEVICE_BACKEND=cutlass-mlir \
+  cargo oxide run nvfp4_gemv_cute --arch sm_120a -- \
+    --m 512 --k 256 --l 1
 ```
 
 Use `--help` to list the shape and device options. Every run performs all
@@ -101,3 +112,26 @@ correctness checks.
 A successful run compares every GEMV output `f16` bit pattern with the host
 calculation. This example is the semantic checkpoint for block-scaled views,
 K tiles, packed loads, and a reduction.
+
+## Single-kernel comparison
+
+Measured on 2026-08-18 at commit `aafe6e47fb4e` on an RTX 5090 (`sm_120`),
+Nsight Systems 2026.1.3 reported these kernel-active medians for `M=512`,
+`K=256`, `L=1`:
+
+| Implementation | Median |
+| :--- | ---: |
+| CUTLASS 4.7 translation | **2.368 µs** |
+| CuTeDSL 4.6.2 | **2.240 µs** |
+
+Translation is 0.128 µs, or 5.71%, longer. The measured translation cubin is
+15,416 bytes with SHA-256
+`5ce377b00a7b73fb8ce1e083aeb83780bfaa4c4c8af3a987a00f1f545ec3b277`.
+All 102 translation runs passed bit-exact validation with output hash
+`f1c627726a82c6bd`, matching the separate CuTeDSL correctness run.
+
+Each observation is one main-kernel launch; setup and CuTeDSL conversion
+kernels are excluded. The translation samples came from 102 independently
+validated processes because this host harness launches once per process,
+whereas CuTeDSL reused one process. That cache/context difference means this
+GEMV comparison is not a perfectly matched hot-reuse experiment.

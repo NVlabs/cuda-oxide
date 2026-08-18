@@ -94,12 +94,23 @@ target `sm_120a`.
 On another GPU, the program skips device execution. Numerical GEMM validation
 requires a compatible SM 12.x GPU.
 
-## Run it
+## Build and run it
 
-From the repository root:
+From the repository root, install the pinned official CUTLASS 4.7 compiler
+once:
 
 ```bash
-cargo oxide run blockscale_gemm_cute --arch sm_120a
+cargo oxide toolchain install cutlass
+```
+
+Build or run this example through the translation backend:
+
+```bash
+CUDA_OXIDE_DEVICE_BACKEND=cutlass-mlir \
+  cargo oxide build blockscale_gemm_cute --arch sm_120a
+
+CUDA_OXIDE_DEVICE_BACKEND=cutlass-mlir \
+  cargo oxide run blockscale_gemm_cute --arch sm_120a
 ```
 
 The program builds deterministic packed inputs, computes a host reference,
@@ -111,6 +122,28 @@ A successful device run confirms all 4,194,304 `f16` output bit patterns. It
 then performs 100 warmup launches and measures 31 individual launches with
 CUDA events. The report includes the median, p10, and p90 device time and the
 median-derived TFLOP/s for `2 × M × N × K` floating-point operations.
+
+## Single-kernel comparison
+
+Measured on 2026-08-18 at commit `aafe6e47fb4e` on an RTX 5090 (`sm_120`),
+Nsight Systems 2026.1.3 reported these kernel-active medians for `M=N=2048`,
+`K=1024`, `L=1`:
+
+| Implementation | Median | Median-derived rate |
+| :--- | ---: | ---: |
+| CUTLASS 4.7 translation | **11.264 µs** | 762.60 TFLOP/s |
+| CuTeDSL 4.6.2 | **10.272 µs** | 836.25 TFLOP/s |
+
+Translation is 0.992 µs, or 9.66%, longer. The measured translation cubin is
+29,608 bytes with SHA-256
+`69e1f1aad53a5889a40f6d7bfce0c6f66607eaeb1119640aa94f8ed3467dfbee`.
+Translation matched all 4,194,304 expected `f16` bit patterns; the separate
+CuTeDSL reference-checking run also passed.
+
+This is a direct hot-reuse comparison with serial submission and no CUDA
+graphs. Both implementations ran in one process with 100 warmups and 31
+one-kernel samples; translation also performed one correctness launch. Nsight
+measured only main-kernel active time, excluding setup and conversion kernels.
 
 This is the full semantic acceptance example:
 
