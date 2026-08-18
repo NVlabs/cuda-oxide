@@ -17,7 +17,7 @@ roadmap, **N/A** = not applicable or no identified need.
 | HMM / Unified Memory Management | **Full** | GPU directly reads/writes host memory without `cudaMemcpy`. Reference captures in closures leverage HMM for host pointer access. Requires Turing+ GPU, Linux 6.1.24+, CUDA 12.2+. |
 | Unified Struct ABI (no `#[repr(C)]`) | **Full** | Device struct layout matches host exactly. The compiler queries rustc's actual layout and reproduces it with explicit padding in LLVM IR. Works with `#[repr(Rust)]` default. |
 | Dynamic Layout Matching | **Full** | Compiler queries rustc's `fields_by_offset_order()` and byte offsets, builds LLVM structs with correct field order and explicit padding bytes. Independent of LLVM's datalayout. |
-| Packed Layouts (`#[repr(packed)]`) | **Partial** | Field addresses formed through a pointer (`addr_of!((*p).field)`) use rustc's exact byte offsets, so `read_unaligned`/`write_unaligned` round-trips work, including `packed(N)`. Handling a packed struct *by value* (construction, whole-value load/store) and addressing elements of `[Packed; N]` are rejected with a diagnostic: LLVM's natural struct layout cannot express the tighter offsets, and a natural-layout value image would silently read the wrong bytes. Byte-faithful by-value support needs packed struct types upstream. |
+| Packed Layouts (`#[repr(packed)]`) | **Partial** | Field addresses formed through a pointer (`addr_of!((*p).field)`) use rustc's exact byte offsets, so `read_unaligned`/`write_unaligned` round-trips work, including `packed(N)`. Byte-faithful packed structs can also use packed LLVM storage for by-value construction/load/store and `[Packed; N]` element addressing. Recursively promotable packed constant arrays use the immutable-device-global path when the selected natural or packed LLVM representation reproduces rustc's field offsets and stored size exactly. Overlapping or otherwise non-representable layouts remain rejected. |
 | Pointer Distance (`offset_from`) | **Full** | `ptr_offset_from` / `ptr_offset_from_unsigned` intrinsics (and the `offset_from`, `offset_from_unsigned`, `byte_offset_from`, `byte_offset_from_unsigned` methods) lower to an address difference divided by the rustc-reported pointee size, returning `isize` (signed) or `usize` (unsigned). Errors on a zero-sized pointee. |
 | Volatile Load/Store | **Full** | `core::ptr::read_volatile` / `write_volatile` carry an explicit volatile bit through MIR import, mem2reg (volatile accesses are never promoted), MIR-to-LLVM lowering, and textual export (`load volatile` / `store volatile`). Emits `ld.volatile` / `st.volatile` in PTX. |
 | Bulk Copy (`copy_nonoverlapping`) | **Full** | `core::ptr::copy_nonoverlapping` lowers to a `mir.memcpy` op and then `llvm.memcpy`, with the element count scaled to bytes for the pointee. The intrinsic overload suffix is derived from the operand address spaces and length width. |
@@ -51,11 +51,14 @@ Bare arrays whose elements are recursively promotable structs use the same
 immutable-device-global path as scalar and tuple tables, avoiding a per-thread
 local table copy for read-only uses. Pointer-to-array constants such as
 `const R: &[Struct; N] = &TABLE` use the same promoted global when every struct
-field is recursively promotable and the converted storage size matches rustc's
-layout. Zero-byte over-aligned struct leaves (for example, `repr(align(N))` ZSTs)
+field is recursively promotable and the selected LLVM storage size matches rustc's
+layout. This includes `repr(packed)` and `repr(packed(N))` structs when lowering
+can reproduce their recorded field offsets with an exact packed LLVM struct; the
+value and reference forms deduplicate to the same immutable initializer.
+Zero-byte over-aligned struct leaves (for example, `repr(align(N))` ZSTs)
 remain on the existing alignment-sensitive value path instead of this promotion
-path. Arrays of packed structs whose element stride diverges from LLVM's natural
-layout remain unsupported as described above.
+path. Overlapping or otherwise non-representable struct layouts remain outside
+immutable promotion and keep the existing fail-closed behavior.
 Thin pointer fields in array, tuple, and struct **const** values that relocate
 to device statics are materialized via `MirGlobalAllocOp` per field, including
 non-zero byte addends into a static (see `struct_constant_provenance`,
