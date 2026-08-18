@@ -86,14 +86,20 @@ L > 0
 
 `L` is the batch count. The default problem is `M=512`, `K=256`, `L=1`.
 
-## Run it
+## Build and run it
 
-From the repository root:
+From the repository root, build or run this example through the native CuTe
+path:
 
 ```bash
+cargo oxide build nvfp4_gemv_cute --arch sm_120a
+
 cargo oxide run nvfp4_gemv_cute --arch sm_120a -- \
   --m 512 --k 256 --l 1
 ```
+
+The native path expands the high-level `cute.*` operations through the
+in-tree MIR/NVVM/LLVM continuation and emits PTX for the selected target.
 
 Use `--help` to list the shape and device options. Every run performs all
 correctness checks.
@@ -101,3 +107,24 @@ correctness checks.
 A successful run compares every GEMV output `f16` bit pattern with the host
 calculation. This example is the semantic checkpoint for block-scaled views,
 K tiles, packed loads, and a reduction.
+
+## Single-kernel comparison
+
+Measured on 2026-08-18 at commit `de449613a942` on an RTX 5090 (`sm_120`),
+Nsight Systems 2026.1.3 reported these kernel-active medians for `M=512`,
+`K=256`, `L=1`:
+
+| Implementation | Median |
+| :--- | ---: |
+| Native CuTe proto | **2.304 µs** |
+| CuTeDSL 4.6.2 | **2.240 µs** |
+
+The native proto is 0.064 µs, or 2.86%, longer. All 102 native runs passed
+bit-exact validation with output hash `f1c627726a82c6bd`, matching the separate
+CuTeDSL correctness run.
+
+Each observation is one main-kernel launch; setup and CuTeDSL conversion
+kernels are excluded. The native samples came from 102 independently
+validated processes because this host harness launches once per process,
+whereas CuTeDSL reused one process. That cache/context difference means this
+GEMV comparison is not a perfectly matched hot-reuse experiment.
