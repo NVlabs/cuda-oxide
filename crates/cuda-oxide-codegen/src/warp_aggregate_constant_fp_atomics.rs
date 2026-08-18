@@ -1,4 +1,7 @@
-// SPDX-License-Identifier: Apache-2.0
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
 //! Opt-in aggregation of discarded device-scope relaxed f16/f32 atomic adds with
 //! finite compile-time increments.
