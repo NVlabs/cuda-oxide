@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Tensor Memory Access (TMA) intrinsics.
+//! Tensor Memory Accelerator (TMA) intrinsics.
 //!
 //! Handles asynchronous bulk data movement between global and shared memory.
 
@@ -31,7 +31,7 @@ use rustc_public::mir;
 /// Emits `cp_async_bulk_tensor_Nd_g2s`: Async tensor copy global → shared via TMA.
 ///
 /// Initiates an asynchronous bulk tensor copy from global memory to shared memory
-/// using the Tensor Memory Access (TMA) hardware unit. The copy is tracked by
+/// using the Tensor Memory Accelerator (TMA) hardware unit. The copy is tracked by
 /// an mbarrier for completion notification.
 ///
 /// # Arguments
