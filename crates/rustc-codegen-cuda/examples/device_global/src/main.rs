@@ -52,6 +52,26 @@ static PACKED_INTERIOR_RELOCATION: PackedInteriorRelocation = PackedInteriorRelo
     suffix: 0x4455,
 };
 
+#[repr(C, packed)]
+struct NestedPackedRelocation {
+    tag: u8,
+    ptr: &'static u32,
+}
+
+#[repr(C)]
+struct NestedPackedRelocationCarrier {
+    head: u32,
+    nested: NestedPackedRelocation,
+}
+
+static NESTED_PACKED_RELOCATION: NestedPackedRelocationCarrier = NestedPackedRelocationCarrier {
+    head: 0x1122_3344,
+    nested: NestedPackedRelocation {
+        tag: 0x7d,
+        ptr: &RELOCATION_TARGET_B,
+    },
+};
+
 /// One-past-the-end interior pointer: const eval permits forming a pointer
 /// whose addend equals the allocation size (32 bytes here). It is legal to
 /// form and compare, only dereferencing it would be UB, so the translator
@@ -195,6 +215,24 @@ mod kernels {
             *out.add(2) = prefix0 as u32;
             *out.add(3) = (*interior_ptr).to_bits();
             *out.add(4) = suffix as u32;
+        }
+    }
+
+    /// Read a relocation through one direct packed struct nested inside an
+    /// ordinary `repr(C)` device static. Only the packed fields require
+    /// unaligned loads; the outer `u32` remains naturally aligned.
+    #[kernel]
+    pub unsafe fn nested_packed_static_initializer_relocation(out: *mut u32) {
+        let head = NESTED_PACKED_RELOCATION.head;
+        let tag =
+            unsafe { core::ptr::addr_of!(NESTED_PACKED_RELOCATION.nested.tag).read_unaligned() };
+        let ptr =
+            unsafe { core::ptr::addr_of!(NESTED_PACKED_RELOCATION.nested.ptr).read_unaligned() };
+
+        unsafe {
+            *out.add(0) = head;
+            *out.add(1) = tag as u32;
+            *out.add(2) = *ptr;
         }
     }
 
@@ -370,6 +408,32 @@ fn main() {
         std::process::exit(1);
     }
 
+    let nested_packed_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 3)
+        .expect("Failed to allocate nested packed relocation output");
+
+    unsafe {
+        module.nested_packed_static_initializer_relocation(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            nested_packed_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Nested packed static initializer relocation kernel launch failed");
+
+    let nested_packed_result = nested_packed_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy nested packed relocation output");
+    let nested_packed_expected = [0x1122_3344u32, 0x7d, 0xcafe_babe];
+
+    println!("Nested packed static initializer relocation: result = {nested_packed_result:?}");
+
+    if nested_packed_result.as_slice() != nested_packed_expected.as_slice() {
+        eprintln!(
+            "FAILED: expected nested packed static initializer relocation {nested_packed_expected:?}, got {nested_packed_result:?}"
+        );
+        std::process::exit(1);
+    }
+
     let one_past_end_dev =
         DeviceBuffer::<u32>::zeroed(&stream, 1).expect("Failed to allocate one-past-end output");
 
@@ -394,6 +458,6 @@ fn main() {
     }
 
     println!(
-        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned and packed pointer relocations, pointer addends, and subobject addresses."
+        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned, packed, and nested packed pointer relocations, pointer addends, and subobject addresses."
     );
 }

@@ -2479,9 +2479,12 @@ pub(crate) fn validate_initialized_global_layout(
 /// Ordinary initialized globals keep their existing conservative semantic
 /// layout validator. Relocated globals use a separate segmented physical
 /// carrier, so a top-level `repr(packed)` struct may use that relocation path
-/// as long as rustc's field ranges are explicit, non-overlapping, in-bounds,
-/// and every nested field remains independently representable. Runtime
-/// by-value packed support does not broaden initialized-global policy here.
+/// as long as rustc's field ranges are explicit, non-overlapping, and in-bounds.
+/// One direct nested struct may use the same relaxation when the top-level
+/// struct itself has an ordinary, non-divergent LLVM layout and the child's
+/// LLVM packed representation exactly reproduces rustc's offsets and size. A
+/// packed top-level struct may not stack the relaxation on a packed child, and
+/// deeper packed nesting remains on the ordinary fail-closed path.
 pub(crate) fn validate_relocated_initialized_global_layout(
     ctx: &mut Context,
     mir_ty: TypeHandle,
@@ -2511,9 +2514,23 @@ pub(crate) fn validate_relocated_initialized_global_layout(
 
             validate_relocated_struct_field_ranges(ctx, &struct_ty)?;
 
+            let top_level_layout = StructLayoutInfo::of_struct(&struct_ty);
+            let top_level_map = build_struct_slot_map(ctx, &top_level_layout)?;
+            let top_level_is_ordinary = !top_level_map.layout_diverges
+                && top_level_map.by_value_layout_faithful
+                && top_level_map
+                    .llvm_struct_ty
+                    .deref(ctx)
+                    .downcast_ref::<llvm_types::StructType>()
+                    .is_some_and(|ty| ty.layout() == llvm_types::StructLayout::Unpacked);
+
             let mut visited = vec![mir_ty];
             for field_ty in struct_ty.field_types.iter().copied() {
-                validate_initialized_global_type(ctx, field_ty, &mut visited)?;
+                if top_level_is_ordinary {
+                    validate_relocated_initialized_global_child(ctx, field_ty, &mut visited)?;
+                } else {
+                    validate_initialized_global_type(ctx, field_ty, &mut visited)?;
+                }
             }
             Ok(())
         }
@@ -2588,6 +2605,67 @@ fn validate_relocated_struct_field_ranges(
         }
     }
 
+    Ok(())
+}
+
+/// Validate one direct child of an ordinary relocated initialized global.
+///
+/// The ordinary initialized-global validator remains the default. Only when it
+/// rejects a direct `MirStructType` do we consider the relocation-specific
+/// relaxation, and only if `build_struct_slot_map` proves that the divergent
+/// rustc layout is represented exactly by an LLVM packed struct. Its own field
+/// ranges must still be explicit, non-overlapping, and in-bounds. Children of
+/// that packed struct go back through the ordinary validator, deliberately
+/// limiting this exception to one nesting level.
+fn validate_relocated_initialized_global_child(
+    ctx: &mut Context,
+    mir_ty: TypeHandle,
+    visited: &mut Vec<TypeHandle>,
+) -> Result<(), anyhow::Error> {
+    if visited.contains(&mir_ty) {
+        return Ok(());
+    }
+
+    let mut ordinary_visited = visited.clone();
+    let original_error = match validate_initialized_global_type(ctx, mir_ty, &mut ordinary_visited)
+    {
+        Ok(()) => {
+            *visited = ordinary_visited;
+            return Ok(());
+        }
+        Err(error) => error,
+    };
+
+    let struct_ty = {
+        let ty_ref = mir_ty.deref(ctx);
+        ty_ref.downcast_ref::<MirStructType>().cloned()
+    };
+    let Some(struct_ty) = struct_ty else {
+        return Err(original_error);
+    };
+    if !struct_ty.has_explicit_layout() {
+        return Err(original_error);
+    }
+
+    let layout = StructLayoutInfo::of_struct(&struct_ty);
+    let map = build_struct_slot_map(ctx, &layout)?;
+    let is_exact_packed = map.layout_diverges
+        && map.by_value_layout_faithful
+        && map
+            .llvm_struct_ty
+            .deref(ctx)
+            .downcast_ref::<llvm_types::StructType>()
+            .is_some_and(|ty| ty.layout() == llvm_types::StructLayout::Packed);
+    if !is_exact_packed {
+        return Err(original_error);
+    }
+
+    validate_relocated_struct_field_ranges(ctx, &struct_ty)?;
+
+    visited.push(mir_ty);
+    for field_ty in struct_ty.field_types.iter().copied() {
+        validate_initialized_global_type(ctx, field_ty, visited)?;
+    }
     Ok(())
 }
 
@@ -5047,11 +5125,11 @@ mod tests {
     }
 
     #[test]
-    fn relocated_initialized_global_layout_rejects_nested_packed_struct() {
+    fn relocated_initialized_global_layout_accepts_one_direct_nested_packed_struct() {
         let mut ctx = make_ctx();
         let byte = mir_uint(&mut ctx, 8);
-        let target = mir_uint(&mut ctx, 32);
-        let pointer: TypeHandle = MirPtrType::get_global(&mut ctx, target, false).into();
+        let word = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_global(&mut ctx, word, false).into();
         let nested_packed: TypeHandle = MirStructType::get_with_full_layout(
             &mut ctx,
             "NestedPackedRelocation".into(),
@@ -5066,17 +5144,98 @@ mod tests {
         let outer: TypeHandle = MirStructType::get_with_full_layout(
             &mut ctx,
             "OuterPackedRelocation".into(),
-            vec!["prefix".into(), "nested".into()],
-            vec![byte, nested_packed],
+            vec!["head".into(), "nested".into()],
+            vec![word, nested_packed],
+            vec![0, 1],
+            vec![0, 4],
+            16,
+            4,
+        )
+        .into();
+
+        validate_relocated_initialized_global_layout(&mut ctx, outer, 16, 4)
+            .expect("one direct nested packed relocation carrier must be accepted");
+        assert!(validate_initialized_global_layout(&mut ctx, outer, 16, 4).is_err());
+    }
+
+    #[test]
+    fn relocated_initialized_global_layout_rejects_packed_root_with_packed_child() {
+        let mut ctx = make_ctx();
+        let byte = mir_uint(&mut ctx, 8);
+        let word = mir_uint(&mut ctx, 32);
+        let target = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_global(&mut ctx, target, false).into();
+        let nested_packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "NestedPackedRelocation".into(),
+            vec!["tag".into(), "ptr".into()],
+            vec![byte, pointer],
             vec![0, 1],
             vec![0, 1],
-            10,
+            9,
+            1,
+        )
+        .into();
+        let packed_root: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedRootRelocation".into(),
+            vec!["tag".into(), "word".into(), "nested".into()],
+            vec![byte, word, nested_packed],
+            vec![0, 1, 2],
+            vec![0, 1, 5],
+            14,
             1,
         )
         .into();
 
-        let error = validate_relocated_initialized_global_layout(&mut ctx, outer, 10, 1)
-            .expect_err("nested packed structs must remain unsupported");
+        let error = validate_relocated_initialized_global_layout(&mut ctx, packed_root, 14, 1)
+            .expect_err("a packed top-level struct must not stack the nested packed relaxation");
+        assert!(error.to_string().contains("lowers at byte"), "{error}");
+    }
+
+    #[test]
+    fn relocated_initialized_global_layout_rejects_deeper_packed_nesting() {
+        let mut ctx = make_ctx();
+        let byte = mir_uint(&mut ctx, 8);
+        let word = mir_uint(&mut ctx, 32);
+        let target = mir_uint(&mut ctx, 32);
+        let pointer: TypeHandle = MirPtrType::get_global(&mut ctx, target, false).into();
+        let inner_packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "InnerPackedRelocation".into(),
+            vec!["tag".into(), "ptr".into()],
+            vec![byte, pointer],
+            vec![0, 1],
+            vec![0, 1],
+            9,
+            1,
+        )
+        .into();
+        let middle_packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "MiddlePackedRelocation".into(),
+            vec!["tag".into(), "word".into(), "inner".into()],
+            vec![byte, word, inner_packed],
+            vec![0, 1, 2],
+            vec![0, 1, 5],
+            14,
+            1,
+        )
+        .into();
+        let outer: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "OuterDeepPackedRelocation".into(),
+            vec!["head".into(), "middle".into()],
+            vec![word, middle_packed],
+            vec![0, 1],
+            vec![0, 4],
+            20,
+            4,
+        )
+        .into();
+
+        let error = validate_relocated_initialized_global_layout(&mut ctx, outer, 20, 4)
+            .expect_err("packed relocation relaxation must stop after one nesting level");
         assert!(error.to_string().contains("lowers at byte"), "{error}");
     }
 
