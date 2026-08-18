@@ -279,6 +279,16 @@ fn rustc_ty_to_device_extern_type<'tcx>(
 ///
 /// Contains paths to generated artifacts and the payload selected for
 /// embedding in the host binary.
+///
+/// `ptx_path`, `ll_path` and `ptx_content` are written by `run_device_codegen`
+/// and never read back inside this crate: they record what codegen produced,
+/// which is what the module diagram above documents. Nothing links this crate
+/// as a library -- it is a `dylib` rustc loads through `-Zcodegen-backend` --
+/// so `pub` does not make them reachable either.
+#[allow(
+    dead_code,
+    reason = "written as the recorded codegen result, not read back"
+)]
 pub struct DeviceCodegenResult {
     /// Path to generated PTX assembly file.
     ///
@@ -433,7 +443,17 @@ fn debug_position_from_span(tcx: TyCtxt<'_>, span: Span) -> Option<DebugSourcePo
 }
 
 /// Errors that can occur during device code generation.
+///
+/// `Translation` is part of the taxonomy and has a `Display` arm, but nothing
+/// constructs it today: translation failures arrive as
+/// `cuda_oxide_codegen::PipelineError` and are reported through that. Kept so
+/// the variant set still mirrors the pipeline's, rather than deleted and
+/// re-added the next time it is needed.
 #[derive(Debug)]
+#[allow(
+    dead_code,
+    reason = "Translation mirrors PipelineError and is not constructed here"
+)]
 pub enum DeviceCodegenError {
     /// No kernels were found to compile.
     NoKernels,
