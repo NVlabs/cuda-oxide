@@ -5,11 +5,13 @@
 
 //! End-to-end ABI regression coverage for packed aggregates.
 //!
-//! This example exercises four paths that must agree on the same rustc byte
+//! This example exercises five paths that must agree on the same rustc byte
 //! layout:
 //!
 //! - packed structs passed by value across the host -> kernel boundary;
 //! - packed structs passed to and returned from an internal device helper;
+//! - packed structs containing a shared pointer returned from an internal
+//!   device helper through a target-stable generic-pointer carrier;
 //! - whole-value stores of packed structs to device memory;
 //! - whole-value loads of packed structs from device memory.
 //!
@@ -19,7 +21,7 @@
 //! Rust does not guarantee a stable value for padding bytes.
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::{cuda_module, kernel};
+use cuda_device::{SharedArray, cuda_module, device, kernel};
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
@@ -33,6 +35,13 @@ pub struct Packed1 {
 pub struct Packed2 {
     pub a: u8,
     pub b: u32,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct PackedShared {
+    pub tag: u8,
+    pub ptr: *mut SharedArray<u32, 1>,
 }
 
 #[cuda_module]
@@ -56,6 +65,26 @@ mod kernels {
         Packed2 {
             a: a.wrapping_add(2),
             b: b.wrapping_add(0x1112_1314),
+        }
+    }
+
+    #[inline(never)]
+    #[device]
+    fn bounce_packed_shared(value: PackedShared) -> PackedShared {
+        value
+    }
+
+    #[inline(never)]
+    #[device]
+    unsafe fn consume_packed_shared(
+        _value: PackedShared,
+        shared: *mut SharedArray<u32, 1>,
+        out: *mut u32,
+    ) {
+        unsafe {
+            (&mut *shared)[0] = (&*shared)[0].wrapping_add(0x0102_0304);
+            out.write(0x22);
+            out.add(1).write((&*shared)[0]);
         }
     }
 
@@ -83,6 +112,25 @@ mod kernels {
             out.write(u32::from(a));
             out.add(1).write(b);
         }
+    }
+
+    #[kernel]
+    pub unsafe fn packed_shared(out: *mut u32) {
+        static mut SHARED: SharedArray<u32, 1> = SharedArray::UNINIT;
+
+        let raw = &raw mut SHARED;
+        unsafe { (&mut *raw)[0] = 0x1020_3040 };
+
+        let value = bounce_packed_shared(PackedShared {
+            tag: 0x21,
+            ptr: raw,
+        });
+
+        // Keep the packed AS3 aggregate in SSA across both internal device ABI
+        // boundaries. The raw shared pointer is passed separately for the
+        // observable runtime check so this regression does not require a
+        // target-dependent whole-value packed store/load.
+        unsafe { consume_packed_shared(value, raw, out) };
     }
 
     #[kernel]
@@ -197,6 +245,11 @@ fn assert_host_layout() {
     assert_eq!(core::mem::align_of::<Packed2>(), 2);
     assert_eq!(core::mem::offset_of!(Packed2, a), 0);
     assert_eq!(core::mem::offset_of!(Packed2, b), 2);
+
+    assert_eq!(core::mem::size_of::<PackedShared>(), 1 + core::mem::size_of::<usize>());
+    assert_eq!(core::mem::align_of::<PackedShared>(), 1);
+    assert_eq!(core::mem::offset_of!(PackedShared, tag), 0);
+    assert_eq!(core::mem::offset_of!(PackedShared, ptr), 1);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -221,6 +274,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let by_value1_out = DeviceBuffer::<u32>::zeroed(&stream, 2)?;
     let by_value2_out = DeviceBuffer::<u32>::zeroed(&stream, 2)?;
+    let packed_shared_out = DeviceBuffer::<u32>::zeroed(&stream, 2)?;
     let load1_out = DeviceBuffer::<u32>::zeroed(&stream, 2)?;
     let load2_out = DeviceBuffer::<u32>::zeroed(&stream, 2)?;
     let storage1 = DeviceBuffer::<u8>::zeroed(&stream, core::mem::size_of::<Packed1>())?;
@@ -247,7 +301,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SAFETY: every kernel launches one thread. The u32 output buffers contain
     // two writable elements. The byte buffers are CUDA allocations, so their
     // base addresses satisfy Packed1/Packed2 alignment and have exact storage
-    // for one value of the corresponding type.
+    // for one value of the corresponding type. The packed-shared kernel creates
+    // its AS3 pointer on device and never exposes it through the host ABI.
     unsafe {
         module.packed1(
             &stream,
@@ -260,6 +315,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config,
             input2,
             by_value2_out.cu_deviceptr() as *mut u32,
+        )?;
+        module.packed_shared(
+            &stream,
+            config,
+            packed_shared_out.cu_deviceptr() as *mut u32,
         )?;
 
         module.store_packed1(
@@ -291,6 +351,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     assert_eq!(by_value1_out.to_host_vec(&stream)?, [0x22, 0x1122_3344]);
     assert_eq!(by_value2_out.to_host_vec(&stream)?, [0x33, 0x6172_8394]);
+    assert_eq!(packed_shared_out.to_host_vec(&stream)?, [0x22, 0x1122_3344]);
     assert_eq!(load1_out.to_host_vec(&stream)?, [0x41, 0x90a0_b0c0]);
     assert_eq!(load2_out.to_host_vec(&stream)?, [0x51, 0xd0e0_f001]);
 
@@ -304,7 +365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(&bytes2[2..6], &0xd0e0_f001u32.to_le_bytes());
 
     println!(
-        "packed_aggregate_abi: PASS (runtime values, whole-value load/store, and PTX parameter shapes)"
+        "packed_aggregate_abi: PASS (runtime values, packed shared internal ABI, whole-value load/store, and PTX parameter shapes)"
     );
     Ok(())
 }

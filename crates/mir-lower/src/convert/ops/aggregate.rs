@@ -42,6 +42,7 @@ use crate::convert::types::{
     build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
     llvm_packed_struct_contains_pointer_in_address_space, llvm_type_contains_i1,
     llvm_type_size_align, make_slice_struct, mir_element_stride, mir_type_abi_align,
+    packed_shared_internal_abi_info,
 };
 use dialect_mir::ops::{
     MirConstantOp, MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp,
@@ -462,14 +463,18 @@ pub(crate) fn convert_construct_struct(
         );
     }
 
-    // Shared pointers are the one target-dependent packed exception: their
-    // physical width is 32 bits in modern NVVM p3:32 but 64 bits in PTX/legacy
-    // mode, and lowering runs before that target mode is selected.
+    // A packed struct containing AS3 remains target-dependent as a physical
+    // memory image. The narrow internal-call ABI exception is safe to construct
+    // in SSA because its return boundary rebuilds the value into a target-stable
+    // generic-pointer carrier before the aggregate crosses the function ABI.
     if llvm_packed_struct_contains_pointer_in_address_space(
         ctx,
         map.llvm_struct_ty,
         llvm_types::address_space::SHARED,
-    ) {
+    ) && packed_shared_internal_abi_info(ctx, result_ty)
+        .map_err(anyhow_to_pliron)?
+        .is_none()
+    {
         return pliron::input_err_noloc!(
             "constructing a packed aggregate containing a shared-memory pointer by value is \
              target-mode dependent and is not yet supported"
@@ -2894,7 +2899,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_struct_construction_with_shared_pointer_fails_closed() {
+    fn packed_struct_construction_with_one_direct_shared_pointer_stays_semantic_in_ssa() {
         use dialect_mir::ops::MirConstructStructOp;
 
         let mut ctx = make_ctx();
@@ -2927,11 +2932,45 @@ mod tests {
         construct.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
-        let err = crate::lower_mir_to_llvm(&mut ctx, module)
-            .expect_err("packed construction containing AS3 must remain fail-closed");
-        assert!(
-            format!("{err:?}").contains("target-mode dependent"),
-            "the refusal must identify the target-dependent packed AS3 image: {err:?}"
+        crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect("one direct AS3 pointer in a packed SSA aggregate must lower");
+
+        let body = kernel_blocks(&ctx, module);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![1]],
+            "packed AS3 construction must preserve the semantic packed field slots"
+        );
+
+        let result_ty = inserts
+            .last()
+            .expect("packed AS3 construction must emit insertvalue")
+            .get_operation()
+            .deref(&ctx)
+            .get_result(0)
+            .get_type(&ctx);
+        let result_ty_ref = result_ty.deref(&ctx);
+        let struct_ty = result_ty_ref
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("packed AS3 construction result must be an LLVM struct");
+        assert_eq!(struct_ty.layout(), llvm_types::StructLayout::Packed);
+        assert_eq!(llvm_type_size_align(&ctx, result_ty), Some((9, 1)));
+
+        let pointer_ty = struct_ty.field_type(1);
+        let pointer_ty_ref = pointer_ty.deref(&ctx);
+        let pointer = pointer_ty_ref
+            .downcast_ref::<llvm_types::PointerType>()
+            .expect("second packed field must remain a pointer");
+        assert_eq!(
+            pointer.address_space(),
+            llvm_types::address_space::SHARED,
+            "construction must keep the semantic pointer in AS3"
+        );
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            0,
+            "construction itself must not genericize the shared pointer"
         );
     }
 

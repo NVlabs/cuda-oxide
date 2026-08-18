@@ -61,9 +61,11 @@
 //! callee declaration carried `addrspace(3)`. The verifier rejected the
 //! mismatch.
 
+use crate::convert::target_stable_storage::coerce_target_stable_value;
 use crate::convert::types::{
     StructLayoutInfo, TransparentScalarAbiInfo, build_struct_slot_map, convert_function_type,
-    convert_type, is_kernel_func, is_zero_sized_type, transparent_scalar_abi_info,
+    convert_type, is_kernel_func, is_zero_sized_type, packed_shared_internal_abi_info,
+    transparent_scalar_abi_info,
 };
 use crate::helpers;
 use dialect_mir::ops::{MirCallOp, MirFuncOp};
@@ -640,6 +642,7 @@ pub fn convert(
 
     let mut zst_replacement_type = None;
     let mut transparent_result_abi = None;
+    let mut packed_shared_result_abi = None;
     let result_type = if let Some(mir_ty) = mir_result_ty_ptr {
         // Only the empty tuple `()` is the unit type. `is::<MirTupleType>()`
         // also matches `(T, U, ...)`, so we have to peek at the field count.
@@ -660,6 +663,12 @@ pub fn convert(
             let scalar_ty = abi.scalar_ty;
             transparent_result_abi = Some(abi);
             scalar_ty
+        } else if let Some(abi) =
+            packed_shared_internal_abi_info(ctx, mir_ty).map_err(anyhow_to_pliron)?
+        {
+            let storage_ty = abi.storage_ty;
+            packed_shared_result_abi = Some(abi);
+            storage_ty
         } else {
             convert_type(ctx, mir_ty).map_err(anyhow_to_pliron)?
         };
@@ -751,6 +760,16 @@ pub fn convert(
                 replacement = insert.get_operation();
             }
             rewriter.replace_operation(ctx, op, replacement);
+        } else if let Some(abi) = packed_shared_result_abi {
+            let value = llvm_call.get_operation().deref(ctx).get_result(0);
+            let semantic = coerce_target_stable_value(
+                ctx,
+                rewriter,
+                value,
+                abi.semantic_ty,
+                "packed shared internal ABI",
+            )?;
+            rewriter.replace_operation_with_values(ctx, op, vec![semantic]);
         } else {
             rewriter.replace_operation(ctx, op, llvm_call.get_operation());
         }
