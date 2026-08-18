@@ -124,8 +124,10 @@ Output buffer layout for reduce/scan kernels:
 
 ## Hardware Requirements
 
-- **Minimum GPU**: Volta (sm_70+) — `match.any.sync`/`match.all.sync`
-  require sm_70.
+- **Minimum GPU**: Hopper (sm_90) or newer. `main` skips cleanly below that
+  (`if major < 9`) because the demo launches thread block clusters. The
+  `match.any.sync`/`match.all.sync` primitives it also exercises are sm_70+,
+  but the cluster launch is what sets the floor.
 - **Cooperative launch**: any GPU that reports
   `cuDeviceGetAttribute(CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH) == 1`
   (essentially all post-Pascal GPUs).

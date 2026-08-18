@@ -75,7 +75,10 @@ cargo oxide run barrier
 
 ## Hardware Requirements
 
-- **Minimum GPU**: Volta (sm_70) or newer for full mbarrier support
+- **Minimum GPU**: Ampere (sm_80) or newer. `main` skips cleanly below that
+  (`if major < 8`), matching the `mbarrier requires sm_80+` message it
+  prints. Some mbarrier instructions are sm_70+, but sm_80 is the floor for
+  running this example.
 - **CUDA Driver**: 11.0+
 
 ## Mbarrier Functions
