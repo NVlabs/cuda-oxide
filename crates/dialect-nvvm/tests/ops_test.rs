@@ -24,22 +24,24 @@ use dialect_nvvm::ops::{
     ReadPtxSregLanemaskGtOp, ReadPtxSregLanemaskLeOp, ReadPtxSregLanemaskLtOp,
     ReadPtxSregNclusterIdOp, ReadPtxSregNsmIdOp, ReadPtxSregNwarpIdOp, ReadPtxSregSmIdOp,
     ReadPtxSregTidXOp, ReadPtxSregTotalSmemSizeOp, ReadPtxSregWarpIdOp, ReduxSyncAddOp,
-    ReduxSyncAndOp, ReduxSyncMaxOp, ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp,
-    ReduxSyncUminOp, ReduxSyncXorOp, RegisterMmaAccumulatorAttr, RegisterMmaElementAttr,
-    RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr,
-    RegisterMmaShapeAttr, ScalarArithmeticFormatAttr, ScalarArithmeticOp,
-    ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr,
-    ScalarArithmeticSubnormalAttr, ScalarConversionOp, ScalarConversionRoundingAttr,
-    ScalarConversionSaturationAttr, ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op,
-    ShflSyncUpI64Op, SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr,
-    SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr,
-    SparseMmaShapeAttr, StmatrixM8n8X4Op, Tcgen05AllocOp, Tcgen05CommitMulticastCg2Op,
-    Tcgen05Ld16x32bx2X1RawOp, Tcgen05Ld16x256bPureOp, Tcgen05MmaF16Op, ThreadfenceBlockOp,
-    ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
-    VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMaxPendingAttr,
-    WgmmaMmaGroupM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32Bf16Op,
-    WgmmaMmaGroupValuesM64N64K16F32F16Op, WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op,
-    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
+    ReduxSyncAndOp, ReduxSyncFmaxAbsNanOp, ReduxSyncFmaxAbsOp, ReduxSyncFmaxNanOp, ReduxSyncFmaxOp,
+    ReduxSyncFminAbsNanOp, ReduxSyncFminAbsOp, ReduxSyncFminNanOp, ReduxSyncFminOp, ReduxSyncMaxOp,
+    ReduxSyncMinOp, ReduxSyncOrOp, ReduxSyncUmaxOp, ReduxSyncUminOp, ReduxSyncXorOp,
+    RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaLayoutAttr, RegisterMmaOp,
+    RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr,
+    ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr,
+    ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr,
+    ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr,
+    ShflSyncBflyI64Op, ShflSyncDownI64Op, ShflSyncIdxI64Op, ShflSyncUpI64Op,
+    SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr,
+    SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr,
+    StmatrixM8n8X4Op, Tcgen05AllocOp, Tcgen05CommitMulticastCg2Op, Tcgen05Ld16x32bx2X1RawOp,
+    Tcgen05Ld16x256bPureOp, Tcgen05MmaF16Op, ThreadfenceBlockOp, ThreadfenceOp,
+    ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp, VprintfOp,
+    WgmmaMakeSmemDescOp, WgmmaMaxPendingAttr, WgmmaMmaGroupM64N64K16F32Bf16Op,
+    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32F16Op,
+    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
+    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
     WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
 
@@ -3894,6 +3896,55 @@ fn test_redux_sync_integer_family_construct_and_verify() {
     check_variant!(ReduxSyncAndOp);
     check_variant!(ReduxSyncOrOp);
     check_variant!(ReduxSyncXorOp);
+}
+
+#[test]
+fn test_redux_sync_f32_family_construct_and_verify() {
+    let mut ctx = Context::new();
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let f32_ty = FP32Type::get(&ctx);
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into(), f32_ty.into()]);
+    let mask = block.deref(&ctx).get_argument(0);
+    let value = block.deref(&ctx).get_argument(1);
+
+    // The good case goes through the generated `build()` so its f32 result
+    // construction is exercised; the bad case's i32 value and result must
+    // fail the `is_f32` verifier path.
+    macro_rules! check_variant {
+        ($op:ty) => {{
+            let good = <$op>::build(&mut ctx, mask, value);
+            assert!(
+                verify_op(&<$op>::new(good), &ctx).is_ok(),
+                "{} should verify with [mask, value] -> f32",
+                stringify!($op)
+            );
+
+            let bad = Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![i32_ty.into()],
+                vec![mask, mask],
+                vec![],
+                0,
+            );
+            assert!(
+                verify_op(&<$op>::new(bad), &ctx).is_err(),
+                "{} must reject an i32 value and result",
+                stringify!($op)
+            );
+        }};
+    }
+
+    check_variant!(ReduxSyncFminOp);
+    check_variant!(ReduxSyncFminNanOp);
+    check_variant!(ReduxSyncFminAbsOp);
+    check_variant!(ReduxSyncFminAbsNanOp);
+    check_variant!(ReduxSyncFmaxOp);
+    check_variant!(ReduxSyncFmaxNanOp);
+    check_variant!(ReduxSyncFmaxAbsOp);
+    check_variant!(ReduxSyncFmaxAbsNanOp);
 }
 
 #[test]

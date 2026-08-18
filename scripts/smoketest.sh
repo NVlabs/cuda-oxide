@@ -49,6 +49,8 @@
 #                   artifact.
 #   blackwell-compile -- compile-only coverage pinned to exact sm_120a. These
 #                   kernels are never launched.
+#   sm100-compile -- compile-only coverage pinned to exact sm_100a. These
+#                   kernels are never launched.
 #   NVVM_VERIFY_EXAMPLES are compiled through the real libNVVM verifier and
 #                   compiler in compile-only mode.
 #
@@ -70,6 +72,7 @@ LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 IKET_EXAMPLES=(iket_trace)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
+SM100_COMPILE_EXAMPLES=(redux_f32)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd legacy_atomic_rmw_cas libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
 ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_kernel_shared_param error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
@@ -103,6 +106,7 @@ classify() {
     for cat in "${AUTO_NVVM_EXAMPLES[@]}";   do [[ "$ex" == "$cat" ]] && { echo auto-nvvm;   return; }; done
     for cat in "${IKET_EXAMPLES[@]}";        do [[ "$ex" == "$cat" ]] && { echo iket;        return; }; done
     for cat in "${BLACKWELL_COMPILE_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo blackwell-compile; return; }; done
+    for cat in "${SM100_COMPILE_EXAMPLES[@]}"; do [[ "$ex" == "$cat" ]] && { echo sm100-compile; return; }; done
     for cat in "${ERROR_EXAMPLES[@]}";       do [[ "$ex" == "$cat" ]] && { echo error;       return; }; done
     echo standard
 }
@@ -922,6 +926,49 @@ run_cargo() {
         return
     fi
 
+    # The f32 redux family admits only Blackwell family 10x in the generated
+    # target gating, so this batch pins sm_100a.
+    if [[ "${cat}" == "sm100-compile" ]]; then
+        local -a llvm_args=("build" "${ex}" "--arch=sm_100a")
+        local llvm_ec
+        if [[ ${VERBOSE} -eq 1 ]]; then
+            cargo oxide "${llvm_args[@]}" 2>&1 | tee "${log}"
+            llvm_ec=${PIPESTATUS[0]}
+        else
+            cargo oxide "${llvm_args[@]}" >"${log}" 2>&1
+            llvm_ec=$?
+        fi
+        CARGO_EC=${llvm_ec}
+        if [[ ${llvm_ec} -ne 0 ]]; then
+            return
+        fi
+        local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"
+        local redux_f32_re='redux\.sync\.(min|max)(\.abs)?(\.NaN)?\.f32'
+        # Each kernel must emit all eight forms inline. Count per entry body:
+        # the shared #[device] helper also survives as a standalone .func copy
+        # the kernels never call, and an aggregate count could go green with
+        # the forms split unevenly across the two kernels.
+        local kernel body kernels_ok=1
+        for kernel in redux_f32_finite redux_f32_nan_policy; do
+            body="$(awk "/^\\.visible \\.entry ${kernel}\\(/,/^}/" "${llvm_ptx}" 2>/dev/null)"
+            if [[ "$(grep -oE "${redux_f32_re}" <<<"${body}" | wc -l)" -ne 8 ]] \
+                || [[ "$(grep -oE "${redux_f32_re}" <<<"${body}" | sort -u | wc -l)" -ne 8 ]]; then
+                kernels_ok=0
+            fi
+        done
+        if [[ ! -s "${llvm_ptx}" ]] \
+            || ! grep -qx '\.version 8\.6' "${llvm_ptx}" \
+            || ! grep -qx '\.target sm_100a' "${llvm_ptx}" \
+            || [[ ${kernels_ok} -ne 1 ]]; then
+            printf 'direct LLVM route did not emit the expected redux.sync f32 instructions\n' >>"${log}"
+            if [[ ${VERBOSE} -eq 1 ]]; then
+                printf 'direct LLVM route did not emit the expected redux.sync f32 instructions\n'
+            fi
+            CARGO_EC=1
+        fi
+        return
+    fi
+
     # The generated tcgen05 families must pass both compiler routes.
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "tcgen05" ]]; then
         local cp_re='tcgen05\.cp\.cta_group::[12]\.(128x128b|128x256b|32x128b\.warpx4|4x256b|64x128b\.warpx2::(01_23|02_13))(\.b8x16\.(b4x16_p64|b6x16_p32))?[[:space:]]'
@@ -1675,7 +1722,7 @@ for ex in "${selected[@]}"; do
     if [[ ! -f "${log}" ]]; then
         verdict="FAIL (log missing: ${log})"
         status=1
-    elif [[ ( ${COMPILE_ONLY} -eq 1 || "${cat}" == "blackwell-compile" ) && "${cat}" != "error" ]]; then
+    elif [[ ( ${COMPILE_ONLY} -eq 1 || "${cat}" == "blackwell-compile" || "${cat}" == "sm100-compile" ) && "${cat}" != "error" ]]; then
         # Compile-only collapses the GPU-gated categories: with nothing
         # executed, "PTX (or NVVM IR) compiled" is the bar for everything
         # except error examples, which must still fail with a diagnostic.
