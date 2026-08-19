@@ -35,15 +35,21 @@ A lazy, composable unit of GPU work. Implements `Send + Sized + IntoFuture`. Key
 | `.sync_on(&stream)`   | The explicit stream you provide       | Yes            | No        |
 | `.async_on(&stream)`  | The explicit stream you provide       | No             | **Yes**   |
 
-`.async_on` is the only one of the five that is `unsafe`, and it is the only
-one that returns while GPU work may still be in flight: it executes and does
-not synchronize, so the caller owns keeping every buffer the operation touches
-alive and unread until the stream is synchronized by other means. Each of the
-other four ties its result to completion: `.sync` and `.sync_on` block,
+`.async_on` is the only `unsafe` method here, and the only one that returns
+while the GPU may still be working. It launches the work and never
+synchronizes. Until you synchronize the stream yourself, every buffer the
+operation touches must stay alive, and its outputs must not be read. Each of
+the other four ties its result to completion: `.sync` and `.sync_on` block,
 `.await` suspends until the `cuLaunchHostFunc` callback below fires, and
 `.schedule` hands back a `DeviceFuture` that does the same when awaited.
 (`DeviceOperation::execute` is `unsafe` too, but it is the primitive those four
 are built from rather than something to call directly.)
+
+```rust
+// SAFETY: `c_dev` stays alive and unread until the synchronize below.
+let out = unsafe { op.async_on(&stream)? };
+stream.synchronize()?; // now the outputs are safe to read
+```
 
 Combinators: `.and_then(f)`, `.and_then_with_context(f)`, `.arc()`, `zip!(a, b)`, `unzip!(op)`.
 
