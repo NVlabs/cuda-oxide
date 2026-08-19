@@ -48,16 +48,15 @@
 
 ### The remaining public modules
 
-The table above is the crate's headline surface, but it is 17 of the 39 modules
-`src/lib.rs` declares `pub` (`grep -c '^pub mod ' src/lib.rs`). The other 22 are
-below. They carry no GPU column because their architecture floor is per function
-rather than per module -- `int`, for instance, holds both an intrinsic-free
-scalar min/max and the `sm_90+` `min.relu.s32` -- so each item's requirement is
-stated in its own rustdoc.
+The table above covers the most-used modules, but it is not the whole crate.
+The remaining public modules are below. There is no GPU column here because
+the minimum architecture varies per function, not per module. `int`, for
+example, has plain scalar min/max that runs anywhere, plus `min.relu.s32`
+which needs `sm_90+`. Each function's rustdoc states its own requirement.
 
 | Module       | Description                                                                     |
 |--------------|---------------------------------------------------------------------------------|
-| `access`     | Inverted tile-shape query: given a target transaction width, what shape is needed|
+| `access`     | Choosing a tile shape from a target memory transaction width.                   |
 | `async_copy` | Classic global-to-shared asynchronous copy intrinsics                           |
 | `bf16`       | Scalar `bf16` min/max; each value is the `u16` bit pattern of one bfloat16       |
 | `bf16x2`     | Packed `bf16x2` arithmetic; two values per `u32`, the first in the low 16 bits   |
