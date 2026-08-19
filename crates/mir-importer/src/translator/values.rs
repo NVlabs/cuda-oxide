@@ -17,8 +17,8 @@
 //! # Slot address-space inference
 //!
 //! Rust's reference / raw-pointer types carry no address-space information
-//! (`&mut f32`, `*const u32` all translate to a generic `MirPtrType`). On
-//! GPU, however, intermediate locals frequently end up holding pointers in
+//! (`&mut f32`, `*const u32` are distinct pointer kinds but both default to a
+//! generic-address-space `MirPtrType`). On GPU, however, intermediate locals frequently end up holding pointers in
 //! a concrete address space — e.g. `let p = &mut TILE_A[i]` on a
 //! `SharedArray` produces an `addrspace(3)` pointer, yet the Rust local is
 //! typed `&mut f32` (generic).
@@ -37,7 +37,7 @@
 
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::ops::{MirAllocaOp, MirCastOp, MirLoadOp, MirStoreOp};
-use dialect_mir::types::{MirPtrType, address_space};
+use dialect_mir::types::{MirPointerKind, MirPtrType, MirSliceType, address_space};
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
 use pliron::op::Op;
@@ -157,14 +157,12 @@ impl ValueMap {
     /// Emit `mir.store` of `value` into `local`'s slot. Returns `None` for ZST
     /// / unset locals.
     ///
-    /// When `value` is a pointer whose type differs from the slot's declared
-    /// pointee (mutability, address space, or underlying pointee shape), a
-    /// `mir.cast <PtrToPtr>` is inserted automatically. This bridges the
-    /// common case where an rvalue produces a pointer in a concrete address
-    /// space (e.g. `shared_alloc` returning `*mut T addrspace(3)`) while the
-    /// local's Rust-declared type translates to a generic-addrspace pointer
-    /// (e.g. `*mut SharedArray<T, N>` -> `*mut ()`). All pointers have the
-    /// same runtime layout after lowering, so the cast is free.
+    /// When `value` is pointer-like and its type differs from the slot's
+    /// declared pointee, a `mir.cast <PtrToPtr>` is inserted automatically.
+    /// This covers both thin [`MirPtrType`] values and fat [`MirSliceType`]
+    /// values. Besides address-space normalization, the cast restores the
+    /// exact Rust pointer/reference kind carried by the local's declared type.
+    /// No alias guarantee is inferred from this conversion.
     pub fn store_local(
         &self,
         ctx: &mut Context,
@@ -189,9 +187,23 @@ impl ValueMap {
     }
 }
 
-/// If `value` is a pointer whose type differs from `target_ty` (also a
-/// pointer), emit a `mir.cast <PtrToPtr>` that converts it. Returns the (new)
-/// value and the (new) anchor op. Otherwise this is a no-op.
+/// Whether generic pointer normalization may change `source` into `target`.
+///
+/// `Erased` is the bridge between compiler-generated physical addresses and
+/// Rust-typed semantic values, so gaining or forgetting a concrete kind at
+/// that boundary is allowed. Two distinct concrete Rust kinds must never be
+/// interconverted by generic normalization: such a transition needs an
+/// explicit Rust/MIR coercion or cast with its own audited semantics.
+pub(crate) fn pointer_kind_retype_allowed(source: MirPointerKind, target: MirPointerKind) -> bool {
+    source == target || source == MirPointerKind::Erased || target == MirPointerKind::Erased
+}
+
+/// If `value` and `target_ty` are compatible pointer-like MIR types, emit a
+/// `mir.cast <PtrToPtr>` to the exact target type. Thin pointers are compatible
+/// when their pointees agree and pointer-kind normalization is safe; fat slices
+/// follow the same rule for their element type. This is deliberately
+/// conservative: thin/fat conversions, pointee reinterpretation, and changes
+/// between distinct concrete Rust pointer kinds remain explicit elsewhere.
 pub(crate) fn maybe_ptr_coerce(
     ctx: &mut Context,
     value: Value,
@@ -204,12 +216,32 @@ pub(crate) fn maybe_ptr_coerce(
         return (value, prev_op);
     }
 
-    // Only auto-insert a PtrToPtr cast when both sides are already pointer
-    // types; anything else is a genuine translation mismatch and should be
-    // surfaced by the verifier, not papered over here.
-    let value_is_ptr = value_ty.deref(ctx).downcast_ref::<MirPtrType>().is_some();
-    let target_is_ptr = target_ty.deref(ctx).downcast_ref::<MirPtrType>().is_some();
-    if !(value_is_ptr && target_is_ptr) {
+    let compatible = {
+        let value_ref = value_ty.deref(ctx);
+        let target_ref = target_ty.deref(ctx);
+
+        match (
+            value_ref.downcast_ref::<MirPtrType>(),
+            target_ref.downcast_ref::<MirPtrType>(),
+        ) {
+            (Some(value_ptr), Some(target_ptr)) => {
+                value_ptr.pointee == target_ptr.pointee
+                    && pointer_kind_retype_allowed(value_ptr.kind, target_ptr.kind)
+            }
+            _ => match (
+                value_ref.downcast_ref::<MirSliceType>(),
+                target_ref.downcast_ref::<MirSliceType>(),
+            ) {
+                (Some(value_slice), Some(target_slice)) => {
+                    value_slice.element_ty == target_slice.element_ty
+                        && pointer_kind_retype_allowed(value_slice.kind, target_slice.kind)
+                }
+                _ => false,
+            },
+        }
+    };
+
+    if !compatible {
         return (value, prev_op);
     }
 
@@ -635,19 +667,21 @@ fn propagate_from_local(local: mir::Local, classes: &[SlotAddrSpace]) -> WriteCl
 /// current address space; otherwise return `elem_ty` unchanged.
 ///
 /// Used by `body::emit_entry_allocas` to override a Rust-declared pointer
-/// addrspace with the one inferred by [`SlotAddrSpaceMap`].
+/// addrspace with the one inferred by [`SlotAddrSpaceMap`]. The pointer kind
+/// is preserved exactly: address-space inference must never turn `&mut T` into
+/// an erased/raw pointer, or vice versa.
 pub fn align_pointer_addr_space(ctx: &mut Context, elem_ty: TypeHandle, target: u32) -> TypeHandle {
     let ptr_info = elem_ty
         .deref(ctx)
         .downcast_ref::<MirPtrType>()
-        .map(|pt| (pt.pointee, pt.is_mutable, pt.address_space));
-    let Some((pointee, is_mutable, current)) = ptr_info else {
+        .map(|pt| (pt.pointee, pt.is_mutable, pt.address_space, pt.kind));
+    let Some((pointee, is_mutable, current, kind)) = ptr_info else {
         return elem_ty;
     };
     if current == target {
         return elem_ty;
     }
-    MirPtrType::get(ctx, pointee, is_mutable, target).into()
+    MirPtrType::get_with_kind(ctx, pointee, is_mutable, target, kind).into()
 }
 
 /// Extract a pointer type's address space, or `None` if `elem_ty` is not a
@@ -663,6 +697,99 @@ pub fn pointer_addr_space(ctx: &Context, elem_ty: TypeHandle) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_like_local_coercion_restores_fat_pointer_kind() {
+        use pliron::builtin::types::{IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        let element: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let physical: TypeHandle = MirSliceType::get(&mut ctx, element).into();
+        let expected: TypeHandle =
+            MirSliceType::get_with_kind(&mut ctx, element, MirPointerKind::SharedRef).into();
+
+        let block = BasicBlock::new(&mut ctx, None, vec![physical]);
+        let value = block.deref(&ctx).get_argument(0);
+        let (value, cast) = maybe_ptr_coerce(&mut ctx, value, expected, block, None);
+
+        assert_eq!(value.get_type(&ctx), expected);
+        assert!(
+            cast.is_some(),
+            "fat pointer kind restoration must be explicit in MIR"
+        );
+    }
+
+    #[test]
+    fn pointer_like_local_coercion_rejects_concrete_kind_changes() {
+        use pliron::builtin::types::{IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        for (source_kind, source_mutable, target_kind, target_mutable) in [
+            (
+                MirPointerKind::SharedRef,
+                false,
+                MirPointerKind::UniqueRef,
+                true,
+            ),
+            (
+                MirPointerKind::RawConst,
+                false,
+                MirPointerKind::RawMut,
+                true,
+            ),
+            (
+                MirPointerKind::RawConst,
+                false,
+                MirPointerKind::SharedRef,
+                false,
+            ),
+        ] {
+            let source: TypeHandle =
+                MirPtrType::get_generic_with_kind(&mut ctx, pointee, source_mutable, source_kind)
+                    .into();
+            let target: TypeHandle =
+                MirPtrType::get_generic_with_kind(&mut ctx, pointee, target_mutable, target_kind)
+                    .into();
+            let block = BasicBlock::new(&mut ctx, None, vec![source]);
+            let value = block.deref(&ctx).get_argument(0);
+
+            let (coerced, cast) = maybe_ptr_coerce(&mut ctx, value, target, block, None);
+
+            assert_eq!(
+                coerced.get_type(&ctx),
+                source,
+                "generic normalization must not change {source_kind:?} into {target_kind:?}"
+            );
+            assert!(
+                cast.is_none(),
+                "generic normalization must not synthesize a concrete pointer-kind transition"
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_like_local_coercion_rejects_fat_pointer_kind_changes() {
+        use pliron::builtin::types::{IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        let element: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let source: TypeHandle =
+            MirSliceType::get_with_kind(&mut ctx, element, MirPointerKind::RawConst).into();
+        let target: TypeHandle =
+            MirSliceType::get_with_kind(&mut ctx, element, MirPointerKind::SharedRef).into();
+        let block = BasicBlock::new(&mut ctx, None, vec![source]);
+        let value = block.deref(&ctx).get_argument(0);
+
+        let (coerced, cast) = maybe_ptr_coerce(&mut ctx, value, target, block, None);
+
+        assert_eq!(coerced.get_type(&ctx), source);
+        assert!(cast.is_none());
+    }
 
     #[test]
     fn reachable_unknown_pointer_write_prevents_concrete_narrowing() {
@@ -683,5 +810,27 @@ mod tests {
             propagate_from_local(source, &[SlotAddrSpace::Generic]),
             WriteClass::Classified(space) if space == address_space::GENERIC
         ));
+    }
+
+    #[test]
+    fn address_space_alignment_preserves_pointer_kind() {
+        use pliron::builtin::types::{IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let unique: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::UniqueRef)
+                .into();
+
+        let aligned = align_pointer_addr_space(&mut ctx, unique, address_space::SHARED);
+        let aligned = aligned.deref(&ctx);
+        let aligned = aligned
+            .downcast_ref::<MirPtrType>()
+            .expect("aligned type must remain a MIR pointer");
+
+        assert_eq!(aligned.address_space, address_space::SHARED);
+        assert_eq!(aligned.kind, MirPointerKind::UniqueRef);
+        assert!(aligned.is_mutable);
     }
 }

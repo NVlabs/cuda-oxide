@@ -572,7 +572,9 @@ pub(crate) fn convert_construct_tuple(
 /// `MirSliceType` lowers to the `{ ptr, i64 }` fat-pointer struct, where
 /// field 0 is the data pointer and field 1 is the element count by
 /// construction (the same layout the entry prologue's `reconstruct_slice`
-/// and the Unsize cast path build).
+/// and the Unsize cast path build). `MirSliceType::kind` is intentionally
+/// semantic-only: all reference/raw-pointer kinds share this physical layout
+/// and no LLVM alias metadata is inferred here.
 pub(crate) fn convert_construct_slice(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
