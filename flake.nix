@@ -127,6 +127,7 @@
           ];
 
           CUDA_HOME = cudaSymlinked;
+          CUDA_TOOLKIT_PATH = cudaSymlinked;
           LIBCLANG_PATH = "${llvmPkgs.libclang.lib}/lib";
         };
 
@@ -218,6 +219,7 @@
 
           shellHook = ''
             export CUDA_HOME="${cudaSymlinked}"
+            export CUDA_TOOLKIT_PATH="${cudaSymlinked}"
             export LIBCLANG_PATH="${llvmPkgs.libclang.lib}/lib"
 
             # GPU driver setup borrowed from https://github.com/NVlabs/cutile-rs
@@ -261,6 +263,17 @@
       }
     ))
     // {
+      nixConfig = {
+        substituters = [
+          "http://10.22.0.2:8097/parrisisland"
+          "https://cache.nixos.org"
+        ];
+        trusted-public-keys = [
+          "parrisisland:iLsJUaWACRjV68lFKfAnTCE0odUzE+8UKaWIvoHttxE="
+          "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+        ];
+      };
+
       templates.default = {
         path = templateSrc;
         description = "Reproducible CUDA + Rust dev environment for cuda-oxide projects";
