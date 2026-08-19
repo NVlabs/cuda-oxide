@@ -732,9 +732,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
         // seed=7: deref_field=18 and deref_value=41.
         // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
-        unsafe {
-            module.test_deref_projection_debug((stream).as_ref(), cfg, 7u32, &mut out_dev)
-        }?;
+        unsafe { module.test_deref_projection_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
         let result = out_dev.to_host_vec(&stream)?;
         assert_eq!(result[0], 59, "test_deref_projection_debug failed");
         println!("  ✓ Result: {} (expected 59)", result[0]);
