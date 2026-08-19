@@ -40,7 +40,7 @@ static SLICE_RELOCATION_TARGET: SliceRelocationTarget = SliceRelocationTarget {
     view: [23, 31, 41],
     suffix: [47, 59, 61],
 };
-static SLICE_RELOCATION_VIEW: &'static [u32] = &SLICE_RELOCATION_TARGET.view;
+static SLICE_RELOCATION_VIEW: &[u32] = &SLICE_RELOCATION_TARGET.view;
 
 #[repr(C, packed)]
 struct PackedRelocation {
