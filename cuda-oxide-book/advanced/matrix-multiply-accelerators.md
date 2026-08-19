@@ -105,18 +105,19 @@ unsafe {
 
 ### Current cuda-oxide WGMMA lowering
 
-The compiler currently supports
-`m64n64k16.f32.bf16.bf16` and selects among three conservative lowering
-shapes. In every case, the entire asynchronous accumulator lifetime stays
-inside one convergent inline-PTX statement so LLVM cannot insert a spill
-boundary while a WGMMA group is pending.
+The compiler supports `m64n64k16.f32.bf16.bf16` across three conservative
+lowering shapes, and `m64n64k16.f32.f16.f16` for canonical linear full-drain
+regions only. In every accepted case, the entire asynchronous accumulator
+lifetime stays inside one convergent inline-PTX statement so LLVM cannot insert
+a spill boundary while a WGMMA group is pending.
 
 **Linear full drain.** A canonical `[[f32; 8]; 4]` accumulator is loaded into
 32 SSA `f32` values before the WGMMA region and stored once after the final
-`wait_group<0>`. Unsupported full-drain pointer shapes retain the original
-deferred pointer-form lowering.
+`wait_group<0>`. Both BF16 and F16 use this value-threaded carrier. Unsupported
+BF16 full-drain pointer shapes retain the original deferred pointer-form
+lowering; F16 does not have a pointer-form fallback.
 
-**Canonical counted K-loop.** For a compile-time counted loop with one MMA per
+**Canonical counted K-loop.** For a compile-time counted BF16 loop with one MMA per
 iteration and affine `u64` descriptor recurrences, cuda-oxide moves the loop
 control and descriptor arithmetic into the same convergent PTX region as the
 WGMMA instruction. The accumulator is therefore loaded once before the K-loop
@@ -142,9 +143,9 @@ accumulator. A final `wait_group<0>` is mandatory before any accumulator value
 escapes the fused region.
 
 Selection is intentionally fail-closed. Dynamic partial waits, unsupported
-control flow, malformed accumulator schedules, and the F16 and TF32 public
-compatibility entry points are rejected instead of exposing an in-flight
-accumulator to LLVM.
+control flow, malformed accumulator schedules, F16 counted-loop or partial-wait
+shapes, F16 non-canonical accumulators, and the TF32 public compatibility entry
+point are rejected instead of exposing an in-flight accumulator to LLVM.
 
 :::{tip}
 WGMMA is often paired with a **multi-stage pipeline**: while the tensor

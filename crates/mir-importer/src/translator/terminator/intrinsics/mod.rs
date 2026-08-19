@@ -15,7 +15,7 @@
 //! | `memory`     | `SharedArray`, `stmatrix_*`, type conversions                                |
 //! | `atomic`     | Atomic read-modify-write and compare-exchange                                |
 //! | `wgmma`      | Hopper WGMMA matrix operations                                               |
-//! | `tma`        | Tensor Memory Access (TMA) operations                                        |
+//! | `tma`        | Tensor Memory Accelerator (TMA) operations                                   |
 //! | `debug`      | `clock`, `clock64`, `globaltimer`, `trap`, `breakpoint`                      |
 //! | `asm`        | Inline PTX marker calls                                                      |
 //! | `iket`       | `cuda_device::iket` compiler markers                                         |

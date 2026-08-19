@@ -813,15 +813,17 @@ pub mod ops {
         pub ty: DebugLocalTypeKind,
     }
 
-    /// A source variable whose storage is a statically-known projection of a MIR local.
+    /// A source variable whose storage is a supported projection of a MIR local.
     ///
-    /// `offset_bytes` is measured from the base local's alloca. The textual LLVM
-    /// exporter turns it into `DIExpression(DW_OP_plus_uconst, offset_bytes)`.
-    /// Dynamic indices, dereferences, slices, and enum downcasts are intentionally
-    /// not represented by this first projection-debug slice.
+    /// `offset_bytes` is measured from the current address after an optional
+    /// leading thin-pointer/reference dereference. The textual LLVM exporter emits
+    /// `DW_OP_deref` when `dereference_base` is set, then `DW_OP_plus_uconst` for a
+    /// non-zero offset. Dynamic indices, repeated dereferences, slices/fat pointers,
+    /// and enum downcasts are intentionally not represented.
     #[derive(Clone, Debug, Eq, Hash, PartialEq)]
     pub struct DebugProjectedVariableInfo {
         pub variable: DebugLocalVariableInfo,
+        pub dereference_base: bool,
         pub offset_bytes: u64,
         pub source_scope: Option<u32>,
         pub declaration: Option<DebugSourcePosition>,
@@ -1013,6 +1015,12 @@ pub mod ops {
             set_string_attr(
                 ctx,
                 op,
+                &debug_projected_key(index, "deref"),
+                u8::from(info.dereference_base).to_string(),
+            );
+            set_string_attr(
+                ctx,
+                op,
                 &debug_projected_key(index, "offset"),
                 info.offset_bytes.to_string(),
             );
@@ -1080,6 +1088,8 @@ pub mod ops {
             if pos != encoded.len() {
                 continue;
             }
+            let dereference_base = get_string_attr(ctx, op, &debug_projected_key(index, "deref"))
+                .is_some_and(|value| value == "1");
             let Some(offset_bytes) =
                 get_string_attr(ctx, op, &debug_projected_key(index, "offset"))
                     .and_then(|offset| offset.parse::<u64>().ok())
@@ -1096,6 +1106,7 @@ pub mod ops {
                     argument_index,
                     ty,
                 },
+                dereference_base,
                 offset_bytes,
                 source_scope,
                 declaration,

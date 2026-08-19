@@ -28,6 +28,32 @@ static RELOCATION_REFERENCE: &u32 = &RELOCATION_TARGET_A;
 static RELOCATION_REFERENCES: [&u32; 2] = [&RELOCATION_TARGET_A, &RELOCATION_TARGET_B];
 static INTERIOR_RELOCATION_REFERENCE: &f32 = &STATIC_WEIGHTS[2][1];
 
+#[repr(C)]
+struct SliceRelocationTarget {
+    prefix: [u32; 2],
+    view: [u32; 3],
+    suffix: [u32; 3],
+}
+
+static SLICE_RELOCATION_TARGET: SliceRelocationTarget = SliceRelocationTarget {
+    prefix: [11, 17],
+    view: [23, 31, 41],
+    suffix: [47, 59, 61],
+};
+static SLICE_RELOCATION_VIEW: &[u32] = &SLICE_RELOCATION_TARGET.view;
+
+static UNION_RELOCATION_TARGETS: [u32; 3] = [7, 11, 23];
+
+#[repr(C)]
+union RelocatedPointerUnion {
+    word: &'static u32,
+    byte: &'static u8,
+}
+
+static UNION_RELOCATION: RelocatedPointerUnion = RelocatedPointerUnion {
+    word: &UNION_RELOCATION_TARGETS[2],
+};
+
 #[repr(C, packed)]
 struct PackedRelocation {
     tag: u8,
@@ -189,6 +215,28 @@ mod kernels {
             *out.add(1) = *RELOCATION_REFERENCES[0];
             *out.add(2) = *RELOCATION_REFERENCES[1];
             *out.add(3) = (*INTERIOR_RELOCATION_REFERENCE).to_bits();
+        }
+    }
+
+    /// Read a slice stored directly in a device-global initializer.
+    ///
+    /// The first fat-pointer word carries a relocation to
+    /// `SLICE_RELOCATION_TARGET + 8`; the second word is literal length metadata.
+    #[kernel]
+    pub unsafe fn slice_static_initializer_relocation(out: *mut u32) {
+        unsafe {
+            *out.add(0) = SLICE_RELOCATION_VIEW.len() as u32;
+            *out.add(1) = SLICE_RELOCATION_VIEW[0];
+            *out.add(2) = SLICE_RELOCATION_VIEW[2];
+        }
+    }
+
+    /// Read a top-level union whose complete static initializer is one
+    /// provenance-preserving pointer relocation with a non-zero target addend.
+    #[kernel]
+    pub unsafe fn union_static_initializer_relocation(out: *mut u32) {
+        unsafe {
+            *out = *UNION_RELOCATION.word;
         }
     }
 
@@ -382,6 +430,57 @@ fn main() {
         std::process::exit(1);
     }
 
+    let slice_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 3)
+        .expect("Failed to allocate slice relocation output");
+
+    unsafe {
+        module.slice_static_initializer_relocation(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            slice_relocation_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Slice static initializer relocation kernel launch failed");
+
+    let slice_relocation_result = slice_relocation_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy slice relocation output");
+    let slice_relocation_expected = [3u32, 23, 41];
+
+    println!("Slice static initializer relocation: result = {slice_relocation_result:?}");
+
+    if slice_relocation_result.as_slice() != slice_relocation_expected.as_slice() {
+        eprintln!(
+            "FAILED: expected slice static initializer relocation {slice_relocation_expected:?}, got {slice_relocation_result:?}"
+        );
+        std::process::exit(1);
+    }
+
+    let union_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 1)
+        .expect("Failed to allocate union relocation output");
+
+    unsafe {
+        module.union_static_initializer_relocation(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            union_relocation_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Union static initializer relocation kernel launch failed");
+
+    let union_relocation_result = union_relocation_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy union relocation output")[0];
+
+    println!("Union static initializer relocation: result = {union_relocation_result}");
+
+    if union_relocation_result != 23 {
+        eprintln!(
+            "FAILED: expected union static initializer relocation 23, got {union_relocation_result}"
+        );
+        std::process::exit(1);
+    }
+
     let packed_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 5)
         .expect("Failed to allocate packed relocation output");
 
@@ -458,6 +557,6 @@ fn main() {
     }
 
     println!(
-        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned, packed, and nested packed pointer relocations, pointer addends, and subobject addresses."
+        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned, packed, nested packed, and union pointer relocations, slice relocations, pointer addends, and subobject addresses."
     );
 }

@@ -301,8 +301,6 @@
 //!   artifacts
 
 #![feature(rustc_private)]
-#![allow(unused_imports)]
-#![allow(dead_code)]
 
 // Import rustc internal crates
 extern crate rustc_abi;
@@ -344,7 +342,6 @@ use rustc_session::config::OutputFilenames;
 use std::any::Any;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The CUDA codegen backend.

@@ -3951,7 +3951,7 @@ fn kernel_keeps_host_addressable_pointer_parameters_and_device_functions_keep_sh
 }
 
 #[test]
-fn full_debug_metadata_emits_static_projected_dbg_declares() {
+fn full_debug_metadata_emits_projected_dbg_declares() {
     let mut ctx = Context::new();
 
     let module = ModuleOp::new(&mut ctx, "projected_debug".try_into().unwrap());
@@ -3989,6 +3989,7 @@ fn full_debug_metadata_emits_static_projected_dbg_declares() {
                         encoding: "DW_ATE_unsigned",
                     },
                 },
+                dereference_base: false,
                 offset_bytes: 8,
                 source_scope: None,
                 declaration: Some(DebugSourcePosition {
@@ -4007,6 +4008,7 @@ fn full_debug_metadata_emits_static_projected_dbg_declares() {
                         encoding: "DW_ATE_unsigned",
                     },
                 },
+                dereference_base: false,
                 offset_bytes: 16,
                 source_scope: None,
                 declaration: Some(DebugSourcePosition {
@@ -4025,11 +4027,50 @@ fn full_debug_metadata_emits_static_projected_dbg_declares() {
                         encoding: "DW_ATE_unsigned",
                     },
                 },
+                dereference_base: false,
                 offset_bytes: 24,
                 source_scope: None,
                 declaration: Some(DebugSourcePosition {
                     file: PathBuf::from("/tmp/cuda-oxide/tests/projected.rs"),
                     line: 13,
+                    column: 9,
+                }),
+            },
+            DebugProjectedVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name: "deref_value".to_string(),
+                    argument_index: None,
+                    ty: DebugLocalTypeKind::Basic {
+                        name: "u32".to_string(),
+                        size_bits: 32,
+                        encoding: "DW_ATE_unsigned",
+                    },
+                },
+                dereference_base: true,
+                offset_bytes: 0,
+                source_scope: None,
+                declaration: Some(DebugSourcePosition {
+                    file: PathBuf::from("/tmp/cuda-oxide/tests/projected.rs"),
+                    line: 14,
+                    column: 9,
+                }),
+            },
+            DebugProjectedVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name: "deref_field_value".to_string(),
+                    argument_index: None,
+                    ty: DebugLocalTypeKind::Basic {
+                        name: "u64".to_string(),
+                        size_bits: 64,
+                        encoding: "DW_ATE_unsigned",
+                    },
+                },
+                dereference_base: true,
+                offset_bytes: 32,
+                source_scope: None,
+                declaration: Some(DebugSourcePosition {
+                    file: PathBuf::from("/tmp/cuda-oxide/tests/projected.rs"),
+                    line: 15,
                     column: 9,
                 }),
             },
@@ -4050,10 +4091,16 @@ fn full_debug_metadata_emits_static_projected_dbg_declares() {
 
     assert_eq!(
         ir.matches("call void @llvm.dbg.declare").count(),
-        3,
+        5,
         "each projected source variable should get its own dbg.declare:\n{ir}"
     );
-    for name in ["field_value", "tuple_value", "array_value"] {
+    for name in [
+        "field_value",
+        "tuple_value",
+        "array_value",
+        "deref_value",
+        "deref_field_value",
+    ] {
         assert!(
             ir.contains(&format!("!DILocalVariable(name: \"{name}\"")),
             "missing projected variable {name}:\n{ir}"
@@ -4065,4 +4112,12 @@ fn full_debug_metadata_emits_static_projected_dbg_declares() {
             "missing static projection offset {offset}:\n{ir}"
         );
     }
+    assert!(
+        ir.contains("!DIExpression(DW_OP_deref)"),
+        "missing dereference-only debug expression:\n{ir}"
+    );
+    assert!(
+        ir.contains("!DIExpression(DW_OP_deref, DW_OP_plus_uconst, 32)"),
+        "missing dereference-plus-field debug expression:\n{ir}"
+    );
 }

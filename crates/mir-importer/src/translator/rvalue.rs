@@ -6592,16 +6592,21 @@ fn translate_ptr_to_array_constant(
             ))
         );
     }
-    let (bytes, alignment) =
-        promoted_array_initializer(constant, expected_size, "array", loc.clone())?;
+    let initializer = promoted_array_initializer(constant, expected_size, "array", loc.clone())?;
+    let promoted_anchor = materialize_promoted_initializer_targets(
+        ctx,
+        &initializer.relocations,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
 
     let global_alloc = emit_promoted_immutable_global(
         ctx,
         array_ty,
-        &bytes,
-        alignment,
+        &initializer,
         block_ptr,
-        prev_op,
+        promoted_anchor,
         loc.clone(),
     );
 
@@ -6617,23 +6622,21 @@ fn translate_ptr_to_array_constant(
     Ok((ptr_val, last_op))
 }
 
-/// Materialize `bytes` as an immutable device global holding a `value_ty`.
+/// Materialize an evaluated constant allocation as an immutable device global.
 ///
-/// Deduplicated by (type, bytes), so the same table spelled several ways — or
-/// reached from several functions — is emitted once.
+/// Deduplicated by type, bytes, and relocation identity. Pointer placeholder
+/// bytes alone are not enough: two constants can have identical byte images and
+/// addends while their rustc provenance targets different statics.
 ///
 /// The global is marked immutable, which is what makes it useful beyond simply
 /// having an address: the exporter writes LLVM `constant`, so `opt` may treat
-/// reads of it as invariant. That is what lets a copy of the data into a stack
-/// slot be deleted (`isOnlyCopiedFromConstantMemory`) and what makes `llc`
-/// select `ld.global.nc`. The claim is sound here and only here: the bytes are
-/// an evaluated Rust constant, the name is compiler-generated so no host setter
-/// can reach it, and nothing is handed a mutable path to the storage.
+/// reads of it as invariant. Pointer slots remain symbolic relocation metadata
+/// all the way to the exporter instead of being reconstructed from placeholder
+/// integer bytes.
 pub(crate) fn emit_promoted_immutable_global(
     ctx: &mut Context,
     value_ty: TypeHandle,
-    bytes: &[u8],
-    alignment: u64,
+    initializer: &GlobalInitializerData,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
@@ -6641,9 +6644,10 @@ pub(crate) fn emit_promoted_immutable_global(
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::attributes::{StringAttr, TypeAttr};
 
-    let initializer_hex = bytes_to_hex(bytes);
-    let global_key = promoted_constant_dedup_key(ctx, value_ty, bytes);
+    let initializer_hex = bytes_to_hex(&initializer.bytes);
+    let global_key = promoted_constant_dedup_key(ctx, value_ty, initializer);
     let global_ptr_ty = MirPtrType::get_global(ctx, value_ty, false);
+    let validation_ty = promoted_global_validation_type(ctx, value_ty, initializer.bytes.len());
 
     let global_op = Operation::new(
         ctx,
@@ -6656,11 +6660,15 @@ pub(crate) fn emit_promoted_immutable_global(
     global_op.deref_mut(ctx).set_loc(loc);
 
     let global_alloc = MirGlobalAllocOp::new(global_op);
-    global_alloc.set_attr_global_type(ctx, TypeAttr::new(value_ty));
+    global_alloc.set_attr_global_type(ctx, TypeAttr::new(validation_ty));
     global_alloc.set_attr_global_key(ctx, StringAttr::new(global_key));
     set_global_initializer_hex_attr(ctx, global_alloc.get_operation(), &initializer_hex);
-    if alignment > 0 {
-        global_alloc.set_alignment_value(ctx, alignment);
+    if !initializer.relocations.is_empty() {
+        let encoded = encode_global_initializer_relocations(&initializer.relocations);
+        set_global_initializer_relocations_attr(ctx, global_alloc.get_operation(), &encoded);
+    }
+    if initializer.alignment > 0 {
+        global_alloc.set_alignment_value(ctx, initializer.alignment);
     }
     global_alloc.mark_immutable(ctx);
 
@@ -6673,6 +6681,35 @@ pub(crate) fn emit_promoted_immutable_global(
     global_alloc
 }
 
+/// Ensure every Rust static referenced by a promoted initializer exists as a
+/// MIR global before the promoted table is emitted.
+///
+/// Without this step the old element-wise pointer decoder used to materialize
+/// the targets as a side effect. Once the entire table stays in one global, the
+/// relocation metadata is the only reference and the targets must be made
+/// explicit here.
+fn materialize_promoted_initializer_targets(
+    ctx: &mut Context,
+    relocations: &[GlobalInitializerRelocation],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Option<Ptr<Operation>>> {
+    let mut state = StaticGlobalMaterializationState {
+        globals: std::collections::HashMap::new(),
+        last_op: prev_op,
+    };
+    ensure_initializer_relocation_targets(
+        ctx,
+        relocations,
+        "promoted constant table",
+        block_ptr,
+        loc,
+        &mut state,
+    )?;
+    Ok(state.last_op)
+}
+
 /// Whether an array's elements are cheap enough to be worth promoting the whole
 /// array to an immutable global and copying it in.
 ///
@@ -6683,8 +6720,11 @@ pub(crate) fn emit_promoted_immutable_global(
 /// bare-array value admission: an unpromotable bare value can fall back to
 /// element-wise materialization, while a pointer-to-array constant cannot.
 ///
-/// Admits primitive scalars, enums carrying no payload, tuples and structs whose
-/// every field is itself admissible, and nested arrays of any of those. `ty` is
+/// Admits primitive scalars, thin pointers, enums carrying no payload, tuples
+/// and structs whose every field is itself admissible, and nested arrays of any
+/// of those. Pointer admission is still relocation-gated later: only provenance
+/// that can be represented by [`GlobalInitializerRelocation`] reaches promotion.
+/// `ty` is
 /// the array type, and nesting is walked so an unsupported leaf cannot hide
 /// inside it. A zero-length array passes for any element type: its initializer
 /// is empty and nothing can ever be read through it, which is what admits a
@@ -6698,17 +6738,20 @@ pub(crate) fn emit_promoted_immutable_global(
 /// read addressed in place, the promotion is what removes the depot — the two
 /// only pay off together.
 ///
-/// Structs are admitted recursively, so a struct containing a pointer, union,
-/// payload-carrying enum, or any other unsupported leaf remains outside this
-/// path. A payload-carrying enum stays out because reading one back still
+/// Structs are admitted recursively, including thin pointer fields. Unions,
+/// fat-pointer storage, payload-carrying enums, and any other unsupported leaf
+/// remain outside this path. A payload-carrying enum stays out because reading
+/// one back still
 /// round-trips the payload through memory: the address walker resolves enum
 /// payload fields for writes, not for reads.
 ///
-/// A struct whose recorded rustc layout the natural (non-packed) LLVM struct
-/// cannot honor, canonically `repr(C, packed)`, is also refused: the promoted
-/// global's bytes are rustc's packed image, but the destination local is
-/// storage of the diverged LLVM type, so the copy would land fields at the
-/// wrong bytes. See [`struct_layout_matches_llvm_natural`].
+/// A struct's recorded rustc layout must be byte-faithful in the LLVM storage
+/// selected by lowering. Ordinary layouts use the natural struct path; layouts
+/// such as `repr(C, packed)` may use the packed struct path when the recorded
+/// field ranges are non-overlapping and the packed representation can reproduce
+/// every offset and the final size exactly. Layouts that neither representation
+/// can express remain on the fallback path. See
+/// [`struct_layout_matches_llvm_storage`].
 fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
     use dialect_mir::types::{MirArrayType, MirEnumType, MirStructType, MirTupleType};
 
@@ -6743,13 +6786,12 @@ fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
             return false;
         }
 
-        // A `repr(packed)` struct records field offsets the non-packed LLVM
-        // struct the lowering builds cannot reproduce: explicit `[N x i8]`
-        // padding slots can only push a field later, never below its natural
-        // alignment. Copying rustc's packed byte image over storage of that
-        // diverged type would put every later field at the wrong bytes, so
-        // such structs stay on the element-wise fallback.
-        if !struct_layout_matches_llvm_natural(
+        // Immutable promotion copies rustc's evaluated byte image into the
+        // exact storage type selected by lowering. Accept either the ordinary
+        // natural representation or the exact packed representation introduced
+        // for layout-divergent structs. Overlapping or otherwise unrepresentable
+        // field maps still fail closed.
+        if !struct_layout_matches_llvm_storage(
             ctx,
             &fields,
             &field_offsets,
@@ -6772,10 +6814,153 @@ fn promotable_array_element(ctx: &Context, ty: TypeHandle) -> bool {
                 .iter()
                 .all(|&count| count == 0);
     }
-    obj.is::<IntegerType>()
+    obj.is::<dialect_mir::types::MirPtrType>()
+        || obj.is::<IntegerType>()
         || obj.is::<MirFP16Type>()
         || obj.is::<FP32Type>()
         || obj.is::<FP64Type>()
+}
+
+/// Whether rustc's recorded struct layout is byte-faithful in one of the LLVM
+/// struct representations available to lowering.
+///
+/// The natural representation remains preferred. When it cannot reproduce the
+/// recorded offsets, lowering can use a packed LLVM struct with explicit byte
+/// padding between stored fields. Such a representation is exact iff the stored
+/// fields are non-overlapping in rustc memory order and every field range plus
+/// the tail fits inside `total_size`. Alignment is intentionally not part of the
+/// packed check: LLVM packed structs permit an otherwise naturally aligned field
+/// at an unaligned byte offset, while the enclosing allocation keeps rustc's ABI
+/// alignment separately.
+///
+/// Unknown layouts retain the previous optimistic answer here; the promotion
+/// path's stored-size agreement check rejects a non-empty initializer whose
+/// concrete size cannot be established.
+fn struct_layout_matches_llvm_storage(
+    ctx: &Context,
+    field_types: &[TypeHandle],
+    field_offsets: &[u64],
+    mem_to_decl: &[usize],
+    total_size: u64,
+) -> bool {
+    if field_offsets.is_empty() || total_size == 0 {
+        return true;
+    }
+    if field_offsets.len() != field_types.len() {
+        return false;
+    }
+
+    if struct_layout_matches_llvm_natural(ctx, field_types, field_offsets, mem_to_decl, total_size)
+    {
+        return true;
+    }
+
+    // Empty `mem_to_decl` means identity (declaration order = memory order).
+    let identity: Vec<usize>;
+    let memory_order: &[usize] = if mem_to_decl.is_empty() {
+        identity = (0..field_types.len()).collect();
+        &identity
+    } else {
+        mem_to_decl
+    };
+
+    let mut end = 0u64;
+    for &decl_idx in memory_order {
+        if decl_idx >= field_types.len() {
+            return false;
+        }
+
+        let Some((size, _)) = llvm_natural_size_align(ctx, field_types[decl_idx]) else {
+            return false;
+        };
+        if size == 0 {
+            continue;
+        }
+
+        let offset = field_offsets[decl_idx];
+        if offset < end {
+            return false;
+        }
+        let Some(field_end) = offset.checked_add(size) else {
+            return false;
+        };
+        if field_end > total_size {
+            return false;
+        }
+        end = field_end;
+    }
+
+    end <= total_size
+}
+
+/// Type used by initialized-global validation for a promoted constant.
+///
+/// `mir.global_alloc` keeps the semantic result pointer separately from its
+/// `global_type` storage metadata. Pointer-free initializers are emitted as an
+/// exact `[N x i8]` allocation by lowering. For a semantic type that contains a
+/// byte-faithful packed struct, use that physical byte view for global-layout
+/// validation while retaining the semantic result pointer. Later typed GEPs and
+/// loads still use `value_ty`, whose packed representation is selected by #941.
+/// Ordinary layouts keep their semantic validation unchanged.
+fn promoted_global_validation_type(
+    ctx: &mut Context,
+    value_ty: TypeHandle,
+    byte_len: usize,
+) -> TypeHandle {
+    use dialect_mir::types::MirArrayType;
+
+    if !type_contains_packed_struct_storage(ctx, value_ty) {
+        return value_ty;
+    }
+
+    let byte_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Unsigned).into();
+    MirArrayType::get(ctx, byte_ty, byte_len as u64).into()
+}
+
+/// Whether `ty` contains a struct whose exact LLVM storage must be packed.
+fn type_contains_packed_struct_storage(ctx: &Context, ty: TypeHandle) -> bool {
+    use dialect_mir::types::{MirArrayType, MirStructType, MirTupleType};
+
+    let obj = ty.deref(ctx);
+    if let Some(array) = obj.downcast_ref::<MirArrayType>() {
+        let element_ty = array.element_type();
+        drop(obj);
+        return type_contains_packed_struct_storage(ctx, element_ty);
+    }
+    if let Some(tuple) = obj.downcast_ref::<MirTupleType>() {
+        let fields = tuple.get_types().to_vec();
+        drop(obj);
+        return fields
+            .into_iter()
+            .any(|field| type_contains_packed_struct_storage(ctx, field));
+    }
+    if let Some(structure) = obj.downcast_ref::<MirStructType>() {
+        let fields = structure.field_types().to_vec();
+        let field_offsets = structure.field_offsets().to_vec();
+        let mem_to_decl = structure.mem_to_decl.clone();
+        let total_size = structure.total_size;
+        drop(obj);
+
+        let uses_packed_storage = !struct_layout_matches_llvm_natural(
+            ctx,
+            &fields,
+            &field_offsets,
+            &mem_to_decl,
+            total_size,
+        ) && struct_layout_matches_llvm_storage(
+            ctx,
+            &fields,
+            &field_offsets,
+            &mem_to_decl,
+            total_size,
+        );
+        return uses_packed_storage
+            || fields
+                .into_iter()
+                .any(|field| type_contains_packed_struct_storage(ctx, field));
+    }
+
+    false
 }
 
 /// Whether rustc's recorded struct layout is one the lowering's non-packed
@@ -6852,11 +7037,11 @@ fn struct_layout_matches_llvm_natural(
 /// field because the padding slots between fields are `[N x i8]` with
 /// alignment one. Aggregates answer with rustc's `total_size` for their size;
 /// that matches the built LLVM type only when their own layout is natural,
-/// which [`struct_layout_matches_llvm_natural`] establishes recursively (via
+/// which [`struct_layout_matches_llvm_storage`] validates recursively (via
 /// [`promotable_array_element`]) before the answer is trusted. A field-less
 /// enum stores only its discriminant, so it aligns as that integer does.
 fn llvm_natural_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64, u64)> {
-    use dialect_mir::types::{MirArrayType, MirEnumType, MirStructType, MirTupleType};
+    use dialect_mir::types::{MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType};
 
     let obj = ty.deref(ctx);
     if let Some(array) = obj.downcast_ref::<MirArrayType>() {
@@ -6887,7 +7072,11 @@ fn llvm_natural_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64, u64)> 
         let (_, align) = llvm_natural_size_align(ctx, discriminant_ty)?;
         return Some((total_size, align));
     }
-    let size = if let Some(integer) = obj.downcast_ref::<IntegerType>() {
+    let size = if obj.is::<MirPtrType>() {
+        // cuda-oxide lowers device code for 64-bit NVPTX. Keep this helper
+        // independent of rustc's session TLS so it remains unit-testable.
+        8
+    } else if let Some(integer) = obj.downcast_ref::<IntegerType>() {
         // `bool` arrives as `i1` and occupies a byte.
         u64::from(integer.width().div_ceil(8)).max(1)
     } else if obj.is::<MirFP16Type>() {
@@ -6930,7 +7119,7 @@ fn aggregate_natural_align(ctx: &Context, fields: &[TypeHandle]) -> Option<u64> 
 /// for a genuine zero-sized type and for a size it does not know, and only the
 /// caller's own size comparison could tell them apart.
 fn dialect_stored_size(ctx: &Context, ty: TypeHandle) -> Option<u64> {
-    use dialect_mir::types::{MirArrayType, MirEnumType, MirStructType, MirTupleType};
+    use dialect_mir::types::{MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType};
 
     let obj = ty.deref(ctx);
     let size = if let Some(array) = obj.downcast_ref::<MirArrayType>() {
@@ -6942,6 +7131,10 @@ fn dialect_stored_size(ctx: &Context, ty: TypeHandle) -> Option<u64> {
         structure.total_size()
     } else if let Some(enumeration) = obj.downcast_ref::<MirEnumType>() {
         enumeration.total_size()
+    } else if obj.is::<MirPtrType>() {
+        // cuda-oxide lowers device code for 64-bit NVPTX. Keep this helper
+        // independent of rustc's session TLS so it remains unit-testable.
+        8
     } else if let Some(integer) = obj.downcast_ref::<IntegerType>() {
         // `bool` arrives as `i1` and occupies a byte.
         u64::from(integer.width().div_ceil(8)).max(1)
@@ -7086,23 +7279,28 @@ pub(crate) fn translate_array_constant_into_alloca(
     if dialect_stored_size(ctx, value_ty) != Some(expected_size as u64) {
         return Ok(None);
     }
-    // Rejects pointer relocations, and any byte image that is not exactly the
-    // Rust size — so the global cannot disagree with the local it fills.
-    let Ok((bytes, alignment)) =
-        promoted_array_initializer(constant, expected_size, "array", loc.clone())
+    // Preserve both the evaluated byte image and any supported pointer
+    // relocations. Unsupported relocation targets keep the existing element-wise
+    // fallback rather than partially promoting the table.
+    let Ok(initializer) = promoted_array_initializer(constant, expected_size, "array", loc.clone())
     else {
         return Ok(None);
     };
+    let promoted_anchor = materialize_promoted_initializer_targets(
+        ctx,
+        &initializer.relocations,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
 
-    // Past every bail-out: nothing below can fail, so no half-built global is
-    // left behind in the block.
+    // Past every promotion bail-out: emit one immutable global and copy it into the local.
     let global_alloc = emit_promoted_immutable_global(
         ctx,
         value_ty,
-        &bytes,
-        alignment,
+        &initializer,
         block_ptr,
-        prev_op,
+        promoted_anchor,
         loc.clone(),
     );
     let src = global_alloc.get_operation().deref(ctx).get_result(0);
@@ -7158,7 +7356,7 @@ fn validate_ptr_to_array_constant_type(
     input_err!(
         loc,
         TranslationErr::unsupported(format!(
-            "Array constant element type is not supported: {:?}. Supported array constants are primitive scalars (integers, f16, f32, f64), field-less enums, tuples and structs recursively composed of supported fields, or nested arrays of those.",
+            "Array constant element type is not supported: {:?}. Supported promoted array constants are primitive scalars (integers, f16, f32, f64), thin pointers/references with supported static relocations, field-less enums, tuples and structs recursively composed of supported fields, or nested arrays of those.",
             ty.deref(ctx)
         ))
     )
@@ -7615,8 +7813,8 @@ fn translate_array_value_constant_inner(
 /// its fields.
 ///
 /// Aggregate **const** values with thin pointers to device statics are
-/// materialized per field; device-global *initializer* relocations remain a
-/// separate unsupported gap.
+/// materialized per field; device-global initializers use a separate
+/// allocation-level relocation path instead of this value reconstruction.
 fn translate_struct_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -8217,6 +8415,124 @@ fn classify_union_constant_storage(
         field_index,
         field_ty,
     })
+}
+
+/// Admit only the device-static union shape whose complete storage can be
+/// represented by one provenance-preserving thin-pointer relocation.
+///
+/// Device-global initializers do not retain a source-level active union field,
+/// so this path must prove the physical storage without guessing one. Keep the
+/// scope deliberately narrower than ordinary union SSA lowering: one top-level
+/// pointer-sized union, naturally aligned, one relocation at byte zero, and
+/// every non-ZST alternative a representation-compatible thin pointer.
+fn validate_device_static_union_initializer(
+    ctx: &Context,
+    static_def: &rustc_public::mir::mono::StaticDef,
+    union_ty: TypeHandle,
+    initializer: &GlobalInitializerData,
+    loc: Location,
+) -> TranslationResult<()> {
+    let relocation_slots: Vec<(u64, u32)> = initializer
+        .relocations
+        .iter()
+        .map(|relocation| (relocation.source_offset, relocation.width_bytes))
+        .collect();
+    validate_device_static_union_storage(
+        ctx,
+        union_ty,
+        rustc_public::target::MachineInfo::target_pointer_width().bytes(),
+        initializer.bytes.len() as u64,
+        initializer.alignment,
+        &relocation_slots,
+    )
+    .map_err(|message| {
+        input_error!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} contains {message}",
+                static_def.name()
+            ))
+        )
+    })
+}
+
+/// Pure storage gate behind [`validate_device_static_union_initializer`]:
+/// accept only a union that is one naturally aligned pointer word whose
+/// evaluated initializer is exactly one full-width relocation at byte zero.
+/// The caller attaches the static's name and source location to rejections.
+fn validate_device_static_union_storage(
+    ctx: &Context,
+    union_ty: TypeHandle,
+    pointer_width: usize,
+    initializer_len: u64,
+    initializer_align: u64,
+    relocation_slots: &[(u64, u32)],
+) -> Result<(), String> {
+    let (union_name, union_size, union_align) = {
+        let ty_ref = union_ty.deref(ctx);
+        let union_ty = ty_ref
+            .downcast_ref::<dialect_mir::types::MirUnionType>()
+            .ok_or_else(|| {
+                "a non-union type in the device-static union initializer gate".to_string()
+            })?;
+        (
+            union_ty.name().to_string(),
+            union_ty.total_size(),
+            union_ty.abi_align(),
+        )
+    };
+
+    let storage_kind = classify_union_constant_storage(ctx, union_ty).map_err(|message| {
+        format!(
+            "union `{union_name}` whose initializer cannot preserve pointer provenance: \
+             {message}"
+        )
+    })?;
+    if !matches!(storage_kind, UnionConstantStorageKind::ThinPointer { .. }) {
+        return Err(format!(
+            "union `{union_name}` without thin-pointer storage; device-global union \
+             initializers are supported only when every non-ZST alternative is a \
+             representation-compatible thin pointer"
+        ));
+    }
+
+    if pointer_width != 8 {
+        return Err(format!(
+            "union `{union_name}`, but cuda-oxide currently supports device-global union \
+             relocations only for 8-byte NVPTX pointers"
+        ));
+    }
+    let pointer_width_u64 = pointer_width as u64;
+
+    if union_size != pointer_width_u64 || union_align != pointer_width_u64 {
+        return Err(format!(
+            "union `{union_name}` with size/alignment {union_size}/{union_align}; \
+             device-global union relocations require exactly one naturally aligned \
+             {pointer_width}-byte pointer word"
+        ));
+    }
+    if initializer_len != pointer_width_u64 || initializer_align != pointer_width_u64 {
+        return Err(format!(
+            "union `{union_name}` with evaluated initializer size/alignment \
+             {initializer_len}/{initializer_align}, expected {pointer_width}/{pointer_width}"
+        ));
+    }
+
+    let [(source_offset, width_bytes)] = relocation_slots else {
+        return Err(format!(
+            "union `{union_name}` with {} initializer relocations; exactly one \
+             thin-pointer relocation is required",
+            relocation_slots.len()
+        ));
+    };
+    if *source_offset != 0 || u64::from(*width_bytes) != pointer_width_u64 {
+        return Err(format!(
+            "union `{union_name}` whose relocation occupies byte {source_offset} with \
+             width {width_bytes}, expected one {pointer_width}-byte slot at byte zero"
+        ));
+    }
+
+    Ok(())
 }
 
 /// Verify that rustc and the MIR union agree on the exact stored size.
@@ -10365,7 +10681,7 @@ struct GlobalInitializerRelocation {
 /// Literal bytes remain byte-exact. Pointer slots are carried separately so
 /// lowering can replace their placeholder addend bytes with LLVM relocation
 /// expressions without changing padding, NaN payloads, or field offsets.
-struct GlobalInitializerData {
+pub(crate) struct GlobalInitializerData {
     bytes: Vec<u8>,
     alignment: u64,
     relocations: Vec<GlobalInitializerRelocation>,
@@ -10518,50 +10834,128 @@ fn allocation_initializer_data(
     })
 }
 
-/// Follow the one outer pointer used for a promoted array, then copy the
-/// referenced array allocation into global storage.
+/// Build the byte-exact, relocation-aware initializer used by array promotion.
+///
+/// Bare `[T; N]` constants own their allocation directly, so provenance entries
+/// inside that allocation belong to pointer fields in the table. Pointer-to-array
+/// constants (`&[T; N]` / `*const [T; N]`) instead contain one outer relocation
+/// to the backing allocation; that relocation is followed once and any
+/// relocations inside the selected table range are preserved and rebased.
 fn promoted_array_initializer(
     constant: &mir::ConstOperand,
     expected_size: usize,
     kind_name: &str,
     loc: Location,
-) -> TranslationResult<(Vec<u8>, u64)> {
+) -> TranslationResult<GlobalInitializerData> {
     use rustc_public::mir::alloc::GlobalAlloc;
-    use rustc_public::ty::TyConstKind;
+    use rustc_public::ty::{RigidTy, TyConstKind, TyKind};
 
-    fn initializer_from_allocation(
+    fn direct_initializer(
         alloc: &rustc_public::ty::Allocation,
         expected_size: usize,
         kind_name: &str,
         loc: Location,
-    ) -> TranslationResult<(Vec<u8>, u64)> {
-        let Some(&(provenance_offset, provenance)) = alloc.provenance.ptrs.first() else {
-            let data = allocation_initializer_data(
-                alloc,
-                &format!("promoted {kind_name} initializer"),
-                loc.clone(),
-            )?;
-            if !data.relocations.is_empty() {
-                return input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "promoted {kind_name} initializer contains {} pointer relocation(s); promoted array provenance is not part of device-global static relocation support",
-                        data.relocations.len()
-                    ))
-                );
-            }
-            if data.bytes.len() != expected_size {
-                return input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "promoted {kind_name} initializer is {} bytes, expected {expected_size}",
-                        data.bytes.len()
-                    ))
-                );
-            }
-            return Ok((data.bytes, data.alignment));
-        };
+    ) -> TranslationResult<GlobalInitializerData> {
+        let data = allocation_initializer_data(
+            alloc,
+            &format!("promoted {kind_name} initializer"),
+            loc.clone(),
+        )?;
+        if data.bytes.len() != expected_size {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "promoted {kind_name} initializer is {} bytes, expected {expected_size}",
+                    data.bytes.len()
+                ))
+            );
+        }
+        Ok(data)
+    }
 
+    fn project_initializer_range(
+        data: GlobalInitializerData,
+        target_offset: usize,
+        expected_size: usize,
+        kind_name: &str,
+        loc: Location,
+    ) -> TranslationResult<GlobalInitializerData> {
+        let end = target_offset.checked_add(expected_size).ok_or_else(|| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "promoted {kind_name} initializer offset overflows its allocation"
+            )))
+        })?;
+        let bytes = data
+            .bytes
+            .get(target_offset..end)
+            .ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "promoted {kind_name} initializer needs bytes {target_offset}..{end}, but its backing allocation is only {} bytes",
+                    data.bytes.len()
+                )))
+            })?
+            .to_vec();
+        let alignment = data.alignment;
+
+        let mut relocations = Vec::new();
+        for relocation in data.relocations {
+            let source_start = usize::try_from(relocation.source_offset).map_err(|_| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "promoted {kind_name} relocation source offset {} does not fit usize",
+                    relocation.source_offset
+                )))
+            })?;
+            let width = usize::try_from(relocation.width_bytes).map_err(|_| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "promoted {kind_name} relocation width {} does not fit usize",
+                    relocation.width_bytes
+                )))
+            })?;
+            let source_end = source_start.checked_add(width).ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "promoted {kind_name} relocation at byte {source_start} overflows"
+                )))
+            })?;
+            let overlaps = source_start < end && source_end > target_offset;
+            if !overlaps {
+                continue;
+            }
+            if source_start < target_offset || source_end > end {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(format!(
+                        "promoted {kind_name} relocation bytes {source_start}..{source_end} cross selected initializer range {target_offset}..{end}"
+                    ))
+                );
+            }
+
+            relocations.push(GlobalInitializerRelocation {
+                source_offset: u64::try_from(source_start - target_offset).map_err(|_| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "promoted {kind_name} rebased relocation offset does not fit u64"
+                    )))
+                })?,
+                width_bytes: relocation.width_bytes,
+                target_address_space: relocation.target_address_space,
+                target_addend: relocation.target_addend,
+                target_key: relocation.target_key,
+                target_static: relocation.target_static,
+            });
+        }
+
+        Ok(GlobalInitializerData {
+            bytes,
+            alignment,
+            relocations,
+        })
+    }
+
+    fn pointer_initializer(
+        alloc: &rustc_public::ty::Allocation,
+        expected_size: usize,
+        kind_name: &str,
+        loc: Location,
+    ) -> TranslationResult<GlobalInitializerData> {
         if alloc.provenance.ptrs.len() != 1 {
             return input_err!(
                 loc,
@@ -10571,10 +10965,19 @@ fn promoted_array_initializer(
                 ))
             );
         }
+        let &(provenance_offset, provenance) =
+            alloc.provenance.ptrs.first().expect("length checked above");
 
         let pointer_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+        let pointer_end = provenance_offset
+            .checked_add(pointer_width)
+            .ok_or_else(|| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "promoted {kind_name} outer pointer range overflows"
+                )))
+            })?;
         let target_offset = alloc
-            .read_partial_uint(provenance_offset..provenance_offset + pointer_width)
+            .read_partial_uint(provenance_offset..pointer_end)
             .map_err(|e| {
                 input_error_noloc!(TranslationErr::unsupported(format!(
                     "Failed to read promoted {kind_name} pointer offset: {e:?}"
@@ -10604,38 +11007,35 @@ fn promoted_array_initializer(
             &format!("promoted {kind_name} backing allocation"),
             loc.clone(),
         )?;
-        if !data.relocations.is_empty() {
-            return input_err!(
-                loc,
-                TranslationErr::unsupported(format!(
-                    "promoted {kind_name} backing allocation contains {} pointer relocation(s); promoted array provenance is not part of device-global static relocation support",
-                    data.relocations.len()
-                ))
-            );
-        }
-        let end = target_offset.checked_add(expected_size).ok_or_else(|| {
-            input_error_noloc!(TranslationErr::unsupported(format!(
-                "promoted {kind_name} initializer offset overflows its allocation"
-            )))
-        })?;
-        let bytes = data.bytes.get(target_offset..end).ok_or_else(|| {
-            input_error_noloc!(TranslationErr::unsupported(format!(
-                "promoted {kind_name} initializer needs bytes {target_offset}..{end}, but its backing allocation is only {} bytes",
-                data.bytes.len()
-            )))
-        })?;
-        Ok((bytes.to_vec(), data.alignment))
+        project_initializer_range(data, target_offset, expected_size, kind_name, loc)
     }
+
+    let pointer_form = matches!(
+        constant.const_.ty().kind(),
+        TyKind::RigidTy(RigidTy::RawPtr(_, _)) | TyKind::RigidTy(RigidTy::Ref(_, _, _))
+    );
 
     match constant.const_.kind() {
         ConstantKind::Allocated(alloc) => {
-            initializer_from_allocation(alloc, expected_size, kind_name, loc)
+            if pointer_form {
+                pointer_initializer(alloc, expected_size, kind_name, loc)
+            } else {
+                direct_initializer(alloc, expected_size, kind_name, loc)
+            }
         }
         ConstantKind::Ty(ty_const) => match ty_const.kind() {
             TyConstKind::Value(_, alloc) => {
-                initializer_from_allocation(alloc, expected_size, kind_name, loc)
+                if pointer_form {
+                    pointer_initializer(alloc, expected_size, kind_name, loc)
+                } else {
+                    direct_initializer(alloc, expected_size, kind_name, loc)
+                }
             }
-            TyConstKind::ZSTValue(_) if expected_size == 0 => Ok((Vec::new(), 1)),
+            TyConstKind::ZSTValue(_) if expected_size == 0 => Ok(GlobalInitializerData {
+                bytes: Vec::new(),
+                alignment: 1,
+                relocations: Vec::new(),
+            }),
             other => input_err!(
                 loc,
                 TranslationErr::unsupported(format!(
@@ -10643,7 +11043,11 @@ fn promoted_array_initializer(
                 ))
             ),
         },
-        ConstantKind::ZeroSized if expected_size == 0 => Ok((Vec::new(), 1)),
+        ConstantKind::ZeroSized if expected_size == 0 => Ok(GlobalInitializerData {
+            bytes: Vec::new(),
+            alignment: 1,
+            relocations: Vec::new(),
+        }),
         other => input_err!(
             loc,
             TranslationErr::unsupported(format!(
@@ -10677,17 +11081,32 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     hex
 }
 
-fn promoted_constant_dedup_key(ctx: &Context, ty: TypeHandle, bytes: &[u8]) -> String {
+fn promoted_constant_dedup_key(
+    ctx: &Context,
+    ty: TypeHandle,
+    initializer: &GlobalInitializerData,
+) -> String {
+    let relocations = encode_global_initializer_relocations(&initializer.relocations);
+    promoted_constant_dedup_key_from_parts(ctx, ty, &initializer.bytes, &relocations)
+}
+
+fn promoted_constant_dedup_key_from_parts(
+    ctx: &Context,
+    ty: TypeHandle,
+    bytes: &[u8],
+    relocations: &str,
+) -> String {
     // This string is only an in-pass map key; it never becomes the emitted
-    // symbol name. Keep the full type and byte image so deduplication is exact.
-    // A short hash would make a collision silently alias two different Rust
-    // constants to the same device global.
+    // symbol name. Keep the full type, byte image, and relocation encoding so
+    // constants with identical placeholder bytes but different provenance
+    // targets cannot alias.
     let ty = ty.deref(ctx).disp(ctx).to_string();
     let bytes = bytes_to_hex(bytes);
     format!(
-        "__cuda_oxide_promoted_type{}:{ty}:bytes{}:{bytes}",
+        "__cuda_oxide_promoted_type{}:{ty}:bytes{}:{bytes}:relocs{}:{relocations}",
         ty.len(),
-        bytes.len() / 2
+        bytes.len() / 2,
+        relocations.len()
     )
 }
 
@@ -11651,13 +12070,15 @@ fn translate_constant_value_from_alloc(
     if is_enum {
         let size = rust_type_layout_size(*rust_ty, loc.clone())?;
         if alloc_has_provenance_in_range(alloc, absolute_byte_offset, size) {
-            return input_err!(
+            return translate_enum_constant_from_alloc(
+                ctx,
+                alloc,
+                absolute_byte_offset,
+                rust_ty,
+                ty_ptr,
+                block_ptr,
+                prev_op,
                 loc,
-                TranslationErr::unsupported(
-                    "Nested enum constant contains pointer relocation(s); cuda-oxide cannot yet \
-                     preserve nested enum pointer provenance"
-                        .to_string()
-                )
             );
         }
     }
@@ -12142,19 +12563,33 @@ fn ensure_static_global_alloc(
     let allocation_size = initializer.bytes.len() as u64;
     let initializer_hex = bytes_to_hex(&initializer.bytes);
     let static_ty = static_def.ty();
-
-    if let Some(union_name) = stored_type_union_name(static_ty, &mut Vec::new()) {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "device static {} contains union `{union_name}`; initialized union storage is not yet supported",
-                static_def.name()
-            ))
-        );
-    }
-
     let is_constant = is_constant_wrapper_type(&static_ty);
     let global_ty = types::translate_type(ctx, &static_ty)?;
+
+    if let Some(union_name) = stored_type_union_name(static_ty, &mut Vec::new()) {
+        if global_ty
+            .deref(ctx)
+            .is::<dialect_mir::types::MirUnionType>()
+        {
+            validate_device_static_union_initializer(
+                ctx,
+                static_def,
+                global_ty,
+                &initializer,
+                loc.clone(),
+            )?;
+        } else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "device static {} contains nested union `{union_name}`; device-global \
+                     union initializer relocations are supported only for a top-level \
+                     thin-pointer union",
+                    static_def.name()
+                ))
+            );
+        }
+    }
     let global_ptr_ty: TypeHandle = if is_constant {
         dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
     } else {
@@ -12200,7 +12635,33 @@ fn ensure_static_global_alloc(
     };
     state.globals.insert(global_key, materialized);
 
-    for relocation in &initializer.relocations {
+    let owner_description = format!("device static {}", static_def.name());
+    ensure_initializer_relocation_targets(
+        ctx,
+        &initializer.relocations,
+        &owner_description,
+        block_ptr,
+        loc,
+        state,
+    )?;
+
+    Ok(materialized)
+}
+
+/// Materialize and validate every static referenced by an initializer.
+///
+/// The owner is already registered by [`ensure_static_global_alloc`] before
+/// recursion reaches this helper, so self-references and mutually recursive
+/// static graphs remain finite.
+fn ensure_initializer_relocation_targets(
+    ctx: &mut Context,
+    relocations: &[GlobalInitializerRelocation],
+    owner_description: &str,
+    block_ptr: Ptr<BasicBlock>,
+    loc: Location,
+    state: &mut StaticGlobalMaterializationState,
+) -> TranslationResult<()> {
+    for relocation in relocations {
         let target = ensure_static_global_alloc(
             ctx,
             &relocation.target_static,
@@ -12213,8 +12674,7 @@ fn ensure_static_global_alloc(
             return input_err!(
                 loc,
                 TranslationErr::unsupported(format!(
-                    "device static {} relocation at byte {} points {} bytes into {}, but the target allocation is only {} bytes",
-                    static_def.name(),
+                    "{owner_description} relocation at byte {} points {} bytes into {}, but the target allocation is only {} bytes",
                     relocation.source_offset,
                     relocation.target_addend,
                     relocation.target_static.name(),
@@ -12223,8 +12683,7 @@ fn ensure_static_global_alloc(
             );
         }
     }
-
-    Ok(materialized)
+    Ok(())
 }
 
 fn translate_static_global_pointer(
@@ -12738,6 +13197,29 @@ mod pointer_array_constant_type_tests {
             "pointer-to-array constants admit structs whose fields are promotable"
         );
 
+        // The reference form shares the immutable-promotion gate. A packed
+        // struct whose selected packed LLVM storage reproduces rustc exactly
+        // must therefore be accepted here as well.
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let packed_struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedPointerArrayElement".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![],
+            vec![0, 1],
+            5,
+            1,
+        )
+        .into();
+        let packed_struct_array: TypeHandle =
+            MirArrayType::get(&mut ctx, packed_struct_ty, 2).into();
+        assert!(
+            validate_ptr_to_array_constant_type(&ctx, packed_struct_array, Location::Unknown,)
+                .is_ok(),
+            "const R: &[Packed; N] = &TABLE must share the packed immutable global"
+        );
+
         let nested_struct_array: TypeHandle = MirArrayType::get(&mut ctx, struct_array, 2).into();
         assert!(
             validate_ptr_to_array_constant_type(&ctx, nested_struct_array, Location::Unknown)
@@ -12768,22 +13250,27 @@ mod pointer_array_constant_type_tests {
             "a promotable struct field keeps its tuple in the reference form"
         );
 
-        // A struct is only as promotable as its fields. Pointer-bearing
-        // initializers need relocation/provenance support and must stay out.
+        // Pointer-bearing structs are promotable now that immutable globals
+        // preserve rustc relocation metadata instead of flattening pointer
+        // placeholder bytes.
         let pointer_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
-        let pointer_struct_ty: TypeHandle = MirStructType::get(
+        let pointer_struct_ty: TypeHandle = MirStructType::get_with_full_layout(
             &mut ctx,
             "PointerBearingElement".into(),
             vec!["pointer".into()],
             vec![pointer_ty],
+            vec![],
+            vec![0],
+            8,
+            8,
         )
         .into();
         let pointer_struct_array: TypeHandle =
             MirArrayType::get(&mut ctx, pointer_struct_ty, 2).into();
         assert!(
             validate_ptr_to_array_constant_type(&ctx, pointer_struct_array, Location::Unknown)
-                .is_err(),
-            "pointer-bearing structs must remain outside immutable-global promotion"
+                .is_ok(),
+            "pointer-bearing structs are admitted by relocation-aware promotion"
         );
     }
 
@@ -12871,7 +13358,7 @@ mod pointer_array_constant_type_tests {
 
 #[cfg(test)]
 mod promotable_array_element_tests {
-    use super::{promotable_array_element, validate_array_value_element_type};
+    use super::{dialect_stored_size, promotable_array_element, validate_array_value_element_type};
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
     };
@@ -13019,20 +13506,41 @@ mod promotable_array_element_tests {
             "a zero-byte over-aligned struct must keep its containing aggregate on the alignment-sensitive path"
         );
 
-        // Unsupported leaves still poison the whole recursive aggregate.
+        // Thin pointers are scalar load leaves once their initializer
+        // provenance is preserved as relocation metadata. Pin their concrete
+        // storage size too, so admission cannot later fail the byte-size gate.
         let pointer_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
-        let pointer_struct_ty: TypeHandle = MirStructType::get(
+        let pointer_array: TypeHandle = MirArrayType::get(&mut ctx, pointer_ty, 4).into();
+        assert!(
+            promotable_array_element(&ctx, pointer_array),
+            "a thin pointer is itself a promotable scalar load leaf"
+        );
+        assert_eq!(
+            dialect_stored_size(&ctx, pointer_array),
+            Some(32),
+            "four NVPTX64 pointers occupy 32 bytes"
+        );
+
+        // Use a full rustc-style layout so this assertion exercises
+        // struct_layout_matches_llvm_natural instead of its unknown-layout
+        // early return.
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let pointer_struct_ty: TypeHandle = MirStructType::get_with_full_layout(
             &mut ctx,
             "PointerBearingElement".into(),
-            vec!["pointer".into()],
-            vec![pointer_ty],
+            vec!["pointer".into(), "tag".into()],
+            vec![pointer_ty, u8_ty],
+            vec![],
+            vec![0, 8],
+            16,
+            8,
         )
         .into();
         let pointer_struct_array: TypeHandle =
             MirArrayType::get(&mut ctx, pointer_struct_ty, 4).into();
         assert!(
-            !promotable_array_element(&ctx, pointer_struct_array),
-            "a pointer leaf must keep its containing struct out of promotion"
+            promotable_array_element(&ctx, pointer_struct_array),
+            "a naturally laid out struct containing a thin pointer is promotable"
         );
 
         let struct_with_payload_enum: TypeHandle = MirStructType::get(
@@ -13051,7 +13559,7 @@ mod promotable_array_element_tests {
     }
 
     #[test]
-    fn a_packed_struct_is_not_promoted_but_keeps_its_fallback() {
+    fn packed_struct_promotion_requires_byte_faithful_storage() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
 
@@ -13059,9 +13567,9 @@ mod promotable_array_element_tests {
         let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
 
         // `#[repr(C, packed)] struct Packed { tag: u8, value: u32 }`: rustc
-        // records `value` at offset 1 and a 5-byte total. The non-packed LLVM
-        // struct the lowering builds cannot place an `i32` below offset 4, so
-        // the recorded byte image and the converted type disagree.
+        // records `value` at offset 1 and a five-byte total. The natural LLVM
+        // struct diverges, but the packed LLVM representation is exactly
+        // `<{ i8, i32 }>` and therefore preserves both offsets and stride.
         let packed_struct_ty: TypeHandle = MirStructType::get_with_full_layout(
             &mut ctx,
             "Packed".into(),
@@ -13076,26 +13584,94 @@ mod promotable_array_element_tests {
         let packed_struct_array: TypeHandle =
             MirArrayType::get(&mut ctx, packed_struct_ty, 4).into();
         assert!(
-            !promotable_array_element(&ctx, packed_struct_array),
-            "a packed struct's byte image diverges from its LLVM storage, so \
-             promotion must fail closed"
+            promotable_array_element(&ctx, packed_struct_array),
+            "a byte-faithful packed struct must use immutable-global promotion"
         );
+        assert_eq!(
+            dialect_stored_size(&ctx, packed_struct_array),
+            Some(20),
+            "four packed five-byte elements must retain rustc's stride"
+        );
+
         let empty_packed_array: TypeHandle =
             MirArrayType::get(&mut ctx, packed_struct_ty, 0).into();
         assert!(
             promotable_array_element(&ctx, empty_packed_array),
-            "a zero-length array of packed structs has no bytes to diverge"
+            "a zero-length packed array remains vacuously promotable"
         );
 
-        // The element-wise fallback decodes fields at rustc's recorded
-        // offsets, so it stays available to the shapes promotion refuses.
+        // `repr(C, packed(2))` keeps one explicit byte between the fields and
+        // a six-byte stride. Natural LLVM still cannot place the u32 at offset
+        // two, while a packed struct plus one byte padding slot can.
+        let packed2_struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Packed2".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![],
+            vec![0, 2],
+            6,
+            2,
+        )
+        .into();
+        let packed2_array: TypeHandle = MirArrayType::get(&mut ctx, packed2_struct_ty, 3).into();
         assert!(
-            validate_array_value_element_type(&ctx, packed_struct_ty, &Location::Unknown).is_ok(),
-            "the bare-array fallback must still admit the packed struct"
+            promotable_array_element(&ctx, packed2_array),
+            "packed(2) must be admitted when explicit padding reproduces rustc exactly"
+        );
+        assert_eq!(
+            dialect_stored_size(&ctx, packed2_array),
+            Some(18),
+            "packed(2) array promotion must preserve the six-byte element stride"
         );
 
-        // The same fields with rustc's natural layout recorded stay promoted:
-        // the gate keys on divergence, not on layout presence.
+        // A naturally laid-out outer struct may contain a packed child. The
+        // child's selected storage is already byte-faithful, so recursive
+        // promotion must not re-impose the child's natural alignment.
+        let outer_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "OuterWithPacked".into(),
+            vec!["head".into(), "inner".into()],
+            vec![u32_ty, packed_struct_ty],
+            vec![],
+            vec![0, 4],
+            12,
+            4,
+        )
+        .into();
+        let outer_array: TypeHandle = MirArrayType::get(&mut ctx, outer_ty, 2).into();
+        assert!(
+            promotable_array_element(&ctx, outer_array),
+            "a recursively byte-faithful packed child must remain promotable"
+        );
+
+        // Synthetic overlapping field ranges model layouts that no sequential
+        // natural or packed LLVM struct can express. Keep this fail-closed even
+        // though the individual leaves are promotable.
+        let overlapping_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Overlapping".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![],
+            vec![0, 0],
+            4,
+            1,
+        )
+        .into();
+        let overlapping_array: TypeHandle = MirArrayType::get(&mut ctx, overlapping_ty, 2).into();
+        assert!(
+            !promotable_array_element(&ctx, overlapping_array),
+            "overlapping storage must remain outside immutable-global promotion"
+        );
+
+        // Bare-array admission stays broader than promotion, so a layout that
+        // fails the promotion gate still has its existing element-wise fallback.
+        assert!(
+            validate_array_value_element_type(&ctx, overlapping_ty, &Location::Unknown).is_ok(),
+            "the bare-array fallback must remain available for an unpromotable struct"
+        );
+
         let natural_struct_ty: TypeHandle = MirStructType::get_with_full_layout(
             &mut ctx,
             "Natural".into(),
@@ -13111,7 +13687,84 @@ mod promotable_array_element_tests {
             MirArrayType::get(&mut ctx, natural_struct_ty, 4).into();
         assert!(
             promotable_array_element(&ctx, natural_struct_array),
-            "a naturally laid out struct with full recorded layout stays promotable"
+            "natural-layout struct promotion must remain unchanged"
+        );
+    }
+
+    /// Coupling oracle: every struct layout the promotion gate admits must be
+    /// one mir-lower actually lowers byte-faithfully (natural, or packed with
+    /// explicit padding). The promotion gate swaps the global's validation
+    /// type to a byte view, so this agreement is the only thing standing
+    /// between an admitted layout and typed reads through a divergent
+    /// natural-layout fallback. If this test fails after changing either
+    /// side's layout walk, the two predicates have drifted.
+    #[test]
+    fn promoted_struct_layouts_agree_with_the_mir_lower_storage_selection() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        // (name, offsets, total_size, align) for each struct shape the
+        // promotion test admits; every one must be byte-faithful downstream.
+        let admitted = [
+            ("Packed", vec![0u64, 1], 5u64, 1u64),
+            ("Packed2", vec![0, 2], 6, 2),
+            ("Natural", vec![0, 4], 8, 4),
+        ];
+        for (name, offsets, total_size, align) in admitted {
+            let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+                &mut ctx,
+                name.into(),
+                vec!["tag".into(), "value".into()],
+                vec![u8_ty, u32_ty],
+                vec![],
+                offsets,
+                total_size,
+                align,
+            )
+            .into();
+            let array_ty: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 2).into();
+            assert!(
+                promotable_array_element(&ctx, array_ty),
+                "`{name}` must stay in the promotion corpus this test guards"
+            );
+            assert!(
+                mir_lower::convert::types::struct_value_lowering_is_byte_faithful(
+                    &mut ctx, struct_ty
+                )
+                .expect("slot map must build for an admitted layout"),
+                "`{name}` is admitted for promotion but mir-lower would fall \
+                 back to a divergent natural layout; the two layout walks have \
+                 drifted"
+            );
+        }
+
+        // The known-unfaithful shape must stay rejected on BOTH sides.
+        let overlapping_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Overlapping".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![],
+            vec![0, 0],
+            4,
+            1,
+        )
+        .into();
+        let overlapping_array: TypeHandle = MirArrayType::get(&mut ctx, overlapping_ty, 2).into();
+        assert!(
+            !promotable_array_element(&ctx, overlapping_array),
+            "overlapping storage must remain outside promotion"
+        );
+        assert!(
+            !mir_lower::convert::types::struct_value_lowering_is_byte_faithful(
+                &mut ctx,
+                overlapping_ty
+            )
+            .expect("slot map must still build for the overlapping layout"),
+            "mir-lower must agree that overlapping storage is not byte-faithful"
         );
     }
 
@@ -13145,7 +13798,8 @@ mod aggregate_relocation_tests {
         UnionConstantStorageKind, classify_union_constant_storage, constant_type_contains_pointer,
         decode_relocation_addend, find_unconsumed_relocation, match_thin_pointer_relocation,
         provenance_starts_in_range, relocation_offsets_overlapping_range,
-        validate_array_value_element_type, validate_slice_relocation_shape,
+        validate_array_value_element_type, validate_device_static_union_storage,
+        validate_slice_relocation_shape,
     };
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
@@ -13505,6 +14159,122 @@ mod aggregate_relocation_tests {
             "direct pointer elements were never part of the bare array contract"
         );
     }
+
+    #[test]
+    fn device_static_union_storage_gate_admits_only_one_anchored_pointer_word() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let word_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let byte_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u8_ty, false).into();
+        let thin_pointer_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "ThinPointerWord".into(),
+            vec!["word".into(), "bytes".into()],
+            vec![word_ptr_ty, byte_ptr_ty],
+            8,
+            8,
+        )
+        .into();
+
+        assert_eq!(
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 8, 8, &[(0, 8)]),
+            Ok(()),
+            "one naturally aligned pointer word with one anchored relocation is the \
+             accepted shape"
+        );
+
+        let byte_image_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 4, 8, 8, &[(0, 8)])
+                .expect_err("a 32-bit pointer target must remain fail-closed");
+        assert!(
+            byte_image_error.contains("8-byte NVPTX pointers"),
+            "diagnostic must name the pointer-width restriction: {byte_image_error}"
+        );
+
+        let bytes_ty: TypeHandle = MirArrayType::get(&mut ctx, u8_ty, 4).into();
+        let pointer_free_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "Bits".into(),
+            vec!["word".into(), "bytes".into()],
+            vec![u32_ty, bytes_ty],
+            4,
+            4,
+        )
+        .into();
+        let storage_error =
+            validate_device_static_union_storage(&ctx, pointer_free_union_ty, 8, 4, 4, &[(0, 8)])
+                .expect_err("byte-image unions take the literal-bytes path, not this gate");
+        assert!(
+            storage_error.contains("without thin-pointer storage"),
+            "diagnostic must explain the thin-pointer requirement: {storage_error}"
+        );
+
+        let wide_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "TwoWords".into(),
+            vec!["first".into(), "second".into()],
+            vec![word_ptr_ty, byte_ptr_ty],
+            16,
+            8,
+        )
+        .into();
+        let size_error =
+            validate_device_static_union_storage(&ctx, wide_union_ty, 8, 16, 8, &[(0, 8)])
+                .expect_err("a union wider than one pointer word must remain fail-closed");
+        assert!(
+            size_error.contains("size/alignment 16/8"),
+            "diagnostic must report the rejected layout: {size_error}"
+        );
+
+        let initializer_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 16, 8, &[(0, 8)])
+                .expect_err("an over-sized evaluated initializer must remain fail-closed");
+        assert!(
+            initializer_error.contains("initializer size/alignment 16/8"),
+            "diagnostic must report the evaluated-initializer mismatch: {initializer_error}"
+        );
+
+        let uninit_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 8, 8, &[])
+                .expect_err("zero relocations (e.g. a ZST-field initializer) must fail closed");
+        assert!(
+            uninit_error.contains("0 initializer relocations"),
+            "diagnostic must count the missing relocation: {uninit_error}"
+        );
+
+        let multi_error = validate_device_static_union_storage(
+            &ctx,
+            thin_pointer_union_ty,
+            8,
+            8,
+            8,
+            &[(0, 4), (4, 4)],
+        )
+        .expect_err("two relocations cannot describe one pointer word");
+        assert!(
+            multi_error.contains("2 initializer relocations"),
+            "diagnostic must count the extra relocations: {multi_error}"
+        );
+
+        let offset_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 8, 8, &[(4, 8)])
+                .expect_err("a relocation off the word base must remain fail-closed");
+        assert!(
+            offset_error.contains("occupies byte 4"),
+            "diagnostic must locate the misplaced relocation: {offset_error}"
+        );
+
+        let width_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 8, 8, &[(0, 4)])
+                .expect_err("a narrow relocation cannot carry full pointer provenance");
+        assert!(
+            width_error.contains("width 4"),
+            "diagnostic must report the short relocation: {width_error}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -13801,7 +14571,7 @@ mod checked_binary_op_tests {
     }
 
     #[test]
-    fn promoted_immutable_globals_are_marked_and_dedup_by_type_and_bytes() {
+    fn promoted_immutable_globals_are_marked_and_dedup_by_type_and_initializer() {
         use dialect_mir::types::MirArrayType;
         use pliron::builtin::ops::ModuleOp;
         use pliron::linked_list::ContainsLinkedList;
@@ -13825,13 +14595,17 @@ mod checked_binary_op_tests {
 
         let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
         let table_ty: TypeHandle = MirArrayType::get(&mut ctx, f32_ty, 2).into();
-        let bytes = [0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0x40]; // [1.0f32, 2.0f32]
+        let bytes = vec![0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x00, 0x40]; // [1.0f32, 2.0f32]
+        let initializer = GlobalInitializerData {
+            bytes,
+            alignment: 4,
+            relocations: Vec::new(),
+        };
 
         let first = emit_promoted_immutable_global(
             &mut ctx,
             table_ty,
-            &bytes,
-            4,
+            &initializer,
             block,
             None,
             Location::Unknown,
@@ -13845,34 +14619,62 @@ mod checked_binary_op_tests {
         );
         let first_key = String::from(first.get_attr_global_key(&ctx).expect("dedup key").clone());
 
-        // The same table reached again — another function, another spelling —
-        // must produce the same key, which is what convert_global_alloc_dc
-        // collapses into a single emitted global.
+        // The same table reached again, through another function or spelling,
+        // must produce the same key.
         let again = emit_promoted_immutable_global(
             &mut ctx,
             table_ty,
-            &bytes,
-            4,
+            &initializer,
             block,
             None,
             Location::Unknown,
         );
         let again_key = String::from(again.get_attr_global_key(&ctx).expect("dedup key").clone());
-        assert_eq!(first_key, again_key, "same (type, bytes) must share a key");
+        assert_eq!(
+            first_key, again_key,
+            "same type, bytes, and relocations must share a key"
+        );
 
-        // A different byte image must not alias: a short or lossy key would
-        // silently hand two different Rust constants one device global.
-        let other_bytes = [0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x80, 0x3f];
+        // A different byte image must not alias.
+        let other_initializer = GlobalInitializerData {
+            bytes: vec![0x00, 0x00, 0x80, 0x3f, 0x00, 0x00, 0x80, 0x3f],
+            alignment: 4,
+            relocations: Vec::new(),
+        };
         let other = emit_promoted_immutable_global(
             &mut ctx,
             table_ty,
-            &other_bytes,
-            4,
+            &other_initializer,
             block,
             None,
             Location::Unknown,
         );
         let other_key = String::from(other.get_attr_global_key(&ctx).expect("dedup key").clone());
         assert_ne!(first_key, other_key, "distinct bytes must not share a key");
+    }
+
+    #[test]
+    fn promoted_dedup_key_distinguishes_relocation_identity() {
+        use dialect_mir::types::MirArrayType;
+
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let table_ty: TypeHandle = MirArrayType::get(&mut ctx, i64_ty, 1).into();
+        let bytes = [0u8; 8];
+
+        // Pointer placeholder bytes and addends may be identical. The target key
+        // is rustc's provenance identity and must therefore participate in the
+        // promoted-global dedup key.
+        let target_a = "v1 1 0 8 1 0 8 target_a ";
+        let target_b = "v1 1 0 8 1 0 8 target_b ";
+
+        let key_a = promoted_constant_dedup_key_from_parts(&ctx, table_ty, &bytes, target_a);
+        let key_b = promoted_constant_dedup_key_from_parts(&ctx, table_ty, &bytes, target_b);
+        assert_ne!(
+            key_a, key_b,
+            "identical bytes with different relocation targets must not alias"
+        );
     }
 }

@@ -432,6 +432,30 @@ pub enum Tcgen05F8ElementType {
     E5M2 = 1,
 }
 
+/// Six-bit floating-point input formats for `.kind::f8f6f4` MMA.
+///
+/// The discriminants are the hardware encodings used in the instruction
+/// descriptor `atype` and `btype` fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Tcgen05F6ElementType {
+    /// E2M3 floating point.
+    E2M3 = 3,
+    /// E3M2 floating point.
+    E3M2 = 4,
+}
+
+/// Four-bit floating-point input format for `.kind::f8f6f4` MMA.
+///
+/// The discriminant is the hardware encoding used in the instruction
+/// descriptor `atype` and `btype` fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Tcgen05F4ElementType {
+    /// E2M1 floating point.
+    E2M1 = 5,
+}
+
 /// Accumulator (output D) data type for tcgen05 MMA operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -589,6 +613,44 @@ impl Tcgen05InstructionDescriptor {
             .build()
     }
 
+    /// Create a dense `.kind::f8f6f4` instruction descriptor with FP6 inputs.
+    ///
+    /// The caller must issue the descriptor through an MMA instruction using
+    /// `.kind::f8f6f4` so the format codes are interpreted in the FP6 domain.
+    #[inline(always)]
+    pub const fn new_f6(
+        shape: Tcgen05MmaShape,
+        a_type: Tcgen05F6ElementType,
+        b_type: Tcgen05F6ElementType,
+        accumulator_type: Tcgen05AccumulatorType,
+    ) -> Self {
+        Self::builder()
+            .shape(shape)
+            .a_type_f6(a_type)
+            .b_type_f6(b_type)
+            .accumulator_type(accumulator_type)
+            .build()
+    }
+
+    /// Create a dense `.kind::f8f6f4` instruction descriptor with FP4 inputs.
+    ///
+    /// The caller must issue the descriptor through an MMA instruction using
+    /// `.kind::f8f6f4` so the format code is interpreted in the FP4 domain.
+    #[inline(always)]
+    pub const fn new_f4(
+        shape: Tcgen05MmaShape,
+        a_type: Tcgen05F4ElementType,
+        b_type: Tcgen05F4ElementType,
+        accumulator_type: Tcgen05AccumulatorType,
+    ) -> Self {
+        Self::builder()
+            .shape(shape)
+            .a_type_f4(a_type)
+            .b_type_f4(b_type)
+            .accumulator_type(accumulator_type)
+            .build()
+    }
+
     /// Create descriptor from raw 32-bit value.
     #[inline(always)]
     pub const fn from_raw(raw: u32) -> Self {
@@ -614,7 +676,7 @@ pub struct Tcgen05InstructionDescriptorBuilder {
     dtype: Tcgen05AccumulatorType,
     // Bits 7-9: atype format code. The 3-bit code is stored raw because its
     // meaning depends on the MMA kind: `Tcgen05ElementType` for f16-family
-    // kinds, `Tcgen05F8ElementType` for `.kind::f8f6f4`.
+    // kinds, or the F8/F6/F4 element types for `.kind::f8f6f4`.
     atype: u32,
     // Bits 10-12: btype format code (same domain rules as atype)
     btype: u32,
@@ -733,6 +795,54 @@ impl Tcgen05InstructionDescriptorBuilder {
     /// Set FP8 element type for matrix B only (`.kind::f8f6f4` MMA).
     #[inline(always)]
     pub const fn b_type_f8(mut self, ty: Tcgen05F8ElementType) -> Self {
+        self.btype = ty as u32;
+        self
+    }
+
+    /// Set the FP6 element type for both A and B matrices.
+    ///
+    /// Only meaningful for `.kind::f8f6f4` MMA.
+    #[inline(always)]
+    pub const fn element_type_f6(mut self, ty: Tcgen05F6ElementType) -> Self {
+        self.atype = ty as u32;
+        self.btype = ty as u32;
+        self
+    }
+
+    /// Set FP6 element type for matrix A only (`.kind::f8f6f4` MMA).
+    #[inline(always)]
+    pub const fn a_type_f6(mut self, ty: Tcgen05F6ElementType) -> Self {
+        self.atype = ty as u32;
+        self
+    }
+
+    /// Set FP6 element type for matrix B only (`.kind::f8f6f4` MMA).
+    #[inline(always)]
+    pub const fn b_type_f6(mut self, ty: Tcgen05F6ElementType) -> Self {
+        self.btype = ty as u32;
+        self
+    }
+
+    /// Set the FP4 element type for both A and B matrices.
+    ///
+    /// Only meaningful for `.kind::f8f6f4` MMA.
+    #[inline(always)]
+    pub const fn element_type_f4(mut self, ty: Tcgen05F4ElementType) -> Self {
+        self.atype = ty as u32;
+        self.btype = ty as u32;
+        self
+    }
+
+    /// Set FP4 element type for matrix A only (`.kind::f8f6f4` MMA).
+    #[inline(always)]
+    pub const fn a_type_f4(mut self, ty: Tcgen05F4ElementType) -> Self {
+        self.atype = ty as u32;
+        self
+    }
+
+    /// Set FP4 element type for matrix B only (`.kind::f8f6f4` MMA).
+    #[inline(always)]
+    pub const fn b_type_f4(mut self, ty: Tcgen05F4ElementType) -> Self {
         self.btype = ty as u32;
         self
     }
@@ -1433,5 +1543,65 @@ mod tests {
         );
         assert_eq!((e4m3_e5m2.raw() >> 7) & 0x7, 0);
         assert_eq!((e4m3_e5m2.raw() >> 10) & 0x7, 1);
+    }
+
+    #[test]
+    fn fp6_fp4_descriptors_match_sm100_layout() {
+        let e2m3 = Tcgen05InstructionDescriptor::new_f6(
+            Tcgen05MmaShape::M128_N128,
+            Tcgen05F6ElementType::E2M3,
+            Tcgen05F6ElementType::E2M3,
+            Tcgen05AccumulatorType::F32,
+        );
+        assert_eq!(e2m3.raw(), 0x0820_0d90);
+        let e2m3_via_builder = Tcgen05InstructionDescriptor::builder()
+            .shape(Tcgen05MmaShape::M128_N128)
+            .element_type_f6(Tcgen05F6ElementType::E2M3)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build();
+        assert_eq!(e2m3_via_builder.raw(), e2m3.raw());
+
+        let e3m2 = Tcgen05InstructionDescriptor::new_f6(
+            Tcgen05MmaShape::M128_N128,
+            Tcgen05F6ElementType::E3M2,
+            Tcgen05F6ElementType::E3M2,
+            Tcgen05AccumulatorType::F32,
+        );
+        assert_eq!(e3m2.raw(), 0x0820_1210);
+
+        let e2m1 = Tcgen05InstructionDescriptor::new_f4(
+            Tcgen05MmaShape::M128_N128,
+            Tcgen05F4ElementType::E2M1,
+            Tcgen05F4ElementType::E2M1,
+            Tcgen05AccumulatorType::F32,
+        );
+        assert_eq!(e2m1.raw(), 0x0820_1690);
+        let e2m1_via_builder = Tcgen05InstructionDescriptor::builder()
+            .shape(Tcgen05MmaShape::M128_N128)
+            .element_type_f4(Tcgen05F4ElementType::E2M1)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build();
+        assert_eq!(e2m1_via_builder.raw(), e2m1.raw());
+    }
+
+    #[test]
+    fn f8f6f4_builder_supports_mixed_narrow_formats() {
+        let descriptor = Tcgen05InstructionDescriptor::builder()
+            .shape(Tcgen05MmaShape::M64_N64)
+            .a_type_f8(Tcgen05F8ElementType::E4M3)
+            .b_type_f6(Tcgen05F6ElementType::E3M2)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build();
+        assert_eq!((descriptor.raw() >> 7) & 0x7, 0);
+        assert_eq!((descriptor.raw() >> 10) & 0x7, 4);
+
+        let descriptor = Tcgen05InstructionDescriptor::builder()
+            .shape(Tcgen05MmaShape::M64_N64)
+            .a_type_f6(Tcgen05F6ElementType::E3M2)
+            .b_type_f4(Tcgen05F4ElementType::E2M1)
+            .accumulator_type(Tcgen05AccumulatorType::F32)
+            .build();
+        assert_eq!((descriptor.raw() >> 7) & 0x7, 4);
+        assert_eq!((descriptor.raw() >> 10) & 0x7, 5);
     }
 }

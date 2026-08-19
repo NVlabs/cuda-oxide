@@ -18,10 +18,12 @@
 //! - straight-line partial-wait pipelines with a static `wait_group<N>` and
 //!   `N + 1` independent accumulator slots.
 //!
-//! Every accepted asynchronous lifetime is fused into one convergent inline-PTX
-//! scope and ends in `wait_group<0>` before accumulator values become visible to
-//! LLVM again. Unsupported full-drain pointer shapes retain the deferred
-//! pointer-form fallback. F16 and TF32 MMA calls remain unsupported.
+//! The `m64n64k16.f32.f16.f16` variant supports only the canonical linear
+//! full-drain shape. Every accepted asynchronous lifetime is fused into one
+//! convergent inline-PTX scope and ends in `wait_group<0>` before accumulator
+//! values become visible to LLVM again. Unsupported BF16 full-drain pointer
+//! shapes retain the deferred pointer-form fallback. F16 has no pointer-form
+//! fallback, and TF32 MMA calls remain unsupported.
 //!
 //! # Architecture
 //!
@@ -69,9 +71,12 @@
 //! The compiler selects a value-threaded path only when it can prove the whole
 //! asynchronous accumulator lifetime.
 //!
-//! - **Linear full drain:** one canonical `[[f32; 8]; 4]` accumulator, one
-//!   commit, and a final `wgmma_wait_group::<0>()`.
-//! - **Canonical counted K-loop:** one MMA per iteration, compile-time trip
+//! - **BF16 linear full drain:** one canonical `[[f32; 8]; 4]` accumulator,
+//!   one commit, and a final `wgmma_wait_group::<0>()`.
+//! - **F16 linear full drain:** the same canonical accumulator and full-drain
+//!   lifetime are supported, but there is no pointer fallback, counted-loop
+//!   lowering, or partial-wait pipeline for F16.
+//! - **Canonical counted K-loop:** one BF16 MMA per iteration, compile-time trip
 //!   count, and `u64` descriptor recurrences of the form `desc + const`. The
 //!   fence-to-final-wait lifetime is fused so the accumulator is loaded and
 //!   stored once for the whole loop rather than once per iteration.
@@ -81,9 +86,10 @@
 //!   partial wait, and a mandatory final `wgmma_wait_group::<0>()`.
 //! - Accumulator values must not be read or written while their asynchronous
 //!   lifetime is pending.
-//! - Unsupported full-drain accumulator pointer shapes retain the deferred
+//! - Unsupported BF16 full-drain accumulator pointer shapes retain the deferred
 //!   pointer-form lowering. Dynamic partial waits, unsupported control flow,
-//!   malformed pipeline schedules, and F16/TF32 MMA variants are rejected.
+//!   malformed pipeline schedules, F16 non-linear/pipelined shapes, and TF32
+//!   MMA variants are rejected.
 //!
 //! # Hardware Support
 //!
@@ -236,14 +242,26 @@ pub unsafe fn wgmma_mma_m64n64k16_f32_bf16(acc: &mut [[f32; 8]; 4], desc_a: u64,
 
 /// WGMMA with f32 accumulator and f16 inputs.
 ///
-/// This variant is public for source compatibility but remains unsupported by
-/// the importer and lowering pipeline.
+/// This variant supports a canonical linear full-drain region:
+/// `fence -> one or more MMA -> commit_group -> wait_group<0>`. The accumulator
+/// must have the public `[[f32; 8]; 4]` shape. Counted loops, partial waits, and
+/// non-canonical pointer fallback remain unsupported for F16.
+///
+/// # PTX
+///
+/// ```ptx
+/// wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16
+///     {%f0, %f1, ..., %f31}, %rd_desc_a, %rd_desc_b,
+///     1, 1, 1, 0, 0;
+/// ```
 ///
 /// # Safety
 ///
 /// - Descriptors must be valid SMEM descriptors
 /// - Must be called by all threads in a warpgroup
 /// - Must be called from within a CUDA kernel context on sm_90a
+/// - `acc` must not be read or written until the region's final
+///   `wgmma_wait_group::<0>()` returns
 #[inline(never)]
 pub unsafe fn wgmma_mma_m64n64k16_f32_f16(acc: &mut [[f32; 8]; 4], desc_a: u64, desc_b: u64) {
     let _ = (acc, desc_a, desc_b);

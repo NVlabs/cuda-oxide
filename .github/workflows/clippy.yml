@@ -72,3 +72,44 @@ jobs:
             (cd "$ex" && cargo clippy --all-targets -- -D warnings)
             echo "::endgroup::"
           done
+
+          # The loop above is one level deep. A few examples nest a second
+          # manifest that the parent's `--all-targets` cannot reach either,
+          # because the parent does not list it in `[workspace] members`:
+          # `cutile_inter_kernel/simt` and `interop_cubin_identity/device`
+          # carry their own `[workspace]`, and `mathdx_ffi_test/libmathdx-sys`
+          # is a plain path dependency, which cargo builds but never lints.
+          # fmt.yml already reaches all three through its `**/Cargo.toml` glob;
+          # this closes the same gap for clippy. Membership is the test rather
+          # than a hardcoded list, so a new nesting is picked up automatically.
+          while IFS= read -r manifest; do
+            dir="$(dirname "${manifest}")"
+            parent="$(dirname "${dir}")"
+            sub="$(basename "${dir}")"
+            # Skip anything the parent lists as a member: the loop above
+            # already lints it through the parent. Two assumptions baked in:
+            # members really are covered by that parent run, and no parent
+            # carries a `[workspace] exclude` list, whose quoted names this
+            # grep would match just like members and wrongly skip.
+            if [ -f "${parent}/Cargo.toml" ] &&
+               sed -n "/^\[workspace\]/,/^\[/p" "${parent}/Cargo.toml" |
+               grep -q "\"${sub}\""; then
+              continue
+            fi
+            echo "::group::clippy: ${dir#crates/rustc-codegen-cuda/examples/}"
+            (cd "${dir}" && cargo clippy --locked --all-targets -- -D warnings)
+            echo "::endgroup::"
+          done < <(
+            find crates/rustc-codegen-cuda/examples -mindepth 3 -name Cargo.toml \
+              -not -path '*/target/*' | sort
+          )
+
+          # The `#[cuda_module]` device-only fixture is a workspace of its own
+          # outside examples/, so neither loop above nor the root
+          # `cargo clippy --workspace` reaches it. It is the only thing proving
+          # the #701/#702 property that a kernel-only crate needs no host
+          # surface, and check-device-only-build.sh runs `cargo check` on it but
+          # never a lint.
+          echo "::group::clippy: cuda-macros device-only fixture"
+          (cd crates/cuda-macros/tests/device-only && cargo clippy --locked --all-targets -- -D warnings)
+          echo "::endgroup::"
