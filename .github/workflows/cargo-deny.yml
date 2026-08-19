@@ -6,9 +6,11 @@ name: cargo-deny
 # Concurrency for the CI path is governed by CI's own group.
 #
 # Four parts of the same concern. `check` enforces the license *policy* over
-# the whole resolved graph from deny.toml -- once for the root workspace and
-# once for crates/rustc-codegen-cuda, which has its own `[workspace]` and so is
-# a separate resolution the root run cannot reach. `license-manifest` enforces that
+# the whole resolved graph from deny.toml, once per `[workspace]` root that
+# resolves third-party crates and is not an example: the root workspace,
+# crates/rustc-codegen-cuda, and the cuda-macros device-only fixture. Each
+# declares its own `[workspace]`, so each is a separate resolution the others
+# cannot reach. `license-manifest` enforces that
 # the human-readable inventory in dependency-licenses.csv still lists what the
 # workspace declares, which nothing checked before: CONTRIBUTING asks
 # contributors to update that file by hand, and it had fallen behind by eight
@@ -49,12 +51,29 @@ jobs:
 
       # crates/rustc-codegen-cuda carries its own `[workspace]` for the
       # rustc-private dylibs, so the run above stops at that boundary and never
-      # sees the 82 third-party crates it resolves. Same policy, second
+      # sees the 88 third-party crates it resolves. Same policy, second
       # workspace -- the pass asked for in the #662 review. No --config:
       # cargo-deny walks up from the manifest directory and finds the
       # repository-root deny.toml, as the example-policy script relies on too.
       - name: Run cargo-deny over the codegen backend workspace
         run: cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
+
+      # The fourth and last `[workspace]` root under version control that
+      # resolves third-party crates. `crates/cuda-macros/tests/device-only`
+      # declares its own `[workspace]` so that its graph provably excludes
+      # cuda-host, which is the whole point of the fixture -- and that same
+      # boundary puts it outside the root run above, outside the backend run,
+      # and outside the example-policy script (which walks
+      # crates/rustc-codegen-cuda/examples only). Its lock resolves
+      # proc-macro2, quote and syn at versions that appear nowhere in the root
+      # lock, so those three (name, version) pairs were governed by no policy
+      # at all. It passes today: advisories ok, bans ok, licenses ok, sources
+      # ok. (crates/fuzzer/rustlantis is the fifth `[workspace]` root and is
+      # deliberately not here: it is a vendored upstream project, not
+      # first-party code, and bringing its graph under deny.toml is a policy
+      # call rather than a gap.)
+      - name: Run cargo-deny over the cuda-macros device-only fixture
+        run: cargo deny --manifest-path crates/cuda-macros/tests/device-only/Cargo.toml --locked check
 
   license-manifest:
     name: dependency-licenses.csv covers every declared crate
@@ -82,7 +101,7 @@ jobs:
 
       # Resolves each example workspace's own graph, so it needs the network but
       # no CUDA toolkit and no LLVM. One run per distinct dependency set rather
-      # than per workspace: 26 runs instead of 187, covering the same crates.
+      # than per workspace: 31 runs instead of 217, covering the same crates.
       - name: Run cargo-deny over the example workspaces
         run: bash scripts/check-example-license-policy.sh
 

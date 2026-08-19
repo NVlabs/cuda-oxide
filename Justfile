@@ -210,10 +210,11 @@ check-errors:
 # command reference, the book's device-API names, the device-only build, and
 # test-matrix coverage),
 # the naming-guard's reserved-prefix search, and all four cargo-deny jobs:
-# `cargo deny check` enforces deny.toml over the root workspace's resolved
-# graph and again over crates/rustc-codegen-cuda, which resolves its own
-# because it has its own `[workspace]`; the license inventory covers what both
-# declare; deny.toml holds over the example workspaces; and every first-party
+# `cargo deny check` enforces deny.toml over each non-example `[workspace]`
+# root that resolves third-party crates -- the root workspace,
+# crates/rustc-codegen-cuda, and the cuda-macros device-only fixture, each of
+# which resolves its own graph because each declares its own `[workspace]`;
+# the license inventory covers what the first two declare; deny.toml holds over the example workspaces; and every first-party
 # source file carries an SPDX header. These were only reachable by reading the
 # workflows, so `just check` could pass while status-guard or cargo-deny
 # failed. Keep this list in step when a guard is added to any of the three
@@ -235,6 +236,7 @@ check-guards:
     bash scripts/check-test-matrix-coverage.sh
     cargo deny --locked check
     cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
+    cargo deny --manifest-path crates/cuda-macros/tests/device-only/Cargo.toml --locked check
     bash scripts/check-dependency-licenses.sh
     bash scripts/check-example-license-policy.sh
     bash scripts/check-spdx-headers.sh
