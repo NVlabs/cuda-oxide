@@ -235,6 +235,37 @@ pub fn grid_sync_kernel(mut out: DisjointSlice<u32>) {
 
 Semantic markers for the codegen backend (pass-through -- no code transformation).
 
+### `#[constant]` -- Constant-Memory Statics
+
+Marks a module-scope `static` as a CUDA constant-memory global. The static must
+be typed `ConstantMemory<T>`, whose `UnsafeCell<T>` semantics on the device stop
+the compiler constant-folding the initializer, so the host's `cuMemcpyHtoD`
+writes stay observable from kernels.
+
+```rust
+#[cuda_module]
+mod kernels {
+    #[constant]
+    static COEFFS: ConstantMemory<[f32; 4]> = ConstantMemory::UNINIT;
+}
+```
+
+The macro attaches a reserved `export_name` so the PTX symbol is resolvable via
+`cuModuleGetGlobal`, and the host-side `#[cuda_module]` expansion generates the
+setters:
+
+- `module.set_<name>(&stream, &value)` -- stream-ordered async write, which
+  orders correctly against surrounding launches. Prefer this one.
+- `module.set_<name>_blocking(&value)` -- synchronous `cuMemcpyHtoD`, for
+  one-shot initialization with no stream in scope.
+
+Three restrictions worth knowing before you reach for it: the initializer must
+be `ConstantMemory::UNINIT` (non-zero initializers are not honored yet, so
+populate from the host before any kernel reads), the attribute must appear
+inside a `#[cuda_module]` (elsewhere it silently produces an unreachable symbol
+with no setter), and the identifier must not start with the reserved cuda-oxide
+prefix.
+
 ## `#[cuda_module]` -- Typed Embedded Module Loading
 
 Wrap an inline module containing `#[kernel]` functions to generate a typed
@@ -484,13 +515,39 @@ supported. `"C"` operands count toward the 16-input limit.
 combined with clobbers. `options(may_diverge)` must be paired with
 `register_only`. More than 16 output operands are not implemented yet.
 
+## `#[derive(DeviceCopy)]` -- Device-Copyable Types
+
+The crate's one derive macro. It implements the `unsafe` trait
+`cuda_core::DeviceCopy` for a type whose fields are all themselves
+`DeviceCopy`. That trait is the promise that every byte pattern of the type is a
+valid value, which is what `DeviceBuffer` needs to turn raw device bytes back
+into initialized Rust values. `Copy` alone is not enough: `bool`, `char` and
+`NonZeroU32` are all `Copy`, and none of them accepts every bit pattern.
+
+Structs and unions only. Enums are rejected with a diagnostic, because a
+product type is `DeviceCopy` when every field is, and no such rule holds for a
+discriminated union.
+
+Unlike the macros above it is re-exported from `cuda_core`, next to the trait it
+implements, so one import brings both into scope in the serde `Serialize`
+trait-and-derive style:
+
+```rust
+use cuda_core::DeviceCopy;
+
+#[derive(Copy, Clone, DeviceCopy)]
+#[repr(C)]
+struct Params { scale: f32, count: u32 }
+```
+
 ## Source Layout
 
 ```text
 src/
-├── lib.rs       # All proc-macro definitions (kernel, device, launch, etc.)
-├── printf.rs    # gpu_printf! implementation
-└── ptx_asm.rs   # ptx_asm! implementation
+├── lib.rs         # All proc-macro definitions (kernel, device, launch, etc.)
+├── device_copy.rs # #[derive(DeviceCopy)] implementation
+├── printf.rs      # gpu_printf! implementation
+└── ptx_asm.rs     # ptx_asm! implementation
 ```
 
 ## Further Reading
