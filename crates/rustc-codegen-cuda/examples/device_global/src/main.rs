@@ -388,9 +388,7 @@ fn main() {
         .expect("Failed to copy slice relocation output");
     let slice_relocation_expected = [3u32, 23, 41];
 
-    println!(
-        "Slice static initializer relocation: result = {slice_relocation_result:?}"
-    );
+    println!("Slice static initializer relocation: result = {slice_relocation_result:?}");
 
     if slice_relocation_result.as_slice() != slice_relocation_expected.as_slice() {
         eprintln!(
