@@ -280,21 +280,27 @@ fn rustc_ty_to_device_extern_type<'tcx>(
 /// Contains paths to generated artifacts and the payload selected for
 /// embedding in the host binary.
 ///
-/// `ptx_path`, `ll_path` and `ptx_content` are written by `run_device_codegen`
-/// and never read back inside this crate: they record what codegen produced,
-/// which is what the module diagram above documents. Nothing links this crate
-/// as a library -- it is a `dylib` rustc loads through `-Zcodegen-backend` --
-/// so `pub` does not make them reachable either.
-#[allow(
-    dead_code,
-    reason = "written as the recorded codegen result, not read back"
-)]
+/// `ptx_path`, `ll_path` and `ptx_content` are written by
+/// `generate_device_code` and never read back inside this crate: they record
+/// what codegen produced, which is what the module diagram above documents.
+/// Nothing links this crate as a library (it is a `dylib` rustc loads through
+/// `-Zcodegen-backend`), so `pub` does not make them reachable either. Those
+/// three fields carry their own suppressions below; the remaining fields are
+/// read in `lib.rs` and stay lint-checked.
 pub struct DeviceCodegenResult {
     /// Path to generated PTX assembly file.
     ///
     /// In NVVM IR modes this is the would-be PTX path and may not exist.
+    #[expect(
+        dead_code,
+        reason = "recorded codegen output, kept for future diagnostics"
+    )]
     pub ptx_path: PathBuf,
     /// Path to generated LLVM IR file.
+    #[expect(
+        dead_code,
+        reason = "recorded codegen output, kept for future diagnostics"
+    )]
     pub ll_path: PathBuf,
     /// GPU target architecture used (e.g., "sm_80", "sm_90a", "sm_100a").
     ///
@@ -304,6 +310,10 @@ pub struct DeviceCodegenResult {
     /// PTX content as a string, ready for embedding in the host binary.
     ///
     /// NVVM IR / LTOIR flows intentionally skip PTX generation.
+    #[expect(
+        dead_code,
+        reason = "recorded codegen output, kept for future diagnostics"
+    )]
     pub ptx_content: Option<String>,
     /// Device artifact payload selected for embedding.
     pub artifact: Option<DeviceCodegenArtifact>,
@@ -450,16 +460,16 @@ fn debug_position_from_span(tcx: TyCtxt<'_>, span: Span) -> Option<DebugSourcePo
 /// the variant set still mirrors the pipeline's, rather than deleted and
 /// re-added the next time it is needed.
 #[derive(Debug)]
-#[allow(
-    dead_code,
-    reason = "Translation mirrors PipelineError and is not constructed here"
-)]
 pub enum DeviceCodegenError {
     /// No kernels were found to compile.
     NoKernels,
     /// Failed to enter or exit stable_mir context.
     StableMirError(String),
     /// MIR to Pliron IR translation failed.
+    #[expect(
+        dead_code,
+        reason = "mirrors PipelineError's taxonomy, not constructed here"
+    )]
     Translation(String),
     /// PTX generation (llc invocation) failed.
     PtxGeneration(String),
