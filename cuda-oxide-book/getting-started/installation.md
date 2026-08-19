@@ -322,8 +322,10 @@ cannot:
 # Arguments after `--` go to cargo; with none it is a plain `cargo test`.
 cargo oxide test -- --lib
 
-# Format the root workspace, the codegen backend, and every example. Each has
-# its own [workspace], so a single `cargo fmt` at the root misses most of them.
+# Format every scope the fmt CI gate checks: the root workspace, the codegen
+# backend, the cuda-macros device-only fixture, and every manifest under
+# examples/ including nested ones. Each is its own [workspace], so a single
+# `cargo fmt` at the root misses most of them.
 cargo oxide fmt
 cargo oxide fmt --check
 
