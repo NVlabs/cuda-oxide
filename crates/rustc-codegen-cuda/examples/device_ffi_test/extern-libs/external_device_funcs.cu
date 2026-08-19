@@ -45,6 +45,21 @@ extern "C" __device__ float fast_rsqrt(float x) {
 }
 
 /**
+ * Uppercase one Unicode scalar value, ASCII range only.
+ *
+ * Declared `unsigned int` on this side: Rust `char` is a 32-bit Unicode
+ * scalar and lowers to a plain i32 parameter slot with no extension
+ * attribute, so the two signatures line up exactly.
+ *
+ * Returning a value outside the Unicode scalar range (above 0x10FFFF, or a
+ * surrogate in 0xD800..0xDFFF) would be undefined behaviour on the Rust side,
+ * so this only shifts ASCII letters.
+ */
+extern "C" __device__ unsigned int char_to_upper(unsigned int c) {
+    return (c >= 'a' && c <= 'z') ? c - 32u : c;
+}
+
+/**
  * Simple addition - basic device function.
  * Pure function - no memory access.
  */

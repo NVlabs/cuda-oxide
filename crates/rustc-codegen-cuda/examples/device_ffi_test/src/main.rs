@@ -40,6 +40,10 @@ unsafe extern "C" {
     fn warp_reduce_sum(val: f32) -> f32;
     fn warp_ballot(predicate: i32) -> u32;
     fn simple_add(a: f32, b: f32) -> f32;
+    // Rust `char` is a 32-bit Unicode scalar, so it lowers to a plain i32
+    // parameter slot with no extension attribute -- the C side declares it
+    // `unsigned int`.
+    fn char_to_upper(c: char) -> char;
     fn clamp_value(val: f32, min_val: f32, max_val: f32) -> f32;
     fn smem_write_aligned_128(offset: i32, value: f32);
     fn smem_read_aligned_128(offset: i32) -> f32;
@@ -88,6 +92,23 @@ mod kernels {
         if tid.is_multiple_of(32) {
             unsafe {
                 *output.add((tid / 32) as usize) = sum;
+            }
+        }
+    }
+
+    /// Round-trip a `char` through an external `unsigned int` device function.
+    ///
+    /// Exercises `char` in both the parameter and the result position of a
+    /// `#[device]` extern.
+    #[kernel]
+    pub fn test_char_ffi(output: *mut u32) {
+        let tid = cuda_device::thread::threadIdx_x();
+        if tid == 0 {
+            let upper = unsafe { char_to_upper('q') };
+            let unchanged = unsafe { char_to_upper('Z') };
+            unsafe {
+                *output = upper as u32;
+                *output.add(1) = unchanged as u32;
             }
         }
     }
@@ -526,6 +547,7 @@ fn main() {
     let mut tests_failed = 0;
 
     test_simple_device_funcs_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
+    test_char_ffi_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
     test_cub_warp_reduce_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
     test_mixed_attrs_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
     test_smem_alignment_cross_module_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
@@ -669,6 +691,53 @@ fn test_cub_warp_reduce_runner(
         *passed += 1;
     } else {
         println!("    ✗ FAILED ({} errors)", errors);
+        *failed += 1;
+    }
+}
+
+/// Test: `char` across a `#[device]` extern boundary.
+///
+/// `char_to_upper` is declared `unsigned int` in the .cu and `char` in Rust.
+/// Both lower to a plain i32 slot, so the two agree without a wrapper.
+fn test_char_ffi_runner(
+    ctx: &Arc<CudaContext>,
+    module: &kernels::LoadedModule,
+    passed: &mut i32,
+    failed: &mut i32,
+) {
+    println!("--- Test: test_char_ffi ---");
+
+    let stream = ctx.default_stream();
+    let mut d_output = stream.alloc_zeros::<u32>(2).unwrap();
+
+    let config = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // SAFETY: launch shape/resources match the kernel; the buffer covers both writes.
+    unsafe {
+        module.test_char_ffi(
+            (stream).as_ref(),
+            config,
+            d_output.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Kernel launch failed");
+
+    let h_output = d_output.to_host_vec(&stream).unwrap();
+    let expected = [u32::from('Q'), u32::from('Z')];
+
+    if h_output[..2] == expected {
+        println!("    ✓ PASSED ('q' -> 'Q', 'Z' unchanged)");
+        *passed += 1;
+    } else {
+        println!(
+            "    ✗ FAILED (got {:?}, expected {:?})",
+            &h_output[..2],
+            expected
+        );
         *failed += 1;
     }
 }

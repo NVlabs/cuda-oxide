@@ -228,11 +228,7 @@ fn rustc_ty_to_device_extern_type<'tcx>(
                 // Rust's `*mut ()` is its common spelling for a void pointer.
                 E::Integer(8)
             } else {
-                rustc_ty_to_device_extern_type(
-                    tcx,
-                    *pointee,
-                    DeviceExternTypePosition::Pointee,
-                )?
+                rustc_ty_to_device_extern_type(tcx, *pointee, DeviceExternTypePosition::Pointee)?
             };
             Ok(E::pointer_to(pointee, 0))
         }
@@ -240,11 +236,8 @@ fn rustc_ty_to_device_extern_type<'tcx>(
             let len = len.try_to_target_usize(tcx).ok_or_else(|| {
                 format!("device-extern array length for `{ty}` is not a concrete constant")
             })?;
-            let element = rustc_ty_to_device_extern_type(
-                tcx,
-                *element,
-                DeviceExternTypePosition::Pointee,
-            )?;
+            let element =
+                rustc_ty_to_device_extern_type(tcx, *element, DeviceExternTypePosition::Pointee)?;
             Ok(E::Array {
                 element: Box::new(element),
                 len,
@@ -265,9 +258,16 @@ fn rustc_ty_to_device_extern_type<'tcx>(
                 Ok(E::ZeroExtInteger(1))
             }
         }
-        TyKind::Char => Err(
-            "Rust `char` is not supported in device extern signatures; use `u32` in a C-compatible wrapper".to_string(),
-        ),
+        // `char` is a 32-bit Unicode scalar value, so it already fills a
+        // parameter slot and needs no extension attribute in any position --
+        // plain i32 by value, behind a pointer, and as a result, exactly as
+        // `u32` lowers. The C side declares it `unsigned int`.
+        //
+        // Rust requires the value to be a Unicode scalar: a device function
+        // handing back anything above 0x10FFFF, or a surrogate in
+        // 0xD800..=0xDFFF, is UB on the Rust side -- the same shape of
+        // contract as `bool` and its 0/1 rule above.
+        TyKind::Char => unsigned_integer(32),
         TyKind::Never => Err("never-returning device externs are not yet supported".to_string()),
         _ => Err(format!(
             "unsupported device-extern ABI type `{ty}`; use scalar C types or raw pointers to supported scalar/array pointees"

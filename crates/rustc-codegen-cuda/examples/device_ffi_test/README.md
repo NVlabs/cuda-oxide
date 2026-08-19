@@ -177,6 +177,28 @@ extern "C" __device__ float warp_reduce_sum(float val) {
 | `warp_ballot`        | Warp ballot             |
 | `simple_add`         | Simple a + b            |
 | `clamp_value`        | Clamp to range          |
+| `char_to_upper`      | ASCII uppercase, `char` |
+
+### `char` in a `#[device]` extern
+
+Rust `char` is a 32-bit Unicode scalar value, so it already fills a parameter
+slot: it lowers to a plain `i32` with no extension attribute, in the parameter,
+result and pointee positions alike. That is the same lowering `u32` gets, which
+is why the C side declares `char_to_upper` as `unsigned int`:
+
+```text
+.ll:   declare i32 @char_to_upper(i32)      call i32 @char_to_upper(i32 113)
+.ptx:  .extern .func (.param .b32 func_retval0) char_to_upper (.param .b32 ...)
+```
+
+Two caveats:
+
+- A value that is not a Unicode scalar — above `0x10FFFF`, or a surrogate in
+  `0xD800..=0xDFFF` — is undefined behaviour once it reaches the Rust side, the
+  same shape of contract as `bool` and its 0/1 rule. Keep the C function's
+  return value in range.
+- rustc's `improper_ctypes` lint still fires on a `char` in an extern
+  signature; callers may `#[allow(improper_ctypes)]` it.
 
 ### From `extern-libs/cccl_wrappers.cu` (CUB)
 
