@@ -7,9 +7,10 @@ This dev container provides the toolchain expected by cuda-oxide:
 - LLVM 21 with NVPTX support
 - Clang 21 resource headers for `bindgen`
 - Rust `nightly-2026-04-03` with `rust-src`, `rustc-dev`, `rust-analyzer`,
-  `rustfmt` and `clippy`. `llvm-tools` is deliberately left out: the image
-  ships LLVM 21 and sets `CUDA_OXIDE_LLC`, so `rust-toolchain.toml` pulls it
-  only if something asks for it.
+  `rustfmt` and `clippy`. `llvm-tools` is not preinstalled in the image;
+  rustup adds it on your first cargo command in the checkout, because
+  `rust-toolchain.toml` names it. The image ships LLVM 21 and
+  `CUDA_OXIDE_LLC` already points at `llc-21`, so nothing waits on it.
 
 Open the repository in a devcontainer-aware editor and choose "Reopen in
 Container". The container requests GPU access with `--gpus=all` and uses
