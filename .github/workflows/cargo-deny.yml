@@ -101,7 +101,8 @@ jobs:
 
       # Resolves each example workspace's own graph, so it needs the network but
       # no CUDA toolkit and no LLVM. One run per distinct dependency set rather
-      # than per workspace: 31 runs instead of 217, covering the same crates.
+      # than per workspace: one run per distinct dependency set instead of one
+      # per lock file, covering the same crates. The script prints both counts.
       - name: Run cargo-deny over the example workspaces
         run: bash scripts/check-example-license-policy.sh
 
