@@ -6647,7 +6647,7 @@ pub(crate) fn emit_promoted_immutable_global(
     let initializer_hex = bytes_to_hex(&initializer.bytes);
     let global_key = promoted_constant_dedup_key(ctx, value_ty, initializer);
     let global_ptr_ty = MirPtrType::get_global(ctx, value_ty, false);
-    let validation_ty = promoted_global_validation_type(ctx, value_ty, bytes.len());
+    let validation_ty = promoted_global_validation_type(ctx, value_ty, initializer.bytes.len());
 
     let global_op = Operation::new(
         ctx,
