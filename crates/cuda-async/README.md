@@ -27,11 +27,23 @@ The crate is organized around a single idea: GPU work is described lazily, sched
 
 A lazy, composable unit of GPU work. Implements `Send + Sized + IntoFuture`. Key methods:
 
-| Method              | Stream chosen by                      | Blocks thread? |
-|---------------------|---------------------------------------|----------------|
-| `.await`            | Default device's `SchedulingPolicy`   | No (suspends)  |
-| `.sync()`           | Default device's `SchedulingPolicy`   | Yes            |
-| `.sync_on(&stream)` | The explicit stream you provide       | Yes            |
+| Method                | Stream chosen by                      | Blocks thread? | `unsafe`? |
+|-----------------------|---------------------------------------|----------------|-----------|
+| `.schedule(&policy)`  | The policy you pass                   | No (returns a `DeviceFuture`) | No |
+| `.await`              | Default device's `SchedulingPolicy`   | No (suspends)  | No        |
+| `.sync()`             | Default device's `SchedulingPolicy`   | Yes            | No        |
+| `.sync_on(&stream)`   | The explicit stream you provide       | Yes            | No        |
+| `.async_on(&stream)`  | The explicit stream you provide       | No             | **Yes**   |
+
+`.async_on` is the only one of the five that is `unsafe`, and it is the only
+one that returns while GPU work may still be in flight: it executes and does
+not synchronize, so the caller owns keeping every buffer the operation touches
+alive and unread until the stream is synchronized by other means. Each of the
+other four ties its result to completion: `.sync` and `.sync_on` block,
+`.await` suspends until the `cuLaunchHostFunc` callback below fires, and
+`.schedule` hands back a `DeviceFuture` that does the same when awaited.
+(`DeviceOperation::execute` is `unsafe` too, but it is the primitive those four
+are built from rather than something to call directly.)
 
 Combinators: `.and_then(f)`, `.and_then_with_context(f)`, `.arc()`, `zip!(a, b)`, `unzip!(op)`.
 
