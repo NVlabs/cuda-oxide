@@ -279,17 +279,30 @@ require_symbol_shape "${llvm_ir}" llvm "${maybe_uninit_symbol}" \
 
 pointer_tuple_symbol='array_constants__kernels__pointer_tuple_array_value'
 
-# Device globals use backend-generated internal symbols, so source-level static
-# names are not stable in LLVM IR. Runtime coverage checks the zero-addend
-# whole-static case. This assertion pins the non-zero interior-static
-# projection and ensures provenance is not reconstructed from placeholder bytes.
+# Pointer-bearing tuple tables now take the same immutable-global promotion as
+# pointer-free tables. The source local is filled from addrspace(1) constant
+# storage before optimization; `opt` then removes the depot. The initializer
+# keeps both pointer identities as symbolic relocations, including the
+# POINTER_VALUES[2] eight-byte addend.
 require_symbol_shape "${llvm_ir}" llvm "${pointer_tuple_symbol}" \
-    "eight-byte device-static subobject projection" \
-    'getelementptr( inbounds)? i8,.*i64 8([^0-9]|$)'
+    "pointer tuple table filled from a relocation-aware read-only global" \
+    'llvm\.memcpy\.p0\.p1\.i64\(ptr %[A-Za-z0-9_.]+, ptr addrspace\(1\) @'
+
+require_shape \
+    "relocation-aware immutable pointer-table initializer" \
+    'addrspace\(1\) constant .*ptrtoint.*ptrtoint'
+
+require_shape \
+    "non-zero promoted pointer-table relocation addend" \
+    'addrspace\(1\) constant .*ptrtoint.*getelementptr.*i64 8'
 
 reject_symbol_shape "${llvm_ir}" llvm "${pointer_tuple_symbol}" \
     "placeholder-byte inttoptr reconstruction" \
     'inttoptr'
+
+reject_symbol_shape "${optimized_llvm_ir}" llvm "${pointer_tuple_symbol}" \
+    "per-thread pointer tuple table depot after optimization" \
+    'alloca \[2 x '
 
 # A non-empty tuple made entirely of ZST fields must still be decoded by the
 # tuple path. Its stripped LLVM representation leaves the outer u32 intact.

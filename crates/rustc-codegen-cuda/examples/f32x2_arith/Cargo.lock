@@ -18,15 +18,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
-name = "f32x2_arith"
-version = "0.1.0"
-dependencies = [
- "cuda-core",
- "cuda-device",
- "cuda-host",
-]
-
-[[package]]
 name = "bindgen"
 version = "0.71.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,6 +156,7 @@ dependencies = [
  "cuda-core",
  "cuda-macros",
  "half",
+ "ptx-parse",
  "sha2",
  "thiserror",
 ]
@@ -200,6 +192,15 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "f32x2_arith"
+version = "0.1.0"
+dependencies = [
+ "cuda-core",
+ "cuda-device",
+ "cuda-host",
+]
 
 [[package]]
 name = "foldhash"
@@ -365,6 +366,10 @@ checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "ptx-parse"
+version = "0.1.0"
 
 [[package]]
 name = "quote"

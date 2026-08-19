@@ -52,9 +52,10 @@ launches through the typed path: both kernels carry
 generated launch methods submit via `cuLaunchKernelEx` with
 `CU_LAUNCH_ATTRIBUTE_COOPERATIVE`. The same module also holds
 `test_cluster_coop_grid_sync`, which combines `#[cluster_launch(2, 1, 1)]`
-with `#[cooperative_launch]` and a `#[launch_contract]`. On Hopper+ that
-kernel is prepared and launched through the safe `PreparedLaunch` path;
-pre-Hopper devices print that the combined mode was not exercised.
+with `#[cooperative_launch]` and a `#[launch_contract]`. That kernel is
+prepared and launched through the safe `PreparedLaunch` path. Pre-Hopper
+devices never get this far: `main` prints its `thread block clusters
+require sm_90+` skip line and exits before launching anything.
 
 ### Layer 2 — typed cooperative-groups handles (5 checks)
 
@@ -124,8 +125,10 @@ Output buffer layout for reduce/scan kernels:
 
 ## Hardware Requirements
 
-- **Minimum GPU**: Volta (sm_70+) — `match.any.sync`/`match.all.sync`
-  require sm_70.
+- **Minimum GPU**: Hopper (sm_90) or newer. `main` skips cleanly below that
+  (`if major < 9`) because the demo launches thread block clusters. The
+  `match.any.sync`/`match.all.sync` primitives it also exercises are sm_70+,
+  but the cluster launch is what sets the floor.
 - **Cooperative launch**: any GPU that reports
   `cuDeviceGetAttribute(CU_DEVICE_ATTRIBUTE_COOPERATIVE_LAUNCH) == 1`
   (essentially all post-Pascal GPUs).

@@ -75,7 +75,11 @@ cargo oxide run barrier
 
 ## Hardware Requirements
 
-- **Minimum GPU**: Volta (sm_70) or newer for full mbarrier support
+- **Minimum GPU**: Ampere (sm_80) or newer. `main` skips cleanly below that
+  (`if major < 8`), matching the `mbarrier requires sm_80+` message it
+  prints. If you have seen `cuda::barrier` work on sm_70, that is libcu++'s
+  software fallback; the PTX `mbarrier` instructions this example emits
+  need sm_80+.
 - **CUDA Driver**: 11.0+
 
 ## Mbarrier Functions
@@ -128,7 +132,6 @@ while !mbarrier_test_wait(&raw const BAR, token) {}
 | Error                              | Cause                      | Solution                                    |
 |------------------------------------|----------------------------|---------------------------------------------|
 | Hang / deadlock                    | Mismatched arrival count   | Ensure init count matches actual arrivals   |
-| `CUDA_ERROR_ILLEGAL_INSTRUCTION`   | Pre-Volta GPU              | Use sync_threads() for older GPUs           |
 | Race condition                     | Missing fence after init   | Add `fence_proxy_async_shared_cta()` for TMA|
 
 ## Generated PTX

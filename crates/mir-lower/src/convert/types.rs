@@ -113,6 +113,7 @@ use pliron::r#type::{TypeHandle, type_cast};
 use super::enum_payload_storage::{
     MAX_ENUM_PAYLOAD_ARRAY_REWRITE_LEAVES, enum_payload_storage_type,
 };
+use super::target_stable_storage::{StorageRewriteOptions, target_stable_storage_type};
 use crate::type_conversion_interface::MirTypeConversion;
 
 // =============================================================================
@@ -364,6 +365,100 @@ pub(crate) fn transparent_scalar_llvm_type(
     Ok(transparent_scalar_abi_info(ctx, struct_ty)?.scalar_ty)
 }
 
+/// Target-stable ABI projection for the deliberately narrow packed-AS3
+/// internal device return case.
+///
+/// The function body continues to use the semantic packed LLVM struct with a
+/// shared pointer. Only the physical return value replaces that direct AS3
+/// pointer with a generic pointer, whose width is stable across the legacy/PTX
+/// and modern NVVM data layouts.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PackedSharedInternalAbiInfo {
+    pub semantic_ty: TypeHandle,
+    pub storage_ty: TypeHandle,
+}
+
+/// Recognize the first supported packed-AS3 internal ABI shape.
+///
+/// Scope is intentionally fail-closed: one direct shared-pointer field in a
+/// byte-faithful packed struct, with every other non-ZST field scalar. Nested
+/// aggregates, arrays, vectors, and multiple shared-pointer leaves remain out
+/// of scope even though the generic storage utility can represent broader
+/// shapes for enum payloads.
+pub(crate) fn packed_shared_internal_abi_info(
+    ctx: &mut Context,
+    mir_ty: TypeHandle,
+) -> Result<Option<PackedSharedInternalAbiInfo>, anyhow::Error> {
+    let layout = {
+        let ty_ref = mir_ty.deref(ctx);
+        let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() else {
+            return Ok(None);
+        };
+        StructLayoutInfo::of_struct(struct_ty)
+    };
+
+    let map = build_struct_slot_map(ctx, &layout)?;
+    if !map.by_value_layout_faithful {
+        return Ok(None);
+    }
+    let is_packed = map
+        .llvm_struct_ty
+        .deref(ctx)
+        .downcast_ref::<llvm_types::StructType>()
+        .is_some_and(|struct_ty| struct_ty.layout() == llvm_types::StructLayout::Packed);
+    if !is_packed {
+        return Ok(None);
+    }
+
+    let mut direct_shared_pointers = 0_u64;
+    for field_ty in &map.field_llvm_types {
+        if is_zero_sized_type(ctx, *field_ty) {
+            continue;
+        }
+        let field_ref = field_ty.deref(ctx);
+        if let Some(pointer) = field_ref.downcast_ref::<llvm_types::PointerType>() {
+            if pointer.address_space() == llvm_types::address_space::SHARED {
+                direct_shared_pointers += 1;
+            }
+            continue;
+        }
+        if field_ref.is::<IntegerType>()
+            || field_ref.is::<llvm_types::HalfType>()
+            || field_ref.is::<FP32Type>()
+            || field_ref.is::<FP64Type>()
+        {
+            continue;
+        }
+        return Ok(None);
+    }
+    if direct_shared_pointers != 1 {
+        return Ok(None);
+    }
+
+    let rewrite = target_stable_storage_type(
+        ctx,
+        map.llvm_struct_ty,
+        StorageRewriteOptions {
+            canonicalize_bool: false,
+        },
+        "packed shared internal ABI",
+    )?;
+    if rewrite.shared_pointer_leaves != 1 || rewrite.array_shared_pointer_leaves != 0 {
+        return Ok(None);
+    }
+    let Some((storage_size, _)) = llvm_type_size_align(ctx, rewrite.ty) else {
+        return Ok(None);
+    };
+    if layout.total_size > 0 && storage_size != layout.total_size {
+        return Ok(None);
+    }
+
+    Ok(Some(PackedSharedInternalAbiInfo {
+        semantic_ty: map.llvm_struct_ty,
+        storage_ty: rewrite.ty,
+    }))
+}
+
 /// Convert a type that crosses a function boundary as one LLVM value.
 ///
 /// A struct with a natural-layout divergence is legal by value only when
@@ -612,6 +707,11 @@ pub fn convert_function_type(
         };
         let ty = if is_transparent_scalar {
             transparent_scalar_llvm_type(ctx, mir_ret_ty)?
+        } else if !is_kernel_entry {
+            match packed_shared_internal_abi_info(ctx, mir_ret_ty)? {
+                Some(abi) => abi.storage_ty,
+                None => convert_by_value_abi_type(ctx, mir_ret_ty, "by-value function return")?,
+            }
         } else {
             convert_by_value_abi_type(ctx, mir_ret_ty, "by-value function return")?
         };
@@ -4908,6 +5008,83 @@ mod tests {
     }
 
     #[test]
+    fn packed_shared_internal_abi_genericizes_one_direct_shared_pointer() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedShared".into(),
+            vec!["tag".into(), "ptr".into()],
+            vec![tag, shared],
+            vec![0, 1],
+            vec![0, 1],
+            9,
+            1,
+        )
+        .into();
+
+        let abi = packed_shared_internal_abi_info(&mut ctx, packed)
+            .expect("ABI classification must succeed")
+            .expect("one direct packed AS3 pointer must use the internal carrier");
+        assert_eq!(llvm_type_size_align(&ctx, abi.semantic_ty), Some((9, 1)));
+        assert_eq!(llvm_type_size_align(&ctx, abi.storage_ty), Some((9, 1)));
+        assert!(llvm_packed_struct_contains_pointer_in_address_space(
+            &ctx,
+            abi.semantic_ty,
+            llvm_types::address_space::SHARED,
+        ));
+        assert!(!llvm_type_contains_pointer_in_address_space(
+            &ctx,
+            abi.storage_ty,
+            llvm_types::address_space::SHARED,
+        ));
+        assert!(llvm_type_contains_pointer_in_address_space(
+            &ctx,
+            abi.storage_ty,
+            llvm_types::address_space::GENERIC,
+        ));
+    }
+
+    #[test]
+    fn packed_shared_internal_abi_rejects_nested_shared_pointer() {
+        let mut ctx = make_ctx();
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let inner: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "InnerShared".into(),
+            vec!["ptr".into()],
+            vec![shared],
+            vec![0],
+            vec![0],
+            8,
+            8,
+        )
+        .into();
+        let tag = mir_uint(&mut ctx, 8);
+        let outer: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedNestedShared".into(),
+            vec!["tag".into(), "inner".into()],
+            vec![tag, inner],
+            vec![0, 1],
+            vec![0, 1],
+            9,
+            1,
+        )
+        .into();
+
+        assert!(
+            packed_shared_internal_abi_info(&mut ctx, outer)
+                .expect("classification must not error")
+                .is_none(),
+            "the first internal ABI lane intentionally accepts only a direct AS3 field"
+        );
+    }
+
+    #[test]
     fn slot_map_rejects_malformed_memory_order() {
         let mut ctx = make_ctx();
         let a = mir_uint(&mut ctx, 8);
@@ -5021,6 +5198,27 @@ mod tests {
         validate_relocated_initialized_global_layout(&mut ctx, packed, 9, 1)
             .expect("relocated top-level packed struct must be accepted");
         assert!(validate_initialized_global_layout(&mut ctx, packed, 9, 1).is_err());
+    }
+
+    #[test]
+    fn relocated_initialized_global_layout_accepts_thin_pointer_union() {
+        let mut ctx = make_ctx();
+        let u32_ty = mir_uint(&mut ctx, 32);
+        let u8_ty = mir_uint(&mut ctx, 8);
+        let word_ptr: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let byte_ptr: TypeHandle = MirPtrType::get_generic(&mut ctx, u8_ty, false).into();
+        let union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "RelocatedPointerUnion".into(),
+            vec!["word".into(), "byte".into()],
+            vec![word_ptr, byte_ptr],
+            8,
+            8,
+        )
+        .into();
+
+        validate_relocated_initialized_global_layout(&mut ctx, union_ty, 8, 8)
+            .expect("one pointer-word union must be valid relocated global storage");
     }
 
     #[test]

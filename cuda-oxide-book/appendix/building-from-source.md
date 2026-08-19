@@ -39,13 +39,15 @@ If you need to install manually:
 
 ```bash
 rustup toolchain install nightly-2026-04-03
-rustup component add rust-src rustc-dev llvm-tools --toolchain nightly-2026-04-03
+rustup component add rust-src rustc-dev rust-analyzer clippy rustfmt llvm-tools --toolchain nightly-2026-04-03
 ```
 
 `rust-src` provides the standard library source for cross-compilation,
 `rustc-dev` exposes compiler internals that the codegen backend links against,
 and `llvm-tools` installs the toolchain-bundled `llc` used for PTX generation
-(also required by `cargo oxide doctor`).
+(also required by `cargo oxide doctor`). The other three are not needed to
+build: `rust-analyzer` powers IDE support, `clippy` is the lint gate CI runs,
+and `rustfmt` backs `cargo oxide fmt`.
 
 ## Install CUDA
 

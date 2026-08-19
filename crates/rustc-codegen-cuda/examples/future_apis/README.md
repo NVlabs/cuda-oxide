@@ -158,7 +158,10 @@ cargo oxide run future_apis
 
 ## Hardware Requirements
 
-- **Minimum GPU**: Volta (sm_70) or newer for mbarrier
+- **Minimum GPU**: Hopper (sm_90) or newer. `ManagedBarrier::init_by` emits
+  `fence.proxy.async`, which ptxas rejects below sm_90, so `main` skips
+  cleanly on anything lower (`if major < 9`). The mbarrier instructions
+  themselves only need sm_80+, but the fence is what sets the floor here.
 - **CUDA Driver**: 11.0+
 
 ## CuSimd API Reference

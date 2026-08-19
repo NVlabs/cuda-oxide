@@ -15,6 +15,7 @@
 //! - Parallel for loop patterns
 //! - Full-debug closure environments
 //! - Full-debug Rust enum variants (direct and niche layouts)
+//! - Full-debug enum payload source projections
 //!
 //! Run: cargo oxide run compiler_features
 
@@ -107,7 +108,10 @@ mod kernels {
             };
             let direct_part = match direct_value {
                 DebugDirectEnum::Small(value) => value,
-                DebugDirectEnum::Wide(value) => value as u32,
+                DebugDirectEnum::Wide(projected_enum_payload) => {
+                    let part = projected_enum_payload as u32; // CUDA_OXIDE_DEBUG_ENUM_PROJECTION_BREAKPOINT
+                    part
+                }
             };
             let niche_part = match niche_value {
                 Some(value) => *value,

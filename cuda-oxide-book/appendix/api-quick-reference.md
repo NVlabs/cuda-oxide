@@ -457,9 +457,16 @@ let rank = cluster::block_rank();        // This block's rank in the cluster
 let size = cluster::cluster_size();      // Number of blocks in cluster
 cluster::cluster_sync();                 // Barrier across all cluster blocks
 
-// Distributed Shared Memory
-let remote_ptr = cluster::map_shared_rank(local_ptr, target_rank);
-let val = cluster::dsmem_read_u32(remote_ptr);
+// Distributed Shared Memory. Both are `unsafe fn` and both take the *local*
+// pointer plus the target rank; they do the rank mapping themselves, so
+// never pass a pointer already returned by `map_shared_rank` back in.
+// Read a remote block's value with `dsmem_read_u32`:
+let val = unsafe { cluster::dsmem_read_u32(local_ptr, target_rank) };
+
+// `map_shared_rank` returns a cluster-address carrier you pass to
+// intrinsics, not a pointer you dereference: a plain deref compiles to a
+// CTA-local load and fails with CUDA_ERROR_ILLEGAL_ADDRESS.
+let remote_ptr = unsafe { cluster::map_shared_rank(local_ptr, target_rank) };
 ```
 
 ---

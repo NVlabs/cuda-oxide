@@ -376,10 +376,11 @@ pub fn set_compiler_result_bundle_marker(ctx: &mut Context, op: Ptr<Operation>) 
 }
 
 /// Bundle a generated operation's independent `u32` results into the Rust
-/// array value expected by its raw ABI.
+/// array value expected by its raw ABI and mark the compiler-owned adapter
+/// for result forwarding.
 ///
-/// Keeping this adapter here lets later multi-result families reuse the same
-/// SSA-to-array boundary without introducing a stack temporary.
+/// This helper is only for compiler-generated multi-result carriers. Ordinary
+/// Rust arrays must never receive the forwarding marker.
 pub fn bundle_generated_u32_results_as_array(
     ctx: &mut Context,
     producer: Ptr<Operation>,
@@ -400,6 +401,7 @@ pub fn bundle_generated_u32_results_as_array(
         0,
     );
     array.deref_mut(ctx).set_loc(loc);
+    set_compiler_result_bundle_marker(ctx, array);
     array.insert_after(ctx, producer);
     (array.deref(ctx).get_result(0), array)
 }
@@ -655,5 +657,87 @@ pub fn emit_unit_noop_intrinsic(
                 intrinsic_name
             ))
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dialect_mir::{
+        attributes::{COMPILER_RESULT_BUNDLE_ATTR_KEY, CompilerResultBundleAttr},
+        ops::MirFuncOp,
+    };
+    use pliron::{
+        builtin::{
+            attributes::{StringAttr, TypeAttr},
+            op_interfaces::{SingleBlockRegionInterface, SymbolOpInterface},
+            ops::ModuleOp,
+            types::FunctionType,
+        },
+        identifier::Identifier,
+        region::Region,
+        r#type::TypeHandle,
+    };
+
+    #[test]
+    fn generated_u32_result_array_is_marked_for_forwarding() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let module = ModuleOp::new(&mut ctx, "test".try_into().unwrap());
+        let function_type = FunctionType::get(&ctx, vec![], vec![]);
+        let function = Operation::new(
+            &mut ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let function_op = MirFuncOp::new(&mut ctx, function, TypeAttr::new(function_type.into()));
+        function_op.set_symbol_name(&mut ctx, "kernel".try_into().unwrap());
+        module.append_operation(&mut ctx, function, 0);
+
+        let region: Ptr<Region> = function.deref(&ctx).get_region(0);
+        let block = BasicBlock::new(&mut ctx, None, vec![]);
+        block.insert_at_back(region, &ctx);
+
+        let producer = Operation::new(
+            &mut ctx,
+            MirCallOp::get_concrete_op_info(),
+            vec![u32_ty; 2],
+            vec![],
+            vec![],
+            0,
+        );
+        MirCallOp::new(producer)
+            .set_attr_callee(&ctx, StringAttr::new("register_pair".to_string()));
+        producer.insert_at_back(block, &ctx);
+
+        let loc = producer.deref(&ctx).loc().clone();
+        let (_, bundle) = bundle_generated_u32_results_as_array(&mut ctx, producer, 2, loc);
+
+        let key = Identifier::try_from(COMPILER_RESULT_BUNDLE_ATTR_KEY).unwrap();
+        let is_marked = {
+            let bundle_op = bundle.deref(&ctx);
+            bundle_op
+                .attributes
+                .get::<CompilerResultBundleAttr>(&key)
+                .is_some_and(|marker| marker.0)
+        };
+
+        assert!(
+            is_marked,
+            "generated result bundle must carry the forwarding marker"
+        );
+        assert_eq!(
+            bundle.deref(&ctx).get_operand(0),
+            producer.deref(&ctx).get_result(0)
+        );
+        assert_eq!(
+            bundle.deref(&ctx).get_operand(1),
+            producer.deref(&ctx).get_result(1)
+        );
     }
 }
