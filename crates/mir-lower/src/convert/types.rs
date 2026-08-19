@@ -712,6 +712,30 @@ pub(crate) struct StructSlotMap {
     pub by_value_layout_faithful: bool,
 }
 
+/// Whether a `MirStructType` value lowers to a byte-faithful LLVM struct:
+/// either its natural LLVM layout already matches rustc's offsets and total
+/// size, or the packed-with-explicit-padding representation reproduces them
+/// exactly.
+///
+/// Public only as a coupling oracle for mir-importer: its constant-promotion
+/// gate must never admit a struct layout whose converted storage falls back
+/// to a divergent natural layout, because a promoted constant's byte image
+/// would then disagree with every typed read through the converted struct.
+/// mir-importer asserts agreement against this function in its tests.
+pub fn struct_value_lowering_is_byte_faithful(
+    ctx: &mut Context,
+    struct_ty: TypeHandle,
+) -> Result<bool, anyhow::Error> {
+    let layout = {
+        let ty_ref = struct_ty.deref(ctx);
+        let mir_struct = ty_ref
+            .downcast_ref::<MirStructType>()
+            .ok_or_else(|| anyhow::anyhow!("expected a MirStructType"))?;
+        StructLayoutInfo::of_struct(mir_struct)
+    };
+    Ok(build_struct_slot_map(ctx, &layout)?.by_value_layout_faithful)
+}
+
 /// Lower a struct/tuple layout to its LLVM struct type and slot map.
 ///
 /// When rustc layout is present (`field_offsets` non-empty and

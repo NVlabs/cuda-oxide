@@ -13350,6 +13350,83 @@ mod promotable_array_element_tests {
         );
     }
 
+    /// Coupling oracle: every struct layout the promotion gate admits must be
+    /// one mir-lower actually lowers byte-faithfully (natural, or packed with
+    /// explicit padding). The promotion gate swaps the global's validation
+    /// type to a byte view, so this agreement is the only thing standing
+    /// between an admitted layout and typed reads through a divergent
+    /// natural-layout fallback. If this test fails after changing either
+    /// side's layout walk, the two predicates have drifted.
+    #[test]
+    fn promoted_struct_layouts_agree_with_the_mir_lower_storage_selection() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        // (name, offsets, total_size, align) for each struct shape the
+        // promotion test admits; every one must be byte-faithful downstream.
+        let admitted = [
+            ("Packed", vec![0u64, 1], 5u64, 1u64),
+            ("Packed2", vec![0, 2], 6, 2),
+            ("Natural", vec![0, 4], 8, 4),
+        ];
+        for (name, offsets, total_size, align) in admitted {
+            let struct_ty: TypeHandle = MirStructType::get_with_full_layout(
+                &mut ctx,
+                name.into(),
+                vec!["tag".into(), "value".into()],
+                vec![u8_ty, u32_ty],
+                vec![],
+                offsets,
+                total_size,
+                align,
+            )
+            .into();
+            let array_ty: TypeHandle = MirArrayType::get(&mut ctx, struct_ty, 2).into();
+            assert!(
+                promotable_array_element(&ctx, array_ty),
+                "`{name}` must stay in the promotion corpus this test guards"
+            );
+            assert!(
+                mir_lower::convert::types::struct_value_lowering_is_byte_faithful(
+                    &mut ctx, struct_ty
+                )
+                .expect("slot map must build for an admitted layout"),
+                "`{name}` is admitted for promotion but mir-lower would fall \
+                 back to a divergent natural layout; the two layout walks have \
+                 drifted"
+            );
+        }
+
+        // The known-unfaithful shape must stay rejected on BOTH sides.
+        let overlapping_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Overlapping".into(),
+            vec!["tag".into(), "value".into()],
+            vec![u8_ty, u32_ty],
+            vec![],
+            vec![0, 0],
+            4,
+            1,
+        )
+        .into();
+        let overlapping_array: TypeHandle = MirArrayType::get(&mut ctx, overlapping_ty, 2).into();
+        assert!(
+            !promotable_array_element(&ctx, overlapping_array),
+            "overlapping storage must remain outside promotion"
+        );
+        assert!(
+            !mir_lower::convert::types::struct_value_lowering_is_byte_faithful(
+                &mut ctx,
+                overlapping_ty
+            )
+            .expect("slot map must still build for the overlapping layout"),
+            "mir-lower must agree that overlapping storage is not byte-faithful"
+        );
+    }
+
     #[test]
     fn an_enum_without_a_recorded_layout_is_not_promoted() {
         let mut ctx = Context::new();
