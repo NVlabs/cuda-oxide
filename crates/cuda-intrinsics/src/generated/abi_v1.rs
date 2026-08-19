@@ -4563,7 +4563,7 @@ pub fn i0787(_arg0: f32) -> f32 {
 ///
 /// # Safety
 /// `_arg0` must point into CTA shared memory, and `_arg1` must name a rank in the same live cluster.
-/// The result is a cluster-shared pointer in address space 7. Dereferencing it performs a remote DSMEM access...
+/// The result is a cluster-shared pointer in address space 7. Dereferencing it performs a remote DSMEM access; ordinary loads and stores compile to `ld.shared::cluster` and `st.shared::cluster`. The target CTA must remain live and synchronization must make the access race-free.
 #[must_use]
 #[inline(never)]
 pub unsafe fn i0320(_arg0: *const u8, _arg1: u32) -> *const u8 {

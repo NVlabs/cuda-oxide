@@ -4916,7 +4916,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                 match cluster.operation {
                     ClusterMemoryOperation::MapSharedRank => output.push_str(
                         "/// `_arg0` must point into CTA shared memory, and `_arg1` must name a rank in the same live cluster.\n\
-                         /// The result is a cluster shared-address carrier; an ordinary pointer dereference is not a remote shared-memory access.\n",
+                         /// The result is a cluster-shared pointer in address space 7. Dereferencing it performs a remote DSMEM access; ordinary loads and stores compile to `ld.shared::cluster` and `st.shared::cluster`. The target CTA must remain live and synchronization must make the access race-free.\n",
                     ),
                     ClusterMemoryOperation::ReadU32 => output.push_str(
                         "/// `_arg0` must point to an aligned readable `u32` in CTA shared memory, and `_arg1` must name a rank in the same live cluster.\n\
@@ -23629,7 +23629,9 @@ mod tests {
         let dialect = render_dialect_cluster_memory(&catalog, "test-hash");
         assert!(dialect.contains("pub struct MapaSharedClusterOp"));
         assert!(dialect.contains("pub struct DsmemReadU32Op"));
-        assert!(dialect.contains("nvvm.mapa_shared_cluster must preserve pointee and mutability and return addrspace(7)"));
+        assert!(dialect.contains(
+            "nvvm.mapa_shared_cluster must preserve pointee and mutability and return addrspace(7)"
+        ));
         assert!(dialect.contains("nvvm.dsmem_read_u32 result must be u32"));
         assert!(dialect.contains("MapaSharedClusterOp::register(ctx);"));
         assert!(dialect.contains("DsmemReadU32Op::register(ctx);"));
@@ -23681,7 +23683,9 @@ mod tests {
         let raw = render_raw_abi(&catalog, "test-hash");
         assert!(raw.contains("pub unsafe fn i0320(_arg0: *const u8, _arg1: u32) -> *const u8"));
         assert!(raw.contains("pub unsafe fn i0321(_arg0: *const u32, _arg1: u32) -> u32"));
-        assert!(raw.contains("ordinary pointer dereference is not a remote shared-memory access"));
+        assert!(raw.contains(
+            "ordinary loads and stores compile to `ld.shared::cluster` and `st.shared::cluster`"
+        ));
 
         let reference = render_reference(&catalog, "test-hash");
         assert!(reference.contains("## Cluster-memory contracts"));
