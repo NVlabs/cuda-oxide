@@ -23,6 +23,7 @@
 //! - tuple-array pointer relocations with non-zero static addends,
 //! - initialized union constants, including `[U; N]` runtime indexing,
 //! - thin-pointer-only union constants that preserve device-static provenance,
+//! - relocation-free pointer/integer union constants materialized as byte images,
 //! - unions nested inside tuple and struct constants,
 //! - `MaybeUninit<T>` array constants.
 //!
@@ -167,6 +168,26 @@ const POINTER_UNION_TABLE: [PointerBits; 2] = [
         // Initialize through the other union view and keep a non-zero addend.
         // Import must preserve the relocation rather than the placeholder bytes.
         bytes: &POINTER_VALUES[2] as *const u32 as *const u8,
+    },
+];
+
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+union PointerOrBits {
+    pointer: *const u32,
+    bits: u64,
+}
+
+const DIRECT_POINTER_INTEGER_UNION: PointerOrBits = PointerOrBits {
+    bits: 0x1122_3344_5566_7788,
+};
+const POINTER_INTEGER_UNION_TABLE: [PointerOrBits; 2] = [
+    PointerOrBits {
+        bits: 0x0123_4567_89ab_cdef,
+    },
+    PointerOrBits {
+        bits: 0xfedc_ba98_7654_3210,
     },
 ];
 
@@ -377,6 +398,24 @@ mod kernels {
     }
 
     #[inline(never)]
+    fn fold_pointer_integer_union(value: PointerOrBits) -> u32 {
+        let bits = unsafe { value.bits };
+        (bits as u32)
+            .wrapping_mul(257)
+            .wrapping_add((bits >> 32) as u32)
+    }
+
+    #[inline(never)]
+    fn direct_pointer_integer_union_value() -> u32 {
+        fold_pointer_integer_union(DIRECT_POINTER_INTEGER_UNION)
+    }
+
+    #[inline(never)]
+    fn pointer_integer_union_array_value(i: usize) -> u32 {
+        fold_pointer_integer_union(POINTER_INTEGER_UNION_TABLE[i & 1])
+    }
+
+    #[inline(never)]
     fn read_bits_word(bits: Bits) -> u32 {
         unsafe { bits.word }
     }
@@ -433,6 +472,10 @@ mod kernels {
         direct_pointer_union_value()
             .wrapping_mul(257)
             .wrapping_add(pointer_union_array_value(i))
+            .wrapping_mul(257)
+            .wrapping_add(direct_pointer_integer_union_value())
+            .wrapping_mul(257)
+            .wrapping_add(pointer_integer_union_array_value(i))
             .wrapping_mul(257)
             .wrapping_add(direct_union_value())
             .wrapping_mul(257)
@@ -526,14 +569,25 @@ mod kernels {
     }
 }
 
+fn fold_u64_for_union_test(bits: u64) -> u32 {
+    (bits as u32)
+        .wrapping_mul(257)
+        .wrapping_add((bits >> 32) as u32)
+}
+
 fn expected_union(i: usize) -> u32 {
     let pointer = [11u32, 23][i & 1];
+    let pointer_integer = [0x0123_4567_89ab_cdefu64, 0xfedc_ba98_7654_3210][i & 1];
     let table = [0x1122_3344u32, 0x5566_7788, 0x99aa_bbcc, 0xdead_beef][i & 3];
     let maybe = [0x1357_9bdfu32, 0x2468_ace0][i & 1];
 
     11u32
         .wrapping_mul(257)
         .wrapping_add(pointer)
+        .wrapping_mul(257)
+        .wrapping_add(fold_u64_for_union_test(0x1122_3344_5566_7788))
+        .wrapping_mul(257)
+        .wrapping_add(fold_u64_for_union_test(pointer_integer))
         .wrapping_mul(257)
         .wrapping_add(0x1122_3344)
         .wrapping_mul(257)
@@ -714,7 +768,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if failures == 0 {
         println!(
-            "array_constants: PASS ({N} threads; primitive, enum, initialized union/MaybeUninit, pointer-union provenance, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, padded/nested/packed/ZST struct, pointer-to-array including packed struct references, and tuple-array static-pointer constants)"
+            "array_constants: PASS ({N} threads; primitive, enum, initialized union/MaybeUninit, pointer-union provenance, relocation-free pointer/integer unions, padded/reordered/over-aligned tuple, nested/equal-offset ZST tuple, padded/nested/packed/ZST struct, pointer-to-array including packed struct references, and tuple-array static-pointer constants)"
         );
         Ok(())
     } else {

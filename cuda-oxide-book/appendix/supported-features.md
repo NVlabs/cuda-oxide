@@ -88,10 +88,15 @@ array-to-slice view. Their literal `usize` length metadata is decoded
 independently, including non-zero static byte addends and nested aggregate field
 offsets. Thin-pointer-only union constants preserve the same relocation
 provenance, including non-zero addends, by reconstructing one typed pointer
-carrier instead of transmuting placeholder bytes. Pointer/integer overlapping
-unions, fat or nested pointer storage in unions, over-aligned/padded pointer
-unions, unsupported fat-pointer metadata, pointer-to-array union constants
-(`&[U; N]`), and pointer relocations in device-global union initializers remain
+carrier instead of transmuting placeholder bytes. Relocation-free
+pointer/integer unions whose storage is exactly one naturally aligned pointer
+word and whose integer alternatives are full-width may instead use rustc's
+evaluated byte image when no relocation overlaps the union storage.
+Relocation-bearing pointer/integer unions, fat or nested pointer storage in
+unions, over-aligned/padded pointer unions, unsupported fat-pointer metadata,
+and pointer-to-array union constants (`&[U; N]`) remain rejected. Top-level
+thin-pointer-only device-global union initializers may preserve one full-width
+relocation at byte zero; mixed pointer/integer device-global initializers remain
 rejected.
 
 Enum constants preserve payload relocations to device statics, including
