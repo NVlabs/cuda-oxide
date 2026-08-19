@@ -8,7 +8,9 @@
 //! One warp fills four distinct 8x8 b16 matrices in shared memory. Every lane
 //! then supplies one 16-byte row address to `ldmatrix`; the host checks all 128
 //! returned register fragments against their exact source matrix, row, and
-//! column pair.
+//! column pair. A second kernel selects one returned register with a source-
+//! level bounded dynamic index to exercise compiler-owned bundle forwarding
+//! through the real rustc-to-PTX pipeline.
 //!
 //! Build and run with:
 //!   cargo oxide run generated_ldmatrix
@@ -28,6 +30,7 @@ const COLUMNS: usize = 8;
 const WORDS_PER_ROW: usize = COLUMNS / 2;
 const SHARED_WORDS: usize = MATRICES * ROWS * WORDS_PER_ROW;
 const OUTPUT_WORDS: usize = LANES * MATRICES;
+const DYNAMIC_OUTPUT_WORDS: usize = LANES;
 const LEGACY_REGISTERS: usize = 14;
 
 /// A distinct nonzero value for every matrix element.
@@ -107,6 +110,44 @@ mod kernels {
             *output.get_unchecked_mut(output_word + 1) = registers[1];
             *output.get_unchecked_mut(output_word + 2) = registers[2];
             *output.get_unchecked_mut(output_word + 3) = registers[3];
+        }
+    }
+
+    /// Exercise bounded dynamic indexing of a compiler-owned x4 result bundle.
+    #[kernel]
+    pub fn ldmatrix_x4_dynamic_index_oracle(mut output: DisjointSlice<u32>) {
+        static mut INPUT: SharedArray<u32, SHARED_WORDS, 16> = SharedArray::UNINIT;
+
+        let lane = thread_idx_x() as usize;
+        if lane >= LANES {
+            return;
+        }
+
+        let source_matrix = lane / ROWS;
+        let source_row = lane % ROWS;
+        let row_word = lane * WORDS_PER_ROW;
+        let shared = core::ptr::addr_of_mut!(INPUT) as *mut u32;
+        unsafe {
+            shared
+                .add(row_word)
+                .write(matrix_word(source_matrix, source_row, 0));
+            shared
+                .add(row_word + 1)
+                .write(matrix_word(source_matrix, source_row, 1));
+            shared
+                .add(row_word + 2)
+                .write(matrix_word(source_matrix, source_row, 2));
+            shared
+                .add(row_word + 3)
+                .write(matrix_word(source_matrix, source_row, 3));
+        }
+        thread::sync_threads();
+
+        let registers = unsafe { ldmatrix_m8n8_x4_b16(shared.add(row_word).cast_const()) };
+        let register_index = lane % MATRICES;
+
+        unsafe {
+            *output.get_unchecked_mut(lane) = registers[register_index];
         }
     }
 
@@ -217,5 +258,47 @@ fn main() {
         }
     }
 
+    let mut dynamic_output = DeviceBuffer::<u32>::zeroed(&stream, DYNAMIC_OUTPUT_WORDS)
+        .expect("failed to allocate bounded dynamic-index output");
+
+    // SAFETY: one complete warp executes the convergent ldmatrix operation and
+    // every lane writes exactly one word to its own output slot.
+    unsafe {
+        module
+            .ldmatrix_x4_dynamic_index_oracle(
+                &stream,
+                LaunchConfig {
+                    grid_dim: (1, 1, 1),
+                    block_dim: (LANES as u32, 1, 1),
+                    shared_mem_bytes: 0,
+                },
+                &mut dynamic_output,
+            )
+            .expect("failed to launch bounded dynamic-index ldmatrix oracle");
+    }
+
+    let dynamic_actual = dynamic_output
+        .to_host_vec(&stream)
+        .expect("failed to copy bounded dynamic-index results to the host");
+
+    for (lane, &observed) in dynamic_actual.iter().enumerate() {
+        let register = lane % MATRICES;
+        let row = lane / WORDS_PER_ROW;
+        let pair = lane % WORDS_PER_ROW;
+        let expected = matrix_word(register, row, pair);
+
+        assert_eq!(
+            observed,
+            expected,
+            "lane {lane}, dynamic register {register}: expected row {row}, columns {}..{} = \
+            {expected:#010x}, got {observed:#010x}",
+            pair * 2,
+            pair * 2 + 1,
+        );
+    }
+
     println!("PASS: all {OUTPUT_WORDS} ldmatrix x4 fragments matched on sm_{major}{minor}");
+    println!(
+        "PASS: all {DYNAMIC_OUTPUT_WORDS} bounded dynamic ldmatrix selections matched on sm_{major}{minor}"
+    );
 }
