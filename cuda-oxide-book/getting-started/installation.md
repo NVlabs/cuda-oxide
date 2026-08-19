@@ -243,11 +243,13 @@ rustup toolchain install nightly-2026-04-03
 rustup component add rust-src rustc-dev rust-analyzer clippy rustfmt llvm-tools --toolchain nightly-2026-04-03
 ```
 
-These components are required by the codegen backend and doctor:
+Three of these components are what the codegen backend and doctor need:
 
 - `rust-src` -- source of the Rust standard library, needed for cross-compiling to the NVPTX target.
 - `rustc-dev` -- compiler internals that the backend links against.
 - `llvm-tools` -- toolchain-bundled `llc` used to lower LLVM IR to PTX (doctor's floor check).
+
+The other three are not needed to build: `rust-analyzer` powers IDE support, `clippy` is the lint gate CI runs, and `rustfmt` backs `cargo oxide fmt`.
 
 ---
 
