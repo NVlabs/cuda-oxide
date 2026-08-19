@@ -4449,7 +4449,6 @@ const TMA_OPERATIONS: [TmaOperation; 47] = [
     TmaOperation::PrefetchTileGather4TwoDimensionalCacheHint,
 ];
 
-const TMA_REDUCTION_FIRST_ABI_ID: u32 = 923;
 const TMA_REDUCTION_OPERATIONS: [TmaReductionOperation; 8] = [
     TmaReductionOperation::Add,
     TmaReductionOperation::And,
@@ -4482,20 +4481,14 @@ fn tma_reduction_matrix() -> Vec<TmaReduction> {
     reductions
 }
 
-fn tma_reduction_expected_abi_id(reduction: TmaReduction) -> String {
-    let index = tma_reduction_matrix()
-        .into_iter()
-        .position(|candidate| candidate == reduction)
-        .expect("TMA reduction must belong to the closed matrix");
-    format!("i{:04}", TMA_REDUCTION_FIRST_ABI_ID + index as u32)
-}
-
 #[cfg(test)]
 fn tma_reduction_admission_variants() -> Vec<TmaReductionAdmissionVariant> {
     tma_reduction_matrix()
         .into_iter()
-        .map(|reduction| TmaReductionAdmissionVariant {
-            abi_id: tma_reduction_expected_abi_id(reduction),
+        .enumerate()
+        .map(|(index, reduction)| TmaReductionAdmissionVariant {
+            // Preserve the repository's current ledger assignments in this test fixture.
+            abi_id: format!("i{:04}", 923 + index),
             operation: reduction.operation,
             load_mode: reduction.load_mode,
             dimensions: reduction.dimensions,
@@ -4614,19 +4607,13 @@ fn expand_tma_reduction_variant(
     admission: &TmaAdmission,
     variant: &TmaReductionAdmissionVariant,
 ) -> Result<OverlayIntrinsic> {
+    validate_abi_id(&variant.abi_id)?;
     let reduction = TmaReduction {
         operation: variant.operation,
         load_mode: variant.load_mode,
         dimensions: variant.dimensions,
     };
     let recipe = tma_reduction_recipe(reduction)?;
-    let expected_abi_id = tma_reduction_expected_abi_id(reduction);
-    ensure!(
-        variant.abi_id == expected_abi_id,
-        "{} must keep reserved ABI ID {}",
-        recipe.id,
-        expected_abi_id
-    );
 
     Ok(OverlayIntrinsic {
         id: recipe.id.clone(),
@@ -6068,7 +6055,6 @@ fn validate_tma_reduction_policy(
     let recipe = tma_reduction_recipe(reduction)?;
     ensure!(
         policy.id == recipe.id
-            && policy.abi_id == tma_reduction_expected_abi_id(reduction)
             && policy.operation_key == recipe.operation_key
             && policy.source.is_none()
             && policy.source_record.as_deref() == Some(recipe.source_record.as_str())
@@ -8612,13 +8598,8 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 .eq(expected_cp),
             "compact tcgen05 copy admission must list all 34 variants in canonical order"
         );
-        for (index, variant) in admission.cp_variants.iter().enumerate() {
-            let reserved = format!("i{:04}", 578 + index);
-            ensure!(
-                variant.abi_id == reserved,
-                "tcgen05 copy variant {} must keep reserved ABI ID {reserved}",
-                index + 1
-            );
+        for variant in &admission.cp_variants {
+            validate_abi_id(&variant.abi_id)?;
             let base_id = if variant.group == Cg1 {
                 "tcgen05_cp_smem_to_tmem"
             } else {
@@ -8673,13 +8654,8 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
             .expect("closed tcgen05 load base")
             .clone();
         let first_load = records.len();
-        for (index, variant) in admission.ld_variants.iter().enumerate() {
-            let reserved = format!("i{:04}", 612 + index);
-            ensure!(
-                variant.abi_id == reserved,
-                "tcgen05 load variant {} must keep reserved ABI ID {reserved}",
-                index + 1
-            );
+        for variant in &admission.ld_variants {
+            validate_abi_id(&variant.abi_id)?;
             records.push(materialize_tcgen05_ld_variant(&base, admission, variant));
         }
         for pair in records[first_load..].chunks_exact(2) {
@@ -8739,13 +8715,8 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
             .expect("closed tcgen05 store base")
             .clone();
         let first_store = records.len();
-        for (index, variant) in admission.st_variants.iter().enumerate() {
-            let reserved = format!("i{:04}", 670 + index);
-            ensure!(
-                variant.abi_id == reserved,
-                "tcgen05 store variant {} must keep reserved ABI ID {reserved}",
-                index + 1
-            );
+        for variant in &admission.st_variants {
+            validate_abi_id(&variant.abi_id)?;
             records.push(materialize_tcgen05_st_variant(&base, admission, variant));
         }
         for pair in records[first_store..].chunks_exact(2) {
@@ -8822,13 +8793,8 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
             .expect("closed tcgen05 offset load/store base")
             .clone();
         let first_load = records.len();
-        for (index, variant) in admission.ld_offset_variants.iter().enumerate() {
-            let reserved = format!("i{:04}", 728 + index);
-            ensure!(
-                variant.abi_id == reserved,
-                "tcgen05 offset load variant {} must keep reserved ABI ID {reserved}",
-                index + 1
-            );
+        for variant in &admission.ld_offset_variants {
+            validate_abi_id(&variant.abi_id)?;
             records.push(materialize_tcgen05_ld_variant(&base, admission, variant));
         }
         for pair in records[first_load..].chunks_exact(2) {
@@ -8848,13 +8814,8 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
         }
 
         let first_store = records.len();
-        for (index, variant) in admission.st_offset_variants.iter().enumerate() {
-            let reserved = format!("i{:04}", 744 + index);
-            ensure!(
-                variant.abi_id == reserved,
-                "tcgen05 offset store variant {} must keep reserved ABI ID {reserved}",
-                index + 1
-            );
+        for variant in &admission.st_offset_variants {
+            validate_abi_id(&variant.abi_id)?;
             records.push(materialize_tcgen05_st_variant(&base, admission, variant));
         }
         for pair in records[first_store..].chunks_exact(2) {
@@ -8911,15 +8872,9 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 .eq(expected_variants),
             "compact tcgen05 MMA admission must list all 19 APIs in canonical order"
         );
-        for (index, variant) in admission.mma_variants.iter().enumerate() {
-            let reserved = format!("i{:04}", 763 + index);
-            ensure!(
-                variant.abi_id == reserved,
-                "tcgen05 MMA variant {} must keep reserved ABI ID {reserved}",
-                index + 1
-            );
+        for variant in &admission.mma_variants {
+            validate_abi_id(&variant.abi_id)?;
         }
-
         let expected_llvm = expected_tcgen05_mma_target_contracts(IntrinsicBackend::LlvmNvptx);
         let expected_libnvvm = expected_tcgen05_mma_target_contracts(IntrinsicBackend::LibNvvm);
         ensure!(
@@ -9070,6 +9025,16 @@ fn validate_tcgen05_mma_policy(
 ) -> Result<()> {
     let form = mma.form;
     let alias = mma.alias;
+    ensure!(
+        match alias {
+            Some(alias) => {
+                form == Tcgen05MmaForm::WsTensor && TCGEN05_MMA_ALIASES.contains(&alias)
+            }
+            None => TCGEN05_MMA_FORMS.contains(&form),
+        },
+        "{} has an unsupported tcgen05 MMA identity",
+        policy.id
+    );
     let id = alias.map_or_else(
         || format!("tcgen05_mma_{}", tcgen05_mma_form_name(form)),
         |alias| format!("tcgen05_mma_ws_{}", tcgen05_mma_alias_name(alias)),
@@ -9083,18 +9048,6 @@ fn validate_tcgen05_mma_policy(
         },
         |alias| format!("tcgen05.mma.ws.tensor.{}", tcgen05_mma_alias_name(alias)),
     );
-    let index = if let Some(alias) = alias {
-        14 + TCGEN05_MMA_ALIASES
-            .iter()
-            .position(|candidate| *candidate == alias)
-            .context("unknown tcgen05 MMA alias")?
-    } else {
-        TCGEN05_MMA_FORMS
-            .iter()
-            .position(|candidate| *candidate == form)
-            .context("unknown tcgen05 MMA form")?
-    };
-    let abi_id = format!("i{:04}", 763 + index);
     let llvm_arguments = tcgen05_mma_llvm_arguments(form);
     let expected_fixed = alias.map(|_| Tcgen05MmaFixedSelectors {
         kind: Tcgen05MmaKind::F8f6f4,
@@ -9103,7 +9056,6 @@ fn validate_tcgen05_mma_policy(
     });
     ensure!(
         policy.id == id
-            && policy.abi_id == abi_id
             && policy.operation_key == operation_key
             && policy.source.is_none()
             && policy.source_record.as_deref() == Some(tcgen05_mma_source_record(form).as_str())
@@ -9313,14 +9265,10 @@ fn validate_tcgen05_ld_policy(
     } else {
         &TCGEN05_LD_VARIANTS
     };
-    let source_index = variants
-        .iter()
-        .position(|identity| *identity == (ld.shape, ld.multiplicity))
-        .with_context(|| format!("{} has an unsupported tcgen05 load identity", policy.id))?;
-    let first_abi = if has_half_split_offset { 728 } else { 612 };
-    let expected_abi_id = format!(
-        "i{:04}",
-        first_abi + source_index * 2 + usize::from(ld.pack16)
+    ensure!(
+        variants.contains(&(ld.shape, ld.multiplicity)),
+        "{} has an unsupported tcgen05 load identity",
+        policy.id
     );
     let id = tcgen05_ld_id(ld);
     let source_record = tcgen05_ld_source_record(ld);
@@ -9367,7 +9315,6 @@ fn validate_tcgen05_ld_policy(
     };
     ensure!(
         policy.id == id
-            && policy.abi_id == expected_abi_id
             && policy.operation_key
                 == format!(
                     "tcgen05.ld.{}.{}.{}",
@@ -9463,14 +9410,10 @@ fn validate_tcgen05_st_policy(
     } else {
         &TCGEN05_ST_VARIANTS
     };
-    let source_index = variants
-        .iter()
-        .position(|identity| *identity == (st.shape, st.multiplicity))
-        .with_context(|| format!("{} has an unsupported tcgen05 store identity", policy.id))?;
-    let first_abi = if has_half_split_offset { 744 } else { 670 };
-    let expected_abi_id = format!(
-        "i{:04}",
-        first_abi + source_index * 2 + usize::from(st.unpack16)
+    ensure!(
+        variants.contains(&(st.shape, st.multiplicity)),
+        "{} has an unsupported tcgen05 store identity",
+        policy.id
     );
     let id = tcgen05_st_id(st);
     let source_record = tcgen05_st_source_record(st);
@@ -9516,7 +9459,6 @@ fn validate_tcgen05_st_policy(
     };
     ensure!(
         policy.id == id
-            && policy.abi_id == expected_abi_id
             && policy.operation_key
                 == format!(
                     "tcgen05.st.{}.{}.{}",
@@ -9606,6 +9548,11 @@ fn validate_tcgen05_cp_policy(
     tcgen05: &Tcgen05,
     cp: Tcgen05Cp,
 ) -> Result<()> {
+    ensure!(
+        TCGEN05_CP_MEMBERS.contains(&cp.member),
+        "{} has an unsupported tcgen05 copy identity",
+        policy.id
+    );
     let recipe = tcgen05_cp_member_recipe(cp.member);
     let group = match cp.group {
         Tcgen05CpGroup::Cg1 => 1,
@@ -9614,14 +9561,6 @@ fn validate_tcgen05_cp_policy(
     let group_suffix = if group == 1 { "" } else { "_cg2" };
     let id_suffix = recipe.llvm_suffix.replace('.', "_");
     let id = format!("tcgen05_cp_{id_suffix}{group_suffix}");
-    let member_index = TCGEN05_CP_MEMBERS
-        .iter()
-        .position(|member| *member == cp.member)
-        .expect("closed tcgen05 copy member");
-    let expected_abi_id = format!(
-        "i{:04}",
-        578 + member_index * 2 + usize::from(cp.group == Tcgen05CpGroup::Cg2)
-    );
     let operation = if group == 1 {
         Tcgen05Operation::CpSmemToTmem
     } else {
@@ -9640,7 +9579,6 @@ fn validate_tcgen05_cp_policy(
         .collect::<Vec<String>>();
     ensure!(
         policy.id == id
-            && policy.abi_id == expected_abi_id
             && policy.operation_key == format!("tcgen05.cp.{}.cg{group}", recipe.llvm_suffix)
             && policy.source.is_none()
             && policy.source_record.as_deref() == Some(source_record.as_str())
@@ -18346,7 +18284,6 @@ fn validate_scalar_conversion_policy(
 #[derive(Clone)]
 struct ScalarArithmeticRecipe {
     id: String,
-    abi_id: String,
     operation_key: String,
     source_record: String,
     llvm_symbol: String,
@@ -18432,10 +18369,9 @@ fn scalar_arithmetic_rounding_name(rounding: ScalarArithmeticRounding) -> &'stat
 }
 
 fn scalar_arithmetic_recipe(variant: ScalarArithmeticVariant) -> Option<ScalarArithmeticRecipe> {
-    let canonical = canonical_scalar_arithmetic_variants();
-    let index = canonical
-        .iter()
-        .position(|candidate| *candidate == variant)?;
+    if !canonical_scalar_arithmetic_variants().contains(&variant) {
+        return None;
+    }
     let (format, operation, rounding, subnormal, saturation) = variant;
     let operation_name = scalar_arithmetic_operation_name(operation);
     let rounding_name = scalar_arithmetic_rounding_name(rounding);
@@ -18534,7 +18470,6 @@ fn scalar_arithmetic_recipe(variant: ScalarArithmeticVariant) -> Option<ScalarAr
 
     Some(ScalarArithmeticRecipe {
         id,
-        abi_id: format!("i{:04}", 390 + index),
         operation_key: format!(
             "scalar.arithmetic.{operation_name}.{modifier_symbol}.{format_name}"
         ),
@@ -18581,6 +18516,7 @@ fn expand_scalar_arithmetic_admission(
         .variants
         .iter()
         .map(|variant| {
+            validate_abi_id(&variant.abi_id)?;
             let identity = (
                 variant.format,
                 variant.operation,
@@ -18590,13 +18526,7 @@ fn expand_scalar_arithmetic_admission(
             );
             let recipe = scalar_arithmetic_recipe(identity)
                 .context("scalar arithmetic is outside the closed recipe set")?;
-            ensure!(
-                variant.abi_id == recipe.abi_id,
-                "{} must reserve ABI ID {}",
-                recipe.id,
-                recipe.abi_id
-            );
-            scalar_arithmetic_overlay_record(recipe, admission, identity)
+            scalar_arithmetic_overlay_record(recipe, admission, identity, &variant.abi_id)
         })
         .collect()
 }
@@ -18605,6 +18535,7 @@ fn scalar_arithmetic_overlay_record(
     recipe: ScalarArithmeticRecipe,
     admission: &ScalarArithmeticAdmission,
     variant: ScalarArithmeticVariant,
+    abi_id: &str,
 ) -> Result<OverlayIntrinsic> {
     let (format, operation, rounding, subnormal, saturation) = variant;
     let rust_arguments = vec![recipe.rust_type.into(); recipe.argument_count];
@@ -18616,7 +18547,7 @@ fn scalar_arithmetic_overlay_record(
     );
     Ok(OverlayIntrinsic {
         id: recipe.id.clone(),
-        abi_id: recipe.abi_id,
+        abi_id: abi_id.into(),
         operation_key: recipe.operation_key,
         family: "scalar_arithmetic".into(),
         source: None,
@@ -18758,7 +18689,6 @@ fn validate_scalar_arithmetic_policy(
     let signature = vec![recipe.rust_type.to_owned(); recipe.argument_count];
     ensure!(
         policy.id == recipe.id
-            && policy.abi_id == recipe.abi_id
             && policy.operation_key == recipe.operation_key
             && policy.source_record.as_deref() == Some(recipe.source_record.as_str())
             && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol.as_str())
@@ -19020,7 +18950,6 @@ enum ScalarMathRecipeSource {
 
 struct ScalarMathRecipe {
     id: String,
-    abi_id: String,
     operation_key: String,
     source: ScalarMathRecipeSource,
     rust_type: &'static str,
@@ -19134,10 +19063,9 @@ fn canonical_scalar_math_variants() -> Vec<ScalarMathVariant> {
 }
 
 fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
-    let canonical = canonical_scalar_math_variants();
-    let index = canonical
-        .iter()
-        .position(|candidate| *candidate == variant)?;
+    if !canonical_scalar_math_variants().contains(&variant) {
+        return None;
+    }
     let (format, operation, precision, subnormal) = variant;
     let operation_name = scalar_math_operation_name(operation);
     let precision_name = scalar_math_precision_name(precision);
@@ -19236,7 +19164,6 @@ fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
 
     Some(ScalarMathRecipe {
         id,
-        abi_id: format!("i{:04}", 782 + index),
         operation_key: format!("scalar.math.{operation_name}.{modifier_symbol}.{format_name}"),
         source,
         rust_type: format_name,
@@ -19275,6 +19202,7 @@ fn expand_scalar_math_admission(admission: &ScalarMathAdmission) -> Result<Vec<O
         .variants
         .iter()
         .map(|variant| {
+            validate_abi_id(&variant.abi_id)?;
             let identity = (
                 variant.format,
                 variant.operation,
@@ -19283,13 +19211,7 @@ fn expand_scalar_math_admission(admission: &ScalarMathAdmission) -> Result<Vec<O
             );
             let recipe = scalar_math_recipe(identity)
                 .context("scalar math is outside the closed recipe set")?;
-            ensure!(
-                variant.abi_id == recipe.abi_id,
-                "{} must reserve ABI ID {}",
-                recipe.id,
-                recipe.abi_id
-            );
-            scalar_math_overlay_record(recipe, admission, identity)
+            scalar_math_overlay_record(recipe, admission, identity, &variant.abi_id)
         })
         .collect()
 }
@@ -19298,6 +19220,7 @@ fn scalar_math_overlay_record(
     recipe: ScalarMathRecipe,
     admission: &ScalarMathAdmission,
     variant: ScalarMathVariant,
+    abi_id: &str,
 ) -> Result<OverlayIntrinsic> {
     let (format, operation, precision, subnormal) = variant;
     let ptx_operands = vec![OperandPattern::Register; 2]; // 1 result + 1 operand
@@ -19347,7 +19270,7 @@ fn scalar_math_overlay_record(
         };
     Ok(OverlayIntrinsic {
         id: recipe.id.clone(),
-        abi_id: recipe.abi_id,
+        abi_id: abi_id.into(),
         operation_key: recipe.operation_key,
         family: "scalar_math".into(),
         source,
@@ -19512,10 +19435,7 @@ fn validate_scalar_math_policy(
         }
     };
     ensure!(
-        policy.id == recipe.id
-            && policy.abi_id == recipe.abi_id
-            && policy.operation_key == recipe.operation_key
-            && source_matches,
+        policy.id == recipe.id && policy.operation_key == recipe.operation_key && source_matches,
         "{} scalar-math identity or LLVM source changed",
         policy.id
     );
@@ -19632,7 +19552,6 @@ type ExtendedMinMaxVariant = (
 
 struct ExtendedMinMaxRecipe {
     id: String,
-    abi_id: String,
     operation_key: String,
     source_record: String,
     llvm_symbol: String,
@@ -19681,8 +19600,9 @@ fn canonical_extended_minmax_variants() -> Vec<ExtendedMinMaxVariant> {
     // `bf16` `ftz` declarations exist but have no NVPTX selection pattern and
     // fail instruction selection, so they are deliberately absent here.
     //
-    // These variants were admitted after the first block, so they continue the
-    // ABI id space at a second base - see `extended_minmax_abi_id`.
+    // ABI identity is intentionally absent from this canonical list. Existing
+    // and future IDs are carried by admission entries and enforced by the
+    // global append-only ABI ledger.
     let scalar_halves = |operation| {
         [
             (F16, operation, Preserve, Number, false),
@@ -19705,28 +19625,6 @@ fn canonical_extended_minmax_variants() -> Vec<ExtendedMinMaxVariant> {
         .chain(scalar_halves(Min))
         .chain(scalar_halves(Max))
         .collect()
-}
-
-/// Maps a canonical variant index to its reserved ABI id.
-///
-/// The family was admitted as one contiguous block at
-/// `EXTENDED_MINMAX_FIRST_ABI_BASE`. Later additions cannot continue that block
-/// because the ids immediately after it were already reserved by other
-/// families, so they open a second block instead. The ledger is append-only,
-/// which makes the discontinuity permanent.
-fn extended_minmax_abi_id(index: usize) -> String {
-    const EXTENDED_MINMAX_FIRST_ABI_BASE: usize = 550;
-    const EXTENDED_MINMAX_FIRST_ABI_COUNT: usize = 28;
-    const EXTENDED_MINMAX_SECOND_ABI_BASE: usize = 830;
-
-    if index < EXTENDED_MINMAX_FIRST_ABI_COUNT {
-        format!("i{:04}", EXTENDED_MINMAX_FIRST_ABI_BASE + index)
-    } else {
-        format!(
-            "i{:04}",
-            EXTENDED_MINMAX_SECOND_ABI_BASE + index - EXTENDED_MINMAX_FIRST_ABI_COUNT
-        )
-    }
 }
 
 /// Joins an operation name, its modifiers, and its format into one identifier.
@@ -19764,9 +19662,9 @@ fn extended_minmax_operation_name(operation: ExtendedMinMaxOperation) -> &'stati
 }
 
 fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinMaxRecipe> {
-    let index = canonical_extended_minmax_variants()
-        .iter()
-        .position(|candidate| *candidate == variant)?;
+    if !canonical_extended_minmax_variants().contains(&variant) {
+        return None;
+    }
     let (format, operation, subnormal, nan, xorsign_abs) = variant;
     let operation_name = extended_minmax_operation_name(operation);
     let format_name = extended_minmax_format_name(format);
@@ -19929,7 +19827,6 @@ fn extended_minmax_recipe(variant: ExtendedMinMaxVariant) -> Option<ExtendedMinM
     };
     Some(ExtendedMinMaxRecipe {
         id,
-        abi_id: extended_minmax_abi_id(index),
         operation_key: format!(
             "floating.minmax.{format_name}.{operation_name}.{}.{}.{}",
             match subnormal {
@@ -19990,6 +19887,7 @@ fn expand_extended_minmax_admission(
         .variants
         .iter()
         .map(|variant| {
+            validate_abi_id(&variant.abi_id)?;
             let identity = (
                 variant.format,
                 variant.operation,
@@ -19999,13 +19897,7 @@ fn expand_extended_minmax_admission(
             );
             let recipe = extended_minmax_recipe(identity)
                 .context("extended min/max is outside the closed recipe set")?;
-            ensure!(
-                variant.abi_id == recipe.abi_id,
-                "{} must reserve ABI ID {}",
-                recipe.id,
-                recipe.abi_id
-            );
-            extended_minmax_overlay_record(recipe, admission, identity)
+            extended_minmax_overlay_record(recipe, admission, identity, &variant.abi_id)
         })
         .collect()
 }
@@ -20014,13 +19906,14 @@ fn extended_minmax_overlay_record(
     recipe: ExtendedMinMaxRecipe,
     admission: &ExtendedMinMaxAdmission,
     variant: ExtendedMinMaxVariant,
+    abi_id: &str,
 ) -> Result<OverlayIntrinsic> {
     let (format, operation, subnormal, nan, xorsign_abs) = variant;
     let rust_arguments = vec![recipe.rust_type.to_owned(); 2];
     let dialect_operands = vec![recipe.dialect_type.to_owned(); 2];
     Ok(OverlayIntrinsic {
         id: recipe.id.clone(),
-        abi_id: recipe.abi_id,
+        abi_id: abi_id.into(),
         operation_key: recipe.operation_key,
         family: "extended_minmax".into(),
         source: None,
@@ -20172,7 +20065,6 @@ fn validate_extended_minmax_policy(
     );
     ensure!(
         policy.id == recipe.id
-            && policy.abi_id == recipe.abi_id
             && policy.operation_key == recipe.operation_key
             && policy.source_record.as_deref() == Some(recipe.source_record.as_str())
             && policy.llvm_symbol.as_deref() == Some(recipe.llvm_symbol.as_str())
@@ -34314,9 +34206,10 @@ scope = "system"
         reordered_reduction.reduce_variants.swap(0, 1);
         assert!(expand_tma_admission(&reordered_reduction).is_err());
 
-        let mut wrong_reduction_abi = test_tma_admission();
-        wrong_reduction_abi.reduce_variants[0].abi_id = "i9999".into();
-        assert!(expand_tma_admission(&wrong_reduction_abi).is_err());
+        let mut non_contiguous_reduction_abi = test_tma_admission();
+        non_contiguous_reduction_abi.reduce_variants[0].abi_id = "i9999".into();
+        let records = expand_tma_admission(&non_contiguous_reduction_abi).unwrap();
+        assert_eq!(records[TMA_OPERATIONS.len()].abi_id, "i9999");
 
         let mut executed = test_tma_admission();
         executed.runtime_validation = RuntimeValidation::Executed;
@@ -34862,9 +34755,10 @@ scope = "system"
         reordered.mma_variants.swap(0, 1);
         assert!(expand_tcgen05_admission(&reordered).is_err());
 
-        let mut wrong_abi = test_tcgen05_mma_admission();
-        wrong_abi.mma_variants[0].abi_id = "i9999".into();
-        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+        let mut non_contiguous_abi = test_tcgen05_mma_admission();
+        non_contiguous_abi.mma_variants[0].abi_id = "i9999".into();
+        let records = expand_tcgen05_admission(&non_contiguous_abi).unwrap();
+        assert!(records.iter().any(|record| record.abi_id == "i9999"));
 
         let mut missing_target = test_tcgen05_mma_admission();
         missing_target.mma_llvm_target_contracts[0]
@@ -35024,9 +34918,10 @@ scope = "system"
         reordered.cp_variants.swap(0, 1);
         assert!(expand_tcgen05_admission(&reordered).is_err());
 
-        let mut wrong_abi = test_tcgen05_cp_admission();
-        wrong_abi.cp_variants[0].abi_id = "i9999".into();
-        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+        let mut non_contiguous_abi = test_tcgen05_cp_admission();
+        non_contiguous_abi.cp_variants[0].abi_id = "i9999".into();
+        let records = expand_tcgen05_admission(&non_contiguous_abi).unwrap();
+        assert!(records.iter().any(|record| record.abi_id == "i9999"));
 
         let mut missing_evidence = test_tcgen05_cp_admission();
         missing_evidence.cp_llvm_evidence_profile = None;
@@ -35167,9 +35062,10 @@ scope = "system"
         reordered.ld_variants.swap(0, 1);
         assert!(expand_tcgen05_admission(&reordered).is_err());
 
-        let mut wrong_abi = test_tcgen05_ld_admission();
-        wrong_abi.ld_variants[0].abi_id = "i9999".into();
-        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+        let mut non_contiguous_abi = test_tcgen05_ld_admission();
+        non_contiguous_abi.ld_variants[0].abi_id = "i9999".into();
+        let records = expand_tcgen05_admission(&non_contiguous_abi).unwrap();
+        assert!(records.iter().any(|record| record.abi_id == "i9999"));
 
         let mut missing_evidence = test_tcgen05_ld_admission();
         missing_evidence.ld_llvm_evidence_profile = None;
@@ -35319,9 +35215,10 @@ scope = "system"
         reordered.st_variants.swap(0, 1);
         assert!(expand_tcgen05_admission(&reordered).is_err());
 
-        let mut wrong_abi = test_tcgen05_st_admission();
-        wrong_abi.st_variants[0].abi_id = "i9999".into();
-        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+        let mut non_contiguous_abi = test_tcgen05_st_admission();
+        non_contiguous_abi.st_variants[0].abi_id = "i9999".into();
+        let records = expand_tcgen05_admission(&non_contiguous_abi).unwrap();
+        assert!(records.iter().any(|record| record.abi_id == "i9999"));
 
         let mut missing_evidence = test_tcgen05_st_admission();
         missing_evidence.st_llvm_evidence_profile = None;
@@ -35492,9 +35389,10 @@ scope = "system"
         reordered.st_offset_variants.swap(0, 1);
         assert!(expand_tcgen05_admission(&reordered).is_err());
 
-        let mut wrong_abi = test_tcgen05_offset_admission();
-        wrong_abi.ld_offset_variants[0].abi_id = "i9999".into();
-        assert!(expand_tcgen05_admission(&wrong_abi).is_err());
+        let mut non_contiguous_abi = test_tcgen05_offset_admission();
+        non_contiguous_abi.ld_offset_variants[0].abi_id = "i9999".into();
+        let records = expand_tcgen05_admission(&non_contiguous_abi).unwrap();
+        assert!(records.iter().any(|record| record.abi_id == "i9999"));
 
         let mut missing_evidence = test_tcgen05_offset_admission();
         missing_evidence.offset_llvm_evidence_profile = None;
@@ -41198,17 +41096,17 @@ scope = "system"
             variants: variants
                 .iter()
                 .copied()
-                .map(|variant| {
-                    let recipe = scalar_arithmetic_recipe(variant).unwrap();
-                    crate::model::ScalarArithmeticAdmissionVariant {
-                        abi_id: recipe.abi_id,
+                .enumerate()
+                .map(
+                    |(index, variant)| crate::model::ScalarArithmeticAdmissionVariant {
+                        abi_id: format!("i{:04}", 390 + index),
                         format: variant.0,
                         operation: variant.1,
                         rounding: variant.2,
                         subnormal: variant.3,
                         saturation: variant.4,
-                    }
-                })
+                    },
+                )
                 .collect(),
         };
         let records = expand_scalar_arithmetic_admission(&admission).unwrap();
@@ -41289,6 +41187,12 @@ scope = "system"
             ["rn", "sat", "ftz", "f32"]
         );
 
+        let mut non_contiguous_abi = admission.clone();
+        non_contiguous_abi.variants[0].abi_id = "i9999".into();
+        let non_contiguous_records =
+            expand_scalar_arithmetic_admission(&non_contiguous_abi).unwrap();
+        assert_eq!(non_contiguous_records[0].abi_id, "i9999");
+
         let mut reordered = admission.clone();
         reordered.variants.swap(0, 1);
         assert!(
@@ -41310,6 +41214,49 @@ scope = "system"
     }
 
     #[test]
+    fn scalar_math_admission_keeps_semantic_order_but_accepts_non_contiguous_abi_ids() {
+        let variants = canonical_scalar_math_variants();
+        let admission = ScalarMathAdmission {
+            llvm_evidence_profile: "llvm-scalar-math".into(),
+            libnvvm_evidence_profile: "libnvvm-scalar-math".into(),
+            runtime_validation: RuntimeValidation::Unexecuted,
+            variants: variants
+                .iter()
+                .copied()
+                .enumerate()
+                .map(
+                    |(index, variant)| crate::model::ScalarMathAdmissionVariant {
+                        abi_id: format!("i{:04}", 782 + index),
+                        format: variant.0,
+                        operation: variant.1,
+                        precision: variant.2,
+                        subnormal: variant.3,
+                    },
+                )
+                .collect(),
+        };
+
+        let records = expand_scalar_math_admission(&admission).unwrap();
+        assert_eq!(records.len(), 40);
+        assert_eq!(records.first().unwrap().abi_id, "i0782");
+        assert_eq!(records.last().unwrap().abi_id, "i0821");
+
+        let mut non_contiguous_abi = admission.clone();
+        non_contiguous_abi.variants[39].abi_id = "i9999".into();
+        let records = expand_scalar_math_admission(&non_contiguous_abi).unwrap();
+        assert_eq!(records.last().unwrap().abi_id, "i9999");
+
+        let mut reordered = admission;
+        reordered.variants.swap(0, 1);
+        assert!(
+            expand_scalar_math_admission(&reordered)
+                .unwrap_err()
+                .to_string()
+                .contains("canonical 40 variants")
+        );
+    }
+
+    #[test]
     fn extended_minmax_admission_is_exact_and_fail_closed() {
         let variants = canonical_extended_minmax_variants();
         let admission = ExtendedMinMaxAdmission {
@@ -41319,17 +41266,21 @@ scope = "system"
             variants: variants
                 .iter()
                 .copied()
-                .map(|variant| {
-                    let recipe = extended_minmax_recipe(variant).unwrap();
-                    crate::model::ExtendedMinMaxAdmissionVariant {
-                        abi_id: recipe.abi_id,
+                .enumerate()
+                .map(
+                    |(index, variant)| crate::model::ExtendedMinMaxAdmissionVariant {
+                        abi_id: if index < 28 {
+                            format!("i{:04}", 550 + index)
+                        } else {
+                            format!("i{:04}", 830 + index - 28)
+                        },
                         format: variant.0,
                         operation: variant.1,
                         subnormal: variant.2,
                         nan: variant.3,
                         xorsign_abs: variant.4,
-                    }
-                })
+                    },
+                )
                 .collect(),
         };
         let records = expand_extended_minmax_admission(&admission).unwrap();
@@ -41435,6 +41386,11 @@ scope = "system"
             );
             assert!(records.iter().all(|record| record.id != id));
         }
+
+        let mut non_contiguous_abi = admission.clone();
+        non_contiguous_abi.variants[0].abi_id = "i9999".into();
+        let non_contiguous_records = expand_extended_minmax_admission(&non_contiguous_abi).unwrap();
+        assert_eq!(non_contiguous_records[0].abi_id, "i9999");
 
         let mut reordered = admission.clone();
         reordered.variants.swap(0, 1);
