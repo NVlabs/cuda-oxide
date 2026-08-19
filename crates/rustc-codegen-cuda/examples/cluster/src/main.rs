@@ -234,8 +234,9 @@ mod kernels {
 
         if tid == 0 {
             let neighbor_rank = (my_rank + 1) % cluster_size;
-            let neighbor_ptr =
-                unsafe { cluster::map_shared_rank_mut(addr_of_mut!(SHMEM) as *mut u32, neighbor_rank) };
+            let neighbor_ptr = unsafe {
+                cluster::map_shared_rank_mut(addr_of_mut!(SHMEM) as *mut u32, neighbor_rank)
+            };
             unsafe { *neighbor_ptr = 3000 + my_rank };
         }
 
@@ -549,8 +550,7 @@ fn main() {
         println!("⚠ Skipped - CUDA context corrupted by previous DSMEM error\n");
         false
     } else {
-        let mut store_output =
-            DeviceBuffer::<u32>::zeroed(&stream, cluster_size as usize).unwrap();
+        let mut store_output = DeviceBuffer::<u32>::zeroed(&stream, cluster_size as usize).unwrap();
 
         println!("Launching test_dsmem_mapped_store via cuLaunchKernelEx");
         println!("  Grid: 4x1x1, Block: 32, Cluster: 4x1x1");

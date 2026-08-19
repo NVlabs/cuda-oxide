@@ -616,8 +616,7 @@ fn classify_call(func: &mir::Operand) -> WriteClass {
     // the `ld.shared::cluster` / `st.shared::cluster` selection contract.
     if matches!(
         path.as_str(),
-        "cuda_device::cluster::map_shared_rank"
-            | "cuda_device::cluster::map_shared_rank_mut"
+        "cuda_device::cluster::map_shared_rank" | "cuda_device::cluster::map_shared_rank_mut"
     ) {
         return WriteClass::Classified(address_space::CLUSTER_SHARED);
     }
