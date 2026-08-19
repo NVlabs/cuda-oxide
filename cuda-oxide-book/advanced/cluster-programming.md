@@ -98,10 +98,11 @@ let cz = cluster::cluster_ctaidZ();     // block's Z position in the cluster
 The core feature of clusters is cross-block shared memory access. There are
 two ways to read a remote block's shared memory:
 
-### Method 1: map_shared_rank (pointer remapping)
+### Method 1: map_shared_rank + plain deref (any type)
 
-`map_shared_rank` takes a local shared memory pointer and returns a pointer
-to the same offset in another block's shared memory:
+`map_shared_rank` takes a local shared memory pointer and returns a real
+pointer to the same offset in another block's shared memory. It lives in
+the cluster-shared address space, so you can just dereference it:
 
 ```rust
 use cuda_device::{cluster, SharedArray, thread};
@@ -129,11 +130,16 @@ pub fn halo_exchange(/* ... */) {
 }
 ```
 
-### Method 2: dsmem_read_u32 (preferred)
+That last line is an ordinary Rust read. The compiler keeps the mapped
+pointer in the cluster-shared address space, so the deref compiles to
+`ld.shared::cluster`. Writes work the same way: map with
+`map_shared_rank_mut`, assign through the pointer, and the store compiles
+to `st.shared::cluster`. This works for any type and needs sm_90+.
 
-`dsmem_read_u32` is the preferred way to read remote shared memory. It
-compiles to the `ld.shared::cluster` PTX instruction, which the hardware
-handles more efficiently than a generic load through a remapped pointer:
+### Method 2: dsmem_read_u32 (fixed-width u32 reads)
+
+`dsmem_read_u32` maps and reads one `u32` in a single call. It takes the
+*local* pointer plus the target rank and does the rank mapping itself:
 
 ```rust
 let neighbor_val = unsafe {
@@ -144,11 +150,10 @@ let neighbor_val = unsafe {
 };
 ```
 
-The difference is subtle but matters for performance: `map_shared_rank`
-produces a pointer that goes through the generic load path, while
-`dsmem_read_u32` uses a dedicated instruction that the hardware can
-optimize. Use `dsmem_read_u32` for `u32`-sized reads; for larger types,
-`map_shared_rank` with the appropriate pointer type works.
+Both methods emit the same `ld.shared::cluster` PTX instruction. Plain
+deref through `map_shared_rank` is the primary method: it works for any
+type and supports writes. Reach for `dsmem_read_u32` when all you need is
+a single `u32` and you want the map and the load in one call.
 
 ---
 
