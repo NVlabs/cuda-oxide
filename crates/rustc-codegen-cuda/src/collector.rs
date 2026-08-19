@@ -723,9 +723,9 @@ fn const_str_text<'tcx>(tcx: TyCtxt<'tcx>, constant: &ConstOperand<'tcx>) -> Opt
 
 /// Extracts the stub function name out of a stub panic message.
 ///
-/// The message reads "internal error: entered unreachable code:
-/// thread::index_1d called outside #[kernel] / #[device] ...", so the
-/// stub name is the last word before " called outside".
+/// The message reads `internal error: entered unreachable code:
+/// thread::index_1d called outside #[kernel] / #[device] ...`, so the
+/// stub name is the last word before `" called outside"`.
 fn stub_name_from_marker_message(text: &str) -> &str {
     text.split(" called outside")
         .next()
@@ -1939,7 +1939,7 @@ impl<'tcx> DeviceCollector<'tcx> {
 
     /// Computes the export name for a function.
     ///
-    /// `name` must be the FQDN (from [`fqdn()`]) so that non-generic export names
+    /// `name` must be the FQDN (from [`Self::fqdn`]) so that non-generic export names
     /// match what `CrateDef::name()` returns on the call side. Both sides feed
     /// the FQDN through pliron's `Legaliser`, which replaces every
     /// non-`[A-Za-z0-9]` character with `_`. We return the *raw* FQDN here so
@@ -2127,7 +2127,7 @@ impl<'tcx> DeviceCollector<'tcx> {
     /// Diagnoses a callee whose entire body is panic machinery (issue #76).
     ///
     /// Reached from the `is_unreachable_body` skip in
-    /// [`process_call_operand`]. Genuine intrinsic placeholders (the
+    /// [`Self::process_call_operand`]. Genuine intrinsic placeholders (the
     /// `cuda_device` stubs the translator rewrites by name) must keep
     /// being skipped silently, so this only reports two specific cases:
     ///
@@ -2266,7 +2266,7 @@ impl<'tcx> DeviceCollector<'tcx> {
     /// Diagnoses a missing `#[device]` annotation found through the panic
     /// machinery of a collected body (issue #76).
     ///
-    /// Called from [`collect`] for every function that is about to be
+    /// Called from [`Self::collect`] for every function that is about to be
     /// translated. A basic block ending in a call into `core::panicking`
     /// is a panic path; the string constants it materializes are the panic
     /// message (or the pieces of a `format_args!` template).
@@ -2439,7 +2439,6 @@ mod tests {
         DEVICE_PREFIX, KERNEL_PREFIX, LEGACY_DEVICE_PREFIX, LEGACY_KERNEL_PREFIX,
         PTX_MERGE_REQUIRED_PREFIX, is_ptx_merge_required_marker, ptx_merge_required_marker,
     };
-    use rustc_index::Idx;
     use rustc_middle::mir::BasicBlock;
 
     #[test]

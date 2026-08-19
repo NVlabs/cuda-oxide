@@ -28,6 +28,32 @@ static RELOCATION_REFERENCE: &u32 = &RELOCATION_TARGET_A;
 static RELOCATION_REFERENCES: [&u32; 2] = [&RELOCATION_TARGET_A, &RELOCATION_TARGET_B];
 static INTERIOR_RELOCATION_REFERENCE: &f32 = &STATIC_WEIGHTS[2][1];
 
+#[repr(C)]
+struct SliceRelocationTarget {
+    prefix: [u32; 2],
+    view: [u32; 3],
+    suffix: [u32; 3],
+}
+
+static SLICE_RELOCATION_TARGET: SliceRelocationTarget = SliceRelocationTarget {
+    prefix: [11, 17],
+    view: [23, 31, 41],
+    suffix: [47, 59, 61],
+};
+static SLICE_RELOCATION_VIEW: &[u32] = &SLICE_RELOCATION_TARGET.view;
+
+static UNION_RELOCATION_TARGETS: [u32; 3] = [7, 11, 23];
+
+#[repr(C)]
+union RelocatedPointerUnion {
+    word: &'static u32,
+    byte: &'static u8,
+}
+
+static UNION_RELOCATION: RelocatedPointerUnion = RelocatedPointerUnion {
+    word: &UNION_RELOCATION_TARGETS[2],
+};
+
 #[repr(C, packed)]
 struct PackedRelocation {
     tag: u8,
@@ -50,6 +76,26 @@ static PACKED_INTERIOR_RELOCATION: PackedInteriorRelocation = PackedInteriorRelo
     prefix: [0x11, 0x22, 0x33],
     ptr: &STATIC_WEIGHTS[2][1],
     suffix: 0x4455,
+};
+
+#[repr(C, packed)]
+struct NestedPackedRelocation {
+    tag: u8,
+    ptr: &'static u32,
+}
+
+#[repr(C)]
+struct NestedPackedRelocationCarrier {
+    head: u32,
+    nested: NestedPackedRelocation,
+}
+
+static NESTED_PACKED_RELOCATION: NestedPackedRelocationCarrier = NestedPackedRelocationCarrier {
+    head: 0x1122_3344,
+    nested: NestedPackedRelocation {
+        tag: 0x7d,
+        ptr: &RELOCATION_TARGET_B,
+    },
 };
 
 /// One-past-the-end interior pointer: const eval permits forming a pointer
@@ -172,6 +218,28 @@ mod kernels {
         }
     }
 
+    /// Read a slice stored directly in a device-global initializer.
+    ///
+    /// The first fat-pointer word carries a relocation to
+    /// `SLICE_RELOCATION_TARGET + 8`; the second word is literal length metadata.
+    #[kernel]
+    pub unsafe fn slice_static_initializer_relocation(out: *mut u32) {
+        unsafe {
+            *out.add(0) = SLICE_RELOCATION_VIEW.len() as u32;
+            *out.add(1) = SLICE_RELOCATION_VIEW[0];
+            *out.add(2) = SLICE_RELOCATION_VIEW[2];
+        }
+    }
+
+    /// Read a top-level union whose complete static initializer is one
+    /// provenance-preserving pointer relocation with a non-zero target addend.
+    #[kernel]
+    pub unsafe fn union_static_initializer_relocation(out: *mut u32) {
+        unsafe {
+            *out = *UNION_RELOCATION.word;
+        }
+    }
+
     /// Read relocation slots whose pointer bytes start at unaligned offsets
     /// inside `repr(packed)` statics. The pointer fields are loaded with
     /// `read_unaligned` so no invalid aligned reference is ever formed.
@@ -195,6 +263,24 @@ mod kernels {
             *out.add(2) = prefix0 as u32;
             *out.add(3) = (*interior_ptr).to_bits();
             *out.add(4) = suffix as u32;
+        }
+    }
+
+    /// Read a relocation through one direct packed struct nested inside an
+    /// ordinary `repr(C)` device static. Only the packed fields require
+    /// unaligned loads; the outer `u32` remains naturally aligned.
+    #[kernel]
+    pub unsafe fn nested_packed_static_initializer_relocation(out: *mut u32) {
+        let head = NESTED_PACKED_RELOCATION.head;
+        let tag =
+            unsafe { core::ptr::addr_of!(NESTED_PACKED_RELOCATION.nested.tag).read_unaligned() };
+        let ptr =
+            unsafe { core::ptr::addr_of!(NESTED_PACKED_RELOCATION.nested.ptr).read_unaligned() };
+
+        unsafe {
+            *out.add(0) = head;
+            *out.add(1) = tag as u32;
+            *out.add(2) = *ptr;
         }
     }
 
@@ -344,6 +430,57 @@ fn main() {
         std::process::exit(1);
     }
 
+    let slice_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 3)
+        .expect("Failed to allocate slice relocation output");
+
+    unsafe {
+        module.slice_static_initializer_relocation(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            slice_relocation_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Slice static initializer relocation kernel launch failed");
+
+    let slice_relocation_result = slice_relocation_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy slice relocation output");
+    let slice_relocation_expected = [3u32, 23, 41];
+
+    println!("Slice static initializer relocation: result = {slice_relocation_result:?}");
+
+    if slice_relocation_result.as_slice() != slice_relocation_expected.as_slice() {
+        eprintln!(
+            "FAILED: expected slice static initializer relocation {slice_relocation_expected:?}, got {slice_relocation_result:?}"
+        );
+        std::process::exit(1);
+    }
+
+    let union_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 1)
+        .expect("Failed to allocate union relocation output");
+
+    unsafe {
+        module.union_static_initializer_relocation(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            union_relocation_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Union static initializer relocation kernel launch failed");
+
+    let union_relocation_result = union_relocation_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy union relocation output")[0];
+
+    println!("Union static initializer relocation: result = {union_relocation_result}");
+
+    if union_relocation_result != 23 {
+        eprintln!(
+            "FAILED: expected union static initializer relocation 23, got {union_relocation_result}"
+        );
+        std::process::exit(1);
+    }
+
     let packed_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 5)
         .expect("Failed to allocate packed relocation output");
 
@@ -366,6 +503,32 @@ fn main() {
     if packed_relocation_result.as_slice() != packed_relocation_expected.as_slice() {
         eprintln!(
             "FAILED: expected packed static initializer relocations {packed_relocation_expected:?}, got {packed_relocation_result:?}"
+        );
+        std::process::exit(1);
+    }
+
+    let nested_packed_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 3)
+        .expect("Failed to allocate nested packed relocation output");
+
+    unsafe {
+        module.nested_packed_static_initializer_relocation(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            nested_packed_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Nested packed static initializer relocation kernel launch failed");
+
+    let nested_packed_result = nested_packed_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy nested packed relocation output");
+    let nested_packed_expected = [0x1122_3344u32, 0x7d, 0xcafe_babe];
+
+    println!("Nested packed static initializer relocation: result = {nested_packed_result:?}");
+
+    if nested_packed_result.as_slice() != nested_packed_expected.as_slice() {
+        eprintln!(
+            "FAILED: expected nested packed static initializer relocation {nested_packed_expected:?}, got {nested_packed_result:?}"
         );
         std::process::exit(1);
     }
@@ -394,6 +557,6 @@ fn main() {
     }
 
     println!(
-        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned and packed pointer relocations, pointer addends, and subobject addresses."
+        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned, packed, nested packed, and union pointer relocations, slice relocations, pointer addends, and subobject addresses."
     );
 }

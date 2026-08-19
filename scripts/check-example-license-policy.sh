@@ -21,8 +21,8 @@
 #   Every example depends on cuda-core/cuda-device/cuda-host by path, so each
 #   lock file re-lists the root workspace's own transitive crates.  Grouping the
 #   lock files by their exact set of third-party (name, version, source) triples
-#   collapses 187 lock files (186 example workspaces plus one nested
-#   sub-workspace) to 26 distinct sets and one cargo-deny run each.  That is an
+#   collapses 217 lock files (215 example workspaces plus two nested
+#   sub-workspaces) to 31 distinct sets and one cargo-deny run each.  That is an
 #   equivalence, not a sample: license, source and advisory verdicts are
 #   per-crate properties, so two workspaces resolving the identical crate set
 #   get the identical verdict.  `bans.multiple-versions` is a graph property,
@@ -86,39 +86,74 @@ def third_party(lock):
     different policy questions.
     """
     found = set()
-    seen = 0
+    parsed = 0
     for block in open(lock).read().split("[[package]]")[1:]:
-        seen += 1
         name = re.search(r"^name = \"([^\"]+)\"", block, re.M)
         version = re.search(r"^version = \"([^\"]+)\"", block, re.M)
         source = re.search(r"^source = \"([^\"]+)\"", block, re.M)
+        if name and version:
+            # Counted after the match, not per `[[package]]` split: every
+            # package carries a name and a version, so a regex that stops
+            # matching takes this to zero.  Counting the splits instead made
+            # the tally below blind to exactly the rot it guards against.
+            parsed += 1
         if name and version and source:
             found.add((name.group(1), version.group(1), source.group(1)))
-    return found, seen
+    return found, parsed
 
 locks = sorted(glob.glob(os.path.join(examples_root, "**", "Cargo.lock"), recursive=True))
-if len(locks) < 20:
-    sys.exit("parse self-test failed: found %d example lock files" % len(locks))
-
 on_disk = {os.path.relpath(lock, examples_root).split(os.sep)[0] for lock in locks}
+
+# Cross-check the glob against an independent enumeration rather than a fixed
+# floor.  Every example directory that carries a Cargo.toml carries a
+# Cargo.lock beside it (215 of each today, plus two nested sub-workspace
+# locks), so a name absent here means the glob stopped reaching it.  A count
+# cannot tell a narrowed glob from a smaller tree: `[a-m]*` still finds 137 of
+# the 217 locks, which clears any floor loose enough not to fail on ordinary
+# growth.  The floor this replaces was 20.
+expected = {
+    name
+    for name in os.listdir(examples_root)
+    if os.path.exists(os.path.join(examples_root, name, "Cargo.toml"))
+}
+missed = sorted(expected - on_disk)
+if missed:
+    sys.exit(
+        "found no Cargo.lock for %d example(s), so deny.toml cannot be "
+        "enforced over them: %s.  Commit the lock file, or fix the glob above "
+        "if it stopped reaching them." % (len(missed), ", ".join(missed[:5]))
+    )
+
 unknown = sorted(set(exempt) - on_disk)
 if unknown:
     sys.exit("POLICY_EXEMPT_EXAMPLES names no such example: " + ", ".join(unknown))
 
 groups = {}
-total_seen = 0
+total_parsed = 0
 for lock in locks:
     example = os.path.relpath(lock, examples_root).split(os.sep)[0]
-    crates, seen = third_party(lock)
-    total_seen += seen
+    crates, parsed = third_party(lock)
+    total_parsed += parsed
+    # Every example reaches crates.io through cuda-core/cuda-device/cuda-host,
+    # so a lock resolving no third-party crate at all means the parse failed,
+    # not that the example is dependency-free.  Measured range across the tree:
+    # 46 to 142 third-party crates per lock, so this has wide margin -- and it
+    # goes to zero for every lock the moment a regex rots, which is the case
+    # the tally below is meant to catch and could not.
+    if not crates:
+        sys.exit("parse self-test failed: no third-party crates in %s" % lock)
     if example in exempt:
         continue
     groups.setdefault(frozenset(crates), os.path.join(os.path.dirname(lock), "Cargo.toml"))
 
 # Mirrors the inventory guard: if the lock-file regexes silently rotted, the
 # groups would quietly collapse and a single run would vouch for everything.
-if total_seen < 100:
-    sys.exit("parse self-test failed: read %d packages from %d lock files" % (total_seen, len(locks)))
+# Scaled to the locks actually found rather than a fixed number, so it cannot
+# go stale as the tree grows: 13871 packages over 217 locks today, against a
+# floor of 2170.
+if total_parsed < 10 * len(locks):
+    sys.exit("parse self-test failed: parsed %d packages from %d lock files"
+             % (total_parsed, len(locks)))
 
 for manifest in sorted(groups.values()):
     print(manifest)

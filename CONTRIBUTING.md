@@ -146,16 +146,21 @@ hand even so.
 
 - Run `cargo oxide fmt` before submitting. All code must be formatted with
   `rustfmt`. Use `cargo oxide fmt` rather than a bare `cargo fmt`: the codegen
-  backend and every example are their own workspaces, so `cargo fmt` at the
-  repository root reaches none of them, while the `fmt` CI job checks all three
-  scopes and will fail on code you never had a chance to format.
-- Run clippy and address any warnings where reasonable. It has the same three
-  scopes, and there is no single command covering them:
+  backend, every example and the `cuda-macros` device-only test fixture are
+  each their own workspace, so `cargo fmt` at the repository root reaches none
+  of them, while the `fmt` CI job checks all four scopes and will fail on code
+  you never had a chance to format. `cargo oxide fmt` mirrors that job, nested
+  example workspaces included.
+- Run clippy and address any warnings where reasonable. There is no single
+  command covering its scopes, and it has more of them than `fmt`: the two
+  workspaces below, plus one run per example, plus the nested example
+  workspaces that their parent does not list as members, plus the device-only
+  fixture. `.github/workflows/clippy.yml` is the full list; the two worth
+  running by hand are:
 
   ```bash
   cargo clippy --workspace --all-targets -- -D warnings
   (cd crates/rustc-codegen-cuda && cargo clippy --all-targets -- -D warnings)
-  # and per example, as .github/workflows/clippy.yml does
   ```
 - Follow existing code patterns and conventions in the crate you are
   modifying.

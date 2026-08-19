@@ -20,6 +20,10 @@
 //! independent 32-value accumulator slots so statically known `wait_group<N>`
 //! depths can keep committed groups in flight without exposing an in-flight
 //! accumulator to LLVM. The pointer-form group remains the deferred fallback.
+//!
+//! F16 uses the same 32-value accumulator carrier only for canonical linear
+//! full-drain regions. It intentionally has no deferred pointer-form group,
+//! counted-loop carrier, or partial-wait pipeline carrier.
 
 use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
@@ -42,9 +46,8 @@ use pliron_derive::{pliron_attr, pliron_op};
 
 const WGMMA_M64N64_F32_ACCUMULATOR_COUNT: usize = 32;
 const WGMMA_COUNTED_LOOP_CONTROL_COUNT: usize = 5;
-const WGMMA_COUNTED_PIPELINE_ACCUMULATOR_COUNT: usize = 2 * WGMMA_M64N64_F32_ACCUMULATOR_COUNT;
-const WGMMA_COUNTED_PIPELINE_CONTROL_COUNT: usize = 9;
 const WGMMA_MAX_PENDING_GROUPS: u8 = 7;
+const WGMMA_COUNTED_PIPELINE_MAX_PENDING_GROUPS: u8 = 2;
 
 // =============================================================================
 // Descriptor Operations
@@ -164,6 +167,52 @@ impl Verify for WgmmaMmaM64N64K16F32Bf16Op {
             return verify_err!(
                 op.loc(),
                 "nvvm.wgmma_mma_m64n64k16_f32_bf16 descriptors must be u64"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Pointer-form F16 WGMMA operation emitted by `mir-importer`.
+///
+/// This operation is not legal at final lowering. The deferred-accumulator
+/// fusion pass accepts it only in a canonical linear full-drain region and
+/// rewrites it to the F16 value-form group.
+#[pliron_op(
+    name = "nvvm.wgmma_mma_m64n64k16_f32_f16",
+    format,
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+)]
+pub struct WgmmaMmaM64N64K16F32F16Op;
+
+impl WgmmaMmaM64N64K16F32F16Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        WgmmaMmaM64N64K16F32F16Op { op }
+    }
+}
+
+impl Verify for WgmmaMmaM64N64K16F32F16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 3 || op.get_num_results() != 0 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k16_f32_f16 requires three operands and no results"
+            );
+        }
+        if !is_supported_wgmma_accumulator(ctx, op.get_operand(0)) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k16_f32_f16 accumulator must be a mutable generic MIR pointer"
+            );
+        }
+        if !is_u64(ctx, op.get_operand(1).get_type(ctx))
+            || !is_u64(ctx, op.get_operand(2).get_type(ctx))
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k16_f32_f16 descriptors must be u64"
             );
         }
         Ok(())
@@ -340,6 +389,111 @@ impl Verify for WgmmaMmaGroupValuesM64N64K16F32Bf16Op {
     }
 }
 
+/// Value-form F16 WGMMA group with 32 SSA accumulator values.
+///
+/// Operand layout:
+///
+/// ```text
+/// [acc_0, ..., acc_31, desc_a_0, desc_b_0, ..., desc_a_n, desc_b_n]
+/// ```
+///
+/// Result layout:
+///
+/// ```text
+/// [acc_0', ..., acc_31']
+/// ```
+///
+/// The operation represents one canonical linear full-drain lifetime with an
+/// implicit fence, one or more F16 MMA instructions, one commit, and
+/// `wait_group<0>`. It does not model counted loops or partial waits.
+#[pliron_op(name = "nvvm.wgmma_mma_group_values_m64n64k16_f32_f16", format)]
+pub struct WgmmaMmaGroupValuesM64N64K16F32F16Op;
+
+impl WgmmaMmaGroupValuesM64N64K16F32F16Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    /// Build a value-form group from 32 accumulator values and descriptor pairs.
+    pub fn build(
+        ctx: &mut Context,
+        accumulators: Vec<Value>,
+        descriptors: Vec<Value>,
+    ) -> Ptr<Operation> {
+        let f32_ty = FP32Type::get(ctx);
+        let mut operands = Vec::with_capacity(accumulators.len() + descriptors.len());
+        operands.extend(accumulators);
+        operands.extend(descriptors);
+
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![f32_ty.into(); WGMMA_M64N64_F32_ACCUMULATOR_COUNT],
+            operands,
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for WgmmaMmaGroupValuesM64N64K16F32F16Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let operand_count = op.get_num_operands();
+        let result_count = op.get_num_results();
+
+        if result_count != WGMMA_M64N64_F32_ACCUMULATOR_COUNT {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_group_values_m64n64k16_f32_f16 requires exactly 32 f32 results"
+            );
+        }
+
+        if operand_count < WGMMA_M64N64_F32_ACCUMULATOR_COUNT + 2 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_group_values_m64n64k16_f32_f16 requires 32 f32 accumulators and one or more descriptor pairs"
+            );
+        }
+
+        let descriptor_count = operand_count - WGMMA_M64N64_F32_ACCUMULATOR_COUNT;
+        if !descriptor_count.is_multiple_of(2) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_group_values_m64n64k16_f32_f16 descriptors must form pairs"
+            );
+        }
+
+        for accumulator_index in 0..WGMMA_M64N64_F32_ACCUMULATOR_COUNT {
+            if !is_f32(ctx, op.get_operand(accumulator_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_group_values_m64n64k16_f32_f16 accumulator operands must be f32"
+                );
+            }
+
+            if !is_f32(ctx, op.get_result(accumulator_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_group_values_m64n64k16_f32_f16 results must be f32"
+                );
+            }
+        }
+
+        for descriptor_index in WGMMA_M64N64_F32_ACCUMULATOR_COUNT..operand_count {
+            if !is_u64(ctx, op.get_operand(descriptor_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_group_values_m64n64k16_f32_f16 descriptors must be u64"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Value-form BF16 WGMMA counted loop with 32 SSA accumulator values.
 ///
 /// Operand layout:
@@ -454,30 +608,41 @@ impl Verify for WgmmaMmaLoopValuesM64N64K16F32Bf16Op {
     }
 }
 
-/// Value-form BF16 WGMMA counted loop with two independent accumulator slots.
+/// Value-form BF16 WGMMA counted loop with independent accumulator slots.
 ///
-/// This deliberately narrow carrier models a fixed `wait_group<1>` pipeline:
-/// each loop iteration issues one committed group into slot 0, throttles to at
-/// most one pending group, then repeats the sequence for slot 1. The four
-/// descriptors advance independently and a final `wait_group<0>` drains the
-/// asynchronous lifetime before either slot becomes visible to LLVM.
+/// This deliberately narrow carrier supports the production counted-loop
+/// pipeline depths validated for Hopper:
+///
+/// ```text
+/// wait_group<1> -> 2 accumulator slots
+/// wait_group<2> -> 3 accumulator slots
+/// ```
+///
+/// For `max_pending_groups = N`, the operation carries `N + 1` independent
+/// 32-value accumulator slots. Each slot owns one descriptor pair and one affine
+/// descriptor-step pair. The loop issues one committed group per slot, throttles
+/// each stage with `wait_group<N>`, advances all descriptor recurrences, and
+/// performs a final `wait_group<0>` before any accumulator becomes visible to
+/// LLVM.
 ///
 /// Operand layout:
 ///
 /// ```text
 /// [
 ///   slot0_acc_0, ..., slot0_acc_31,
-///   slot1_acc_0, ..., slot1_acc_31,
-///   desc_a0_base, desc_b0_base, desc_a1_base, desc_b1_base,
-///   desc_a0_step, desc_b0_step, desc_a1_step, desc_b1_step,
+///   ...
+///   slotN_acc_0, ..., slotN_acc_31,
+///   desc_a0_base, desc_b0_base, ..., desc_aN_base, desc_bN_base,
+///   desc_a0_step, desc_b0_step, ..., desc_aN_step, desc_bN_step,
 ///   trip_count,
 /// ]
 /// ```
 ///
-/// Result layout mirrors the 64 flattened accumulator inputs.
+/// Result layout mirrors the flattened accumulator inputs.
 #[pliron_op(
     name = "nvvm.wgmma_mma_loop_pipeline_values_m64n64k16_f32_bf16",
-    format
+    format,
+    attributes = (counted_max_pending_groups: WgmmaMaxPendingAttr)
 )]
 pub struct WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op;
 
@@ -487,68 +652,86 @@ impl WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op {
         Self { op }
     }
 
-    /// Build the fixed two-slot counted-loop pipeline carrier.
-    #[allow(clippy::too_many_arguments)]
+    /// Build a counted-loop WGMMA pipeline for a validated partial-wait depth.
     pub fn build(
         ctx: &mut Context,
         accumulators: Vec<Value>,
-        desc_a0_base: Value,
-        desc_b0_base: Value,
-        desc_a1_base: Value,
-        desc_b1_base: Value,
-        desc_a0_step: Value,
-        desc_b0_step: Value,
-        desc_a1_step: Value,
-        desc_b1_step: Value,
+        desc_bases: Vec<Value>,
+        desc_steps: Vec<Value>,
         trip_count: Value,
+        max_pending_groups: u8,
     ) -> Ptr<Operation> {
         let f32_ty = FP32Type::get(ctx);
+        let result_count = accumulators.len();
         let mut operands =
-            Vec::with_capacity(accumulators.len() + WGMMA_COUNTED_PIPELINE_CONTROL_COUNT);
+            Vec::with_capacity(result_count + desc_bases.len() + desc_steps.len() + 1);
         operands.extend(accumulators);
-        operands.extend([
-            desc_a0_base,
-            desc_b0_base,
-            desc_a1_base,
-            desc_b1_base,
-            desc_a0_step,
-            desc_b0_step,
-            desc_a1_step,
-            desc_b1_step,
-            trip_count,
-        ]);
+        operands.extend(desc_bases);
+        operands.extend(desc_steps);
+        operands.push(trip_count);
 
-        Operation::new(
+        let op = Operation::new(
             ctx,
             Self::get_concrete_op_info(),
-            vec![f32_ty.into(); WGMMA_COUNTED_PIPELINE_ACCUMULATOR_COUNT],
+            vec![f32_ty.into(); result_count],
             operands,
             vec![],
             0,
-        )
+        );
+        Self::new(op)
+            .set_attr_counted_max_pending_groups(ctx, WgmmaMaxPendingAttr(max_pending_groups));
+        op
+    }
+
+    /// Return the statically known `wait_group<N>` bound.
+    pub fn max_pending_groups(&self, ctx: &Context) -> Option<u8> {
+        self.get_attr_counted_max_pending_groups(ctx)
+            .map(|attribute| attribute.0)
     }
 }
 
 impl Verify for WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = self.get_operation().deref(ctx);
-        let expected_operands =
-            WGMMA_COUNTED_PIPELINE_ACCUMULATOR_COUNT + WGMMA_COUNTED_PIPELINE_CONTROL_COUNT;
+        let Some(max_pending_attr) = self.get_attr_counted_max_pending_groups(ctx) else {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_loop_pipeline_values_m64n64k16_f32_bf16 requires an nvvm.wgmma_max_pending_groups attribute"
+            );
+        };
+        max_pending_attr.verify(ctx)?;
+        let max_pending_groups = max_pending_attr.0;
+        drop(max_pending_attr);
+
+        if max_pending_groups > WGMMA_COUNTED_PIPELINE_MAX_PENDING_GROUPS {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_loop_pipeline_values_m64n64k16_f32_bf16 supports only max_pending_groups 1 or 2"
+            );
+        }
+
+        let slot_count = usize::from(max_pending_groups) + 1;
+        let expected_results = slot_count * WGMMA_M64N64_F32_ACCUMULATOR_COUNT;
+        let expected_controls = slot_count * 4 + 1;
+        let expected_operands = expected_results + expected_controls;
 
         if op.get_num_operands() != expected_operands {
             return verify_err!(
                 op.loc(),
-                "nvvm.wgmma_mma_loop_pipeline_values_m64n64k16_f32_bf16 requires 64 f32 accumulators and exactly nine u64 loop-control operands"
+                "nvvm.wgmma_mma_loop_pipeline_values_m64n64k16_f32_bf16 requires {} f32 accumulators and exactly {} u64 loop-control operands",
+                expected_results,
+                expected_controls
             );
         }
-        if op.get_num_results() != WGMMA_COUNTED_PIPELINE_ACCUMULATOR_COUNT {
+        if op.get_num_results() != expected_results {
             return verify_err!(
                 op.loc(),
-                "nvvm.wgmma_mma_loop_pipeline_values_m64n64k16_f32_bf16 requires exactly 64 f32 results"
+                "nvvm.wgmma_mma_loop_pipeline_values_m64n64k16_f32_bf16 requires exactly {} f32 results",
+                expected_results
             );
         }
 
-        for accumulator_index in 0..WGMMA_COUNTED_PIPELINE_ACCUMULATOR_COUNT {
+        for accumulator_index in 0..expected_results {
             if !is_f32(ctx, op.get_operand(accumulator_index).get_type(ctx))
                 || !is_f32(ctx, op.get_result(accumulator_index).get_type(ctx))
             {
@@ -559,7 +742,7 @@ impl Verify for WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op {
             }
         }
 
-        for control_index in WGMMA_COUNTED_PIPELINE_ACCUMULATOR_COUNT..expected_operands {
+        for control_index in expected_results..expected_operands {
             if !is_u64(ctx, op.get_operand(control_index).get_type(ctx)) {
                 return verify_err!(
                     op.loc(),
@@ -572,8 +755,8 @@ impl Verify for WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op {
     }
 }
 
-/// The statically known `wait_group<N>` bound carried by a
-/// [`WgmmaMmaPipelineValuesM64N64K16F32Bf16Op`].
+/// The statically known `wait_group<N>` bound carried by value-form WGMMA
+/// pipeline operations.
 ///
 /// PTX `wgmma.wait_group.sync.aligned N;` throttles at most `N` pending
 /// groups, with `N` in `1..=7` for a partial wait. `0` is the full drain the
@@ -739,8 +922,10 @@ pub(super) fn register(ctx: &mut Context) {
 
     WgmmaMakeSmemDescOp::register(ctx);
     WgmmaMmaM64N64K16F32Bf16Op::register(ctx);
+    WgmmaMmaM64N64K16F32F16Op::register(ctx);
     WgmmaMmaGroupM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaGroupValuesM64N64K16F32Bf16Op::register(ctx);
+    WgmmaMmaGroupValuesM64N64K16F32F16Op::register(ctx);
     WgmmaMmaLoopValuesM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaPipelineValuesM64N64K16F32Bf16Op::register(ctx);

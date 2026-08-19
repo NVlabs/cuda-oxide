@@ -27,11 +27,29 @@ The crate is organized around a single idea: GPU work is described lazily, sched
 
 A lazy, composable unit of GPU work. Implements `Send + Sized + IntoFuture`. Key methods:
 
-| Method              | Stream chosen by                      | Blocks thread? |
-|---------------------|---------------------------------------|----------------|
-| `.await`            | Default device's `SchedulingPolicy`   | No (suspends)  |
-| `.sync()`           | Default device's `SchedulingPolicy`   | Yes            |
-| `.sync_on(&stream)` | The explicit stream you provide       | Yes            |
+| Method                | Stream chosen by                      | Blocks thread? | `unsafe`? |
+|-----------------------|---------------------------------------|----------------|-----------|
+| `.schedule(&policy)`  | The policy you pass                   | No (returns a `DeviceFuture`) | No |
+| `.await`              | Default device's `SchedulingPolicy`   | No (suspends)  | No        |
+| `.sync()`             | Default device's `SchedulingPolicy`   | Yes            | No        |
+| `.sync_on(&stream)`   | The explicit stream you provide       | Yes            | No        |
+| `.async_on(&stream)`  | The explicit stream you provide       | No             | **Yes**   |
+
+`.async_on` is the only `unsafe` method here, and the only one that returns
+while the GPU may still be working. It launches the work and never
+synchronizes. Until you synchronize the stream yourself, every buffer the
+operation touches must stay alive, and its outputs must not be read. Each of
+the other four ties its result to completion: `.sync` and `.sync_on` block,
+`.await` suspends until the `cuLaunchHostFunc` callback below fires, and
+`.schedule` hands back a `DeviceFuture` that does the same when awaited.
+(`DeviceOperation::execute` is `unsafe` too, but it is the primitive those four
+are built from rather than something to call directly.)
+
+```rust
+// SAFETY: `c_dev` stays alive and unread until the synchronize below.
+let out = unsafe { op.async_on(&stream)? };
+stream.synchronize()?; // now the outputs are safe to read
+```
 
 Combinators: `.and_then(f)`, `.and_then_with_context(f)`, `.arc()`, `zip!(a, b)`, `unzip!(op)`.
 

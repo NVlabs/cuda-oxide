@@ -46,6 +46,39 @@
 
 - *cooperative_groups* also features support for warp/block reductions and scans
 
+### The remaining public modules
+
+The table above covers the most-used modules, but it is not the whole crate.
+The remaining public modules are below. There is no GPU column here because
+the minimum architecture varies per function, not per module. `int`, for
+example, has plain scalar min/max that runs anywhere, plus `min.relu.s32`
+which needs `sm_90+`. Each function's rustdoc states its own requirement.
+
+| Module       | Description                                                                     |
+|--------------|---------------------------------------------------------------------------------|
+| `access`     | Choosing a tile shape from a target memory transaction width.                   |
+| `async_copy` | Classic global-to-shared asynchronous copy intrinsics                           |
+| `bf16`       | Scalar `bf16` min/max; each value is the `u16` bit pattern of one bfloat16       |
+| `bf16x2`     | Packed `bf16x2` arithmetic; two values per `u32`, the first in the low 16 bits   |
+| `constant`   | `ConstantMemory<T>` -- module-scope statics in PTX `.const` (address space 4)    |
+| `convert`    | PTX type-conversion instructions                                                |
+| `dotprod`    | Integer dot products: `dp4a` (packed bytes) and `dp2a` (packed halves)           |
+| `f16`        | Scalar `f16` min/max; each value is the `u16` bit pattern of one IEEE half       |
+| `f16x2`      | Packed `f16x2` arithmetic; two values per `u32`, the first in the low 16 bits    |
+| `f32x2`      | Native SM100 two-lane `f32` arithmetic, each pair carried in a `u64`            |
+| `float`      | Scalar floating-point intrinsics                                                |
+| `i16x2`      | Packed 16-bit integer min/max; two values per `u32`, the first in the low bits   |
+| `iket`       | Semantic annotations for In-Kernel Event Tracing; compiler markers behind macros |
+| `int`        | Scalar integer intrinsics, including the `sm_90+` `min.relu.s32`/`max.relu.s32`  |
+| `mma_frag`   | Fragment index algebra for the `m16n8k16` tensor-core accumulator                |
+| `prmt`       | Byte permutation intrinsics                                                     |
+| `ptx`        | Inline PTX support; user code goes through `ptx_asm!`, not this module directly  |
+| `swizzle`    | XOR swizzles for shared memory, and the bank-conflict arithmetic to pick one     |
+| `uniform`    | Launch-uniform scalar witnesses for APIs needing a value identical in every thread|
+| `vector`     | Over-aligned element types, and a checked way to view a flat slice as them       |
+| `view`       | Checked-once views for 32-bit kernel indexing, backed by a launch contract       |
+| `wmma`       | Warp-level matrix ops: `movmatrix`, `mma.sync`, and cooperative `ldmatrix` loads |
+
 ## Key Types
 
 ### `ThreadIndex<'kernel, IndexSpace>` and `DisjointSlice<T, IndexSpace>`

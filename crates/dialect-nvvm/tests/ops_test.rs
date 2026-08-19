@@ -38,8 +38,9 @@ use dialect_nvvm::ops::{
     ThreadfenceOp, ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp,
     VoteSyncUniOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMaxPendingAttr,
     WgmmaMmaGroupM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32Bf16Op,
-    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaGroupValuesM64N64K16F32F16Op, WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
+    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
 
 #[test]
@@ -89,8 +90,10 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("memory.rs", "CvtaGenericToSharedOffsetOp"),
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),
         ("wgmma.rs", "WgmmaMmaM64N64K16F32Bf16Op"),
+        ("wgmma.rs", "WgmmaMmaM64N64K16F32F16Op"),
         ("wgmma.rs", "WgmmaMmaGroupM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaGroupValuesM64N64K16F32Bf16Op"),
+        ("wgmma.rs", "WgmmaMmaGroupValuesM64N64K16F32F16Op"),
         ("wgmma.rs", "WgmmaMmaLoopValuesM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaPipelineValuesM64N64K16F32Bf16Op"),
@@ -4641,6 +4644,85 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
             .is_err()
     );
 
+    let f16_mma = Operation::new(
+        &mut ctx,
+        WgmmaMmaM64N64K16F32F16Op::get_concrete_op_info(),
+        vec![],
+        vec![accumulator_pointer, u64_value, u64_value],
+        vec![],
+        0,
+    );
+    assert!(WgmmaMmaM64N64K16F32F16Op::new(f16_mma).verify(&ctx).is_ok());
+    for operands in [
+        vec![pointer, u64_value, u64_value],
+        vec![mutable_global_pointer, u64_value, u64_value],
+        vec![accumulator_pointer, u32_value, u64_value],
+    ] {
+        let invalid = Operation::new(
+            &mut ctx,
+            WgmmaMmaM64N64K16F32F16Op::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![],
+            0,
+        );
+        assert!(
+            WgmmaMmaM64N64K16F32F16Op::new(invalid)
+                .verify(&ctx)
+                .is_err()
+        );
+    }
+
+    let f16_value_group = WgmmaMmaGroupValuesM64N64K16F32F16Op::build(
+        &mut ctx,
+        vec![f32_value; 32],
+        vec![u64_value, u64_value],
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32F16Op::new(f16_value_group)
+            .verify(&ctx)
+            .is_ok()
+    );
+
+    let f16_too_few_accumulators = WgmmaMmaGroupValuesM64N64K16F32F16Op::build(
+        &mut ctx,
+        vec![f32_value; 31],
+        vec![u64_value, u64_value],
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32F16Op::new(f16_too_few_accumulators)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let f16_incomplete_descriptor_pair = WgmmaMmaGroupValuesM64N64K16F32F16Op::build(
+        &mut ctx,
+        vec![f32_value; 32],
+        vec![u64_value, u64_value, u64_value],
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32F16Op::new(f16_incomplete_descriptor_pair)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let mut f16_wrong_accumulator_operands = vec![f32_value; 32];
+    f16_wrong_accumulator_operands[0] = u32_value;
+    f16_wrong_accumulator_operands.extend([u64_value, u64_value]);
+    let f16_wrong_accumulator = Operation::new(
+        &mut ctx,
+        WgmmaMmaGroupValuesM64N64K16F32F16Op::get_concrete_op_info(),
+        vec![f32_ty.into(); 32],
+        f16_wrong_accumulator_operands,
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N64K16F32F16Op::new(f16_wrong_accumulator)
+            .verify(&ctx)
+            .is_err()
+    );
+
     let loop_group = WgmmaMmaLoopValuesM64N64K16F32Bf16Op::build(
         &mut ctx,
         vec![f32_value; 32],
@@ -4728,58 +4810,91 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     let counted_pipeline_group = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
         &mut ctx,
         vec![f32_value; 64],
+        vec![u64_value; 4],
+        vec![u64_value; 4],
         u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
+        1,
     );
     {
         let counted_pipeline_ref = counted_pipeline_group.deref(&ctx);
         assert_eq!(counted_pipeline_ref.get_num_operands(), 73);
         assert_eq!(counted_pipeline_ref.get_num_results(), 64);
     }
-    assert!(
-        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(counted_pipeline_group)
-            .verify(&ctx)
-            .is_ok()
-    );
+    let counted_pipeline =
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(counted_pipeline_group);
+    assert_eq!(counted_pipeline.max_pending_groups(&ctx), Some(1));
+    assert!(counted_pipeline.verify(&ctx).is_ok());
 
-    let too_few_counted_pipeline_accumulators = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
+    let three_slot_counted_pipeline = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
         &mut ctx,
-        vec![f32_value; 63],
+        vec![f32_value; 96],
+        vec![u64_value; 6],
+        vec![u64_value; 6],
         u64_value,
+        2,
+    );
+    {
+        let counted_pipeline_ref = three_slot_counted_pipeline.deref(&ctx);
+        assert_eq!(counted_pipeline_ref.get_num_operands(), 109);
+        assert_eq!(counted_pipeline_ref.get_num_results(), 96);
+    }
+    let three_slot_counted_pipeline =
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(three_slot_counted_pipeline);
+    assert_eq!(
+        three_slot_counted_pipeline.max_pending_groups(&ctx),
+        Some(2)
+    );
+    assert!(three_slot_counted_pipeline.verify(&ctx).is_ok());
+
+    let too_many_accumulators_for_wait_one = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 96],
+        vec![u64_value; 4],
+        vec![u64_value; 4],
         u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
-        u64_value,
+        1,
     );
     assert!(
-        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(too_few_counted_pipeline_accumulators)
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(too_many_accumulators_for_wait_one)
             .verify(&ctx)
             .is_err()
     );
 
-    let mut wrong_counted_pipeline_control_operands = vec![f32_value; 64];
-    wrong_counted_pipeline_control_operands.extend([
-        u64_value, u64_value, u64_value, u64_value, u64_value, u64_value, u32_value, u64_value,
-        u64_value,
-    ]);
-    let wrong_counted_pipeline_control = Operation::new(
+    let too_few_accumulators_for_wait_two = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
         &mut ctx,
-        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::get_concrete_op_info(),
-        vec![f32_ty.into(); 64],
-        wrong_counted_pipeline_control_operands,
-        vec![],
-        0,
+        vec![f32_value; 64],
+        vec![u64_value; 6],
+        vec![u64_value; 6],
+        u64_value,
+        2,
+    );
+    assert!(
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(too_few_accumulators_for_wait_two)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let unsupported_wait_three = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 128],
+        vec![u64_value; 8],
+        vec![u64_value; 8],
+        u64_value,
+        3,
+    );
+    assert!(
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(unsupported_wait_three)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let wrong_counted_pipeline_control = WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 64],
+        vec![u64_value; 4],
+        vec![u64_value, u64_value, u32_value, u64_value],
+        u64_value,
+        1,
     );
     assert!(
         WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(wrong_counted_pipeline_control)
@@ -4797,11 +4912,11 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
         vec![],
         0,
     );
-    assert!(
-        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(wrong_counted_pipeline_result_count)
-            .verify(&ctx)
-            .is_err()
-    );
+    let wrong_counted_pipeline_result_count =
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(wrong_counted_pipeline_result_count);
+    wrong_counted_pipeline_result_count
+        .set_attr_counted_max_pending_groups(&ctx, WgmmaMaxPendingAttr(1));
+    assert!(wrong_counted_pipeline_result_count.verify(&ctx).is_err());
 
     let mut wrong_counted_pipeline_result_types = vec![f32_ty.into(); 64];
     wrong_counted_pipeline_result_types[0] = u32_ty.into();
@@ -4813,11 +4928,11 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
         vec![],
         0,
     );
-    assert!(
-        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(wrong_counted_pipeline_result_type)
-            .verify(&ctx)
-            .is_err()
-    );
+    let wrong_counted_pipeline_result_type =
+        WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::new(wrong_counted_pipeline_result_type);
+    wrong_counted_pipeline_result_type
+        .set_attr_counted_max_pending_groups(&ctx, WgmmaMaxPendingAttr(1));
+    assert!(wrong_counted_pipeline_result_type.verify(&ctx).is_err());
 
     let pipeline_group = WgmmaMmaPipelineValuesM64N64K16F32Bf16Op::build(
         &mut ctx,

@@ -4021,11 +4021,16 @@ pub fn codegen_debug(
 // Fmt command
 // =============================================================================
 
-/// Format (or check formatting of) all crates in the workspace.
+/// Format (or check formatting of) every scope the `fmt` CI gate checks.
 ///
-/// Runs `cargo fmt --all` in three scopes: root workspace, codegen backend
-/// crate, and every example that has a `Cargo.toml`. In `check` mode,
-/// reports which files need formatting without modifying them.
+/// `.github/workflows/fmt.yml` checks four: the root workspace, the codegen
+/// backend crate, the cuda-macros device-only fixture, and every `Cargo.toml`
+/// under `examples/`, nested ones included. This mirrors that set on purpose --
+/// the reason CONTRIBUTING tells contributors to prefer this command over a
+/// bare `cargo fmt` is so the gate cannot fail on code they had no way to
+/// format, which only holds while the two cover the same ground.
+///
+/// In `check` mode, reports which files need formatting without modifying them.
 pub fn format_all(ctx: &Context, check: bool) {
     let mode = if check { "Checking" } else { "Formatting" };
     let mut failed = false;
@@ -4040,22 +4045,44 @@ pub fn format_all(ctx: &Context, check: bool) {
         failed = true;
     }
 
-    if let Ok(entries) = std::fs::read_dir(&ctx.examples_dir) {
-        let mut examples: Vec<_> = entries.flatten().filter(|e| e.path().is_dir()).collect();
-        examples.sort_by_key(|e| e.file_name());
+    // Its own `[workspace]`, so neither run above reaches it and the examples
+    // walk below never sees it either. The gate carries a dedicated step for
+    // exactly this reason.
+    let fixture = ctx
+        .workspace_root
+        .join("crates")
+        .join("cuda-macros")
+        .join("tests")
+        .join("device-only");
+    if fixture.join("Cargo.toml").is_file() {
+        println!("📦 {} cuda-macros device-only fixture...", mode);
+        if !run_cargo_fmt(&fixture, check) {
+            failed = true;
+        }
+    }
 
-        for entry in examples {
-            let example_name = entry.file_name();
-            let example_path = entry.path();
+    // One `--manifest-path` run per manifest found, rather than `cargo fmt
+    // --all` once per top-level example directory. Both reasons match the gate:
+    //
+    //   * `--all` stops at a nested `[workspace]` boundary, and two examples
+    //     declare one (`cutile_inter_kernel/simt`,
+    //     `interop_cubin_identity/device`), so neither was ever formatted here.
+    //   * `--all` also formats an example's path dependencies, which means
+    //     re-formatting the large shared workspaces once per example.
+    let mut manifests = Vec::new();
+    collect_example_manifests(&ctx.examples_dir, &mut manifests);
+    manifests.sort();
 
-            if !example_path.join("Cargo.toml").exists() {
-                continue;
-            }
-
-            println!("📦 {} example: {}...", mode, example_name.to_string_lossy());
-            if !run_cargo_fmt(&example_path, check) {
-                failed = true;
-            }
+    for manifest in &manifests {
+        let label = manifest
+            .parent()
+            .and_then(|dir| dir.strip_prefix(&ctx.examples_dir).ok())
+            .unwrap_or(Path::new("."))
+            .display()
+            .to_string();
+        println!("📦 {} example: {}...", mode, label);
+        if !run_cargo_fmt_manifest(manifest, check) {
+            failed = true;
         }
     }
 
@@ -4087,12 +4114,61 @@ fn run_cargo_fmt(dir: &Path, check: bool) -> bool {
         cmd.arg("--check");
     }
 
+    run_fmt_command(cmd)
+}
+
+/// Run `cargo fmt` for one manifest. Returns `true` on success.
+///
+/// No `--all`: the caller walks every manifest, so a workspace member is
+/// visited through its own manifest rather than through its parent's.
+fn run_cargo_fmt_manifest(manifest: &Path, check: bool) -> bool {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("fmt").arg("--manifest-path").arg(manifest);
+
+    if check {
+        cmd.arg("--check");
+    }
+
+    run_fmt_command(cmd)
+}
+
+fn run_fmt_command(mut cmd: Command) -> bool {
     match cmd.status() {
         Ok(status) => status.success(),
         Err(e) => {
             eprintln!("  Failed to run cargo fmt: {}", e);
             false
         }
+    }
+}
+
+/// Collect every `Cargo.toml` under `dir`, recursively.
+///
+/// Mirrors the gate's `examples/**/Cargo.toml` glob, with one difference that
+/// only matters off CI: `target` directories are skipped. A fresh checkout has
+/// none, but a working tree does, and a packaged or vendored manifest under one
+/// is not a crate this repository formats.
+fn collect_example_manifests(dir: &Path, out: &mut Vec<PathBuf>) {
+    let manifest = dir.join("Cargo.toml");
+    if manifest.is_file() {
+        out.push(manifest);
+    }
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == "target" || name.starts_with('.') {
+            continue;
+        }
+        collect_example_manifests(&path, out);
     }
 }
 
@@ -7055,6 +7131,65 @@ mod tests {
             .expect("system time before unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), unique))
+    }
+
+    /// The examples walk backing `cargo oxide fmt` must reach nested manifests
+    /// and skip build directories.
+    ///
+    /// The gate's glob is `examples/**/Cargo.toml`, so a nested manifest is a
+    /// scope of its own; the loop this replaced read only the first level, which
+    /// is how `cutile_inter_kernel/simt` and `interop_cubin_identity/device`
+    /// went unformatted. `target` is skipped because a working tree has one and
+    /// a packaged manifest under it is not a crate this repository formats.
+    #[test]
+    fn collect_example_manifests_reaches_nested_and_skips_target() {
+        let root = unique_temp_dir("cargo_oxide_fmt_walk");
+        let write = |rel: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "[package]\nname = \"x\"\n").unwrap();
+        };
+
+        write("plain/Cargo.toml");
+        write("with_member/Cargo.toml");
+        write("with_member/kernel-lib/Cargo.toml");
+        write("own_workspace/Cargo.toml");
+        write("own_workspace/simt/Cargo.toml");
+        write("built/Cargo.toml");
+        write("built/target/package/vendored/Cargo.toml");
+        write(".hidden/Cargo.toml");
+        std::fs::create_dir_all(root.join("no_manifest_here")).unwrap();
+
+        let mut found = Vec::new();
+        collect_example_manifests(&root, &mut found);
+        let mut got: Vec<String> = found
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace(std::path::MAIN_SEPARATOR, "/")
+            })
+            .collect();
+        got.sort();
+
+        assert_eq!(
+            got,
+            vec![
+                // `built` itself is a real example; only the manifest inside
+                // its `target/` is skipped.
+                "built/Cargo.toml",
+                "own_workspace/Cargo.toml",
+                "own_workspace/simt/Cargo.toml",
+                "plain/Cargo.toml",
+                "with_member/Cargo.toml",
+                "with_member/kernel-lib/Cargo.toml",
+            ],
+            "expected both nested manifests, and neither the one under target/ \
+             nor the one in a dot directory"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn test_materializer_handshake() -> cuda_artifact_finalizer::MaterializerHandshakeV1 {

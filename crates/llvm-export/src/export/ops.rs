@@ -827,11 +827,14 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
-    fn debug_expression_for_static_offset(offset_bytes: u64) -> String {
-        if offset_bytes == 0 {
-            "!DIExpression()".to_string()
-        } else {
-            format!("!DIExpression(DW_OP_plus_uconst, {offset_bytes})")
+    fn debug_expression_for_projection(dereference_base: bool, offset_bytes: u64) -> String {
+        match (dereference_base, offset_bytes) {
+            (false, 0) => "!DIExpression()".to_string(),
+            (false, offset) => format!("!DIExpression(DW_OP_plus_uconst, {offset})"),
+            (true, 0) => "!DIExpression(DW_OP_deref)".to_string(),
+            (true, offset) => {
+                format!("!DIExpression(DW_OP_deref, DW_OP_plus_uconst, {offset})")
+            }
         }
     }
 
@@ -874,7 +877,10 @@ impl<'a> ModuleExportState<'a> {
             else {
                 continue;
             };
-            let expression = Self::debug_expression_for_static_offset(projected.offset_bytes);
+            let expression = Self::debug_expression_for_projection(
+                projected.dereference_base,
+                projected.offset_bytes,
+            );
             writeln!(
                 output,
                 "  call void @llvm.dbg.declare(metadata ptr {alloca_name}, metadata !{var_id}, metadata {expression}), !dbg !{loc_id}"
