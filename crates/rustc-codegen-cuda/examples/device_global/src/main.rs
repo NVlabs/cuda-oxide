@@ -365,8 +365,8 @@ fn main() {
         std::process::exit(1);
     }
 
-    let union_relocation_out_dev =
-        DeviceBuffer::<u32>::zeroed(&stream, 1).expect("Failed to allocate union relocation output");
+    let union_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 1)
+        .expect("Failed to allocate union relocation output");
 
     unsafe {
         module.union_static_initializer_relocation(
