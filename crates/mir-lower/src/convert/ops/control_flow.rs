@@ -23,6 +23,8 @@
 //! With `DialectConversion` + `inline_region`, blocks are the ORIGINALS (moved,
 //! not copied). Successor pointers are already valid — no block map lookup needed.
 
+use crate::convert::target_stable_storage::coerce_target_stable_value;
+use crate::convert::types::packed_shared_internal_abi_info;
 use dialect_mir::types::MirStructType;
 use llvm_export::ops as llvm;
 use pliron::basic_block::BasicBlock;
@@ -79,13 +81,36 @@ pub(crate) fn convert_return(
                 }
                 Some(scalar)
             } else {
-                let ty = val.get_type(ctx);
-                if ty.deref(ctx).is::<llvm_export::types::VoidType>()
-                    || crate::convert::types::is_zero_sized_type(ctx, ty)
-                {
-                    None
+                let packed_shared_abi = if let Some(mir_ty) = mir_ty {
+                    match packed_shared_internal_abi_info(ctx, mir_ty) {
+                        Ok(abi) => abi,
+                        Err(error) => {
+                            return pliron::input_err_noloc!(
+                                "failed to lower packed shared internal return ABI: {error}"
+                            );
+                        }
+                    }
                 } else {
-                    Some(*val)
+                    None
+                };
+
+                if let Some(abi) = packed_shared_abi {
+                    Some(coerce_target_stable_value(
+                        ctx,
+                        rewriter,
+                        *val,
+                        abi.storage_ty,
+                        "packed shared internal ABI",
+                    )?)
+                } else {
+                    let ty = val.get_type(ctx);
+                    if ty.deref(ctx).is::<llvm_export::types::VoidType>()
+                        || crate::convert::types::is_zero_sized_type(ctx, ty)
+                    {
+                        None
+                    } else {
+                        Some(*val)
+                    }
                 }
             }
         }

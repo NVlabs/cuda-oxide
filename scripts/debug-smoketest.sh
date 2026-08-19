@@ -12,11 +12,13 @@
 # metadata in the emitted IR.
 #
 # For compiler_features, dedicated debugger passes additionally validate
-# closure-environment, Rust-enum, static-projection, and dereference-projection
-# DWARF. The closure pass checks that both captures are inspectable; the enum pass
-# checks direct-tag and niche-layout values; the static projection pass checks
-# struct/tuple fields and a fixed-array constant index; the dereference pass checks
-# a thin reference directly and through a static field.
+# closure-environment, Rust-enum, static-projection, enum-projection, and
+# dereference-projection DWARF. The closure pass checks that both captures are
+# inspectable; the enum pass checks direct-tag and niche-layout values; the
+# static projection pass checks struct/tuple fields and a fixed-array constant
+# index; the enum-projection pass checks a Downcast -> Field payload binding;
+# the dereference pass checks a thin reference directly and through a static
+# field.
 #
 # This complements scripts/smoketest.sh (which validates the compile pipeline)
 # by validating debugger *consumption* of the DWARF we emit.
@@ -73,8 +75,9 @@ GDB_LOG="$(mktemp)"
 CLOSURE_GDB_LOG="$(mktemp)"
 ENUM_GDB_LOG="$(mktemp)"
 PROJECTION_GDB_LOG="$(mktemp)"
+ENUM_PROJECTION_GDB_LOG="$(mktemp)"
 DEREF_GDB_LOG="$(mktemp)"
-trap 'rm -f "$GDB_LOG" "$CLOSURE_GDB_LOG" "$ENUM_GDB_LOG" "$PROJECTION_GDB_LOG" "$DEREF_GDB_LOG"' EXIT
+trap 'rm -f "$GDB_LOG" "$CLOSURE_GDB_LOG" "$ENUM_GDB_LOG" "$PROJECTION_GDB_LOG" "$ENUM_PROJECTION_GDB_LOG" "$DEREF_GDB_LOG"' EXIT
 
 # Run from the example dir: the host binary resolves its embedded device
 # artifact relative to the working directory.
@@ -174,6 +177,34 @@ if [ "$EXAMPLE" = "compiler_features" ]; then
         grep -qiE "INVALID_PTX|JIT compilation failed|No device code" "$ENUM_GDB_LOG" && { echo "debug-smoketest: FAIL (enum-debug PTX did not load under cuda-gdb)"; fail=1; }
     fi
 
+    ENUM_PROJECTION_MARKER="CUDA_OXIDE_DEBUG_ENUM_PROJECTION_BREAKPOINT"
+    ENUM_PROJECTION_LINE="$(grep -nF "$ENUM_PROJECTION_MARKER" "$DEBUG_SOURCE" | head -1 | cut -d: -f1)"
+
+    if [ -z "$ENUM_PROJECTION_LINE" ]; then
+        echo "debug-smoketest: FAIL (enum projection debug breakpoint marker not found)"
+        fail=1
+    else
+        ( cd "$EXAMPLE_DIR" && timeout 300 "$CUDA_GDB" --batch \
+            -ex 'set pagination off' \
+            -ex 'set breakpoint pending on' \
+            -ex "break $DEBUG_SOURCE:$ENUM_PROJECTION_LINE" \
+            -ex 'run' \
+            -ex 'frame 0' \
+            -ex 'ptype projected_enum_payload' \
+            -ex 'print projected_enum_payload' \
+            -ex 'backtrace' \
+            -ex 'kill' \
+            "./target/release/$EXAMPLE" ) >"$ENUM_PROJECTION_GDB_LOG" 2>&1
+
+        echo "----- cuda-gdb enum projection output (tail) -----"
+        tail -25 "$ENUM_PROJECTION_GDB_LOG"
+        echo "--------------------------------------------------"
+
+        grep -qiE "CUDA thread hit .*Breakpoint" "$ENUM_PROJECTION_GDB_LOG" || { echo "debug-smoketest: FAIL (enum projection source breakpoint did not hit)"; fail=1; }
+        grep -qE '\$[0-9]+ = 8589934603([[:space:]]|$)' "$ENUM_PROJECTION_GDB_LOG" || { echo "debug-smoketest: FAIL (enum Downcast -> Field payload binding is not inspectable)"; fail=1; }
+        grep -qiE "INVALID_PTX|JIT compilation failed|No device code" "$ENUM_PROJECTION_GDB_LOG" && { echo "debug-smoketest: FAIL (enum-projection debug PTX did not load under cuda-gdb)"; fail=1; }
+    fi
+
     PROJECTION_MARKER="CUDA_OXIDE_DEBUG_PROJECTION_BREAKPOINT"
     PROJECTION_LINE="$(grep -nF "$PROJECTION_MARKER" "$DEBUG_SOURCE" | head -1 | cut -d: -f1)"
 
@@ -242,7 +273,7 @@ fi
 
 if [ "$fail" -eq 0 ]; then
     if [ "$EXAMPLE" = "compiler_features" ]; then
-        echo "debug-smoketest: PASS (source debugging + closure environments + Rust enums + static/dereference projections verified on $ARCH)"
+        echo "debug-smoketest: PASS (source debugging + closure environments + Rust enums + static, enum payload, and dereference projections verified on $ARCH)"
     else
         echo "debug-smoketest: PASS (source debugging + info args/locals verified on $ARCH)"
     fi

@@ -49,34 +49,54 @@ layout-exact union type. This includes direct unions, unions nested in tuple or
 struct constants, runtime-indexed `[U; N]`, and `MaybeUninit<T>` constants.
 Bare arrays whose elements are recursively promotable structs use the same
 immutable-device-global path as scalar and tuple tables, avoiding a per-thread
-local table copy for read-only uses. Pointer-to-array constants such as
-`const R: &[Struct; N] = &TABLE` use the same promoted global when every struct
-field is recursively promotable and the converted storage size matches rustc's
-layout. Zero-byte over-aligned struct leaves (for example, `repr(align(N))` ZSTs)
-remain on the existing alignment-sensitive value path instead of this promotion
-path. Arrays of packed structs whose element stride diverges from LLVM's natural
-layout remain unsupported as described above.
-Thin pointer fields in array, tuple, and struct **const** values that relocate
-to device statics are materialized via `MirGlobalAllocOp` per field, including
-non-zero byte addends into a static (see `struct_constant_provenance`,
-`tuple_constant_provenance`, `tuple_array_provenance`). Slice fat-pointer fields
-in aggregate constants are also supported when their data pointer relocates to
-a device static and the pointee is a same-element array-to-slice view. Their
-literal `usize` length metadata is decoded independently, including non-zero
-static byte addends and nested aggregate field offsets. Thin-pointer-only
-union constants preserve the same relocation provenance, including non-zero
-addends, by reconstructing one typed pointer carrier instead of transmuting
-placeholder bytes. Pointer/integer overlapping unions, fat or nested pointer
-storage in unions, over-aligned/padded pointer unions, unsupported fat-pointer
-metadata, pointer-to-array union constants (`&[U; N]`), and pointer
-relocations in device-global union initializers remain rejected.
+local table copy for read-only uses. This promotion also admits supported thin
+pointer/reference leaves. Their evaluated byte image remains byte-exact while
+pointer slots are preserved as symbolic device-global relocations, including
+non-zero byte addends into referenced device statics. Relocation targets are
+materialized explicitly, and promoted-global deduplication includes relocation
+identity as well as type and bytes so byte-identical tables that point at
+different statics cannot alias.
+
+Pointer-to-array constants such as `const R: &[Struct; N] = &TABLE` use the same
+promoted immutable global when every element is recursively promotable and the
+converted storage size matches rustc's layout. When the outer pointer selects a
+subrange of a backing allocation, relocation source offsets inside that range
+are rebased into the promoted initializer while preserving their target and
+addend. Unsupported bare array constants retain the existing element-wise
+fallback where available; pointer-to-array constants continue to fail closed
+when no correct fallback exists. Zero-byte over-aligned struct leaves (for
+example, `repr(align(N))` ZSTs) remain on the existing alignment-sensitive value
+path instead of this promotion path. Arrays of packed structs whose element
+stride diverges from LLVM's natural layout remain unsupported as described
+above.
+
+Thin pointer fields in array, tuple, and struct **const** values that do not take
+the immutable-table promotion path are materialized via `MirGlobalAllocOp` per
+field, including non-zero byte addends into a static (see
+`struct_constant_provenance`, `tuple_constant_provenance`,
+`tuple_array_provenance`). The `array_constants` regression also covers a
+promoted pointer-bearing tuple table with both a zero-addend static reference
+and a non-zero static-subobject addend, and verifies that optimized code does
+not retain a per-thread table depot.
+
+Slice fat-pointer fields in aggregate constants are also supported when their
+data pointer relocates to a device static and the pointee is a same-element
+array-to-slice view. Their literal `usize` length metadata is decoded
+independently, including non-zero static byte addends and nested aggregate field
+offsets. Thin-pointer-only union constants preserve the same relocation
+provenance, including non-zero addends, by reconstructing one typed pointer
+carrier instead of transmuting placeholder bytes. Pointer/integer overlapping
+unions, fat or nested pointer storage in unions, over-aligned/padded pointer
+unions, unsupported fat-pointer metadata, pointer-to-array union constants
+(`&[U; N]`), and pointer relocations in device-global union initializers remain
+rejected.
 
 Enum constants preserve payload relocations to device statics, including
 non-zero byte addends. This includes niche-encoded `Option<&T>` and
 direct-tagged enum layouts, both for direct thin-reference payloads and for
-pointers nested inside tuple, struct, or array payload fields. Anonymous
-promoted allocations remain unsupported, as does a relocation-carrying enum
-constant nested inside another constant's field.
+pointers nested inside tuple, struct, or array payload fields. Relocation-carrying
+enum constants can also be nested inside tuple, struct, and array constants.
+Anonymous promoted allocations remain unsupported.
 
 ## Compiler: Closures
 
@@ -140,7 +160,7 @@ constant nested inside another constant's field.
 | Local Clean | **Full** | `cargo oxide clean` removes project-local `target/` directories and generated device artifacts (`.ptx`, `.ll`, `.opt.ll`, `.ltoir`, `.cubin`, `.target`, `.options`, `.cubin.target`), never the shared `~/.cargo/cuda-oxide/` cache. |
 | Compute Sanitizer Wrapper | **Full** | `cargo oxide sanitize <example>` builds the example and runs the host binary under NVIDIA Compute Sanitizer (`memcheck`, `racecheck`, `initcheck`, or `synccheck`). |
 | cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug information on the PTX path and launches `cuda-gdb`. Legacy NVVM IR does not yet support debug metadata. |
-| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, structs/tuples/arrays, closure environments, and Rust enums with direct-tag or niche layouts, including active variants and payload fields. Static source projections through struct/tuple fields and fixed-array constant indices are described with address-offset DWARF expressions. A single dereference through a thin pointer/reference, optionally followed by static field projections, is also described with DWARF dereference/address-offset expressions. ABI-split bare slices, dereference-plus-index chains, repeated dereferences, runtime indices, subslices, and enum downcast projections are not yet described. |
+| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, structs/tuples/arrays, closure environments, and Rust enums with direct-tag or niche layouts, including active variants and payload fields. Static source projections through struct/tuple fields, fixed-array constant indices, and enum downcast payload fields are described with address-offset DWARF expressions. A single dereference through a thin pointer/reference, optionally followed by static field projections, is also described with DWARF dereference/address-offset expressions. ABI-split bare slices, dereference-plus-index and dereference-downcast chains, repeated dereferences, runtime indices, subslices, and composite fragments are not yet described. |
 
 ## Compiler: Inline PTX
 

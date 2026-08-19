@@ -28,6 +28,16 @@ jobs:
         run: cargo fmt --all -- --check
         working-directory: crates/rustc-codegen-cuda
 
+      # `crates/cuda-macros/tests/device-only` is a workspace of its own, so the
+      # root `cargo fmt --all` above stops at it, and the examples glob below
+      # only covers `examples/`. It is the fixture that proves the #701/#702
+      # device-only property, and `check-device-only-build.sh` runs `cargo check`
+      # on it but never rustfmt -- so unformatted code there has never failed
+      # anything.
+      - name: Check the cuda-macros device-only fixture formatting
+        run: cargo fmt --all -- --check
+        working-directory: crates/cuda-macros/tests/device-only
+
       - name: Check example crate formatting
         run: |
           set -euo pipefail

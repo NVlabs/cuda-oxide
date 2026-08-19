@@ -574,11 +574,13 @@ struct CollectedDebugLocals {
 /// Build full-debug bindings for whole locals and supported place projections.
 ///
 /// Whole-local records keep the existing path. A `VarDebugInfoContents::Place`
-/// can describe either a projection that stays inside the base local (`Field` and
-/// forward `ConstantIndex`) or one leading thin-pointer/reference `Deref` followed
-/// only by static `Field` projections. Dynamic indices, dereference-index chains,
-/// repeated dereferences, fat pointers, slices, enum downcasts, opaque casts, and
-/// composite fragments stay unsupported and are skipped rather than approximated.
+/// can describe a projection that stays inside the base local (`Field`, forward
+/// `ConstantIndex`, and enum `Downcast -> Field` elements, attached to the base
+/// local with its rustc-layout byte offset) or one leading thin-pointer/reference
+/// `Deref` followed only by static `Field` projections. Dynamic indices,
+/// dereference-index and dereference-downcast chains, repeated dereferences, fat
+/// pointers, slices, opaque casts, and composite fragments stay unsupported and
+/// are skipped rather than approximated.
 fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLocals {
     let mut collected = CollectedDebugLocals::default();
 
@@ -671,6 +673,7 @@ fn debug_projection(body: &mir::Body, place: &mir::Place) -> Option<ResolvedDebu
     let mut current_ty = body.local_decl(place.local)?.ty;
     let mut dereference_base = false;
     let mut offset_bytes = 0u64;
+    let mut enum_variant = None;
 
     for (index, elem) in place.projection.iter().enumerate() {
         match elem {
@@ -688,13 +691,39 @@ fn debug_projection(body: &mir::Body, place: &mir::Place) -> Option<ResolvedDebu
                 };
                 dereference_base = true;
             }
+            mir::ProjectionElem::Downcast(variant) => {
+                // Downcasts are supported only inside the base local: after a
+                // dereference the tested recipe allows static fields alone.
+                if enum_variant.is_some() || dereference_base {
+                    return None;
+                }
+                let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = current_ty.kind() else {
+                    return None;
+                };
+                if !matches!(adt_def.kind(), rustc_public::ty::AdtKind::Enum) {
+                    return None;
+                }
+                enum_variant = Some(variant.to_index());
+            }
             mir::ProjectionElem::Field(field_idx, field_ty) => {
                 let layout = current_ty.layout().ok()?;
                 let shape = layout.shape();
-                let rustc_public::abi::FieldsShape::Arbitrary { offsets } = &shape.fields else {
-                    return None;
+                let field_offset = if let Some(variant) = enum_variant.take() {
+                    crate::translator::layout::enum_variant_field_offsets(
+                        &shape,
+                        variant,
+                        pliron::location::Location::Unknown,
+                    )
+                    .ok()?
+                    .get(*field_idx)
+                    .copied()? as u64
+                } else {
+                    let rustc_public::abi::FieldsShape::Arbitrary { offsets } = &shape.fields
+                    else {
+                        return None;
+                    };
+                    offsets.get(*field_idx)?.bytes() as u64
                 };
-                let field_offset = offsets.get(*field_idx)?.bytes() as u64;
                 offset_bytes = offset_bytes.checked_add(field_offset)?;
                 current_ty = *field_ty;
             }
@@ -703,6 +732,9 @@ fn debug_projection(body: &mir::Body, place: &mir::Place) -> Option<ResolvedDebu
                 min_length: _,
                 from_end: false,
             } if !dereference_base => {
+                if enum_variant.is_some() {
+                    return None;
+                }
                 let layout = current_ty.layout().ok()?;
                 let shape = layout.shape();
                 let rustc_public::abi::FieldsShape::Array { stride, count } = &shape.fields else {
@@ -720,6 +752,10 @@ fn debug_projection(body: &mir::Body, place: &mir::Place) -> Option<ResolvedDebu
             }
             _ => return None,
         }
+    }
+
+    if enum_variant.is_some() {
+        return None;
     }
 
     Some(ResolvedDebugProjection {
