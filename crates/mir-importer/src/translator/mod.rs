@@ -19,6 +19,9 @@
 //! | [`rvalue`]     | Expression translation (binops, casts, etc.)      |
 //! | [`types`]      | Rust type → `dialect-mir` type conversion         |
 //! | [`values`]     | MIR local → alloca slot mapping                   |
+//! | [`layout`]     | Shared readers over rustc's aggregate layout       |
+//! | [`location`]   | Source-location helpers for MIR translation       |
+//! | [`payload_store`] | Enum-payload stores whose storage type differs  |
 //!
 //! # Translation Flow
 //!

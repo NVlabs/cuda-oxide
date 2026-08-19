@@ -76,6 +76,14 @@ repository's current Rust toolchain. The data word therefore relocates to
 `SLICE_TARGET + 8`, while the metadata word stores length `3`. The runtime
 regression verifies both the non-zero data-pointer addend and the slice length.
 
+A top-level union initializer is also supported when its complete storage is
+exactly one naturally aligned pointer word and every non-ZST union alternative
+is a representation-compatible thin pointer. The example initializes the union
+with `&UNION_RELOCATION_TARGETS[2]`, so the same check also covers an 8-byte
+non-zero target addend. Pointer/integer unions, fat or nested pointer storage,
+mixed pointer address spaces, nested unions, and padded, over-aligned, or
+under-aligned union storage remain fail-closed.
+
 Packed `repr(C, packed)` statics are also covered. When either the allocation
 alignment or a relocation's byte offset cannot satisfy the pointer carrier's
 natural alignment, cuda-oxide uses a packed LLVM struct only as the physical
@@ -94,6 +102,7 @@ The relocation coverage includes:
 - an interior pointer with a non-zero byte addend;
 - a slice fat-pointer initializer with a relocated data word and literal length metadata;
 - a non-zero slice data-pointer addend into the target static;
+- a top-level thin-pointer union occupying one pointer word;
 - packed/unaligned relocation slots, including literal prefix/suffix bytes;
 - targets reachable only through another static initializer;
 - modern opaque-pointer NVVM IR and legacy LLVM 7 typed-pointer NVVM IR.
@@ -139,8 +148,11 @@ The supported relocation scope is intentionally narrow: thin pointers and slice
 fat pointers whose data word targets another device static in global or constant
 memory, including zero and non-zero byte addends. For slices, the data word
 carries provenance while the length metadata remains literal initializer data.
-Anonymous promoted allocations, functions, vtables, trait-object metadata,
-other fat-pointer forms, and relocation targets outside device static storage
-remain fail-closed. Packed or otherwise unaligned thin-pointer slots are
-supported when the containing top-level struct has an explicit,
-non-overlapping rustc layout.
+A top-level union is admitted only when the complete union is one naturally
+aligned pointer word and every non-ZST alternative is a
+representation-compatible thin pointer. Anonymous promoted allocations,
+functions, vtables, trait-object metadata, other fat-pointer forms, unsized
+pointees, nested unions, pointer/integer unions, and relocation targets outside
+device static storage remain fail-closed. Packed or otherwise unaligned
+thin-pointer slots are supported when the containing top-level struct has an
+explicit, non-overlapping rustc layout.

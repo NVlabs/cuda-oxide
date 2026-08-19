@@ -42,6 +42,18 @@ static SLICE_RELOCATION_TARGET: SliceRelocationTarget = SliceRelocationTarget {
 };
 static SLICE_RELOCATION_VIEW: &[u32] = &SLICE_RELOCATION_TARGET.view;
 
+static UNION_RELOCATION_TARGETS: [u32; 3] = [7, 11, 23];
+
+#[repr(C)]
+union RelocatedPointerUnion {
+    word: &'static u32,
+    byte: &'static u8,
+}
+
+static UNION_RELOCATION: RelocatedPointerUnion = RelocatedPointerUnion {
+    word: &UNION_RELOCATION_TARGETS[2],
+};
+
 #[repr(C, packed)]
 struct PackedRelocation {
     tag: u8,
@@ -196,6 +208,15 @@ mod kernels {
             *out.add(0) = SLICE_RELOCATION_VIEW.len() as u32;
             *out.add(1) = SLICE_RELOCATION_VIEW[0];
             *out.add(2) = SLICE_RELOCATION_VIEW[2];
+        }
+    }
+
+    /// Read a top-level union whose complete static initializer is one
+    /// provenance-preserving pointer relocation with a non-zero target addend.
+    #[kernel]
+    pub unsafe fn union_static_initializer_relocation(out: *mut u32) {
+        unsafe {
+            *out = *UNION_RELOCATION.word;
         }
     }
 
@@ -397,6 +418,31 @@ fn main() {
         std::process::exit(1);
     }
 
+    let union_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 1)
+        .expect("Failed to allocate union relocation output");
+
+    unsafe {
+        module.union_static_initializer_relocation(
+            &stream,
+            LaunchConfig::for_num_elems(1),
+            union_relocation_out_dev.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Union static initializer relocation kernel launch failed");
+
+    let union_relocation_result = union_relocation_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy union relocation output")[0];
+
+    println!("Union static initializer relocation: result = {union_relocation_result}");
+
+    if union_relocation_result != 23 {
+        eprintln!(
+            "FAILED: expected union static initializer relocation 23, got {union_relocation_result}"
+        );
+        std::process::exit(1);
+    }
+
     let packed_relocation_out_dev = DeviceBuffer::<u32>::zeroed(&stream, 5)
         .expect("Failed to allocate packed relocation output");
 
@@ -447,6 +493,6 @@ fn main() {
     }
 
     println!(
-        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned and packed pointer relocations, slice relocations, pointer addends, and subobject addresses."
+        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned, packed, and union pointer relocations, slice relocations, pointer addends, and subobject addresses."
     );
 }

@@ -109,6 +109,24 @@ jobs:
       - name: Verify every device call the book shows resolves
         run: bash scripts/check-book-api-names.sh
 
+  # `unit-tests.yml`'s matrix is the only thing deciding which crates get
+  # `cargo test`, and a member missing from it fails nothing: the workflow is
+  # green, `just check` is green, and the tests never ran. #971 found four
+  # crates in that state holding 107 tests between them, two of them for
+  # months. The workflow's own "intentionally not in this matrix" comment
+  # reading as complete is what hid them.
+  test-matrix-coverage:
+    name: test-matrix coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads Cargo.toml, unit-tests.yml and the Justfile: no cargo, no network.
+      - name: Verify every workspace member is tested or declared untested
+        run: bash scripts/check-test-matrix-coverage.sh
+
   # #702 let a kernel-only crate drop the host surface (and with it `cuda.h`) via
   # `cuda-macros = { default-features = false }`, which is what #701 asked for.
   # Nothing exercised it: no example takes that configuration, and every other

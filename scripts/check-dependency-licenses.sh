@@ -45,8 +45,16 @@ test -s "${CSV}"
 # Column 1 is the package name: always a bare crate name, never quoted and
 # never containing a comma, so a plain field split is safe.  Later columns do
 # use quoting (descriptions contain commas), which is why only column 1 is
-# read this way.  The file uses CRLF, hence the `tr -d '\r'`.
-recorded="$(tail -n +2 "${CSV}" | cut -d, -f1 | tr -d '\r' | LC_ALL=C sort -u)"
+# read this way.
+#
+# No CR handling is needed on this path, and the comment here used to claim
+# otherwise. Two reasons: the committed file is LF-only since 8eb0dcf2 (#917)
+# normalized it (111 CR bytes -> 0) while touching it for something else; and
+# even on a CRLF checkout the CR sits before the newline, which puts it in the
+# *last* field, never in the `cut -d, -f1` we read. Verified both ways -- CSV
+# converted to CRLF, with and without a `tr -d '\r'` here, all four
+# combinations agree.
+recorded="$(tail -n +2 "${CSV}" | cut -d, -f1 | LC_ALL=C sort -u)"
 
 # Self-test.  The failure mode a guard like this has to survive is "quietly
 # stops seeing anything", so prove the CSV still parses into a plausible set

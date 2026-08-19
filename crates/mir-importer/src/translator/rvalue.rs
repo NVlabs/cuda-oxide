@@ -7615,8 +7615,8 @@ fn translate_array_value_constant_inner(
 /// its fields.
 ///
 /// Aggregate **const** values with thin pointers to device statics are
-/// materialized per field; device-global *initializer* relocations remain a
-/// separate unsupported gap.
+/// materialized per field; device-global initializers use a separate
+/// allocation-level relocation path instead of this value reconstruction.
 fn translate_struct_constant(
     ctx: &mut Context,
     constant: &mir::ConstOperand,
@@ -8217,6 +8217,124 @@ fn classify_union_constant_storage(
         field_index,
         field_ty,
     })
+}
+
+/// Admit only the device-static union shape whose complete storage can be
+/// represented by one provenance-preserving thin-pointer relocation.
+///
+/// Device-global initializers do not retain a source-level active union field,
+/// so this path must prove the physical storage without guessing one. Keep the
+/// scope deliberately narrower than ordinary union SSA lowering: one top-level
+/// pointer-sized union, naturally aligned, one relocation at byte zero, and
+/// every non-ZST alternative a representation-compatible thin pointer.
+fn validate_device_static_union_initializer(
+    ctx: &Context,
+    static_def: &rustc_public::mir::mono::StaticDef,
+    union_ty: TypeHandle,
+    initializer: &GlobalInitializerData,
+    loc: Location,
+) -> TranslationResult<()> {
+    let relocation_slots: Vec<(u64, u32)> = initializer
+        .relocations
+        .iter()
+        .map(|relocation| (relocation.source_offset, relocation.width_bytes))
+        .collect();
+    validate_device_static_union_storage(
+        ctx,
+        union_ty,
+        rustc_public::target::MachineInfo::target_pointer_width().bytes(),
+        initializer.bytes.len() as u64,
+        initializer.alignment,
+        &relocation_slots,
+    )
+    .map_err(|message| {
+        input_error!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "device static {} contains {message}",
+                static_def.name()
+            ))
+        )
+    })
+}
+
+/// Pure storage gate behind [`validate_device_static_union_initializer`]:
+/// accept only a union that is one naturally aligned pointer word whose
+/// evaluated initializer is exactly one full-width relocation at byte zero.
+/// The caller attaches the static's name and source location to rejections.
+fn validate_device_static_union_storage(
+    ctx: &Context,
+    union_ty: TypeHandle,
+    pointer_width: usize,
+    initializer_len: u64,
+    initializer_align: u64,
+    relocation_slots: &[(u64, u32)],
+) -> Result<(), String> {
+    let (union_name, union_size, union_align) = {
+        let ty_ref = union_ty.deref(ctx);
+        let union_ty = ty_ref
+            .downcast_ref::<dialect_mir::types::MirUnionType>()
+            .ok_or_else(|| {
+                "a non-union type in the device-static union initializer gate".to_string()
+            })?;
+        (
+            union_ty.name().to_string(),
+            union_ty.total_size(),
+            union_ty.abi_align(),
+        )
+    };
+
+    let storage_kind = classify_union_constant_storage(ctx, union_ty).map_err(|message| {
+        format!(
+            "union `{union_name}` whose initializer cannot preserve pointer provenance: \
+             {message}"
+        )
+    })?;
+    if !matches!(storage_kind, UnionConstantStorageKind::ThinPointer { .. }) {
+        return Err(format!(
+            "union `{union_name}` without thin-pointer storage; device-global union \
+             initializers are supported only when every non-ZST alternative is a \
+             representation-compatible thin pointer"
+        ));
+    }
+
+    if pointer_width != 8 {
+        return Err(format!(
+            "union `{union_name}`, but cuda-oxide currently supports device-global union \
+             relocations only for 8-byte NVPTX pointers"
+        ));
+    }
+    let pointer_width_u64 = pointer_width as u64;
+
+    if union_size != pointer_width_u64 || union_align != pointer_width_u64 {
+        return Err(format!(
+            "union `{union_name}` with size/alignment {union_size}/{union_align}; \
+             device-global union relocations require exactly one naturally aligned \
+             {pointer_width}-byte pointer word"
+        ));
+    }
+    if initializer_len != pointer_width_u64 || initializer_align != pointer_width_u64 {
+        return Err(format!(
+            "union `{union_name}` with evaluated initializer size/alignment \
+             {initializer_len}/{initializer_align}, expected {pointer_width}/{pointer_width}"
+        ));
+    }
+
+    let [(source_offset, width_bytes)] = relocation_slots else {
+        return Err(format!(
+            "union `{union_name}` with {} initializer relocations; exactly one \
+             thin-pointer relocation is required",
+            relocation_slots.len()
+        ));
+    };
+    if *source_offset != 0 || u64::from(*width_bytes) != pointer_width_u64 {
+        return Err(format!(
+            "union `{union_name}` whose relocation occupies byte {source_offset} with \
+             width {width_bytes}, expected one {pointer_width}-byte slot at byte zero"
+        ));
+    }
+
+    Ok(())
 }
 
 /// Verify that rustc and the MIR union agree on the exact stored size.
@@ -12142,19 +12260,33 @@ fn ensure_static_global_alloc(
     let allocation_size = initializer.bytes.len() as u64;
     let initializer_hex = bytes_to_hex(&initializer.bytes);
     let static_ty = static_def.ty();
-
-    if let Some(union_name) = stored_type_union_name(static_ty, &mut Vec::new()) {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "device static {} contains union `{union_name}`; initialized union storage is not yet supported",
-                static_def.name()
-            ))
-        );
-    }
-
     let is_constant = is_constant_wrapper_type(&static_ty);
     let global_ty = types::translate_type(ctx, &static_ty)?;
+
+    if let Some(union_name) = stored_type_union_name(static_ty, &mut Vec::new()) {
+        if global_ty
+            .deref(ctx)
+            .is::<dialect_mir::types::MirUnionType>()
+        {
+            validate_device_static_union_initializer(
+                ctx,
+                static_def,
+                global_ty,
+                &initializer,
+                loc.clone(),
+            )?;
+        } else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "device static {} contains nested union `{union_name}`; device-global \
+                     union initializer relocations are supported only for a top-level \
+                     thin-pointer union",
+                    static_def.name()
+                ))
+            );
+        }
+    }
     let global_ptr_ty: TypeHandle = if is_constant {
         dialect_mir::types::MirPtrType::get_constant(ctx, global_ty, is_mutable).into()
     } else {
@@ -13145,7 +13277,8 @@ mod aggregate_relocation_tests {
         UnionConstantStorageKind, classify_union_constant_storage, constant_type_contains_pointer,
         decode_relocation_addend, find_unconsumed_relocation, match_thin_pointer_relocation,
         provenance_starts_in_range, relocation_offsets_overlapping_range,
-        validate_array_value_element_type, validate_slice_relocation_shape,
+        validate_array_value_element_type, validate_device_static_union_storage,
+        validate_slice_relocation_shape,
     };
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
@@ -13503,6 +13636,122 @@ mod aggregate_relocation_tests {
         assert!(
             validate_array_value_element_type(&ctx, ptr_ty, &Location::Unknown).is_err(),
             "direct pointer elements were never part of the bare array contract"
+        );
+    }
+
+    #[test]
+    fn device_static_union_storage_gate_admits_only_one_anchored_pointer_word() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let word_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let byte_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u8_ty, false).into();
+        let thin_pointer_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "ThinPointerWord".into(),
+            vec!["word".into(), "bytes".into()],
+            vec![word_ptr_ty, byte_ptr_ty],
+            8,
+            8,
+        )
+        .into();
+
+        assert_eq!(
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 8, 8, &[(0, 8)]),
+            Ok(()),
+            "one naturally aligned pointer word with one anchored relocation is the \
+             accepted shape"
+        );
+
+        let byte_image_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 4, 8, 8, &[(0, 8)])
+                .expect_err("a 32-bit pointer target must remain fail-closed");
+        assert!(
+            byte_image_error.contains("8-byte NVPTX pointers"),
+            "diagnostic must name the pointer-width restriction: {byte_image_error}"
+        );
+
+        let bytes_ty: TypeHandle = MirArrayType::get(&mut ctx, u8_ty, 4).into();
+        let pointer_free_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "Bits".into(),
+            vec!["word".into(), "bytes".into()],
+            vec![u32_ty, bytes_ty],
+            4,
+            4,
+        )
+        .into();
+        let storage_error =
+            validate_device_static_union_storage(&ctx, pointer_free_union_ty, 8, 4, 4, &[(0, 8)])
+                .expect_err("byte-image unions take the literal-bytes path, not this gate");
+        assert!(
+            storage_error.contains("without thin-pointer storage"),
+            "diagnostic must explain the thin-pointer requirement: {storage_error}"
+        );
+
+        let wide_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "TwoWords".into(),
+            vec!["first".into(), "second".into()],
+            vec![word_ptr_ty, byte_ptr_ty],
+            16,
+            8,
+        )
+        .into();
+        let size_error =
+            validate_device_static_union_storage(&ctx, wide_union_ty, 8, 16, 8, &[(0, 8)])
+                .expect_err("a union wider than one pointer word must remain fail-closed");
+        assert!(
+            size_error.contains("size/alignment 16/8"),
+            "diagnostic must report the rejected layout: {size_error}"
+        );
+
+        let initializer_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 16, 8, &[(0, 8)])
+                .expect_err("an over-sized evaluated initializer must remain fail-closed");
+        assert!(
+            initializer_error.contains("initializer size/alignment 16/8"),
+            "diagnostic must report the evaluated-initializer mismatch: {initializer_error}"
+        );
+
+        let uninit_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 8, 8, &[])
+                .expect_err("zero relocations (e.g. a ZST-field initializer) must fail closed");
+        assert!(
+            uninit_error.contains("0 initializer relocations"),
+            "diagnostic must count the missing relocation: {uninit_error}"
+        );
+
+        let multi_error = validate_device_static_union_storage(
+            &ctx,
+            thin_pointer_union_ty,
+            8,
+            8,
+            8,
+            &[(0, 4), (4, 4)],
+        )
+        .expect_err("two relocations cannot describe one pointer word");
+        assert!(
+            multi_error.contains("2 initializer relocations"),
+            "diagnostic must count the extra relocations: {multi_error}"
+        );
+
+        let offset_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 8, 8, &[(4, 8)])
+                .expect_err("a relocation off the word base must remain fail-closed");
+        assert!(
+            offset_error.contains("occupies byte 4"),
+            "diagnostic must locate the misplaced relocation: {offset_error}"
+        );
+
+        let width_error =
+            validate_device_static_union_storage(&ctx, thin_pointer_union_ty, 8, 8, 8, &[(0, 4)])
+                .expect_err("a narrow relocation cannot carry full pointer provenance");
+        assert!(
+            width_error.contains("width 4"),
+            "diagnostic must report the short relocation: {width_error}"
         );
     }
 }

@@ -2439,7 +2439,6 @@ mod tests {
         DEVICE_PREFIX, KERNEL_PREFIX, LEGACY_DEVICE_PREFIX, LEGACY_KERNEL_PREFIX,
         PTX_MERGE_REQUIRED_PREFIX, is_ptx_merge_required_marker, ptx_merge_required_marker,
     };
-    use rustc_index::Idx;
     use rustc_middle::mir::BasicBlock;
 
     #[test]
