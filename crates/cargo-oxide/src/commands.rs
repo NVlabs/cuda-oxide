@@ -388,7 +388,7 @@ pub struct Context {
 pub fn resolve_context() -> Context {
     if let Some(workspace_root) = backend::find_workspace_root() {
         let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
-        let examples_dir = codegen_crate.join("examples");
+        let examples_dir = workspace_root.join(FMT_EXAMPLES_DIR);
         let config = load_oxide_config(&workspace_root);
         let backend_so = backend::find_or_build_backend(&workspace_root, config.backend.as_deref());
         return Context {
@@ -4031,32 +4031,46 @@ pub fn codegen_debug(
 /// format, which only holds while the two cover the same ground.
 ///
 /// In `check` mode, reports which files need formatting without modifying them.
+/// Directories `cargo oxide fmt` formats in their own right, relative to the
+/// workspace root, with the label each is announced under.
+///
+/// These mirror the fixed steps in `.github/workflows/fmt.yml`. The mirroring
+/// used to be convention only, and the gate grew a fourth scope while this
+/// command kept three (#1047), so contributors could format everything locally
+/// and still fail CI. `fmt_gate_and_cargo_oxide_fmt_cover_the_same_scopes`
+/// reads the workflow and fails when the two sets diverge.
+///
+/// The example crates are not listed: both sides walk
+/// `crates/rustc-codegen-cuda/examples` for manifests instead, which the same
+/// test checks separately.
+pub(crate) const FIXED_FMT_SCOPES: &[(&str, &str)] = &[
+    (".", "root workspace"),
+    ("crates/rustc-codegen-cuda", "rustc-codegen-cuda"),
+    // Its own `[workspace]`, so the root run does not reach it and the examples
+    // walk never sees it either. The gate carries a dedicated step for exactly
+    // this reason.
+    (
+        "crates/cuda-macros/tests/device-only",
+        "cuda-macros device-only fixture",
+    ),
+];
+
+/// Directory both sides walk for example manifests, relative to the workspace
+/// root. Kept beside [`FIXED_FMT_SCOPES`] because the gate's glob has to agree
+/// with it.
+pub(crate) const FMT_EXAMPLES_DIR: &str = "crates/rustc-codegen-cuda/examples";
+
 pub fn format_all(ctx: &Context, check: bool) {
     let mode = if check { "Checking" } else { "Formatting" };
     let mut failed = false;
 
-    println!("📦 {} root workspace...", mode);
-    if !run_cargo_fmt(&ctx.workspace_root, check) {
-        failed = true;
-    }
-
-    println!("📦 {} rustc-codegen-cuda...", mode);
-    if !run_cargo_fmt(&ctx.codegen_crate, check) {
-        failed = true;
-    }
-
-    // Its own `[workspace]`, so neither run above reaches it and the examples
-    // walk below never sees it either. The gate carries a dedicated step for
-    // exactly this reason.
-    let fixture = ctx
-        .workspace_root
-        .join("crates")
-        .join("cuda-macros")
-        .join("tests")
-        .join("device-only");
-    if fixture.join("Cargo.toml").is_file() {
-        println!("📦 {} cuda-macros device-only fixture...", mode);
-        if !run_cargo_fmt(&fixture, check) {
+    for (scope, label) in FIXED_FMT_SCOPES {
+        let dir = ctx.workspace_root.join(scope);
+        if !dir.join("Cargo.toml").is_file() {
+            continue;
+        }
+        println!("📦 {} {}...", mode, label);
+        if !run_cargo_fmt(&dir, check) {
             failed = true;
         }
     }
@@ -7131,6 +7145,71 @@ mod tests {
             .expect("system time before unix epoch")
             .as_nanos();
         std::env::temp_dir().join(format!("{}_{}_{}", prefix, std::process::id(), unique))
+    }
+
+    /// The fmt gate and `cargo oxide fmt` are two implementations of one scope
+    /// list. #1047 was that list drifting: the gate grew a fourth scope and the
+    /// command kept three, so a contributor could format everything locally and
+    /// still fail CI. Read the workflow and hold the two sets together.
+    #[test]
+    fn fmt_gate_and_cargo_oxide_fmt_cover_the_same_scopes() {
+        let workflow = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join(".github/workflows/fmt.yml");
+        let yaml = std::fs::read_to_string(&workflow)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", workflow.display()));
+
+        // Every step that runs a whole-directory `cargo fmt` contributes one
+        // scope: the directory named by a following `working-directory:`, or
+        // the workspace root when the step has none.
+        let mut gate_scopes: Vec<String> = Vec::new();
+        let mut lines = yaml.lines().peekable();
+        while let Some(line) = lines.next() {
+            if line.trim() != "run: cargo fmt --all -- --check" {
+                continue;
+            }
+            let scope = match lines.peek().map(|next| next.trim()) {
+                Some(next) if next.starts_with("working-directory:") => next
+                    .trim_start_matches("working-directory:")
+                    .trim()
+                    .to_string(),
+                _ => ".".to_string(),
+            };
+            gate_scopes.push(scope);
+        }
+        gate_scopes.sort();
+
+        let mut command_scopes: Vec<String> = FIXED_FMT_SCOPES
+            .iter()
+            .map(|(scope, _)| (*scope).to_string())
+            .collect();
+        command_scopes.sort();
+
+        assert_eq!(
+            gate_scopes, command_scopes,
+            "fmt.yml and FIXED_FMT_SCOPES disagree; a scope added to one needs the other"
+        );
+
+        // Both sides then walk the same directory for example manifests. The
+        // gate spells it as a glob, so compare against that.
+        let glob = format!("{FMT_EXAMPLES_DIR}/**/Cargo.toml");
+        assert!(
+            yaml.contains(&glob),
+            "fmt.yml does not glob {glob}; FMT_EXAMPLES_DIR and the gate disagree"
+        );
+
+        // A scope the command lists has to be a real directory, or it silently
+        // formats nothing while the gate still checks it.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for (scope, _) in FIXED_FMT_SCOPES {
+            let manifest = root.join(scope).join("Cargo.toml");
+            assert!(
+                manifest.is_file(),
+                "FIXED_FMT_SCOPES names {scope}, which has no Cargo.toml"
+            );
+        }
+        assert!(root.join(FMT_EXAMPLES_DIR).is_dir());
     }
 
     /// The examples walk backing `cargo oxide fmt` must reach nested manifests
