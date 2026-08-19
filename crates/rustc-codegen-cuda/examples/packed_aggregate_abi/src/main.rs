@@ -246,7 +246,10 @@ fn assert_host_layout() {
     assert_eq!(core::mem::offset_of!(Packed2, a), 0);
     assert_eq!(core::mem::offset_of!(Packed2, b), 2);
 
-    assert_eq!(core::mem::size_of::<PackedShared>(), 1 + core::mem::size_of::<usize>());
+    assert_eq!(
+        core::mem::size_of::<PackedShared>(),
+        1 + core::mem::size_of::<usize>()
+    );
     assert_eq!(core::mem::align_of::<PackedShared>(), 1);
     assert_eq!(core::mem::offset_of!(PackedShared, tag), 0);
     assert_eq!(core::mem::offset_of!(PackedShared, ptr), 1);
