@@ -52,9 +52,10 @@ launches through the typed path: both kernels carry
 generated launch methods submit via `cuLaunchKernelEx` with
 `CU_LAUNCH_ATTRIBUTE_COOPERATIVE`. The same module also holds
 `test_cluster_coop_grid_sync`, which combines `#[cluster_launch(2, 1, 1)]`
-with `#[cooperative_launch]` and a `#[launch_contract]`. On Hopper+ that
-kernel is prepared and launched through the safe `PreparedLaunch` path;
-pre-Hopper devices print that the combined mode was not exercised.
+with `#[cooperative_launch]` and a `#[launch_contract]`. That kernel is
+prepared and launched through the safe `PreparedLaunch` path. Pre-Hopper
+devices never get this far: `main` prints its `thread block clusters
+require sm_90+` skip line and exits before launching anything.
 
 ### Layer 2 — typed cooperative-groups handles (5 checks)
 
