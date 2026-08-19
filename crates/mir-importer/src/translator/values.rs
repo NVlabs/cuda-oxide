@@ -608,6 +608,20 @@ fn classify_call(func: &mir::Operand) -> WriteClass {
         return WriteClass::Classified(address_space::SHARED);
     }
 
+    // --- addrspace 7 (cluster shared) producers ------------------------------
+    //
+    // `map_shared_rank` and `map_shared_rank_mut` return mapped DSMEM pointers.
+    // Their result slots must retain addrspace(7); otherwise `store_local` would
+    // insert a PtrToPtr cast back to generic and a later dereference would lose
+    // the `ld.shared::cluster` / `st.shared::cluster` selection contract.
+    if matches!(
+        path.as_str(),
+        "cuda_device::cluster::map_shared_rank"
+            | "cuda_device::cluster::map_shared_rank_mut"
+    ) {
+        return WriteClass::Classified(address_space::CLUSTER_SHARED);
+    }
+
     // --- explicit narrow to generic -----------------------------------------
     //
     // Public SharedArray pointer conversions deliberately `cvta.shared` the

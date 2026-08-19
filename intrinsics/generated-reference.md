@@ -5507,7 +5507,7 @@ This table is generated from the resolved catalog. Evidence stages below disting
 ## Cluster-memory contracts
 
 - `dsmem_read_u32` has no one-to-one LLVM intrinsic. Both backends use one convergent `mapa.shared::cluster.u64` plus `ld.shared::cluster.u32` block with a compiler memory clobber.
-- `map_shared_rank` keeps LLVM 22's address-space-7 result as source identity only. Both backends use exact convergent `mapa.shared::cluster.u64` inline PTX and preserve the established shared-address carrier; an ordinary pointer dereference is not a remote cluster load.
+- `map_shared_rank` preserves LLVM 22's address-space-7 result. Both backends use exact convergent `mapa.shared::cluster.u64` inline PTX, and ordinary Rust dereference of the mapped pointer lowers through cluster shared memory.
 
 ## movmatrix contracts
 

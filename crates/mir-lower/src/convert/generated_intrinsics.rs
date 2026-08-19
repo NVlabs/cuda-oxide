@@ -9986,8 +9986,8 @@ impl MirToLlvmConversion for MapaSharedClusterOp {
             "=l,l,r",
         );
         let mapped = asm.deref(ctx).get_result(0);
-        let shared_pointer_ty = llvm_types::PointerType::get(ctx, 3);
-        let int_to_ptr = llvm_ops::IntToPtrOp::new(ctx, mapped, shared_pointer_ty.into());
+        let cluster_shared_pointer_ty = llvm_types::PointerType::get(ctx, 7);
+        let int_to_ptr = llvm_ops::IntToPtrOp::new(ctx, mapped, cluster_shared_pointer_ty.into());
         rewriter.insert_operation(ctx, int_to_ptr.get_operation());
         rewriter.replace_operation(ctx, op, int_to_ptr.get_operation());
         Ok(())

@@ -5730,7 +5730,7 @@ fn render_compat_cluster_memory(catalog: &CatalogFile, hash: &str) -> String {
             ClusterMemoryOperation::MapSharedRank => {
                 output.push_str(
                     "/// `local_ptr` must point into CTA shared memory, and `target_rank` must name a rank in the same live cluster.\n\
-                     /// The result is a cluster address carrier. Do not use an ordinary pointer dereference for a remote load.\n",
+                     /// The result is a cluster-shared pointer in address space 7. Dereferencing it performs a remote DSMEM access; the target CTA must remain live and synchronization must make the access race-free.\n",
                 );
                 output.push_str("#[must_use]\n#[inline(never)]\n");
                 output.push_str(
@@ -5743,7 +5743,7 @@ fn render_compat_cluster_memory(catalog: &CatalogFile, hash: &str) -> String {
                     "/// Maps a mutable CTA-shared address to another cluster rank.\n\
                      ///\n\
                      /// # Safety\n\
-                     /// The mapping requirements above apply, and writes must not race.\n\
+                     /// The mapping requirements above apply. The target CTA must remain live, and remote writes must be synchronized and race-free.\n\
                      #[must_use]\n#[inline(never)]\n\
                      pub unsafe fn map_shared_rank_mut<T>(local_ptr: *mut T, target_rank: u32) -> *mut T {\n\
                              let _ = (local_ptr, target_rank);\n\
@@ -10893,11 +10893,19 @@ impl MapaSharedClusterOp {
     pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
 
     pub fn build(ctx: &mut Context, source: Value, rank: Value) -> Ptr<Operation> {
-        let result_ty = source.get_type(ctx);
+        let source_ty = source.get_type(ctx);
+        let (pointee, is_mutable) = {
+            let source_ty_obj = source_ty.deref(ctx);
+            let source_ptr = source_ty_obj
+                .downcast_ref::<MirPtrType>()
+                .expect("nvvm.mapa_shared_cluster source must be a MIR pointer");
+            (source_ptr.pointee, source_ptr.is_mutable())
+        };
+        let result_ty = MirPtrType::get_cluster_shared(ctx, pointee, is_mutable);
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
-            vec![result_ty],
+            vec![result_ty.into()],
             vec![source, rank],
             vec![],
             0,
@@ -10910,8 +10918,25 @@ impl Verify for MapaSharedClusterOp {
         let operation = self.get_operation();
         verify_pointer_rank(ctx, operation, "nvvm.mapa_shared_cluster")?;
         let op = operation.deref(ctx);
-        if op.get_result(0).get_type(ctx) != op.get_operand(0).get_type(ctx) {
-            return verify_err!(op.loc(), "nvvm.mapa_shared_cluster must preserve the pointer type");
+        let source_ty = op.get_operand(0).get_type(ctx);
+        let result_ty = op.get_result(0).get_type(ctx);
+        let source_ty_obj = source_ty.deref(ctx);
+        let result_ty_obj = result_ty.deref(ctx);
+        let source_ptr = source_ty_obj.downcast_ref::<MirPtrType>().unwrap();
+        let Some(result_ptr) = result_ty_obj.downcast_ref::<MirPtrType>() else {
+            return verify_err!(
+                op.loc(),
+                "nvvm.mapa_shared_cluster result must be a MIR pointer"
+            );
+        };
+        if result_ptr.pointee != source_ptr.pointee
+            || result_ptr.is_mutable() != source_ptr.is_mutable()
+            || !result_ptr.is_cluster_shared()
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.mapa_shared_cluster must preserve pointee and mutability and return addrspace(7)"
+            );
         }
         Ok(())
     }
@@ -16279,7 +16304,7 @@ fn convert_generated_tcgen05_load(
             ClusterMemoryOperation::MapSharedRank => {
                 writeln!(
                     output,
-                    "        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);\n        let asm = inline_asm_convergent(\n            ctx, rewriter, op, i64_ty.into(), vec![shared_pointer, rank], {template:?}, {constraints:?},\n        );\n        let mapped = asm.deref(ctx).get_result(0);\n        let shared_pointer_ty = llvm_types::PointerType::get(ctx, 3);\n        let int_to_ptr = llvm_ops::IntToPtrOp::new(ctx, mapped, shared_pointer_ty.into());\n        rewriter.insert_operation(ctx, int_to_ptr.get_operation());\n        rewriter.replace_operation(ctx, op, int_to_ptr.get_operation());\n        Ok(())"
+                    "        let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);\n        let asm = inline_asm_convergent(\n            ctx, rewriter, op, i64_ty.into(), vec![shared_pointer, rank], {template:?}, {constraints:?},\n        );\n        let mapped = asm.deref(ctx).get_result(0);\n        let cluster_shared_pointer_ty = llvm_types::PointerType::get(ctx, 7);\n        let int_to_ptr = llvm_ops::IntToPtrOp::new(ctx, mapped, cluster_shared_pointer_ty.into());\n        rewriter.insert_operation(ctx, int_to_ptr.get_operation());\n        rewriter.replace_operation(ctx, op, int_to_ptr.get_operation());\n        Ok(())"
                 )
                 .unwrap();
             }
@@ -18688,7 +18713,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
             ClusterMemoryOperation::MapSharedRank => {
                 writeln!(
                     output,
-                    "define ptr addrspace(3) @probe_{}(ptr %source_generic, i32 %rank) #0 {{",
+                    "define ptr addrspace(7) @probe_{}(ptr %source_generic, i32 %rank) #0 {{",
                     record.id
                 )
                 .unwrap();
@@ -18701,7 +18726,7 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 )
                 .unwrap();
                 output.push_str(
-                    "  %mapped = inttoptr i64 %mapped_integer to ptr addrspace(3)\n  ret ptr addrspace(3) %mapped\n}\n\nattributes #0 = { convergent }\n",
+                    "  %mapped = inttoptr i64 %mapped_integer to ptr addrspace(7)\n  ret ptr addrspace(7) %mapped\n}\n\nattributes #0 = { convergent }\n",
                 );
             }
             ClusterMemoryOperation::ReadU32 => {
@@ -20161,7 +20186,7 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
                 ClusterMemorySourceContract::LlvmMapaSharedClusterAs7IdentityInlinePtx => {
                     writeln!(
                         output,
-                        "- `{}` keeps LLVM 22's address-space-7 result as source identity only. Both backends use exact convergent `mapa.shared::cluster.u64` inline PTX and preserve the established shared-address carrier; an ordinary pointer dereference is not a remote cluster load.",
+                        "- `{}` preserves LLVM 22's address-space-7 result. Both backends use exact convergent `mapa.shared::cluster.u64` inline PTX, and ordinary Rust dereference of the mapped pointer lowers through cluster shared memory.",
                         record.id
                     )
                     .unwrap();
@@ -23579,7 +23604,7 @@ mod tests {
     }
 
     #[test]
-    fn cluster_memory_rendering_preserves_pointer_carrier_and_composite_load() {
+    fn cluster_memory_rendering_preserves_cluster_shared_addrspace_and_composite_load() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
@@ -23594,7 +23619,7 @@ mod tests {
         ] {
             assert!(compatibility.contains(signature), "missing {signature}");
         }
-        assert!(compatibility.contains("ordinary pointer dereference"));
+        assert!(compatibility.contains("cluster-shared pointer in address space 7"));
 
         let dialect_mod = render_dialect_mod(&catalog, "test-hash");
         assert!(dialect_mod.contains("mod cluster_memory;"));
@@ -23604,7 +23629,7 @@ mod tests {
         let dialect = render_dialect_cluster_memory(&catalog, "test-hash");
         assert!(dialect.contains("pub struct MapaSharedClusterOp"));
         assert!(dialect.contains("pub struct DsmemReadU32Op"));
-        assert!(dialect.contains("nvvm.mapa_shared_cluster must preserve the pointer type"));
+        assert!(dialect.contains("nvvm.mapa_shared_cluster must preserve pointee and mutability and return addrspace(7)"));
         assert!(dialect.contains("nvvm.dsmem_read_u32 result must be u32"));
         assert!(dialect.contains("MapaSharedClusterOp::register(ctx);"));
         assert!(dialect.contains("DsmemReadU32Op::register(ctx);"));
@@ -23623,7 +23648,7 @@ mod tests {
         let lowering = render_lowering(&catalog, "test-hash");
         assert!(lowering.contains("cast_to_shared_addrspace"));
         assert!(lowering.contains("llvm_ops::IntToPtrOp::new"));
-        assert!(lowering.contains("llvm_types::PointerType::get(ctx, 3)"));
+        assert!(lowering.contains("llvm_types::PointerType::get(ctx, 7)"));
         assert!(lowering.contains("mapa.shared::cluster.u64 $0, $1, $2;"));
         assert!(lowering.contains(
             "{ .reg .u64 %mapped; mapa.shared::cluster.u64 %mapped, $1, $2; ld.shared::cluster.u32 $0, [%mapped]; }"
@@ -23637,7 +23662,7 @@ mod tests {
             .unwrap();
         assert_eq!(map.llvm.as_ref().unwrap().results, ["shared_cluster_ptr"]);
         let map_probe = render_probe(&catalog, map, "test-hash");
-        assert!(map_probe.contains("define ptr addrspace(3)"));
+        assert!(map_probe.contains("define ptr addrspace(7)"));
         assert!(map_probe.contains("inttoptr i64"));
         assert!(map_probe.contains("asm sideeffect"));
         assert!(!map_probe.contains("~{memory}"));
@@ -23660,7 +23685,7 @@ mod tests {
 
         let reference = render_reference(&catalog, "test-hash");
         assert!(reference.contains("## Cluster-memory contracts"));
-        assert!(reference.contains("address-space-7 result as source identity only"));
+        assert!(reference.contains("preserves LLVM 22's address-space-7 result"));
         assert!(reference.contains("has no one-to-one LLVM intrinsic"));
 
         let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();

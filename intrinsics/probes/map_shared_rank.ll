@@ -6,11 +6,11 @@
 
 target triple = "nvptx64-nvidia-cuda"
 
-define ptr addrspace(3) @probe_map_shared_rank(ptr %source_generic, i32 %rank) #0 {
+define ptr addrspace(7) @probe_map_shared_rank(ptr %source_generic, i32 %rank) #0 {
   %source = addrspacecast ptr %source_generic to ptr addrspace(3)
   %mapped_integer = call i64 asm sideeffect "mapa.shared::cluster.u64 $0, $1, $2;", "=l,l,r"(ptr addrspace(3) %source, i32 %rank) #0
-  %mapped = inttoptr i64 %mapped_integer to ptr addrspace(3)
-  ret ptr addrspace(3) %mapped
+  %mapped = inttoptr i64 %mapped_integer to ptr addrspace(7)
+  ret ptr addrspace(7) %mapped
 }
 
 attributes #0 = { convergent }

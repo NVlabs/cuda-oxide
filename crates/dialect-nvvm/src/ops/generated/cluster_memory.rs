@@ -65,11 +65,19 @@ impl MapaSharedClusterOp {
     }
 
     pub fn build(ctx: &mut Context, source: Value, rank: Value) -> Ptr<Operation> {
-        let result_ty = source.get_type(ctx);
+        let source_ty = source.get_type(ctx);
+        let (pointee, is_mutable) = {
+            let source_ty_obj = source_ty.deref(ctx);
+            let source_ptr = source_ty_obj
+                .downcast_ref::<MirPtrType>()
+                .expect("nvvm.mapa_shared_cluster source must be a MIR pointer");
+            (source_ptr.pointee, source_ptr.is_mutable())
+        };
+        let result_ty = MirPtrType::get_cluster_shared(ctx, pointee, is_mutable);
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
-            vec![result_ty],
+            vec![result_ty.into()],
             vec![source, rank],
             vec![],
             0,
@@ -82,10 +90,24 @@ impl Verify for MapaSharedClusterOp {
         let operation = self.get_operation();
         verify_pointer_rank(ctx, operation, "nvvm.mapa_shared_cluster")?;
         let op = operation.deref(ctx);
-        if op.get_result(0).get_type(ctx) != op.get_operand(0).get_type(ctx) {
+        let source_ty = op.get_operand(0).get_type(ctx);
+        let result_ty = op.get_result(0).get_type(ctx);
+        let source_ty_obj = source_ty.deref(ctx);
+        let result_ty_obj = result_ty.deref(ctx);
+        let source_ptr = source_ty_obj.downcast_ref::<MirPtrType>().unwrap();
+        let Some(result_ptr) = result_ty_obj.downcast_ref::<MirPtrType>() else {
             return verify_err!(
                 op.loc(),
-                "nvvm.mapa_shared_cluster must preserve the pointer type"
+                "nvvm.mapa_shared_cluster result must be a MIR pointer"
+            );
+        };
+        if result_ptr.pointee != source_ptr.pointee
+            || result_ptr.is_mutable() != source_ptr.is_mutable()
+            || !result_ptr.is_cluster_shared()
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.mapa_shared_cluster must preserve pointee and mutability and return addrspace(7)"
             );
         }
         Ok(())

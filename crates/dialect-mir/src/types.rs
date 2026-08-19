@@ -183,6 +183,8 @@ pub mod address_space {
     pub const LOCAL: u32 = 5;
     /// Tensor Memory - Blackwell+ (sm_100+) tcgen05 operands
     pub const TMEM: u32 = 6;
+    /// Cluster-shared memory (distributed shared memory, sm_90+)
+    pub const CLUSTER_SHARED: u32 = 7;
 }
 
 /// A pointer type with mutability and address space tracking.
@@ -197,6 +199,7 @@ pub mod address_space {
 /// - 4 (constant): Read-only constant memory
 /// - 5 (local): Per-thread local memory
 /// - 6 (tmem): Tensor Memory - Blackwell+ tcgen05 operands
+/// - 7 (cluster shared): Distributed shared memory across a thread-block cluster
 ///
 /// # Verification
 /// * Pointee type must be valid.
@@ -270,6 +273,15 @@ impl MirPtrType {
         Self::get(ctx, pointee, is_mutable, address_space::TMEM)
     }
 
+    /// Create a pointer in cluster-shared memory address space (7) - Hopper+.
+    pub fn get_cluster_shared(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        is_mutable: bool,
+    ) -> TypedHandle<Self> {
+        Self::get(ctx, pointee, is_mutable, address_space::CLUSTER_SHARED)
+    }
+
     pub fn is_mutable(&self) -> bool {
         self.is_mutable
     }
@@ -286,6 +298,11 @@ impl MirPtrType {
     /// Check if this pointer is in tensor memory (addrspace 6) - Blackwell+ tcgen05.
     pub fn is_tmem(&self) -> bool {
         self.address_space == address_space::TMEM
+    }
+
+    /// Check if this pointer is in cluster-shared memory (addrspace 7).
+    pub fn is_cluster_shared(&self) -> bool {
+        self.address_space == address_space::CLUSTER_SHARED
     }
 }
 

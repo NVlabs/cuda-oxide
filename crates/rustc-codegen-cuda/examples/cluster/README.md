@@ -9,8 +9,9 @@ Demonstrates Thread Block Clusters, a Hopper feature that enables direct shared 
 1. **test_cluster_compile_time**: Compile-time cluster configuration with `#[cluster_launch]`
 2. **test_cluster_intrinsics**: Cluster special registers (ctaid, nctaid, rank, size)
 3. **test_cluster_sync**: Cluster-wide synchronization
-4. **test_dsmem_ring_exchange**: Distributed shared memory - read neighbor block's data
-5. **test_dsmem_reduction**: All-to-one reduction using DSMEM
+4. **test_dsmem_ring_exchange**: Distributed shared memory read through `map_shared_rank` + dereference
+5. **test_dsmem_reduction**: All-to-one reduction using `dsmem_read_u32`
+6. **test_dsmem_mapped_store**: Distributed shared memory write through `map_shared_rank_mut` + dereference
 
 ## Key Concepts Demonstrated
 
@@ -75,23 +76,39 @@ cluster::cluster_sync();
 
 ### Distributed Shared Memory (DSMEM)
 
+`map_shared_rank` maps a CTA-shared pointer to the same offset in another rank. The mapped result is represented as LLVM `addrspace(7)`, so an ordinary Rust dereference lowers through cluster shared memory.
+
 ```rust
 // Each block writes to its own shared memory
 SHMEM[0] = 1000 + my_rank;  // Block 0: 1000, Block 1: 1001, etc.
 thread::sync_threads();
 cluster::cluster_sync();
 
-// Read ANOTHER block's shared memory via dsmem_read_u32!
+// Read ANOTHER block's shared memory through a mapped cluster-shared pointer.
 let neighbor_rank = (my_rank + 1) % cluster_size;
-let neighbor_value = cluster::dsmem_read_u32(addr_of!(SHMEM) as *const u32, neighbor_rank);
+let neighbor_ptr =
+    cluster::map_shared_rank(addr_of!(SHMEM) as *const u32, neighbor_rank);
+let neighbor_value = *neighbor_ptr;
 
 // Block 0 reads 1001, Block 1 reads 1002, Block 2 reads 1003, Block 3 reads 1000
 ```
 
-**Why `dsmem_read_u32` instead of `map_shared_rank` + dereference?**
-`mapa.shared::cluster` returns a shared-space address that requires `ld.shared::cluster`
-to read. A generic load (`ld.b32`) cannot access it. `dsmem_read_u32` combines both
-into a single inline asm: `mapa.shared::cluster.u64` + `ld.shared::cluster.u32`.
+For a mutable mapping, the same address-space semantics apply:
+
+```rust
+let neighbor_ptr =
+    cluster::map_shared_rank_mut(addr_of_mut!(SHMEM) as *mut u32, neighbor_rank);
+*neighbor_ptr = 3000 + my_rank;
+```
+
+`dsmem_read_u32` remains available as a fixed-width convenience intrinsic. It combines the mapping and remote load in one inline-PTX block:
+
+```rust
+let neighbor_value =
+    cluster::dsmem_read_u32(addr_of!(SHMEM) as *const u32, neighbor_rank);
+```
+
+Both approaches require the target CTA to remain live and require cluster synchronization appropriate to the data dependency.
 
 ## Build and Run
 
@@ -132,6 +149,14 @@ Results (each block reads neighbor's value):
 Result: 100, expected: 100
 ✓ DSMEM reduction PASSED
 
+=== Test 5: DSMEM Mapped Remote Store (cluster launch) ===
+Results (each block observes the write from its previous rank):
+  Block 0: got 3003, expected 3003 ✓
+  Block 1: got 3000, expected 3000 ✓
+  Block 2: got 3001, expected 3001 ✓
+  Block 3: got 3002, expected 3002 ✓
+✓ DSMEM mapped remote store PASSED
+
 🎉 All cluster + DSMEM tests PASSED!
 ```
 
@@ -169,15 +194,15 @@ GPU Compute Capability: sm_86
 
 ## Cluster Intrinsic Reference
 
-| Intrinsic                    | PTX                             | Description                      |
-|------------------------------|---------------------------------|----------------------------------|
-| `cluster_ctaidX/Y/Z()`       | `mov.u32 %r, %clusterctaid.x`   | Block position in cluster        |
-| `cluster_nctaidX/Y/Z()`      | `mov.u32 %r, %clusternctaid.x`  | Cluster dimensions               |
-| `block_rank()`               | Computed                        | Linear block index               |
-| `cluster_size()`             | Computed                        | Total blocks in cluster          |
-| `cluster_sync()`             | `barrier.cluster.sync.aligned`  | Cluster-wide barrier             |
-| `map_shared_rank(ptr, rank)` | `mapa.shared::cluster`          | Pointer to other block's SMEM    |
-| `dsmem_read_u32(ptr, rank)`  | `mapa` + `ld.shared::cluster`   | Read u32 from other block's SMEM |
+| Intrinsic                    | PTX                             | Description                                      |
+|------------------------------|---------------------------------|--------------------------------------------------|
+| `cluster_ctaidX/Y/Z()`       | `mov.u32 %r, %clusterctaid.x`   | Block position in cluster                        |
+| `cluster_nctaidX/Y/Z()`      | `mov.u32 %r, %clusternctaid.x`  | Cluster dimensions                               |
+| `block_rank()`               | Computed                        | Linear block index                               |
+| `cluster_size()`             | Computed                        | Total blocks in cluster                          |
+| `cluster_sync()`             | `barrier.cluster.sync.aligned`  | Cluster-wide barrier                             |
+| `map_shared_rank(ptr, rank)` | `mapa.shared::cluster`          | `addrspace(7)` pointer to another block's SMEM   |
+| `dsmem_read_u32(ptr, rank)`  | `mapa` + `ld.shared::cluster`   | Read u32 from other block's SMEM                 |
 
 ## Generated PTX
 
@@ -203,15 +228,29 @@ GPU Compute Capability: sm_86
 }
 ```
 
+An ordinary dereference through `map_shared_rank` selects a cluster-shared load:
+
+```ptx
+mapa.shared::cluster.u64 %rd_mapped, %rd_local_shmem, %r_neighbor_rank;
+ld.shared::cluster.u32 %r_result, [%rd_mapped];
+```
+
+A mutable mapped pointer similarly selects a cluster-shared store:
+
+```ptx
+mapa.shared::cluster.u64 %rd_mapped, %rd_local_shmem, %r_neighbor_rank;
+st.shared::cluster.u32 [%rd_mapped], %r_value;
+```
+
 ## Potential Errors
 
-| Error                        | Cause                          | Solution                          |
-|------------------------------|--------------------------------|-----------------------------------|
-| `CUDA_ERROR_NOT_SUPPORTED`   | Pre-Hopper GPU                 | Use sm_90+ hardware               |
-| `CUDA_ERROR_INVALID_VALUE`   | Cluster dims > max             | Check device limits               |
-| `CUDA_ERROR_ILLEGAL_ADDRESS` | Used `map_shared_rank` + deref | Use `dsmem_read_u32` instead      |
-| `CUDA_ERROR_LAUNCH_FAILED`   | Blocks exited during DSMEM     | Add `cluster_sync()` before return|
-| DSMEM read wrong value       | Missing cluster_sync           | Add sync before DSMEM access      |
+| Error                        | Cause                                    | Solution                                  |
+|------------------------------|------------------------------------------|-------------------------------------------|
+| `CUDA_ERROR_NOT_SUPPORTED`   | Pre-Hopper GPU                           | Use sm_90+ hardware                       |
+| `CUDA_ERROR_INVALID_VALUE`   | Cluster dims > max                       | Check device limits                       |
+| `CUDA_ERROR_ILLEGAL_ADDRESS` | Invalid mapped pointer or dead target CTA | Keep target CTA live and validate pointer |
+| `CUDA_ERROR_LAUNCH_FAILED`   | Blocks exited during DSMEM               | Add `cluster_sync()` before return        |
+| DSMEM read/write wrong value | Missing or incorrect synchronization     | Add the required cluster synchronization  |
 
 ## Cluster Configuration Options
 

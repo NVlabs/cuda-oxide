@@ -136,7 +136,7 @@ mod kernels {
     // Test 3: Distributed Shared Memory (Ring Exchange)
     // ============================================================================
 
-    /// Test kernel for distributed shared memory via dsmem_read_u32().
+    /// Test kernel for distributed shared memory via map_shared_rank() + dereference.
     #[kernel]
     #[cluster_launch(4, 1, 1)]
     pub fn test_dsmem_ring_exchange(mut output: DisjointSlice<u32>) {
@@ -158,8 +158,9 @@ mod kernels {
         // Step 3: Read neighbor's shared memory (ring pattern)
         if tid == 0 {
             let neighbor_rank = (my_rank + 1) % cluster_size;
-            let neighbor_value =
-                unsafe { cluster::dsmem_read_u32(addr_of!(SHMEM) as *const u32, neighbor_rank) };
+            let neighbor_ptr =
+                unsafe { cluster::map_shared_rank(addr_of!(SHMEM) as *const u32, neighbor_rank) };
+            let neighbor_value = unsafe { *neighbor_ptr };
 
             let idx = my_rank as usize;
             if idx < output.len() {
@@ -208,6 +209,46 @@ mod kernels {
         }
 
         // All blocks must stay alive while block 0 reads DSMEM
+        cluster::cluster_sync();
+    }
+
+    // ============================================================================
+    // Test 5: Distributed Shared Memory (Mapped Remote Store)
+    // ============================================================================
+
+    /// Test map_shared_rank_mut() followed by an ordinary Rust pointer store.
+    #[kernel]
+    #[cluster_launch(4, 1, 1)]
+    pub fn test_dsmem_mapped_store(mut output: DisjointSlice<u32>) {
+        static mut SHMEM: SharedArray<u32, 1> = SharedArray::UNINIT;
+
+        let tid = thread::threadIdx_x();
+        let my_rank = cluster::block_rank();
+        let cluster_size = cluster::cluster_size();
+
+        if tid == 0 {
+            unsafe { (addr_of_mut!(SHMEM) as *mut u32).write(2000 + my_rank) };
+        }
+        thread::sync_threads();
+        cluster::cluster_sync();
+
+        if tid == 0 {
+            let neighbor_rank = (my_rank + 1) % cluster_size;
+            let neighbor_ptr =
+                unsafe { cluster::map_shared_rank_mut(addr_of_mut!(SHMEM) as *mut u32, neighbor_rank) };
+            unsafe { *neighbor_ptr = 3000 + my_rank };
+        }
+
+        cluster::cluster_sync();
+
+        if tid == 0 {
+            let idx = my_rank as usize;
+            if idx < output.len() {
+                let local_value = unsafe { *(addr_of!(SHMEM) as *const u32) };
+                unsafe { *output.get_unchecked_mut(idx) = local_value };
+            }
+        }
+
         cluster::cluster_sync();
     }
 }
@@ -499,6 +540,72 @@ fn main() {
     }
 
     // ====================================================================
+    // Test 5: DSMEM mapped remote store
+    // ====================================================================
+
+    println!("=== Test 5: DSMEM Mapped Remote Store (cluster launch) ===\n");
+
+    let store_pass = if dsmem_context_error {
+        println!("⚠ Skipped - CUDA context corrupted by previous DSMEM error\n");
+        false
+    } else {
+        let mut store_output =
+            DeviceBuffer::<u32>::zeroed(&stream, cluster_size as usize).unwrap();
+
+        println!("Launching test_dsmem_mapped_store via cuLaunchKernelEx");
+        println!("  Grid: 4x1x1, Block: 32, Cluster: 4x1x1");
+        println!("  Each block writes through a mapped pointer into its next rank\n");
+
+        let store_result = unsafe {
+            module.test_dsmem_mapped_store(
+                (stream).as_ref(),
+                LaunchConfig {
+                    grid_dim: (cluster_size, 1, 1),
+                    block_dim: (32, 1, 1),
+                    shared_mem_bytes: 0,
+                },
+                &mut store_output,
+            )
+        };
+
+        match store_result {
+            Ok(_) => match stream.synchronize() {
+                Ok(()) => {
+                    let results: Vec<u32> = store_output.to_host_vec(&stream).unwrap();
+                    println!("Results (each block observes the write from its previous rank):");
+                    for (i, &val) in results.iter().enumerate() {
+                        let previous_rank = (i as u32 + cluster_size - 1) % cluster_size;
+                        let expected = 3000 + previous_rank;
+                        let status = if val == expected { "✓" } else { "?" };
+                        println!(
+                            "  Block {}: got {}, expected {} {}",
+                            i, val, expected, status
+                        );
+                    }
+                    results.iter().enumerate().all(|(i, &val)| {
+                        let previous_rank = (i as u32 + cluster_size - 1) % cluster_size;
+                        val == 3000 + previous_rank
+                    })
+                }
+                Err(e) => {
+                    println!("⚠ DSMEM mapped-store synchronize failed: {:?}", e);
+                    false
+                }
+            },
+            Err(e) => {
+                println!("⚠ Cluster launch failed: {:?}", e);
+                false
+            }
+        }
+    };
+
+    if store_pass {
+        println!("✓ DSMEM mapped remote store PASSED\n");
+    } else if !dsmem_context_error {
+        println!("⚠ DSMEM mapped remote store failed\n");
+    }
+
+    // ====================================================================
     // Summary
     // ====================================================================
 
@@ -508,7 +615,7 @@ fn main() {
     println!("  .explicitcluster");
     println!("  .reqnctapercluster 4, 1, 1\n");
 
-    let all_pass = ct_pass && sync_pass && ring_pass && reduce_pass;
+    let all_pass = ct_pass && sync_pass && ring_pass && reduce_pass && store_pass;
     if all_pass {
         println!("All cluster + DSMEM tests PASSED!");
     } else {
@@ -529,6 +636,10 @@ fn main() {
         println!(
             "  Test 4 (DSMEM reduction):        {}",
             if reduce_pass { "PASS" } else { "FAIL" }
+        );
+        println!(
+            "  Test 5 (DSMEM mapped store):     {}",
+            if store_pass { "PASS" } else { "FAIL" }
         );
         std::process::exit(1);
     }

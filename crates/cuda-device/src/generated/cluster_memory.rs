@@ -27,7 +27,7 @@ pub unsafe fn dsmem_read_u32(local_ptr: *const u32, target_rank: u32) -> u32 {
 ///
 /// # Safety
 /// `local_ptr` must point into CTA shared memory, and `target_rank` must name a rank in the same live cluster.
-/// The result is a cluster address carrier. Do not use an ordinary pointer dereference for a remote load.
+/// The result is a cluster-shared pointer in address space 7. Dereferencing it performs a remote DSMEM access; the target CTA must remain live and synchronization must make the access race-free.
 #[must_use]
 #[inline(never)]
 pub unsafe fn map_shared_rank<T>(local_ptr: *const T, target_rank: u32) -> *const T {
@@ -38,7 +38,7 @@ pub unsafe fn map_shared_rank<T>(local_ptr: *const T, target_rank: u32) -> *cons
 /// Maps a mutable CTA-shared address to another cluster rank.
 ///
 /// # Safety
-/// The mapping requirements above apply, and writes must not race.
+/// The mapping requirements above apply. The target CTA must remain live, and remote writes must be synchronized and race-free.
 #[must_use]
 #[inline(never)]
 pub unsafe fn map_shared_rank_mut<T>(local_ptr: *mut T, target_rank: u32) -> *mut T {
