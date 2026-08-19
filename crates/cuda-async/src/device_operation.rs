@@ -17,7 +17,7 @@
 //! | [`schedule`] | Pairs the operation with a stream, returns a [`DeviceFuture`].    |
 //! | [`sync`]     | Shorthand: schedule + execute + synchronize on the default device.|
 //! | [`sync_on`]  | Execute and synchronize on a specific stream.                     |
-//! | [`async_on`] | Execute on a specific stream **without** synchronizing.           |
+//! | [`async_on`] | `unsafe`: execute on a specific stream **without** synchronizing.  |
 //!
 //! [`schedule`]: DeviceOperation::schedule
 //! [`sync`]: DeviceOperation::sync
@@ -105,13 +105,18 @@ impl ExecutionContext {
 ///
 /// # Executing operations
 ///
-/// | Method       | Picks stream via         | Blocks? | Async? |
-/// |--------------|--------------------------|---------|--------|
-/// | [`schedule`] | `SchedulingPolicy`       | No      | Yes    |
-/// | `.await`     | Default policy           | No      | Yes    |
-/// | [`sync`]     | Default policy           | Yes     | No     |
-/// | [`sync_on`]  | Caller-provided stream   | Yes     | No     |
-/// | [`async_on`] | Caller-provided stream   | No      | No     |
+/// | Method       | Picks stream via         | Blocks? | Async? | `unsafe`? |
+/// |--------------|--------------------------|---------|--------|-----------|
+/// | [`schedule`] | `SchedulingPolicy`       | No      | Yes    | No        |
+/// | `.await`     | Default policy           | No      | Yes    | No        |
+/// | [`sync`]     | Default policy           | Yes     | No     | No        |
+/// | [`sync_on`]  | Caller-provided stream   | Yes     | No     | No        |
+/// | [`async_on`] | Caller-provided stream   | No      | No     | **`unsafe`** |
+///
+/// [`async_on`] is the only one that is `unsafe`, and it is the only one that
+/// returns while GPU work may still be in flight: the caller must synchronize
+/// the stream before consuming device-side outputs. The other four either block
+/// or hand back a future that does the waiting.
 ///
 /// # Implementors
 ///

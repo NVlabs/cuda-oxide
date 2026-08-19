@@ -21,11 +21,13 @@ use crate::provenance::{
 use crate::{FinalizationOptions, FinalizerError, LinkReport, NamedInput, is_valid_cubin};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
@@ -184,7 +186,7 @@ impl PtxasTool {
             || {
                 let mut command = self.command();
                 command.args(&args);
-                command.output().map_err(|source| FinalizerError::Io {
+                run_tolerating_busy_text_file(&mut command).map_err(|source| FinalizerError::Io {
                     path: self.path.clone(),
                     source,
                 })
@@ -214,6 +216,28 @@ impl PtxasTool {
 
         Command::new(&self.path)
     }
+}
+
+/// Runs `command`, retrying briefly when the kernel reports ETXTBSY.
+///
+/// Executing a just-written tool by path can collide with an unrelated
+/// `Command` spawn on another thread: the concurrent fork inherits the
+/// writer's still-open descriptor for the moment before its own exec, and
+/// exec of the tool during that moment fails with "Text file busy". The
+/// descriptor vanishes as soon as that child execs, so a short bounded
+/// retry rides out the collision while a persistent error still surfaces.
+fn run_tolerating_busy_text_file(command: &mut Command) -> io::Result<Output> {
+    let mut delay = Duration::from_millis(2);
+    for _ in 0..8 {
+        match command.output() {
+            Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
+                thread::sleep(delay);
+                delay = delay.saturating_mul(2);
+            }
+            result => return result,
+        }
+    }
+    command.output()
 }
 
 /// Driver-independent assembler for one already-linked PTX module.
@@ -680,6 +704,25 @@ echo 'not a cubin' > "$output"
             assembler.assemble_ptx(NamedInput::new("kernel.ptx", b"ptx"), &options()),
             Err(FinalizerError::InvalidCubin)
         ));
+    }
+
+    /// Exec of the fake tool must survive a write descriptor that another
+    /// process (here: this test) still holds when the version probe runs.
+    /// Without the bounded ETXTBSY retry this fails immediately with
+    /// "Text file busy", which is the race CI hits when a concurrent
+    /// test's spawn inherits a freshly written script's descriptor.
+    #[cfg(unix)]
+    #[test]
+    fn version_probe_survives_a_briefly_held_write_descriptor() {
+        let (_directory, path) = fake_ptxas("exit 0", None);
+        let held = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            drop(held);
+        });
+        let assembler = PtxAssembler::from_path(path);
+        release.join().unwrap();
+        assert!(assembler.is_ok());
     }
 
     #[cfg(unix)]

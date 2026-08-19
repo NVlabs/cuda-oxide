@@ -102,7 +102,7 @@ file:
 | `layout`      | Rust dynamic-layout intrinsics for slices, `str`, and slice-tailed structs  |
 | `memory`      | Memory access and conversion intrinsics                                     |
 | `saturating`  | Rust compiler saturating integer intrinsics                                 |
-| `tma`         | Tensor Memory Access (TMA) intrinsics                                       |
+| `tma`         | Tensor Memory Accelerator (TMA) intrinsics                                  |
 | `wgmma`       | Hopper WGMMA (Warpgroup Matrix Multiply-Accumulate) intrinsics              |
 
 Per-intrinsic PTX and minimum-SM requirements live in the catalog and are
