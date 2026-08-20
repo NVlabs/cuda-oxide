@@ -813,6 +813,34 @@ pub mod ops {
         pub ty: DebugLocalTypeKind,
     }
 
+    /// One operation in a multi-value LLVM debug expression.
+    ///
+    /// `Arg(N)` selects the Nth operand from the `DIArgList`. The remaining
+    /// operations are the small DWARF subset needed to combine addresses and
+    /// runtime scalar state without exposing raw expression strings to callers.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    pub enum DebugValueExpressionOp {
+        Arg(u32),
+        ConstU(u64),
+        Plus,
+        PlusUConst(u64),
+        Mul,
+        Deref,
+        StackValue,
+    }
+
+    /// Ordered operations for a multi-value `llvm.dbg.value` location recipe.
+    #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+    pub struct DebugValueExpression {
+        pub operations: Vec<DebugValueExpressionOp>,
+    }
+
+    impl DebugValueExpression {
+        pub fn new(operations: Vec<DebugValueExpressionOp>) -> Self {
+            Self { operations }
+        }
+    }
+
     /// A source variable whose storage is a supported projection of a MIR local.
     ///
     /// `offset_bytes` is measured from the current address after an optional
@@ -881,6 +909,7 @@ pub mod ops {
     const DEBUG_LOCAL_DECL_COLUMN_KEY: &str = "cuda_oxide_debug_local_decl_column";
     const DEBUG_LOCAL_SCOPE_KEY: &str = "cuda_oxide_debug_local_scope";
     const DEBUG_PROJECTED_COUNT_KEY: &str = "cuda_oxide_debug_projected_count";
+    const DEBUG_VALUE_EXPRESSION_KEY: &str = "cuda_oxide_debug_value_expression";
     const DEBUG_SOURCE_SCOPE_COUNT_KEY: &str = "cuda_oxide_debug_scope_count";
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
@@ -1173,6 +1202,85 @@ pub mod ops {
     /// Read the MIR source-scope id that owns this source local.
     pub fn debug_local_source_scope(ctx: &Context, op: Ptr<Operation>) -> Option<u32> {
         get_string_attr(ctx, op, DEBUG_LOCAL_SCOPE_KEY).and_then(|scope| scope.parse().ok())
+    }
+
+    /// Attach a typed multi-value location expression to a debug marker.
+    pub fn set_debug_value_expression(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        expression: &DebugValueExpression,
+    ) {
+        set_string_attr(
+            ctx,
+            op,
+            DEBUG_VALUE_EXPRESSION_KEY,
+            encode_debug_value_expression(expression),
+        );
+    }
+
+    /// Read a typed multi-value location expression from a debug marker.
+    pub fn debug_value_expression(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Option<DebugValueExpression> {
+        let encoded = get_string_attr(ctx, op, DEBUG_VALUE_EXPRESSION_KEY)?;
+        decode_debug_value_expression(&encoded)
+    }
+
+    fn encode_debug_value_expression(expression: &DebugValueExpression) -> String {
+        let mut encoded = String::from("v1");
+        for operation in &expression.operations {
+            encoded.push(' ');
+            match operation {
+                DebugValueExpressionOp::Arg(index) => {
+                    encoded.push_str("arg:");
+                    encoded.push_str(&index.to_string());
+                }
+                DebugValueExpressionOp::ConstU(value) => {
+                    encoded.push_str("constu:");
+                    encoded.push_str(&value.to_string());
+                }
+                DebugValueExpressionOp::Plus => encoded.push_str("plus"),
+                DebugValueExpressionOp::PlusUConst(value) => {
+                    encoded.push_str("plus_uconst:");
+                    encoded.push_str(&value.to_string());
+                }
+                DebugValueExpressionOp::Mul => encoded.push_str("mul"),
+                DebugValueExpressionOp::Deref => encoded.push_str("deref"),
+                DebugValueExpressionOp::StackValue => encoded.push_str("stack_value"),
+            }
+        }
+        encoded
+    }
+
+    fn decode_debug_value_expression(encoded: &str) -> Option<DebugValueExpression> {
+        let mut tokens = encoded.split_ascii_whitespace();
+        if tokens.next()? != "v1" {
+            return None;
+        }
+
+        let mut operations = Vec::new();
+        for token in tokens {
+            let operation = if let Some(index) = token.strip_prefix("arg:") {
+                DebugValueExpressionOp::Arg(index.parse::<u32>().ok()?)
+            } else if let Some(value) = token.strip_prefix("constu:") {
+                DebugValueExpressionOp::ConstU(value.parse::<u64>().ok()?)
+            } else if token == "plus" {
+                DebugValueExpressionOp::Plus
+            } else if let Some(value) = token.strip_prefix("plus_uconst:") {
+                DebugValueExpressionOp::PlusUConst(value.parse::<u64>().ok()?)
+            } else if token == "mul" {
+                DebugValueExpressionOp::Mul
+            } else if token == "deref" {
+                DebugValueExpressionOp::Deref
+            } else if token == "stack_value" {
+                DebugValueExpressionOp::StackValue
+            } else {
+                return None;
+            };
+            operations.push(operation);
+        }
+        Some(DebugValueExpression { operations })
     }
 
     /// Attach a function's MIR source-scope table.
@@ -1519,6 +1627,34 @@ pub mod ops {
     }
 
     impl Verify for DebugValueOp {
+        fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+            Ok(())
+        }
+    }
+
+    /// LLVM multi-value debug marker used by the textual exporter.
+    ///
+    /// The operands form the ordered `DIArgList`; a `DebugValueExpression`
+    /// attached to the op selects and combines them with `DW_OP_LLVM_arg`.
+    #[pliron_op(
+        name = "llvm.dbg_value_list",
+        format,
+        interfaces = [NResultsInterface<0>]
+    )]
+    pub struct DebugValueListOp;
+
+    impl DebugValueListOp {
+        pub fn new(ctx: &mut Context, values: Vec<Value>) -> Self {
+            let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], values, vec![], 0);
+            DebugValueListOp { op }
+        }
+
+        pub fn values(&self, ctx: &Context) -> Vec<Value> {
+            self.get_operation().deref(ctx).operands().collect()
+        }
+    }
+
+    impl Verify for DebugValueListOp {
         fn verify(&self, _ctx: &Context) -> Result<(), Error> {
             Ok(())
         }

@@ -20,7 +20,7 @@
   "fixtures": [
     {
       "id": "tcgen05_mma19_libnvvm_probe",
-      "coverage_count": 19,
+      "coverage_count": 24,
       "stages": [
         {
           "targets": ["compute_100a", "ptx93"],
@@ -418,6 +418,18 @@
         "llvm_symbol": "llvm.nvvm.tcgen05.mma.ws.tensor.zero_col_mask",
         "expected_ptx": {"mnemonic": "tcgen05", "modifiers": ["mma", "ws", "cta_group::1", "kind::f16", "collector::b0::discard"], "operands": [{"kind": "address"}, {"kind": "address"}, {"kind": "register"}, {"kind": "register"}, {"kind": "exact", "value": "%enable_pred"}, {"kind": "register"}]},
         "facts": {"llvm_arguments": ["tmem_ptr", "tmem_ptr", "i64", "i32", "i1", "i64", "i32", "i32", "i32"]}
+      }
+    },
+    {
+      "axes": [{"name": "alias", "values": ["e4m3", "e5m2", "e2m3", "e3m2", "e2m1"]}],
+      "product_count": 5,
+      "fixtures": ["tcgen05_mma19_libnvvm_probe"],
+      "template": {
+        "id": "tcgen05_mma_${alias}",
+        "source_record": "int_nvvm_tcgen05_mma_shared",
+        "llvm_symbol": "llvm.nvvm.tcgen05.mma.shared",
+        "expected_ptx": {"mnemonic": "tcgen05", "modifiers": ["mma", "cta_group::1", "kind::f8f6f4", "collector::a::discard"], "operands": [{"kind": "address"}, {"kind": "register"}, {"kind": "register"}, {"kind": "register"}, {"kind": "exact", "value": "%enable_pred"}]},
+        "facts": {"llvm_arguments": ["tmem_ptr", "i64", "i64", "i32", "i1", "i32", "i32", "i32"]}
       }
     },
     {

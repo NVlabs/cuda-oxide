@@ -2491,7 +2491,7 @@ fn tcgen05_mma_b_usage_attr(usage: Tcgen05MmaBUsage) -> &'static str {
 }
 
 fn tcgen05_mma_runtime_parameters(mma: &Tcgen05Mma) -> Vec<(&'static str, &'static str)> {
-    if mma.alias.is_some() {
+    if mma.alias.is_some() && mma.form == Tcgen05MmaForm::WsTensor {
         return vec![
             ("d_tmem", "u32"),
             ("a_tmem", "u32"),
@@ -3117,6 +3117,34 @@ fn tcgen05_mma_render_contract(
                         mma.selector_layout,
                         Tcgen05MmaSelectorLayout::WarpSpecialized { .. }
                     )
+        }
+        (
+            Tcgen05Adapter::MmaDirectSelectors,
+            Some(
+                Tcgen05MmaAlias::E4m3
+                | Tcgen05MmaAlias::E5m2
+                | Tcgen05MmaAlias::E2m3
+                | Tcgen05MmaAlias::E3m2
+                | Tcgen05MmaAlias::E2m1,
+            ),
+            Some(fixed),
+        ) => {
+            mma.form == Tcgen05MmaForm::Shared
+                && fixed.kind == Tcgen05MmaKind::F8f6f4
+                && fixed.b_buffer == 0
+                && fixed.b_usage == Tcgen05MmaBUsage::Discard
+                && matches!(
+                    mma.selector_layout,
+                    Tcgen05MmaSelectorLayout::Base {
+                        kind_argument: 5,
+                        cta_group_argument: 6,
+                        collector_a_argument: 7,
+                        collector_a_upper_exclusive: 4,
+                    }
+                )
+                && record.rust.arguments == ["u32", "u64", "u64", "u32", "bool"]
+                && record.dialect.operands == ["i32", "i64", "i64", "i32", "i1"]
+                && llvm.arguments.len() == 8
         }
         (
             Tcgen05Adapter::MmaWsFixedSelectorsDropLegacyADescriptor,
@@ -6335,9 +6363,11 @@ fn render_compat_tcgen05_mma_record(output: &mut String, record: &CatalogIntrins
 
     writeln!(output, "/// {}", record.summary).unwrap();
     output.push_str("/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n");
-    if mma.alias.is_some() {
+    if mma.alias.is_some() && mma.form == Tcgen05MmaForm::WsTensor {
         output.push_str("/// This uses kind f8f6f4 and collector b0::discard.\n");
         output.push_str("/// `legacy_a_desc` is kept for compatibility; tensor A uses `a_tmem`.\n");
+    } else if mma.alias.is_some() {
+        output.push_str("/// This uses kind f8f6f4, CTA group 1, and collector a::discard.\n");
     } else {
         match mma.selector_layout {
             Tcgen05MmaSelectorLayout::Base { .. } => {
@@ -6423,7 +6453,7 @@ fn render_compat_tcgen05_mma_record(output: &mut String, record: &CatalogIntrins
 }
 
 fn render_compat_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 228);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 233);
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::tcgen05` to keep its public API stable.\n\n");
     for record in tcgen05_intrinsics(catalog) {
@@ -11361,7 +11391,7 @@ fn render_tcgen05_carrier_runs(types: &[String]) -> String {
 }
 
 fn render_dialect_tcgen05(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(tcgen05_intrinsics(catalog).count(), 228);
+    assert_eq!(tcgen05_intrinsics(catalog).count(), 233);
     let mut output = rust_header(catalog, hash);
     output.push_str(
         r#"//! Generated Tensor Core Generation 5 operations.
@@ -11994,8 +12024,10 @@ fn render_importer_tcgen05_mma_dispatch(
     )
     .unwrap();
 
-    let runtime_indices = if mma.alias.is_some() {
+    let runtime_indices = if mma.alias.is_some() && mma.form == Tcgen05MmaForm::WsTensor {
         vec![0, 1, 3, 4, 5]
+    } else if mma.alias.is_some() {
+        (0..record.rust.arguments.len()).collect()
     } else {
         let selector_indices = match mma.selector_layout {
             Tcgen05MmaSelectorLayout::Base {
@@ -12032,26 +12064,35 @@ fn render_importer_tcgen05_mma_dispatch(
     );
 
     if let Some(fixed) = mma.fixed_selectors {
-        let b_buffer = match fixed.b_buffer {
-            0 => "Tcgen05MmaBBufferAttr::B0",
-            1 => "Tcgen05MmaBBufferAttr::B1",
-            2 => "Tcgen05MmaBBufferAttr::B2",
-            3 => "Tcgen05MmaBBufferAttr::B3",
-            _ => panic!("admitted tcgen05 MMA B buffer"),
-        };
         writeln!(
             output,
             "            let kind = {};",
             tcgen05_mma_kind_attr(fixed.kind)
         )
         .unwrap();
-        writeln!(output, "            let b_buffer = {b_buffer};").unwrap();
-        writeln!(
-            output,
-            "            let b_usage = {};",
-            tcgen05_mma_b_usage_attr(fixed.b_usage)
-        )
-        .unwrap();
+        match mma.selector_layout {
+            Tcgen05MmaSelectorLayout::Base { .. } => {
+                output.push_str(
+                    "            let cta_group = Tcgen05MmaCtaGroupAttr::Cg1;\n            let collector_a = Tcgen05MmaCollectorAAttr::Discard;\n",
+                );
+            }
+            Tcgen05MmaSelectorLayout::WarpSpecialized { .. } => {
+                let b_buffer = match fixed.b_buffer {
+                    0 => "Tcgen05MmaBBufferAttr::B0",
+                    1 => "Tcgen05MmaBBufferAttr::B1",
+                    2 => "Tcgen05MmaBBufferAttr::B2",
+                    3 => "Tcgen05MmaBBufferAttr::B3",
+                    _ => panic!("admitted tcgen05 MMA B buffer"),
+                };
+                writeln!(output, "            let b_buffer = {b_buffer};").unwrap();
+                writeln!(
+                    output,
+                    "            let b_usage = {};",
+                    tcgen05_mma_b_usage_attr(fixed.b_usage)
+                )
+                .unwrap();
+            }
+        }
     } else {
         let (kind_argument, second_argument, third_argument) = match mma.selector_layout {
             Tcgen05MmaSelectorLayout::Base {
@@ -17593,8 +17634,17 @@ impl GeneratedIntrinsicTarget {
                 && op.get_attr_nvvm_tcgen05_mma_kind(ctx).is_some();
             let alias_matches = !compatibility_alias || (
                 op.get_attr_nvvm_tcgen05_mma_kind(ctx).as_deref() == Some(&Tcgen05MmaKindAttr::F8f6f4)
-                    && op.get_attr_nvvm_tcgen05_mma_b_buffer(ctx).as_deref() == Some(&Tcgen05MmaBBufferAttr::B0)
-                    && op.get_attr_nvvm_tcgen05_mma_b_usage(ctx).as_deref() == Some(&Tcgen05MmaBUsageAttr::Discard)
+                    && match form {
+                        GeneratedTcgen05MmaForm::Shared => {
+                            op.get_attr_nvvm_tcgen05_mma_cta_group(ctx).as_deref() == Some(&Tcgen05MmaCtaGroupAttr::Cg1)
+                                && op.get_attr_nvvm_tcgen05_mma_collector_a(ctx).as_deref() == Some(&Tcgen05MmaCollectorAAttr::Discard)
+                        }
+                        GeneratedTcgen05MmaForm::WsTensor => {
+                            op.get_attr_nvvm_tcgen05_mma_b_buffer(ctx).as_deref() == Some(&Tcgen05MmaBBufferAttr::B0)
+                                && op.get_attr_nvvm_tcgen05_mma_b_usage(ctx).as_deref() == Some(&Tcgen05MmaBUsageAttr::Discard)
+                        }
+                        _ => false,
+                    }
             );
             form_matches && selector_matches && alias_matches
         }"#,
@@ -17844,7 +17894,7 @@ impl GeneratedIntrinsicTarget {
         replace_exact_render_fragment(
             &mut output,
             "SparseMmaSelectorAttr, SparseMmaShapeAttr",
-            "SparseMmaSelectorAttr, SparseMmaShapeAttr, Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp",
+            "SparseMmaSelectorAttr, SparseMmaShapeAttr, Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaCollectorAAttr, Tcgen05MmaCtaGroupAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp",
         );
     }
     output.push_str(
@@ -18312,11 +18362,12 @@ fn render_tcgen05_mma_probe(
         .map(llvm_parameter)
         .collect::<Vec<_>>()
         .join(", ");
-    let argument_indices: Vec<usize> = if mma.alias.is_some() {
-        vec![0, 1, 3, 4, 5]
-    } else {
-        (0..parameters.len()).collect()
-    };
+    let argument_indices: Vec<usize> =
+        if mma.alias.is_some() && mma.form == Tcgen05MmaForm::WsTensor {
+            vec![0, 1, 3, 4, 5]
+        } else {
+            (0..parameters.len()).collect()
+        };
     let arguments = argument_indices
         .iter()
         .map(|&index| llvm_parameter(&parameters[index]))
@@ -19900,6 +19951,18 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
     output
 }
 
+/// Escape a value for a GFM table cell.
+///
+/// A `|` splits the row before inline parsing runs, so it splits the cell even
+/// inside a code span. GFM's own rule is that a literal pipe must be written
+/// `\|` wherever it appears. Three catalog entries carry a literal pipe today:
+/// the `elect.sync` and `match.all.sync` PTX patterns write their two
+/// destinations as `<register|predicate>`. Their rows rendered with a seventh
+/// cell, which dropped the backend-evidence column.
+fn escape_table_cell(value: impl std::fmt::Display) -> String {
+    value.to_string().replace('|', "\\|")
+}
+
 fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = markdown_header(catalog, hash);
     output.push_str(
@@ -19923,21 +19986,21 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "| `{}` | `{}` | {} | {safety}; scope {}; {}; memory {}; convergent {} | {availability} ([PTX ISA {}, {}]({})) | {} on `{}`; expects `{}` (`{}`, SHA-256 `{}`) |",
-            record.rust.public_path,
-            record.dialect.op_name,
-            source_label(record),
-            record.semantics.execution_scope,
+            escape_table_cell(&record.rust.public_path),
+            escape_table_cell(&record.dialect.op_name),
+            escape_table_cell(source_label(record)),
+            escape_table_cell(&record.semantics.execution_scope),
             if record.semantics.pure { "pure" } else { "impure" },
-            record.semantics.memory,
+            escape_table_cell(&record.semantics.memory),
             record.semantics.convergent,
-            record.target.ptx_isa_version,
-            record.target.ptx_isa_section,
-            record.target.ptx_isa_url,
-            record.backend.status,
-            record.backend.profile,
-            record.expected_ptx,
-            record.backend.version,
-            record.backend.sha256,
+            escape_table_cell(&record.target.ptx_isa_version),
+            escape_table_cell(&record.target.ptx_isa_section),
+            escape_table_cell(&record.target.ptx_isa_url),
+            escape_table_cell(&record.backend.status),
+            escape_table_cell(&record.backend.profile),
+            escape_table_cell(&record.expected_ptx),
+            escape_table_cell(&record.backend.version),
+            escape_table_cell(&record.backend.sha256),
         )
         .unwrap();
     }
@@ -20977,7 +21040,7 @@ mod tests {
     fn catalog_with_tcgen05() -> CatalogFile {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::test_catalog_with_tcgen05(&repo_root).unwrap();
-        assert_eq!(tcgen05_intrinsics(&catalog).count(), 228);
+        assert_eq!(tcgen05_intrinsics(&catalog).count(), 233);
         catalog
     }
 
@@ -22726,7 +22789,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 1010);
+        assert_eq!(catalog.intrinsics.len(), 1015);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 154);
         let generated_records = records
@@ -24116,6 +24179,11 @@ mod tests {
         assert!(compatibility.contains(
             "pub unsafe fn tcgen05_mma_ws_f16(d_tmem: u32, a_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool) -> ()"
         ));
+        for alias in ["e4m3", "e5m2", "e2m3", "e3m2", "e2m1"] {
+            assert!(compatibility.contains(&format!(
+                "pub unsafe fn tcgen05_mma_{alias}(d_tmem: u32, a_desc: u64, b_desc: u64, idesc: u32, enable_d: bool)"
+            )));
+        }
         assert!(
             compatibility
                 .contains("pub unsafe fn tcgen05_ld_16x256b_x8_pure(tmem_addr: u32) -> TmemF32x32")
@@ -24218,7 +24286,7 @@ mod tests {
                     "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
                 )
                 .count(),
-            228
+            233
         );
         assert!(compatibility.contains("/// `KIND` is 0=f16, 1=tf32, 2=f8f6f4, or 3=i8."));
         assert!(compatibility.contains(
@@ -24232,6 +24300,12 @@ mod tests {
                 .matches(
                     "/// `legacy_a_desc` is kept for compatibility; tensor A uses `a_tmem`.\n",
                 )
+                .count(),
+            5
+        );
+        assert_eq!(
+            compatibility
+                .matches("/// This uses kind f8f6f4, CTA group 1, and collector a::discard.\n",)
                 .count(),
             5
         );
@@ -24289,7 +24363,7 @@ mod tests {
                 "/// All tcgen05 operations in the kernel must use the same CTA-group mode.\n",
             )
             .count(),
-            228
+            233
         );
         assert!(raw.contains("pub fn i0345() -> ()"));
         assert!(raw.contains("pub fn i0357() -> ()"));
@@ -24567,6 +24641,9 @@ mod tests {
         assert!(target.contains("\"v1:i0727\""));
         assert!(target.contains("\"v1:i0728\""));
         assert!(target.contains("\"v1:i0759\""));
+        assert!(target.contains(
+            "Tcgen05MmaBUsageAttr, Tcgen05MmaCollectorAAttr, Tcgen05MmaCtaGroupAttr, Tcgen05MmaFormAttr"
+        ));
         assert!(target.contains(
             "GeneratedHardwareTarget::AnyOf(&[GeneratedHardwareAlternative::ExactArchitecture(100), GeneratedHardwareAlternative::ExactArchitecture(101), GeneratedHardwareAlternative::ExactArchitecture(103), GeneratedHardwareAlternative::ExactArchitecture(110)])"
         ));
@@ -24999,5 +25076,48 @@ mod tests {
         );
         assert!(float.contains("pub fn min_xorsign_abs_f32(a: f32, b: f32) -> f32"));
         assert!(!float.contains("pub fn add_rn_f32"));
+    }
+
+    /// Every reference row must carry exactly the six cells of its header.
+    ///
+    /// A `|` in cell data splits the row before inline parsing, so it splits
+    /// the cell even inside a code span. Three catalog entries write a PTX
+    /// destination pair as `<register|predicate>`, and their rows rendered with
+    /// a seventh cell, which drops the backend-evidence column. Counting
+    /// unescaped pipes per row is the direct check.
+    #[test]
+    fn reference_rows_have_one_cell_per_header_column() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        let reference = render_reference(&catalog, "test-hash");
+
+        let mut rows = 0usize;
+        let mut carried_a_pipe = 0usize;
+        for line in reference
+            .lines()
+            .filter(|line| line.starts_with("| `cuda_intrinsics::"))
+        {
+            rows += 1;
+            if line.contains("\\|") {
+                carried_a_pipe += 1;
+            }
+            // Delimiters only: drop every escaped pipe first, then a six-column
+            // row leaves seven.
+            let delimiters = line.replace("\\|", "").matches('|').count();
+            assert_eq!(
+                delimiters, 7,
+                "row has {delimiters} cell delimiters, expected 7: {line}"
+            );
+        }
+
+        assert!(
+            rows > 900,
+            "expected the full reference, rendered {rows} rows"
+        );
+        assert!(
+            carried_a_pipe >= 3,
+            "expected the elect.sync and match.all.sync patterns to need escaping, \
+             found {carried_a_pipe} rows with an escaped pipe"
+        );
     }
 }

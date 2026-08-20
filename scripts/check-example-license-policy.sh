@@ -21,12 +21,14 @@
 #   Every example depends on cuda-core/cuda-device/cuda-host by path, so each
 #   lock file re-lists the root workspace's own transitive crates.  Grouping the
 #   lock files by their exact set of third-party (name, version, source) triples
-#   collapses 217 lock files (215 example workspaces plus two nested
-#   sub-workspaces) to 31 distinct sets and one cargo-deny run each.  That is an
-#   equivalence, not a sample: license, source and advisory verdicts are
-#   per-crate properties, so two workspaces resolving the identical crate set
-#   get the identical verdict.  `bans.multiple-versions` is a graph property,
-#   but deny.toml sets it to "warn", so it cannot change the exit status.
+#   collapses every example lock file (one per example directory, plus one per
+#   nested sub-workspace) to far fewer distinct sets, and one cargo-deny run
+#   each.  The run prints both counts, so this comment does not repeat them.
+#   The grouping is an equivalence, not a sample: license, source and advisory
+#   verdicts are per-crate properties, so two workspaces resolving the
+#   identical crate set get the identical verdict.  `bans.multiple-versions`
+#   is a graph property, but deny.toml sets it to "warn", so it cannot change
+#   the exit status.
 set -euo pipefail
 
 export LC_ALL=C
@@ -106,11 +108,11 @@ on_disk = {os.path.relpath(lock, examples_root).split(os.sep)[0] for lock in loc
 
 # Cross-check the glob against an independent enumeration rather than a fixed
 # floor.  Every example directory that carries a Cargo.toml carries a
-# Cargo.lock beside it (215 of each today, plus two nested sub-workspace
-# locks), so a name absent here means the glob stopped reaching it.  A count
-# cannot tell a narrowed glob from a smaller tree: `[a-m]*` still finds 137 of
-# the 217 locks, which clears any floor loose enough not to fail on ordinary
-# growth.  The floor this replaces was 20.
+# Cargo.lock beside it, plus one per nested sub-workspace, so a name absent
+# here means the glob stopped reaching it.  A count cannot tell a narrowed
+# glob from a smaller tree: measured once, a glob narrowed to `[a-m]*` still
+# found 137 of the 217 locks then present, which clears any floor loose enough
+# not to fail on ordinary growth.  The floor this replaces was 20.
 expected = {
     name
     for name in os.listdir(examples_root)
@@ -149,8 +151,9 @@ for lock in locks:
 # Mirrors the inventory guard: if the lock-file regexes silently rotted, the
 # groups would quietly collapse and a single run would vouch for everything.
 # Scaled to the locks actually found rather than a fixed number, so it cannot
-# go stale as the tree grows: 13871 packages over 217 locks today, against a
-# floor of 2170.
+# go stale as the tree grows: every lock yields dozens of parsed packages
+# against a floor of ten (measured once: about 64 per lock), and a regex rot
+# takes the tally to zero.
 if total_parsed < 10 * len(locks):
     sys.exit("parse self-test failed: parsed %d packages from %d lock files"
              % (total_parsed, len(locks)))
@@ -160,7 +163,9 @@ for manifest in sorted(groups.values()):
 ' "${EXAMPLES_ROOT}" "${POLICY_EXEMPT_EXAMPLES[@]}")"
 
 total="$(printf '%s\n' "${representatives}" | grep -c .)"
-echo "Checking deny.toml over ${total} representative example workspaces."
+locks="$(find "${EXAMPLES_ROOT}" -name Cargo.lock | grep -c .)"
+echo "Checking deny.toml over ${total} representative example workspaces" \
+    "across ${locks} example lock files."
 
 # No --config: cargo-deny resolves the config by walking up from the manifest
 # directory, so every example workspace finds the repository-root deny.toml.

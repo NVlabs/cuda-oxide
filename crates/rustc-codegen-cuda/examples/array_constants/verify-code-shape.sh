@@ -237,6 +237,8 @@ require_symbol_shape "${llvm_ir}" llvm "${bare_enum_symbol}" \
 
 pointer_union_array_symbol='array_constants__kernels__pointer_union_array_value'
 direct_pointer_union_symbol='array_constants__kernels__direct_pointer_union_value'
+pointer_integer_union_array_symbol='array_constants__kernels__pointer_integer_union_array_value'
+direct_pointer_integer_union_symbol='array_constants__kernels__direct_pointer_integer_union_value'
 union_array_symbol='array_constants__kernels__union_array_value'
 direct_union_symbol='array_constants__kernels__direct_union_value'
 union_tuple_symbol='array_constants__kernels__union_tuple_value'
@@ -267,6 +269,21 @@ reject_symbol_shape "${llvm_ir}" llvm "${direct_pointer_union_symbol}" \
 reject_symbol_shape "${llvm_ir}" llvm "${direct_pointer_union_symbol}" \
     "raw eight-byte image materialization for direct pointer unions" \
     'alloca \[8 x i8\]'
+
+# A pointer/integer union initialized through its integer view has no relocation
+# provenance to preserve. The importer must therefore use the exact evaluated
+# byte image instead of inventing a pointer carrier. Both direct and array forms
+# pin the new path; neither may reconstruct a pointer with inttoptr.
+for symbol in \
+    "${direct_pointer_integer_union_symbol}" \
+    "${pointer_integer_union_array_symbol}"; do
+    require_symbol_shape "${llvm_ir}" llvm "${symbol}" \
+        "relocation-free pointer/integer union byte-image materialization" \
+        'alloca \[8 x i8\]'
+    reject_symbol_shape "${llvm_ir}" llvm "${symbol}" \
+        "inttoptr reconstruction for relocation-free pointer/integer unions" \
+        'inttoptr'
+done
 
 # Initialized union constants are deliberately materialized element-wise instead
 # of taking the promoted-global fast path. rustc gives the importer a byte image

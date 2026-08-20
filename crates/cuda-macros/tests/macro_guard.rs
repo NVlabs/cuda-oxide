@@ -14,6 +14,7 @@ fn macro_guards() {
     t.compile_fail("tests/compile_fail/device_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_extern_reserved_name.rs");
     t.compile_fail("tests/compile_fail/device_extern_wrong_abi.rs");
+    t.compile_fail("tests/compile_fail/device_extern_variadic.rs");
     t.compile_fail("tests/compile_fail/kernel_legacy_const_instantiation.rs");
     t.compile_fail("tests/compile_fail/kernel_legacy_lifetime_instantiation.rs");
     t.compile_fail("tests/compile_fail/kernel_impl_trait_parameter.rs");

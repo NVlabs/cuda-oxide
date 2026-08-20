@@ -18,14 +18,14 @@
 //! - straight-line partial-wait pipelines with a static `wait_group<N>` and
 //!   `N + 1` independent accumulator slots.
 //!
-//! The `m64n64k16.f32.f16.f16` variant supports only the canonical linear
-//! full-drain shape. The `m64n64k8.f32.tf32.tf32` variant uses the same
-//! canonical linear full-drain carrier. Every accepted asynchronous lifetime is
-//! fused into one convergent inline-PTX scope and ends in `wait_group<0>` before
-//! accumulator values become visible to LLVM again. Unsupported BF16 full-drain
-//! pointer shapes retain the deferred pointer-form fallback. F16 and TF32 have
-//! no pointer-form fallback; the legacy K=16 TF32 entry point remains
-//! unsupported.
+//! The `m64n64k16.f32.f16.f16` variant supports canonical linear full-drain
+//! regions and the canonical counted K-loop. The `m64n64k8.f32.tf32.tf32`
+//! variant uses the canonical linear full-drain carrier only. Every accepted
+//! asynchronous lifetime is fused into one convergent inline-PTX scope and ends
+//! in `wait_group<0>` before accumulator values become visible to LLVM again.
+//! Unsupported BF16 full-drain pointer shapes retain the deferred pointer-form
+//! fallback. F16 and TF32 have no pointer-form fallback; the legacy K=16 TF32
+//! entry point remains unsupported.
 //!
 //! # Architecture
 //!
@@ -76,13 +76,13 @@
 //! - **BF16 linear full drain:** one canonical `[[f32; 8]; 4]` accumulator,
 //!   one commit, and a final `wgmma_wait_group::<0>()`.
 //! - **F16 linear full drain:** the same canonical accumulator and full-drain
-//!   lifetime are supported, but there is no pointer fallback, counted-loop
-//!   lowering, or partial-wait pipeline for F16.
+//!   lifetime are supported, but there is no pointer fallback or partial-wait
+//!   pipeline for F16.
 //! - **TF32 linear full drain:** `m64n64k8.f32.tf32.tf32` uses the same
 //!   canonical accumulator and full-drain lifetime. TF32 has no pointer
 //!   fallback, counted-loop lowering, or partial-wait pipeline.
-//! - **Canonical counted K-loop:** one BF16 MMA per iteration, compile-time trip
-//!   count, and `u64` descriptor recurrences of the form `desc + const`. The
+//! - **Canonical counted K-loop:** one BF16 or F16 MMA per iteration,
+//!   compile-time trip count, and `u64` descriptor recurrences of the form `desc + const`. The
 //!   fence-to-final-wait lifetime is fused so the accumulator is loaded and
 //!   stored once for the whole loop rather than once per iteration.
 //! - **Partial-wait pipeline:** a static `wgmma_wait_group::<N>()` with
@@ -93,8 +93,9 @@
 //!   lifetime is pending.
 //! - Unsupported BF16 full-drain accumulator pointer shapes retain the deferred
 //!   pointer-form lowering. Dynamic partial waits, unsupported control flow,
-//!   malformed pipeline schedules, F16/TF32 non-linear or pipelined shapes, and
-//!   the legacy K=16 TF32 compatibility entry point are rejected.
+//!   malformed pipeline schedules, F16 partial-wait/pipelined shapes, TF32
+//!   counted-loop or partial-wait shapes, and the legacy K=16 TF32
+//!   compatibility entry point are rejected.
 //!
 //! # Hardware Support
 //!
@@ -247,10 +248,10 @@ pub unsafe fn wgmma_mma_m64n64k16_f32_bf16(acc: &mut [[f32; 8]; 4], desc_a: u64,
 
 /// WGMMA with f32 accumulator and f16 inputs.
 ///
-/// This variant supports a canonical linear full-drain region:
-/// `fence -> one or more MMA -> commit_group -> wait_group<0>`. The accumulator
-/// must have the public `[[f32; 8]; 4]` shape. Counted loops, partial waits, and
-/// non-canonical pointer fallback remain unsupported for F16.
+/// This variant supports canonical linear full-drain regions and canonical
+/// counted K-loops with a compile-time trip count and affine `u64` descriptor
+/// recurrences. The accumulator must have the public `[[f32; 8]; 4]` shape.
+/// Partial waits and non-canonical pointer fallback remain unsupported for F16.
 ///
 /// # PTX
 ///

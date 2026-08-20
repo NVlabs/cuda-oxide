@@ -464,9 +464,10 @@ pub(crate) fn convert_construct_struct(
     }
 
     // A packed struct containing AS3 remains target-dependent as a physical
-    // memory image. The narrow internal-call ABI exception is safe to construct
-    // in SSA because its return boundary rebuilds the value into a target-stable
-    // generic-pointer carrier before the aggregate crosses the function ABI.
+    // memory image. The internal-call ABI exception is safe to construct in SSA
+    // because its return boundary recursively rebuilds every supported AS3 leaf
+    // into a target-stable generic-pointer carrier before the aggregate crosses
+    // the function ABI.
     if llvm_packed_struct_contains_pointer_in_address_space(
         ctx,
         map.llvm_struct_ty,
@@ -2971,6 +2972,177 @@ mod tests {
             count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
             0,
             "construction itself must not genericize the shared pointer"
+        );
+    }
+
+    #[test]
+    fn packed_struct_construction_with_multiple_direct_shared_pointers_stays_semantic_in_ssa() {
+        use dialect_mir::ops::MirConstructStructOp;
+
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedPair".into(),
+            vec!["tag".into(), "left".into(), "right".into()],
+            vec![u8_ty, shared_ty, shared_ty],
+            vec![0, 1, 2],
+            vec![0, 1, 9],
+            17,
+            1,
+        )
+        .into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![u8_ty, shared_ty, shared_ty], vec![]);
+        let tag = block.deref(&ctx).get_argument(0);
+        let left = block.deref(&ctx).get_argument(1);
+        let right = block.deref(&ctx).get_argument(2);
+        let construct = Operation::new(
+            &mut ctx,
+            MirConstructStructOp::get_concrete_op_info(),
+            vec![packed_ty],
+            vec![tag, left, right],
+            vec![],
+            0,
+        );
+        construct.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect("multiple direct AS3 leaves in a packed SSA aggregate must lower");
+
+        let body = kernel_blocks(&ctx, module);
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        assert_eq!(
+            insert_indices(&ctx, &inserts),
+            vec![vec![0], vec![1], vec![2]],
+            "all direct shared leaves must remain in their semantic packed slots"
+        );
+
+        let result_ty = inserts
+            .last()
+            .expect("packed AS3 construction must emit insertvalue")
+            .get_operation()
+            .deref(&ctx)
+            .get_result(0)
+            .get_type(&ctx);
+        let result_ty_ref = result_ty.deref(&ctx);
+        let struct_ty = result_ty_ref
+            .downcast_ref::<llvm_types::StructType>()
+            .expect("packed AS3 construction result must be an LLVM struct");
+        assert_eq!(struct_ty.layout(), llvm_types::StructLayout::Packed);
+        assert_eq!(llvm_type_size_align(&ctx, result_ty), Some((17, 1)));
+        for slot in [1usize, 2] {
+            let pointer_ty = struct_ty.field_type(slot);
+            let pointer_ty_ref = pointer_ty.deref(&ctx);
+            let pointer = pointer_ty_ref
+                .downcast_ref::<llvm_types::PointerType>()
+                .expect("direct shared leaves must remain pointer-typed");
+            assert_eq!(pointer.address_space(), llvm_types::address_space::SHARED);
+        }
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            0,
+            "semantic construction must not genericize any direct shared leaf"
+        );
+    }
+
+    #[test]
+    fn packed_struct_construction_with_nested_shared_pointers_stays_semantic_in_ssa() {
+        use dialect_mir::ops::MirConstructStructOp;
+
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let inner_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "SharedPair".into(),
+            vec!["left".into(), "right".into()],
+            vec![shared_ty, shared_ty],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedNestedShared".into(),
+            vec!["tag".into(), "pair".into()],
+            vec![u8_ty, inner_ty],
+            vec![0, 1],
+            vec![0, 1],
+            17,
+            1,
+        )
+        .into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![u8_ty, shared_ty, shared_ty], vec![]);
+        let tag = block.deref(&ctx).get_argument(0);
+        let left = block.deref(&ctx).get_argument(1);
+        let right = block.deref(&ctx).get_argument(2);
+
+        let inner = Operation::new(
+            &mut ctx,
+            MirConstructStructOp::get_concrete_op_info(),
+            vec![inner_ty],
+            vec![left, right],
+            vec![],
+            0,
+        );
+        inner.insert_at_back(block, &ctx);
+        let inner_value = inner.deref(&ctx).get_result(0);
+
+        let outer = Operation::new(
+            &mut ctx,
+            MirConstructStructOp::get_concrete_op_info(),
+            vec![packed_ty],
+            vec![tag, inner_value],
+            vec![],
+            0,
+        );
+        outer.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect("nested AS3 leaves in a packed SSA aggregate must lower");
+
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            0,
+            "semantic construction must keep nested shared leaves in AS3"
+        );
+
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        let packed_result = inserts
+            .iter()
+            .filter_map(|insert| {
+                let result_ty = insert
+                    .get_operation()
+                    .deref(&ctx)
+                    .get_result(0)
+                    .get_type(&ctx);
+                let is_packed = result_ty
+                    .deref(&ctx)
+                    .downcast_ref::<llvm_types::StructType>()
+                    .is_some_and(|ty| ty.layout() == llvm_types::StructLayout::Packed);
+                is_packed.then_some(result_ty)
+            })
+            .last()
+            .expect("outer packed construction must produce a packed LLVM struct");
+
+        assert_eq!(llvm_type_size_align(&ctx, packed_result), Some((17, 1)));
+        assert!(
+            llvm_packed_struct_contains_pointer_in_address_space(
+                &ctx,
+                packed_result,
+                llvm_types::address_space::SHARED,
+            ),
+            "the semantic packed value must retain its recursively nested AS3 leaves"
         );
     }
 

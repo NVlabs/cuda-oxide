@@ -39,7 +39,8 @@
 //! | ptr → struct (thin→fat, no niche)              | `insertvalue` into undef                    |
 //! | ptr → integer                                  | genericize named-space pointers, `ptrtoint` |
 //! | integer → ptr                                  | `inttoptr`                                  |
-//! | struct → struct (transmute)                    | `alloca` + `store` + `load`                 |
+//! | slice-shaped struct → slice-shaped struct     | fieldwise SSA; `addrspacecast` data as needed |
+//! | other struct → struct                          | `alloca` + `store` + `load`                 |
 //! | ptr → ptr (diff addrspace)                     | `addrspacecast`                             |
 //! | struct → integer, equal size                   | `alloca` + `store` + `load`                 |
 //! | struct → integer, mismatched size              | cuda-oxide error (see issue #21)            |
@@ -58,7 +59,7 @@ use crate::convert::types::{
 use crate::helpers;
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::ops::MirCastOp;
-use dialect_mir::types::{MirArrayType, MirPtrType};
+use dialect_mir::types::{MirArrayType, MirPtrType, address_space};
 use llvm_export::op_interfaces::{CastOpInterface, CastOpWithNNegInterface};
 use llvm_export::ops as llvm;
 use llvm_export::types::{FuncType, PointerType, PointerTypeExt};
@@ -464,6 +465,108 @@ fn emit_unsize_cast(
     emit_pointer_cast(ctx, rewriter, op, val, val_ty, llvm_ty)
 }
 
+/// Return the data-pointer and metadata field types for the canonical slice-fat-pointer
+/// LLVM shape `{ ptr, integer }`.
+///
+/// This recognizer is intentionally narrow. In the semantic pointer-cast path,
+/// `{ ptr, integer }` is the slice fat-pointer representation, while trait-object
+/// fat pointers use pointer metadata and therefore do not match. Requiring the
+/// metadata type to remain identical in the caller prevents this path from
+/// becoming a general aggregate coercion.
+fn slice_fat_pointer_fields(
+    ctx: &Context,
+    ty: pliron::r#type::TypeHandle,
+) -> Option<(pliron::r#type::TypeHandle, pliron::r#type::TypeHandle)> {
+    let ty_ref = ty.deref(ctx);
+    let struct_ty = ty_ref.downcast_ref::<llvm_export::types::StructType>()?;
+    if struct_ty.num_fields() != 2 {
+        return None;
+    }
+
+    let data_ty = struct_ty.field_type(0);
+    let metadata_ty = struct_ty.field_type(1);
+    let data_is_pointer = data_ty.deref(ctx).is::<llvm_export::types::PointerType>();
+    let metadata_is_integer = metadata_ty.deref(ctx).is::<IntegerType>();
+    (data_is_pointer && metadata_is_integer).then_some((data_ty, metadata_ty))
+}
+
+/// Lower a slice-fat-pointer cast entirely in SSA.
+///
+/// The data-pointer half carries address-space semantics and is converted with
+/// `addrspacecast` when the source and destination spaces differ. The integer
+/// metadata half is copied unchanged. No aggregate bytes are materialized in
+/// memory, so an addrspace(3) pointer is never exposed as its target-dependent
+/// physical representation.
+fn try_emit_slice_fat_pointer_cast(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    val: pliron::value::Value,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
+) -> Result<Option<Ptr<Operation>>> {
+    let Some((src_data_ty, src_metadata_ty)) = slice_fat_pointer_fields(ctx, val_ty) else {
+        return Ok(None);
+    };
+    let Some((dst_data_ty, dst_metadata_ty)) = slice_fat_pointer_fields(ctx, llvm_ty) else {
+        return Ok(None);
+    };
+
+    // Slice casts preserve metadata exactly. Refuse to reinterpret, widen, or
+    // truncate the metadata field here; a non-identical metadata type is not
+    // the canonical slice-fat-pointer coercion this helper recognizes.
+    if src_metadata_ty != dst_metadata_ty {
+        return Ok(None);
+    }
+
+    let src_data_as = src_data_ty
+        .deref(ctx)
+        .downcast_ref::<PointerType>()
+        .expect("slice fat-pointer data field must be a pointer")
+        .address_space();
+    let dst_data_as = dst_data_ty
+        .deref(ctx)
+        .downcast_ref::<PointerType>()
+        .expect("slice fat-pointer data field must be a pointer")
+        .address_space();
+
+    // Cluster-shared pointers have distinct lowering semantics and are intentionally
+    // outside this legalization. Preserve the existing aggregate fallback for AS7.
+    if src_data_as == address_space::CLUSTER_SHARED || dst_data_as == address_space::CLUSTER_SHARED
+    {
+        return Ok(None);
+    }
+
+    let extract_data = llvm::ExtractValueOp::new(ctx, val, vec![0])
+        .map_err(|e| pliron::input_error_noloc!("slice pointer cast data extraction: {e}"))?;
+    rewriter.insert_operation(ctx, extract_data.get_operation());
+    let data = extract_data.get_operation().deref(ctx).get_result(0);
+
+    let extract_metadata = llvm::ExtractValueOp::new(ctx, val, vec![1])
+        .map_err(|e| pliron::input_error_noloc!("slice pointer cast metadata extraction: {e}"))?;
+    rewriter.insert_operation(ctx, extract_metadata.get_operation());
+    let metadata = extract_metadata.get_operation().deref(ctx).get_result(0);
+
+    let data = if src_data_as != dst_data_as {
+        let cast = llvm::AddrSpaceCastOp::new(ctx, data, dst_data_ty);
+        rewriter.insert_operation(ctx, cast.get_operation());
+        cast.get_operation().deref(ctx).get_result(0)
+    } else {
+        data
+    };
+
+    let undef = llvm::UndefOp::new(ctx, llvm_ty);
+    rewriter.insert_operation(ctx, undef.get_operation());
+    let undef_value = undef.get_operation().deref(ctx).get_result(0);
+
+    let insert_data = llvm::InsertValueOp::new(ctx, undef_value, data, vec![0]);
+    rewriter.insert_operation(ctx, insert_data.get_operation());
+    let with_data = insert_data.get_operation().deref(ctx).get_result(0);
+
+    Ok(Some(
+        llvm::InsertValueOp::new(ctx, with_data, metadata, vec![1]).get_operation(),
+    ))
+}
+
 /// Emit a pointer-compatible cast, handling the struct↔ptr patterns that arise
 /// because our type system represents fat pointers (slices) as `{ ptr, i64 }` structs.
 ///
@@ -471,6 +574,8 @@ fn emit_unsize_cast(
 /// - struct → ptr: `extractvalue` field 0 (extract data pointer from fat pointer)
 /// - ptr → struct: `insertvalue` into undef at field 0 (wrap thin ptr in fat pointer)
 /// - ptr → ptr (different address space): `addrspacecast`
+/// - slice-shaped struct → slice-shaped struct: extract data + metadata,
+///   address-space-cast the data pointer when needed, then rebuild in SSA
 /// - array ↔ anything: memory round-trip (`alloca` + `store` + `load`),
 ///   because `bitcast` is only defined between non-aggregate first-class
 ///   types (e.g. `u32::from_ne_bytes` transmutes `[u8; 4]` → `u32`)
@@ -513,7 +618,11 @@ fn emit_pointer_cast(
     } else if src_is_int && dst_is_ptr {
         Ok(emit_int_to_ptr(ctx, rewriter, val, llvm_ty))
     } else if src_is_struct && dst_is_struct {
-        emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
+        if let Some(cast) = try_emit_slice_fat_pointer_cast(ctx, rewriter, val, val_ty, llvm_ty)? {
+            Ok(cast)
+        } else {
+            emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
+        }
     } else if let (Some(s), Some(d)) = (src_as, dst_as) {
         if s != d {
             let cast_ty = llvm_export::types::PointerType::get(ctx, d).into();
@@ -1084,6 +1193,28 @@ mod tests {
             .downcast_ref::<llvm_export::types::PointerType>()
             .expect("expected LLVM pointer type")
             .address_space()
+    }
+
+    fn slice_like_pointer_struct(
+        ctx: &mut Context,
+        name: &str,
+        element_width: u32,
+        address_space: u32,
+    ) -> TypeHandle {
+        let element = int_ty(ctx, element_width, Signedness::Unsigned);
+        let data: TypeHandle = MirPtrType::get(ctx, element, true, address_space).into();
+        let metadata = int_ty(ctx, 64, Signedness::Unsigned);
+        MirStructType::get_with_full_layout(
+            ctx,
+            name.into(),
+            vec!["data".into(), "len".into()],
+            vec![data, metadata],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into()
     }
 
     fn integer_niche_enum(ctx: &mut Context) -> TypeHandle {
@@ -1773,6 +1904,113 @@ mod tests {
             3,
             "ptr -> ptr addrspace cast must produce an addrspace(3) pointer"
         );
+    }
+
+    #[test]
+    fn slice_fat_pointer_cast_with_shared_data_rebuilds_in_ssa() {
+        for shared_is_source in [true, false] {
+            let mut ctx = make_ctx();
+            let shared = llvm_export::types::address_space::SHARED;
+            let generic = llvm_export::types::address_space::GENERIC;
+            let (source_space, destination_space) = if shared_is_source {
+                (shared, generic)
+            } else {
+                (generic, shared)
+            };
+            let source =
+                slice_like_pointer_struct(&mut ctx, "SourceSliceFatPointer", 32, source_space);
+            let destination = slice_like_pointer_struct(
+                &mut ctx,
+                "DestinationSliceFatPointer",
+                16,
+                destination_space,
+            );
+
+            let module =
+                lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::PtrToPtr);
+            let body = kernel_blocks(&ctx, module);
+
+            assert_eq!(
+                count_ops::<llvm::AllocaOp>(&ctx, &body),
+                0,
+                "slice fat-pointer casts must stay in SSA"
+            );
+            assert_eq!(
+                count_ops::<llvm::StoreOp>(&ctx, &body),
+                0,
+                "slice fat-pointer casts must not expose aggregate bytes"
+            );
+            assert_eq!(
+                count_ops::<llvm::LoadOp>(&ctx, &body),
+                0,
+                "slice fat-pointer casts must not reload target-dependent pointer bytes"
+            );
+            assert!(
+                count_ops::<llvm::ExtractValueOp>(&ctx, &body) >= 2,
+                "slice fat-pointer casts must extract data and metadata"
+            );
+            assert!(
+                count_ops::<llvm::InsertValueOp>(&ctx, &body) >= 2,
+                "slice fat-pointer casts must rebuild data and metadata"
+            );
+
+            let expected_space = destination_space;
+            let casts = find_all::<llvm::AddrSpaceCastOp>(&ctx, &body);
+            assert!(
+                casts.iter().any(|cast| {
+                    let result = cast.get_operation().deref(&ctx).get_result(0);
+                    pointer_addrspace(&ctx, result.get_type(&ctx)) == expected_space
+                }),
+                "slice data pointer must be addrspacecast into the destination space"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_slice_fat_pointer_cast_avoids_memory_round_trip() {
+        let mut ctx = make_ctx();
+        let generic = llvm_export::types::address_space::GENERIC;
+        let source = slice_like_pointer_struct(&mut ctx, "SourceSliceFatPointer", 32, generic);
+        let destination =
+            slice_like_pointer_struct(&mut ctx, "DestinationSliceFatPointer", 16, generic);
+
+        let module = lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::PtrToPtr);
+        let body = kernel_blocks(&ctx, module);
+
+        assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn cluster_shared_slice_fat_pointer_cast_keeps_existing_fallback() {
+        for cluster_shared_is_source in [true, false] {
+            let mut ctx = make_ctx();
+            let cluster_shared = dialect_mir::types::address_space::CLUSTER_SHARED;
+            let generic = dialect_mir::types::address_space::GENERIC;
+            let (source_space, destination_space) = if cluster_shared_is_source {
+                (cluster_shared, generic)
+            } else {
+                (generic, cluster_shared)
+            };
+            let source =
+                slice_like_pointer_struct(&mut ctx, "SourceSliceFatPointer", 32, source_space);
+            let destination = slice_like_pointer_struct(
+                &mut ctx,
+                "DestinationSliceFatPointer",
+                16,
+                destination_space,
+            );
+
+            let module =
+                lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::PtrToPtr);
+            let body = kernel_blocks(&ctx, module);
+
+            assert!(
+                count_ops::<llvm::AllocaOp>(&ctx, &body) > 0,
+                "cluster-shared slice-shaped casts must keep the existing aggregate fallback"
+            );
+        }
     }
 
     /// `&mut [T; N]` in shared memory (addrspace 3) unsized to `&mut [T]`:

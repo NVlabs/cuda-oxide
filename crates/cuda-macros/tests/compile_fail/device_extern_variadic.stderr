@@ -1,0 +1,5 @@
+error: #[device] externs cannot be variadic
+ --> tests/compile_fail/device_extern_variadic.rs:8:32
+  |
+8 |     fn variadic_helper(x: f32, ...) -> f32;
+  |                                ^^^

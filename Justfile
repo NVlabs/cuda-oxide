@@ -63,7 +63,8 @@ test:
         -p mir-transforms -p nvvm-transforms -p reserved-oxide-symbols \
         -p cuda-device -p libnvvm-sys -p nvjitlink-sys \
         -p cuda-artifact-finalizer -p cargo-oxide \
-        -p dialect-iket -p iket-lower -p ptx-parse -p dialect-ptx
+        -p dialect-iket -p iket-lower -p ptx-parse -p dialect-ptx \
+        -p ptx-schedule
     # `default = []`, but every consumer turns the object features on, and the
     # default set alone skips the eight ELF emit/extract tests.
     cargo test -p oxide-artifacts --all-targets --features object
@@ -112,8 +113,8 @@ test-cuda:
 # Mirror unit-tests.yml's third job, `generated-intrinsics`: the three gates a
 # change under crates/cuda-intrinsics-gen has to pass. Nothing else here ran
 # them, so a catalog edit could clear `just check` and still fail CI -- and the
-# catalog is the majority of the intrinsic surface (986 entries, 35 generated
-# files, against 7 hand-written op modules).
+# catalog is the majority of the intrinsic surface: it generates 35 op modules,
+# against 7 that are hand-written.
 #
 # Needs no CUDA toolkit: `--skip-terminal` is CI's own flag for runners without
 # the recorded CUDA 13.3 ptxas, leaving the pinned llc identity and the exact
