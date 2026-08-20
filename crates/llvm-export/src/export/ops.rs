@@ -52,7 +52,7 @@ use super::{
 /// textual export touches four places in this file:
 ///
 /// 1. Add a variant to `LlvmOp` below.
-/// 2. Add a matching entry in the [`classify_op!`] invocation.
+/// 2. Add a matching entry in the `classify_op!` invocation below.
 /// 3. Add an `emit_*` helper method on [`ModuleExportState`].
 /// 4. Add a `Some(LlvmOp::X(op)) => self.emit_x(...)` arm in `export_op`.
 ///
@@ -130,6 +130,7 @@ enum LlvmOp<'op> {
     Constant(&'op ops::ConstantOp),
     AddressOf(&'op ops::AddressOfOp),
     DebugValue(&'op ops::DebugValueOp),
+    DebugValueList(&'op ops::DebugValueListOp),
 }
 
 /// Try each `(Variant, OpType)` pair in order; return the first match.
@@ -218,6 +219,7 @@ impl<'op> TryFrom<&'op dyn Op> for LlvmOp<'op> {
             Constant     => ops::ConstantOp,
             AddressOf    => ops::AddressOfOp,
             DebugValue   => ops::DebugValueOp,
+            DebugValueList => ops::DebugValueListOp,
         })
     }
 }
@@ -226,7 +228,11 @@ impl LlvmOp<'_> {
     fn emits_real_instruction(&self) -> bool {
         !matches!(
             self,
-            Self::Undef(_) | Self::Constant(_) | Self::AddressOf(_) | Self::DebugValue(_)
+            Self::Undef(_)
+                | Self::Constant(_)
+                | Self::AddressOf(_)
+                | Self::DebugValue(_)
+                | Self::DebugValueList(_)
         )
     }
 
@@ -478,6 +484,9 @@ impl<'a> ModuleExportState<'a> {
             Some(LlvmOp::AddressOf(op)) => self.emit_address_of(op, value_names, output)?,
             Some(LlvmOp::DebugValue(op)) => {
                 self.emit_debug_value(op, value_names, debug_scope, &op_loc, output)?
+            }
+            Some(LlvmOp::DebugValueList(op)) => {
+                self.emit_debug_value_list(op, value_names, debug_scope, &op_loc, output)?
             }
             // Unknown
             None if self.legacy_typed_pointers() => {
@@ -842,6 +851,55 @@ impl<'a> ModuleExportState<'a> {
         format!("!DIExpression(DW_OP_LLVM_fragment, {offset_bits}, {size_bits})")
     }
 
+    fn debug_expression_for_value_list(
+        expression: &ops::DebugValueExpression,
+        operand_count: usize,
+    ) -> Result<String, String> {
+        if expression.operations.is_empty() {
+            return Err("multi-value debug expression must not be empty".to_string());
+        }
+
+        let mut parts = Vec::with_capacity(expression.operations.len() * 2);
+        let mut saw_arg = false;
+        for operation in &expression.operations {
+            match operation {
+                ops::DebugValueExpressionOp::Arg(index) => {
+                    let index = *index as usize;
+                    if index >= operand_count {
+                        return Err(format!(
+                            "multi-value debug expression references argument {index}, but only {operand_count} operands exist"
+                        ));
+                    }
+                    saw_arg = true;
+                    parts.push("DW_OP_LLVM_arg".to_string());
+                    parts.push(index.to_string());
+                }
+                ops::DebugValueExpressionOp::ConstU(value) => {
+                    parts.push("DW_OP_constu".to_string());
+                    parts.push(value.to_string());
+                }
+                ops::DebugValueExpressionOp::Plus => parts.push("DW_OP_plus".to_string()),
+                ops::DebugValueExpressionOp::PlusUConst(value) => {
+                    parts.push("DW_OP_plus_uconst".to_string());
+                    parts.push(value.to_string());
+                }
+                ops::DebugValueExpressionOp::Mul => parts.push("DW_OP_mul".to_string()),
+                ops::DebugValueExpressionOp::Deref => parts.push("DW_OP_deref".to_string()),
+                ops::DebugValueExpressionOp::StackValue => {
+                    parts.push("DW_OP_stack_value".to_string())
+                }
+            }
+        }
+        if !saw_arg {
+            return Err(
+                "multi-value debug expression must reference at least one DIArgList operand"
+                    .to_string(),
+            );
+        }
+
+        Ok(format!("!DIExpression({})", parts.join(", ")))
+    }
+
     fn emit_debug_declare_for_alloca(
         &mut self,
         op: &ops::AllocaOp,
@@ -990,6 +1048,57 @@ impl<'a> ModuleExportState<'a> {
         if emitted {
             self.debug_value_used = true;
         }
+        Ok(())
+    }
+
+    fn emit_debug_value_list(
+        &mut self,
+        op: &ops::DebugValueListOp,
+        value_names: &FxHashMap<Value, String>,
+        debug_scope: Option<usize>,
+        loc: &pliron::location::Location,
+        output: &mut String,
+    ) -> Result<(), String> {
+        if !self.debug_kind.variables_enabled() {
+            return Ok(());
+        }
+
+        let Some(scope) = debug_scope else {
+            return Ok(());
+        };
+        let Some(info) = crate::ops::debug_local_variable(self.ctx, op.get_operation()) else {
+            return Ok(());
+        };
+        let Some((var_id, loc_id)) =
+            self.debug_local_variable_for_scope(scope, loc, op.get_operation(), &info)
+        else {
+            return Ok(());
+        };
+
+        let values = op.values(self.ctx);
+        if values.len() < 2 {
+            return Err("llvm.dbg_value_list requires at least two operands".to_string());
+        }
+        let expression = crate::ops::debug_value_expression(self.ctx, op.get_operation())
+            .ok_or_else(|| "llvm.dbg_value_list is missing its debug expression".to_string())?;
+        let expression = Self::debug_expression_for_value_list(&expression, values.len())?;
+
+        write!(output, "  call void @llvm.dbg.value(metadata !DIArgList(").unwrap();
+        for (index, value) in values.into_iter().enumerate() {
+            if index != 0 {
+                write!(output, ", ").unwrap();
+            }
+            self.export_type(value.get_type(self.ctx), output)?;
+            write!(output, " ").unwrap();
+            self.export_value(value, value_names, output)?;
+        }
+        writeln!(
+            output,
+            "), metadata !{var_id}, metadata {expression}), !dbg !{loc_id}"
+        )
+        .unwrap();
+        self.debug_value_used = true;
+
         Ok(())
     }
 

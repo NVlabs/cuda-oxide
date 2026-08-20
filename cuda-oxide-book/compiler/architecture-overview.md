@@ -149,6 +149,7 @@ cuda-oxide is split into focused crates. Here is every one and its role:
 | `iket-lower`         | `dialect-iket` profiles + instrumentation lowering                                     |
 | `dialect-ptx`        | pliron dialect modelling structured PTX                                                |
 | `ptx-parse`          | Lossless structural views over PTX source text                                         |
+| `ptx-schedule`       | PTX schedule-perturbation fuzzing (nanosleep injection campaigns)                      |
 | `cuda-oxide-codegen` | Experimental rustc-independent PTX backend                                             |
 | `libnvvm-sys`        | `dlopen` bindings to libNVVM (used by `cuda-host::ltoir`)                              |
 | `nvjitlink-sys`      | `dlopen` bindings to nvJitLink (used by `cuda-host::ltoir`)                             |

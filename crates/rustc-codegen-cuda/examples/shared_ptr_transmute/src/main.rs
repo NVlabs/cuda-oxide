@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Scalar transmutes of shared-memory pointers (guards issue #874).
+//! Shared-memory pointer representation regressions.
 //!
 //! `core::mem::transmute` on a shared-memory (`addrspace(3)`) pointer used
 //! to be rejected wholesale because the pointer's physical width is
@@ -26,10 +26,14 @@
 //! - pointer -> pointer across address spaces: a direct `addrspacecast`
 //!   each way. The restored shared pointer must equal the original and a
 //!   store through it must be visible through the original allocation.
+//! - slice fat-pointer `as` cast: cast `*mut [u32]` to `*mut [i32]`, preserving
+//!   the integer metadata while the data-pointer half follows the compiler's
+//!   address-space rules. The cast must remain an SSA reconstruction rather
+//!   than an aggregate memory round-trip.
 //!
-//! Each transmute lives in an `#[inline(never)]` device function so LLVM
-//! cannot see both halves of a round trip in one body and fold the pair
-//! away; the lowering's own bridge is what executes.
+//! Each scalar transmute and the fat-pointer cast live in `#[inline(never)]`
+//! device functions so LLVM cannot see both halves of a round trip in one body
+//! and fold away the lowering path under test.
 //!
 //! Run: `cargo oxide run shared_ptr_transmute`
 
@@ -82,6 +86,15 @@ mod kernels {
         unsafe { core::mem::transmute(alias) }
     }
 
+    /// Slice fat-pointer cast. The metadata is the element count and must be
+    /// preserved exactly; only the data-pointer field may require an address-
+    /// space conversion during lowering.
+    #[inline(never)]
+    #[device]
+    fn cast_slice_elements(pointer: *mut [u32]) -> *mut [i32] {
+        pointer as *mut [i32]
+    }
+
     #[kernel]
     pub fn shared_ptr_transmute(mut out: DisjointSlice<u32>) {
         static mut SCRATCH: SharedArray<u32, THREADS> = SharedArray::UNINIT;
@@ -115,6 +128,15 @@ mod kernels {
             let alias = pointer_to_alias(raw);
             let restored = alias_to_pointer(alias);
 
+            // Construct a slice fat pointer over the same shared allocation,
+            // then force the semantic fat-pointer `as` cast through a separate
+            // device function. The destination changes element type but keeps
+            // identical metadata semantics and alignment.
+            let shared_slice = core::ptr::slice_from_raw_parts_mut(base, THREADS);
+            let recast_slice = cast_slice_elements(shared_slice);
+            let recast_len = unsafe { (&*recast_slice).len() };
+            let recast_data = recast_slice as *mut i32;
+
             unsafe {
                 // The first static shared allocation has shared-local
                 // offset zero, but its exposed bits are a generic address
@@ -126,13 +148,22 @@ mod kernels {
                 // original allocation.
                 (&mut (*restored))[0] = 0xC0DE;
                 *out.get_unchecked_mut(3) = SCRATCH[0];
+
+                // Fat-pointer cast: metadata is unchanged, the data pointer
+                // still identifies the same allocation, and a store through
+                // the recast pointer is visible through the original shared
+                // storage.
+                *out.get_unchecked_mut(4) = (recast_len == THREADS) as u32;
+                *out.get_unchecked_mut(5) = core::ptr::eq(recast_data.cast::<u32>(), base) as u32;
+                recast_data.add(1).write(0x1234_i32);
+                *out.get_unchecked_mut(6) = SCRATCH[1];
             }
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== shared_ptr_transmute (issue #874 regression) ===");
+    println!("=== shared_ptr_transmute (shared-pointer representation regressions) ===");
 
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
@@ -143,11 +174,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         block_dim: (32, 1, 1),
         shared_mem_bytes: 0,
     };
-    let mut out = DeviceBuffer::<u32>::zeroed(&stream, 4)?;
+    let mut out = DeviceBuffer::<u32>::zeroed(&stream, 7)?;
 
     // SAFETY: one 32-thread block writes 32 distinct shared elements, then
-    // thread 0 reads them after a block-wide barrier. Only thread 0 writes
-    // the four output elements.
+    // thread 0 reads or mutates the shared allocation after a block-wide
+    // barrier. Only thread 0 writes the seven output elements.
     unsafe { module.shared_ptr_transmute(&stream, cfg, &mut out) }?;
 
     let result = out.to_host_vec(&stream)?;
@@ -177,9 +208,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         std::process::exit(1);
     }
+    if result[4] != 1 {
+        eprintln!("FAIL shared_ptr_transmute: slice fat-pointer cast changed the metadata length");
+        std::process::exit(1);
+    }
+    if result[5] != 1 {
+        eprintln!("FAIL shared_ptr_transmute: slice fat-pointer cast changed the data pointer");
+        std::process::exit(1);
+    }
+    if result[6] != 0x1234 {
+        eprintln!(
+            "FAIL shared_ptr_transmute: slice fat-pointer write-through read back {:#X}, expected 0x1234",
+            result[6]
+        );
+        std::process::exit(1);
+    }
     println!(
-        "PASS shared_ptr_transmute: usize and cross-space pointer transmutes round-trip, sum={}, readback={:#X}",
-        result[1], result[3]
+        "PASS shared_ptr_transmute: scalar and slice-fat-pointer casts preserve shared-pointer semantics, sum={}, scalar_readback={:#X}, slice_readback={:#X}",
+        result[1], result[3], result[6]
     );
     Ok(())
 }

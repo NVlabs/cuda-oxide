@@ -206,20 +206,25 @@ and `globaltimer()`.
 
 ## Proc-Macro Re-exports
 
-These are defined in `cuda-macros` and re-exported from `cuda-device` for convenience:
+These are defined in `cuda-macros` and re-exported from `cuda-device` for
+convenience. The table is the whole `pub use cuda_macros::{...}` list in
+`src/lib.rs`:
 
-| Attribute                | Purpose                                       |
-|--------------------------|-----------------------------------------------|
-| `#[kernel]`              | Mark a function as a GPU kernel entry point   |
-| `#[device]`              | Mark a helper function or extern block        |
-| `#[launch_bounds]`       | Set max threads / min blocks per SM           |
-| `#[cluster_launch]`      | Set compile-time cluster dimensions           |
-| `#[cooperative_launch]`  | Launch as cooperative (for `grid::sync()`)    |
-| `#[convergent]`          | Mark as convergent (barrier semantics)        |
-| `#[pure]`                | Mark as pure (no side effects)                |
-| `#[readonly]`            | Mark as read-only                             |
-| `gpu_printf!`            | Device-side printf                            |
-| `ptx_asm!`               | Unsafe CUDA inline PTX                        |
+| Attribute                | Purpose                                                                                |
+|--------------------------|----------------------------------------------------------------------------------------|
+| `#[kernel]`              | Mark a function as a GPU kernel entry point                                            |
+| `#[device]`              | Mark a helper function or extern block                                                 |
+| `#[cuda_module]`         | Collect a module's kernels into a typed host module with `load` and launchers          |
+| `#[launch_bounds]`       | Set max threads / min blocks per SM                                                    |
+| `#[launch_contract]`     | Declare a kernel's launch requirements, unlocking a safe launch                        |
+| `#[cluster_launch]`      | Set compile-time cluster dimensions                                                    |
+| `#[cooperative_launch]`  | Launch as cooperative (for `grid::sync()`)                                             |
+| `#[convergent]`          | Mark as convergent (barrier semantics)                                                 |
+| `#[pure]`                | Mark as pure (no side effects)                                                         |
+| `#[readonly]`            | Mark as read-only                                                                      |
+| `#[constant]`            | Place a `ConstantMemory<T>` static in constant memory, plus a host `set_<name>` setter |
+| `gpu_printf!`            | Device-side printf                                                                     |
+| `ptx_asm!`               | Unsafe CUDA inline PTX                                                                 |
 
 ## Safety Model
 

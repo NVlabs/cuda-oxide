@@ -1351,3 +1351,28 @@ abi_id = "i0759"
 shape = "16x32bx2"
 multiplicity = "x128"
 unpack16 = true
+
+[[tcgen05.mma_variant]]
+abi_id = "i1011"
+form = "shared"
+alias = "e4m3"
+
+[[tcgen05.mma_variant]]
+abi_id = "i1012"
+form = "shared"
+alias = "e5m2"
+
+[[tcgen05.mma_variant]]
+abi_id = "i1013"
+form = "shared"
+alias = "e2m3"
+
+[[tcgen05.mma_variant]]
+abi_id = "i1014"
+form = "shared"
+alias = "e3m2"
+
+[[tcgen05.mma_variant]]
+abi_id = "i1015"
+form = "shared"
+alias = "e2m1"

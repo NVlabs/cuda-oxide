@@ -8417,6 +8417,74 @@ fn classify_union_constant_storage(
     })
 }
 
+/// Whether a mixed thin-pointer/integer union can use its evaluated byte image
+/// when the allocation carries no relocation provenance.
+///
+/// Keep this deliberately narrower than [`classify_union_constant_storage`]:
+/// the ordinary classifier remains the provenance-preserving authority used by
+/// pointer-bearing constants and device-static union initializers. This helper
+/// only admits one naturally aligned pointer word whose non-ZST alternatives
+/// are compatible thin pointers or full-width integers.
+fn relocation_free_pointer_integer_union_uses_byte_image(
+    ctx: &Context,
+    union_ty: TypeHandle,
+    pointer_width: usize,
+) -> bool {
+    let (union_size, union_align, field_types) = {
+        let ty_ref = union_ty.deref(ctx);
+        let Some(union_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirUnionType>() else {
+            return false;
+        };
+        (
+            union_ty.total_size(),
+            union_ty.abi_align(),
+            union_ty.field_types().to_vec(),
+        )
+    };
+
+    let pointer_width_u64 = pointer_width as u64;
+    if union_size != pointer_width_u64 || union_align != pointer_width_u64 {
+        return false;
+    }
+
+    let integer_width = (pointer_width * 8) as u32;
+    let mut pointer_address_space = None;
+    let mut saw_pointer = false;
+    let mut saw_integer = false;
+
+    for field_ty in field_types {
+        if types::is_zst_type(ctx, field_ty) {
+            continue;
+        }
+
+        let field_ref = field_ty.deref(ctx);
+        if let Some(pointer) = field_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
+            match pointer_address_space {
+                None => pointer_address_space = Some(pointer.address_space),
+                Some(address_space) if address_space == pointer.address_space => {}
+                Some(_) => return false,
+            }
+            saw_pointer = true;
+            continue;
+        }
+
+        if field_ref
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| integer.width() == integer_width)
+        {
+            saw_integer = true;
+            continue;
+        }
+
+        // Fat pointers, nested pointer aggregates, partial-width integers, and
+        // unrelated scalar/aggregate alternatives keep the existing fail-closed
+        // path. The byte-image exception is intentionally pointer-word exact.
+        return false;
+    }
+
+    saw_pointer && saw_integer
+}
+
 /// Admit only the device-static union shape whose complete storage can be
 /// represented by one provenance-preserving thin-pointer relocation.
 ///
@@ -8612,8 +8680,11 @@ fn translate_union_constant(
 /// Pointer-free unions retain the existing byte-image path and exact initialization
 /// mask. A union whose every non-ZST alternative is a compatible thin pointer
 /// instead uses one typed pointer carrier so rustc relocation provenance never
-/// becomes integer bytes. Pointer/integer overlap, fat pointers, nested pointer
-/// aggregates, and ambiguous relocation layouts remain fail-closed.
+/// becomes integer bytes. A naturally aligned pointer-word union that overlaps
+/// compatible thin pointers with full-width integers may also use the byte image,
+/// but only when no relocation overlaps its storage. Relocation-bearing mixed
+/// unions, fat pointers, nested pointer aggregates, and ambiguous layouts remain
+/// fail-closed.
 #[allow(clippy::too_many_arguments)]
 fn translate_union_constant_from_alloc(
     ctx: &mut Context,
@@ -8655,6 +8726,25 @@ fn translate_union_constant_from_alloc(
         end,
         pointer_width,
     );
+
+    // A mixed pointer/integer union initialized through the integer view carries
+    // no relocation provenance. In that one case the evaluated bytes and init
+    // mask are the complete storage truth, so reuse the existing byte-image
+    // materializer before the provenance-aware classifier rejects the overlap.
+    // Keep classify_union_constant_storage unchanged: #984's device-static gate
+    // and relocation-bearing union constants still depend on its strict policy.
+    if relocations.is_empty()
+        && relocation_free_pointer_integer_union_uses_byte_image(ctx, union_ty, pointer_width)
+    {
+        return translate_union_constant_from_storage(
+            ctx,
+            union_ty,
+            &alloc.bytes[base_offset..end],
+            block_ptr,
+            prev_op,
+            loc,
+        );
+    }
 
     let storage_kind = classify_union_constant_storage(ctx, union_ty)
         .map_err(|message| input_error!(loc.clone(), TranslationErr::unsupported(message)))?;
@@ -13797,9 +13887,9 @@ mod aggregate_relocation_tests {
     use super::{
         UnionConstantStorageKind, classify_union_constant_storage, constant_type_contains_pointer,
         decode_relocation_addend, find_unconsumed_relocation, match_thin_pointer_relocation,
-        provenance_starts_in_range, relocation_offsets_overlapping_range,
-        validate_array_value_element_type, validate_device_static_union_storage,
-        validate_slice_relocation_shape,
+        provenance_starts_in_range, relocation_free_pointer_integer_union_uses_byte_image,
+        relocation_offsets_overlapping_range, validate_array_value_element_type,
+        validate_device_static_union_storage, validate_slice_relocation_shape,
     };
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
@@ -14112,10 +14202,44 @@ mod aggregate_relocation_tests {
         )
         .into();
         let pointer_integer_error = classify_union_constant_storage(&ctx, pointer_integer_union_ty)
-            .expect_err("pointer/integer overlap must remain fail-closed");
+            .expect_err("the provenance-aware classifier must keep pointer/integer overlap closed");
         assert!(
             pointer_integer_error.contains("pointer/integer union constants"),
             "diagnostic must explain the provenance-vs-bits conflict: {pointer_integer_error}"
+        );
+        assert!(
+            relocation_free_pointer_integer_union_uses_byte_image(
+                &ctx,
+                pointer_integer_union_ty,
+                8,
+            ),
+            "a pointer-word ptr/u64 union is byte-image eligible when the allocation has no relocation"
+        );
+        assert!(
+            !relocation_free_pointer_integer_union_uses_byte_image(
+                &ctx,
+                pointer_integer_union_ty,
+                4,
+            ),
+            "the exception must not cross a target pointer-width mismatch"
+        );
+
+        let u32_pointer_integer_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "PointerNarrowBits".into(),
+            vec!["ptr".into(), "bits".into()],
+            vec![pointer_field_ty, u32_ty],
+            8,
+            8,
+        )
+        .into();
+        assert!(
+            !relocation_free_pointer_integer_union_uses_byte_image(
+                &ctx,
+                u32_pointer_integer_union_ty,
+                8,
+            ),
+            "partial-width integer alternatives stay outside the initial pointer-word exception"
         );
 
         let slice_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, u32_ty).into();

@@ -48,6 +48,7 @@ const DEBUG_FRAGMENT_FIELDS: &[&str] = &[
     "line",
     "column",
 ];
+const DEBUG_VALUE_EXPRESSION_KEY: &str = "cuda_oxide_debug_value_expression";
 
 const DEBUG_LOCAL_ATTR_KEYS: &[&str] = &[
     DEBUG_LOCAL_NAME_KEY,
@@ -57,6 +58,7 @@ const DEBUG_LOCAL_ATTR_KEYS: &[&str] = &[
     DEBUG_LOCAL_DECL_LINE_KEY,
     DEBUG_LOCAL_DECL_COLUMN_KEY,
     DEBUG_LOCAL_SCOPE_KEY,
+    DEBUG_VALUE_EXPRESSION_KEY,
 ];
 
 /// Value-based source-local debug record.
@@ -97,6 +99,39 @@ impl MirDbgValueOp {
 }
 
 impl Verify for MirDbgValueOp {
+    fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// Multi-value source-local debug record.
+///
+/// LLVM models a source value computed from multiple SSA values with a
+/// `DIArgList` plus a `DIExpression` containing `DW_OP_LLVM_arg` selectors.
+/// This MIR marker carries the ordered SSA operands; the expression itself is
+/// stored as generic debug metadata so `dialect-mir` stays independent of the
+/// LLVM exporter data structures.
+#[pliron_op(
+    name = "mir.dbg_value_list",
+    format,
+    interfaces = [NResultsInterface<0>]
+)]
+pub struct MirDbgValueListOp;
+
+impl MirDbgValueListOp {
+    /// Create a multi-value debug record from an ordered list of SSA values.
+    pub fn new(ctx: &mut Context, values: Vec<Value>) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], values, vec![], 0);
+        MirDbgValueListOp { op }
+    }
+
+    /// The ordered SSA values referenced by `DW_OP_LLVM_arg` operations.
+    pub fn values(&self, ctx: &Context) -> Vec<Value> {
+        self.get_operation().deref(ctx).operands().collect()
+    }
+}
+
+impl Verify for MirDbgValueListOp {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
         Ok(())
     }
@@ -237,4 +272,5 @@ fn source_position_from_location(ctx: &Context, loc: &Location) -> Option<(Strin
 /// Register debug operations into the given context.
 pub fn register(ctx: &mut Context) {
     MirDbgValueOp::register(ctx);
+    MirDbgValueListOp::register(ctx);
 }
