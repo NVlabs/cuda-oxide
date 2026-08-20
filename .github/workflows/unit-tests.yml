@@ -205,11 +205,11 @@ jobs:
       - name: Check generated intrinsic outputs
         run: cargo run -p cuda-intrinsics-gen -- check
 
-      - name: Probe every generated LLVM-NVPTX route
+      - name: Probe every declared LLVM-NVPTX target
         run: |
           # Stock runners do not carry the recorded CUDA 13.3 ptxas binary.
           # This still checks the pinned llc identity and exact emitted PTX.
-          cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal
+          cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal --per-target
 
       - name: Check append-only intrinsic ABI ledger
         run: |
