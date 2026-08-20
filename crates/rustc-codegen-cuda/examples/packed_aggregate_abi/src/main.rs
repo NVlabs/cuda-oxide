@@ -5,7 +5,7 @@
 
 //! End-to-end ABI regression coverage for packed aggregates.
 //!
-//! This example exercises seven paths that must agree on the same rustc byte
+//! This example exercises eight paths that must agree on the same rustc byte
 //! layout:
 //!
 //! - packed structs passed by value across the host -> kernel boundary;
@@ -15,6 +15,8 @@
 //! - packed structs containing multiple direct shared-pointer leaves crossing
 //!   the same internal device ABI;
 //! - packed structs containing recursively nested shared-pointer leaves crossing
+//!   the same internal device ABI;
+//! - packed structs containing bounded arrays of shared-pointer leaves crossing
 //!   the same internal device ABI;
 //! - whole-value stores of packed structs to device memory;
 //! - whole-value loads of packed structs from device memory.
@@ -70,6 +72,13 @@ pub struct PackedNestedShared {
     pub pair: SharedPair,
 }
 
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct PackedSharedArray {
+    pub tag: u8,
+    pub ptrs: [*mut SharedArray<u32, 1>; 2],
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -109,6 +118,12 @@ mod kernels {
     #[inline(never)]
     #[device]
     fn bounce_packed_nested_shared(value: PackedNestedShared) -> PackedNestedShared {
+        value
+    }
+
+    #[inline(never)]
+    #[device]
+    fn bounce_packed_shared_array(value: PackedSharedArray) -> PackedSharedArray {
         value
     }
 
@@ -155,6 +170,23 @@ mod kernels {
             (&mut *left)[0] = (&*left)[0].wrapping_add(0x0304_0506);
             (&mut *right)[0] = (&*right)[0].wrapping_add(0x0405_0607);
             out.write(0x42);
+            out.add(1).write((&*left)[0]);
+            out.add(2).write((&*right)[0]);
+        }
+    }
+
+    #[inline(never)]
+    #[device]
+    unsafe fn consume_packed_shared_array(
+        _value: PackedSharedArray,
+        left: *mut SharedArray<u32, 1>,
+        right: *mut SharedArray<u32, 1>,
+        out: *mut u32,
+    ) {
+        unsafe {
+            (&mut *left)[0] = (&*left)[0].wrapping_add(0x0506_0708);
+            (&mut *right)[0] = (&*right)[0].wrapping_add(0x0607_0809);
+            out.write(0x52);
             out.add(1).write((&*left)[0]);
             out.add(2).write((&*right)[0]);
         }
@@ -251,6 +283,30 @@ mod kernels {
         // packed outer value in SSA so this exercises only the internal ABI
         // carrier generalization and does not depend on packed local storage.
         unsafe { consume_packed_nested_shared(value, left, right, out) };
+    }
+
+    #[kernel]
+    pub unsafe fn packed_shared_array(out: *mut u32) {
+        static mut LEFT: SharedArray<u32, 1> = SharedArray::UNINIT;
+        static mut RIGHT: SharedArray<u32, 1> = SharedArray::UNINIT;
+
+        let left = &raw mut LEFT;
+        let right = &raw mut RIGHT;
+        unsafe {
+            (&mut *left)[0] = 0x5060_7080;
+            (&mut *right)[0] = 0x6070_8090;
+        }
+
+        let value = bounce_packed_shared_array(PackedSharedArray {
+            tag: 0x51,
+            ptrs: [left, right],
+        });
+
+        // The two AS3 leaves live inside one fixed array. Keep the packed
+        // value in SSA so the return boundary must rebuild the array through
+        // the bounded target-stable carrier without relying on packed local
+        // storage or field projection support.
+        unsafe { consume_packed_shared_array(value, left, right, out) };
     }
 
     #[kernel]
@@ -401,6 +457,14 @@ fn assert_host_layout() {
     assert_eq!(core::mem::align_of::<PackedNestedShared>(), 1);
     assert_eq!(core::mem::offset_of!(PackedNestedShared, tag), 0);
     assert_eq!(core::mem::offset_of!(PackedNestedShared, pair), 1);
+
+    assert_eq!(
+        core::mem::size_of::<PackedSharedArray>(),
+        1 + 2 * core::mem::size_of::<usize>()
+    );
+    assert_eq!(core::mem::align_of::<PackedSharedArray>(), 1);
+    assert_eq!(core::mem::offset_of!(PackedSharedArray, tag), 0);
+    assert_eq!(core::mem::offset_of!(PackedSharedArray, ptrs), 1);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -428,6 +492,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let packed_shared_out = DeviceBuffer::<u32>::zeroed(&stream, 2)?;
     let packed_shared_pair_out = DeviceBuffer::<u32>::zeroed(&stream, 3)?;
     let packed_nested_shared_out = DeviceBuffer::<u32>::zeroed(&stream, 3)?;
+    let packed_shared_array_out = DeviceBuffer::<u32>::zeroed(&stream, 3)?;
     let load1_out = DeviceBuffer::<u32>::zeroed(&stream, 2)?;
     let load2_out = DeviceBuffer::<u32>::zeroed(&stream, 2)?;
     let storage1 = DeviceBuffer::<u8>::zeroed(&stream, core::mem::size_of::<Packed1>())?;
@@ -485,6 +550,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config,
             packed_nested_shared_out.cu_deviceptr() as *mut u32,
         )?;
+        module.packed_shared_array(
+            &stream,
+            config,
+            packed_shared_array_out.cu_deviceptr() as *mut u32,
+        )?;
 
         module.store_packed1(
             &stream,
@@ -524,6 +594,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         packed_nested_shared_out.to_host_vec(&stream)?,
         [0x42, 0x3344_5566, 0x4455_6677]
     );
+    assert_eq!(
+        packed_shared_array_out.to_host_vec(&stream)?,
+        [0x52, 0x5566_7788, 0x6677_8899]
+    );
     assert_eq!(load1_out.to_host_vec(&stream)?, [0x41, 0x90a0_b0c0]);
     assert_eq!(load2_out.to_host_vec(&stream)?, [0x51, 0xd0e0_f001]);
 
@@ -537,7 +611,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(&bytes2[2..6], &0xd0e0_f001u32.to_le_bytes());
 
     println!(
-        "packed_aggregate_abi: PASS (runtime values, recursive/multi-leaf packed shared internal ABI, whole-value load/store, and PTX parameter shapes)"
+        "packed_aggregate_abi: PASS (runtime values, recursive/multi-leaf/bounded-array packed shared internal ABI, whole-value load/store, and PTX parameter shapes)"
     );
     Ok(())
 }
