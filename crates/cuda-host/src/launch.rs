@@ -150,9 +150,10 @@ pub fn push_kernel_scalar<T: KernelScalar>(args: &mut Vec<*mut c_void>, value: &
 /// parameters such as `&[T]`.
 #[inline]
 #[doc(hidden)]
-pub fn read_only_device_buffer_arg<T>(
-    buffer: &cuda_core::DeviceBuffer<T>,
-) -> (cuda_core::sys::CUdeviceptr, u64) {
+pub fn read_only_device_buffer_arg<B>(buffer: &B) -> (cuda_core::sys::CUdeviceptr, u64)
+where
+    B: KernelSliceArg + ?Sized,
+{
     (buffer.cu_deviceptr(), buffer.len() as u64)
 }
 
@@ -160,9 +161,10 @@ pub fn read_only_device_buffer_arg<T>(
 /// parameters such as `&mut [T]` and `DisjointSlice<T>`.
 #[inline]
 #[doc(hidden)]
-pub fn writable_device_buffer_arg<T>(
-    buffer: &mut cuda_core::DeviceBuffer<T>,
-) -> (cuda_core::sys::CUdeviceptr, u64) {
+pub fn writable_device_buffer_arg<B>(buffer: &mut B) -> (cuda_core::sys::CUdeviceptr, u64)
+where
+    B: KernelSliceArgMut + ?Sized,
+{
     (buffer.cu_deviceptr(), buffer.len() as u64)
 }
 
@@ -312,11 +314,11 @@ pub fn push_kernel_row_width_device_slice(
 }
 
 // =============================================================================
-// Typed Async Kernel Arguments
+// Typed Kernel Slice Arguments
 // =============================================================================
 
-/// A typed device allocation that can be passed to an async kernel launch as a
-/// read-only device slice.
+/// A typed device allocation or borrowed view that can be passed to a generated
+/// kernel launch as a read-only device slice.
 ///
 /// # Safety
 ///
@@ -343,7 +345,6 @@ pub fn push_kernel_row_width_device_slice(
 ///     fn len(&self) -> usize { 1_000_000 }
 /// }
 /// ```
-#[cfg(feature = "async")]
 pub unsafe trait KernelSliceArg {
     /// Element type stored in the allocation.
     type Elem;
@@ -360,8 +361,8 @@ pub unsafe trait KernelSliceArg {
     }
 }
 
-/// A typed device allocation that can be passed to an async kernel launch as a
-/// writable device slice.
+/// A typed device allocation or borrowed view that can be passed to a generated
+/// kernel launch as a writable device slice.
 ///
 /// # Safety
 ///
@@ -370,10 +371,8 @@ pub unsafe trait KernelSliceArg {
 /// this rule: the implementor must own exclusive device-write authority for
 /// the entire reported element range for the lifetime of the mutable borrow or
 /// owned operation.
-#[cfg(feature = "async")]
 pub unsafe trait KernelSliceArgMut: KernelSliceArg {}
 
-#[cfg(feature = "async")]
 // SAFETY: DeviceBuffer owns the reported allocation and keeps its CUDA context
 // alive; its pointer and length accessors describe that allocation exactly.
 unsafe impl<T> KernelSliceArg for cuda_core::DeviceBuffer<T> {
@@ -388,10 +387,41 @@ unsafe impl<T> KernelSliceArg for cuda_core::DeviceBuffer<T> {
     }
 }
 
-#[cfg(feature = "async")]
 // SAFETY: &mut DeviceBuffer provides exclusive host authority to launch device
 // writes through this adapter for the duration of the operation.
 unsafe impl<T> KernelSliceArgMut for cuda_core::DeviceBuffer<T> {}
+
+// SAFETY: DeviceSlice borrows its parent allocation for the view lifetime and
+// reports the checked adjusted pointer and element count for that subrange.
+unsafe impl<T> KernelSliceArg for cuda_core::DeviceSlice<'_, T> {
+    type Elem = T;
+
+    fn cu_deviceptr(&self) -> cuda_core::sys::CUdeviceptr {
+        self.cu_deviceptr()
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+// SAFETY: DeviceSliceMut retains an exclusive borrow of its parent allocation
+// and reports only the checked subrange covered by that borrow.
+unsafe impl<T> KernelSliceArg for cuda_core::DeviceSliceMut<'_, T> {
+    type Elem = T;
+
+    fn cu_deviceptr(&self) -> cuda_core::sys::CUdeviceptr {
+        self.cu_deviceptr()
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+// SAFETY: DeviceSliceMut's construction and consuming split operations preserve
+// exclusive authority over the reported subrange.
+unsafe impl<T> KernelSliceArgMut for cuda_core::DeviceSliceMut<'_, T> {}
 
 #[cfg(feature = "async")]
 // SAFETY: DeviceBox owns the reported allocation and its raw constructor
@@ -803,6 +833,18 @@ impl<T> HasLength for cuda_core::DeviceBuffer<T> {
     }
 }
 
+impl<T> HasLength for cuda_core::DeviceSlice<'_, T> {
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
+impl<T> HasLength for cuda_core::DeviceSliceMut<'_, T> {
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -904,5 +946,17 @@ mod tests {
             ptr
         );
         assert_eq!(unsafe { *(args[1] as *const u64) }, len);
+    }
+
+    fn assert_slice_arg<T: KernelSliceArg>() {}
+    fn assert_slice_arg_mut<T: KernelSliceArgMut>() {}
+
+    #[test]
+    fn borrowed_device_views_implement_typed_slice_argument_traits() {
+        assert_slice_arg::<cuda_core::DeviceBuffer<u32>>();
+        assert_slice_arg::<cuda_core::DeviceSlice<'static, u32>>();
+        assert_slice_arg::<cuda_core::DeviceSliceMut<'static, u32>>();
+        assert_slice_arg_mut::<cuda_core::DeviceBuffer<u32>>();
+        assert_slice_arg_mut::<cuda_core::DeviceSliceMut<'static, u32>>();
     }
 }

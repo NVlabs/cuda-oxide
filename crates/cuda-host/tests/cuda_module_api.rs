@@ -5,7 +5,9 @@
 
 #![allow(dead_code, non_upper_case_globals, clippy::needless_lifetimes)]
 
-use cuda_core::{CudaStream, DeviceBuffer, LaunchConfig, LaunchConfig1D};
+use cuda_core::{
+    CudaStream, DeviceBuffer, DeviceSlice, DeviceSliceMut, LaunchConfig, LaunchConfig1D,
+};
 #[cfg(feature = "async")]
 use cuda_host::cuda_async::device_box::DeviceBox;
 #[cfg(feature = "async")]
@@ -227,6 +229,35 @@ unsafe fn generated_methods_accept_kernel_scalar_types(
     Ok(())
 }
 
+unsafe fn generated_sync_methods_accept_borrowed_device_views(
+    module: &kernels::LoadedModule,
+    stream: &CudaStream,
+    config: LaunchConfig,
+    input: &DeviceSlice<'_, f32>,
+    input_u32: &DeviceSlice<'_, u32>,
+    output: &mut DeviceSliceMut<'_, f32>,
+    output_u32: &mut DeviceSliceMut<'_, u32>,
+) -> Result<(), cuda_core::DriverError> {
+    let params = AffineParams {
+        scale: 2.0,
+        bias: 1.0,
+    };
+    let raw = core::ptr::null::<f32>();
+    let offset = 5u32;
+    let op = move |x: u32| x + offset;
+
+    unsafe {
+        module.scalar_args(stream, config, 2.0, params, raw, input, output)?;
+        module.copy_closure(stream, config, op, output_u32)?;
+        module.const_only::<4>(stream, config, output_u32)?;
+        module.mixed::<u32, 8>(stream, config, 7, output_u32)?;
+        module.lifetime_mixed::<u32, 4>(stream, config, input_u32, output_u32)?;
+        module.cooperative_grid_sync(stream, config, output_u32)?;
+    }
+
+    Ok(())
+}
+
 fn generated_prepared_methods_bind_the_exact_kernel_and_specialization(
     module: &kernels::LoadedModule,
     stream: &CudaStream,
@@ -271,6 +302,42 @@ fn generated_prepared_methods_bind_the_exact_kernel_and_specialization(
             input,
         )?;
     }
+    Ok(())
+}
+
+fn generated_prepared_methods_accept_borrowed_device_views(
+    module: &kernels::LoadedModule,
+    stream: &CudaStream,
+    input: &DeviceSlice<'_, u32>,
+) -> Result<(), cuda_core::LaunchContractError> {
+    let prepared = module.prepare_contracted_read(LaunchConfig1D::new(1, 64, 0))?;
+    module.contracted_read(stream, &prepared, input)?;
+
+    let sizes = module.prepare_contracted_sizes(LaunchConfig1D::new(1, 64, 0))?;
+    module.contracted_sizes(stream, &sizes, 4, input)?;
+
+    unsafe {
+        module.contracted_read_unchecked(
+            stream,
+            LaunchConfig {
+                grid_dim: (1, 1, 1),
+                block_dim: (64, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            input,
+        )?;
+        module.contracted_sizes_unchecked(
+            stream,
+            LaunchConfig {
+                grid_dim: (1, 1, 1),
+                block_dim: (64, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            4,
+            input,
+        )?;
+    }
+
     Ok(())
 }
 
@@ -436,7 +503,9 @@ fn generated_prepared_owned_async_methods_are_immutable_operations(
 #[test]
 fn generated_cuda_module_api_typechecks() {
     let _ = generated_methods_accept_kernel_scalar_types;
+    let _ = generated_sync_methods_accept_borrowed_device_views;
     let _ = generated_prepared_methods_bind_the_exact_kernel_and_specialization;
+    let _ = generated_prepared_methods_accept_borrowed_device_views;
     #[cfg(feature = "async")]
     let _ = generated_async_methods_accept_borrowed_buffers;
     #[cfg(feature = "async")]
