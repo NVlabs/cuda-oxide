@@ -25,6 +25,7 @@ enum ProbeInvocation {
         selection: EvidenceProbeSelection,
         llc: Option<PathBuf>,
         skip_terminal: bool,
+        per_target: bool,
     },
     Candidate(probe::CandidateProbeOptions),
 }
@@ -82,11 +83,14 @@ fn try_main() -> Result<()> {
                 selection,
                 llc,
                 skip_terminal,
+                per_target,
             } => match selection {
                 EvidenceProbeSelection::Intrinsic(intrinsic_id) => {
-                    probe::run(&repo_root, &intrinsic_id, llc, skip_terminal)
+                    probe::run(&repo_root, &intrinsic_id, llc, skip_terminal, per_target)
                 }
-                EvidenceProbeSelection::All => probe::run_all(&repo_root, llc, skip_terminal),
+                EvidenceProbeSelection::All => {
+                    probe::run_all(&repo_root, llc, skip_terminal, per_target)
+                }
             },
             ProbeInvocation::Candidate(options) => probe::run_candidate(&repo_root, options),
         },
@@ -121,11 +125,13 @@ fn parse_probe_invocation(mut arguments: Vec<String>) -> Result<ProbeInvocation>
         };
         let llc = take_option(&mut arguments, "--llc")?.map(PathBuf::from);
         let skip_terminal = take_flag(&mut arguments, "--skip-terminal");
+        let per_target = take_flag(&mut arguments, "--per-target");
         reject_extra(arguments)?;
         return Ok(ProbeInvocation::Evidence {
             selection,
             llc,
             skip_terminal,
+            per_target,
         });
     }
 
@@ -191,7 +197,7 @@ fn print_usage() {
          cuda-intrinsics-gen check [--repo-root DIR]\n  \
          cuda-intrinsics-gen coverage [--family NAME] [--repo-root DIR]\n  \
          cuda-intrinsics-gen check-abi-history --base-ref REF [--repo-root DIR]\n  \
-         cuda-intrinsics-gen probe [--all | --intrinsic ID] [--llc FILE] [--skip-terminal] [--repo-root DIR]\n  \
+         cuda-intrinsics-gen probe [--all | --intrinsic ID] [--llc FILE] [--skip-terminal] [--per-target] [--repo-root DIR]\n  \
          cuda-intrinsics-gen probe --candidate --intrinsic ID --llc FILE --gpu-target TARGET --ptx-feature FEATURE (--ptxas FILE | --skip-terminal) [--repo-root DIR]"
     );
 }
@@ -210,6 +216,7 @@ mod tests {
             selection: EvidenceProbeSelection::Intrinsic(intrinsic_id),
             llc: None,
             skip_terminal: false,
+            per_target: false,
         } = parse_probe_invocation(Vec::new()).unwrap()
         else {
             panic!("expected one selected-evidence probe")
@@ -223,6 +230,7 @@ mod tests {
             selection: EvidenceProbeSelection::All,
             llc: Some(llc),
             skip_terminal: true,
+            per_target: false,
         } = parse_probe_invocation(strings(&["--all", "--llc", "/tool/llc", "--skip-terminal"]))
             .unwrap()
         else {
@@ -237,6 +245,18 @@ mod tests {
         let error = parse_probe_invocation(strings(&["--intrinsic", "--all", "--skip-terminal"]))
             .unwrap_err();
         assert!(error.to_string().contains("cannot be used together"));
+    }
+
+    #[test]
+    fn per_target_probe_is_explicit() {
+        let ProbeInvocation::Evidence {
+            selection: EvidenceProbeSelection::All,
+            per_target: true,
+            ..
+        } = parse_probe_invocation(strings(&["--all", "--per-target"])).unwrap()
+        else {
+            panic!("expected an all-target evidence probe")
+        };
     }
 
     #[test]

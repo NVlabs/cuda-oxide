@@ -108,6 +108,7 @@ pub fn run(
     intrinsic_id: &str,
     llc: Option<PathBuf>,
     skip_terminal: bool,
+    per_target: bool,
 ) -> Result<()> {
     let catalog = resolve(repo_root)?;
     let record = catalog
@@ -117,10 +118,15 @@ pub fn run(
         .with_context(|| format!("unknown catalog intrinsic {intrinsic_id}"))?;
     let runner = ProbeRunner::new(repo_root, &catalog, llc, skip_terminal)?;
     runner.validate_backend(record)?;
-    runner.run(record)
+    runner.run(record, per_target).map(|_| ())
 }
 
-pub fn run_all(repo_root: &Path, llc: Option<PathBuf>, skip_terminal: bool) -> Result<()> {
+pub fn run_all(
+    repo_root: &Path,
+    llc: Option<PathBuf>,
+    skip_terminal: bool,
+    per_target: bool,
+) -> Result<()> {
     let catalog = resolve(repo_root)?;
     ensure!(
         !catalog.intrinsics.is_empty(),
@@ -141,13 +147,16 @@ pub fn run_all(repo_root: &Path, llc: Option<PathBuf>, skip_terminal: bool) -> R
     )?;
 
     let total = catalog.intrinsics.len();
+    let mut target_probes = 0;
     for (index, record) in catalog.intrinsics.iter().enumerate() {
         eprintln!("[{}/{}] probing {}", index + 1, total, record.id);
-        runner
-            .run(record)
+        target_probes += runner
+            .run(record, per_target)
             .with_context(|| format!("probe {}", record.id))?;
     }
-    println!("probed all {total} generated intrinsic routes");
+    println!(
+        "probed {target_probes} target configurations across all {total} generated intrinsic routes"
+    );
     Ok(())
 }
 
@@ -197,7 +206,7 @@ impl<'a> ProbeRunner<'a> {
         )
     }
 
-    fn run(&self, record: &CatalogIntrinsic) -> Result<()> {
+    fn run(&self, record: &CatalogIntrinsic, per_target: bool) -> Result<usize> {
         let intrinsic_id = &record.id;
         let input = self.output_dir.join(format!("{intrinsic_id}.ll"));
         fs::write(
@@ -218,12 +227,51 @@ impl<'a> ProbeRunner<'a> {
                 record,
             )?;
         }
-        let output = self.output_dir.join(format!("{intrinsic_id}.ptx"));
-        let status = Command::new(&self.llc)
-            .arg(&input)
+        let targets = if per_target && record.target.targets.contains('|') {
+            record.target.targets.split('|').collect::<Vec<_>>()
+        } else {
+            vec![record.backend.gpu_target.as_str()]
+        };
+        let target_count = targets.len();
+        for gpu_target in targets {
+            self.run_target(record, &input, gpu_target, per_target)?;
+        }
+        Ok(target_count)
+    }
+
+    fn run_target(
+        &self,
+        record: &CatalogIntrinsic,
+        input: &Path,
+        gpu_target: &str,
+        per_target: bool,
+    ) -> Result<()> {
+        let intrinsic_id = &record.id;
+        let selected_evidence_target = gpu_target == record.backend.gpu_target;
+        let (ptx_feature, effective_floor) = if !per_target || selected_evidence_target {
+            (
+                Some(record.backend.ptx_feature.clone()),
+                record.target.minimum_ptx.encoded(),
+            )
+        } else {
+            derived_ptx_feature(gpu_target, record.target.minimum_ptx.encoded()).with_context(
+                || format!("derive PTX configuration for {intrinsic_id} target {gpu_target}"),
+            )?
+        };
+        let output = self.output_dir.join(if per_target {
+            format!("{intrinsic_id}.{gpu_target}.ptx")
+        } else {
+            format!("{intrinsic_id}.ptx")
+        });
+        let mut command = Command::new(&self.llc);
+        command
+            .arg(input)
             .arg("-march=nvptx64")
-            .arg(format!("-mcpu={}", record.backend.gpu_target))
-            .arg(format!("-mattr={}", record.backend.ptx_feature))
+            .arg(format!("-mcpu={gpu_target}"));
+        if let Some(ptx_feature) = &ptx_feature {
+            command.arg(format!("-mattr={ptx_feature}"));
+        }
+        let status = command
             .arg("-o")
             .arg(&output)
             .status()
@@ -240,7 +288,12 @@ impl<'a> ProbeRunner<'a> {
                     .any(|stage| stage.stage == EvidenceStageKind::PtxAssembly)
         });
         if self.mode == ProbeMode::SelectedEvidence && has_terminal_stage {
-            if self.skip_terminal {
+            if !selected_evidence_target {
+                println!(
+                    "derived target {gpu_target} is LLVM-selection-only; terminal assembly evidence exists only for selected target {}",
+                    record.backend.gpu_target
+                );
+            } else if self.skip_terminal {
                 println!(
                     "backend-only probe: `--skip-terminal` was explicit, so recorded ptxas evidence was not revalidated"
                 );
@@ -248,22 +301,47 @@ impl<'a> ProbeRunner<'a> {
                 assemble_probe_ptx(record, &output, &self.output_dir, intrinsic_id)?;
             }
         }
+        let ptx_configuration = ptx_feature.unwrap_or_else(|| {
+            format!(
+                "target default (effective floor PTX {}.{})",
+                effective_floor / 10,
+                effective_floor % 10
+            )
+        });
         match self.mode {
-            ProbeMode::SelectedEvidence => println!(
-                "selected evidence backend {} (SHA-256 {}) lowered {} to `{}` for {} {}",
+            ProbeMode::SelectedEvidence if selected_evidence_target => println!(
+                "selected evidence backend {} (SHA-256 {}) lowered {} to `{}` for selected evidence target {} {}",
                 self.identity.version,
                 self.identity.sha256,
                 intrinsic_id,
                 record.expected_ptx,
+                gpu_target,
+                ptx_configuration,
+            ),
+            ProbeMode::SelectedEvidence => println!(
+                "selected evidence backend {} (SHA-256 {}) lowered {} to `{}` for derived target {} {}; record evidence selects {} {}",
+                self.identity.version,
+                self.identity.sha256,
+                intrinsic_id,
+                record.expected_ptx,
+                gpu_target,
+                ptx_configuration,
                 record.backend.gpu_target,
                 record.backend.ptx_feature,
             ),
             ProbeMode::Comparison => println!(
-                "comparison backend {} (SHA-256 {}) lowered {} to `{}` for {} {}; this does not validate selected evidence {} (SHA-256 {})",
+                "comparison backend {} (SHA-256 {}) lowered {} to `{}` for {} target {} {}; record evidence selects {} {}; this does not validate selected evidence {} (SHA-256 {})",
                 self.identity.version,
                 self.identity.sha256,
                 intrinsic_id,
                 record.expected_ptx,
+                if selected_evidence_target {
+                    "evidence-selected"
+                } else {
+                    "derived"
+                },
+                gpu_target,
+                ptx_configuration,
                 record.backend.gpu_target,
                 record.backend.ptx_feature,
                 record.backend.version,
@@ -272,6 +350,51 @@ impl<'a> ProbeRunner<'a> {
         }
         println!("PTX: {}", output.display());
         Ok(())
+    }
+}
+
+fn derived_ptx_feature(gpu_target: &str, instruction_floor: u16) -> Result<(Option<String>, u16)> {
+    ensure!(
+        gpu_target.strip_prefix("sm_").is_some_and(|value| value
+            .trim_end_matches(['a', 'f'])
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())),
+        "unsupported catalog GPU target {gpu_target:?}"
+    );
+    let target_floor = target_minimum_ptx_isa(gpu_target).with_context(|| {
+        format!(
+            "derived target {gpu_target} has no recorded PTX ISA floor; cannot derive the PTX configuration production uses"
+        )
+    })?;
+    let effective_floor = instruction_floor.max(target_floor);
+    let feature = (instruction_floor > target_floor).then(|| format!("+ptx{instruction_floor}"));
+    Ok((feature, effective_floor))
+}
+
+fn target_minimum_ptx_isa(target: &str) -> Option<u16> {
+    let value = target.strip_prefix("sm_")?;
+    let suffix = value
+        .chars()
+        .last()
+        .filter(|suffix| matches!(suffix, 'a' | 'f'));
+    let digits = suffix.map_or(value, |_| &value[..value.len() - 1]);
+    let capability: u16 = digits.parse().ok()?;
+    match (capability, suffix) {
+        (100 | 101 | 120, Some('f')) => Some(88),
+        (70, _) => Some(60),
+        (72, _) => Some(61),
+        (75, _) => Some(63),
+        (80, _) => Some(70),
+        (86, _) => Some(71),
+        (87, _) => Some(74),
+        (88, _) => Some(90),
+        (89 | 90, _) => Some(78),
+        (100 | 101, _) => Some(86),
+        (103, _) => Some(88),
+        (110, _) => Some(90),
+        (120, _) => Some(87),
+        (121, _) => Some(88),
+        _ => None,
     }
 }
 
@@ -1711,6 +1834,34 @@ fn rust_toolchain_llc() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derived_target_uses_default_when_it_meets_the_floor() {
+        assert_eq!(derived_ptx_feature("sm_100a", 86).unwrap(), (None, 86));
+        assert_eq!(derived_ptx_feature("sm_100f", 86).unwrap(), (None, 88));
+        assert_eq!(derived_ptx_feature("sm_103f", 86).unwrap(), (None, 88));
+        assert_eq!(derived_ptx_feature("sm_110a", 86).unwrap(), (None, 90));
+        assert_eq!(derived_ptx_feature("sm_120a", 86).unwrap(), (None, 87));
+        assert_eq!(derived_ptx_feature("sm_121f", 87).unwrap(), (None, 88));
+    }
+
+    #[test]
+    fn derived_target_rejects_canonical_unknown_architecture() {
+        let error = derived_ptx_feature("sm_999a", 90).unwrap_err();
+        assert!(error.to_string().contains("sm_999a"), "{error:#}");
+        assert!(
+            error.to_string().contains("no recorded PTX ISA floor"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn derived_target_raises_a_default_below_the_instruction_floor() {
+        assert_eq!(
+            derived_ptx_feature("sm_80", 88).unwrap(),
+            (Some("+ptx88".into()), 88)
+        );
+    }
     use crate::model::{
         CatalogHalfOpenRange, CatalogHardwareAlternative, CatalogHardwareTarget,
         CatalogLlvmResultFacts,
