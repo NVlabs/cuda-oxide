@@ -14,6 +14,7 @@
 //! - 64-bit arithmetic
 //! - Parallel for loop patterns
 //! - Full-debug closure environments
+//! - Full-debug optimized-MIR composite fragments
 //! - Full-debug Rust enum variants (direct and niche layouts)
 //! - Full-debug static and dereference projections
 //! - Full-debug enum payload source projections
@@ -185,9 +186,12 @@ mod kernels {
 
     /// Full-debug fixture for closure environment DWARF.
     ///
-    /// The `move` closure forces two scalar captures into the environment so
-    /// cuda-gdb can verify the generated composite type and inspect both
-    /// `capture_0` and `capture_1`.
+    /// The `move` closure forces two scalar captures into the environment. The
+    /// `u64` capture is intentionally constant so optimized MIR exercises a
+    /// constant-propagated composite fragment alongside the dynamic `u32` piece.
+    /// Full debug keeps normal rustc MIR optimization, and cuda-gdb must still
+    /// inspect both `capture_0` and `capture_1`. Two observable calls keep the
+    /// closure live across the source breakpoint between them.
     #[kernel]
     pub fn test_closure_debug(seed: u32, mut out: DisjointSlice<u32>) {
         let idx = thread::index_1d();
@@ -195,9 +199,32 @@ mod kernels {
             let captured_u32 = seed + 10;
             let captured_u64 = 0x1_0000_0020u64;
             let closure = move |x: u32| x + captured_u32 + captured_u64 as u32;
-            *out_elem = seed; // CUDA_OXIDE_DEBUG_CLOSURE_BREAKPOINT
-            let closure_result = closure(5u32);
-            *out_elem = closure_result;
+            let first_result = closure(5u32);
+            *out_elem = first_result; // CUDA_OXIDE_DEBUG_CLOSURE_BREAKPOINT
+            let second_result = closure(6u32);
+            *out_elem = second_result;
+        }
+    }
+
+    /// Helper that mirrors the importer SROA regression as closely as possible.
+    ///
+    /// Keeping the aggregate in a standalone, non-inlined function avoids
+    /// kernel control flow and `DisjointSlice` lowering influencing rustc's MIR
+    /// scalar-replacement decision for the source tuple.
+    #[inline(never)]
+    fn debug_scalarized_pair(a: u32, b: u64) -> u64 {
+        let debug_fragment_pair = (a, b);
+        debug_fragment_pair
+            .1
+            .wrapping_add(debug_fragment_pair.0 as u64) // CUDA_OXIDE_DEBUG_FRAGMENT_BREAKPOINT
+    }
+
+    /// Full-debug fixture for rustc MIR scalar-replacement fragments.
+    #[kernel]
+    pub fn test_fragment_debug(seed: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            *out_elem = debug_scalarized_pair(seed + 10, 0x1_0000_0020u64) as u32;
         }
     }
 
@@ -746,12 +773,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing: test_closure_debug");
     {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        // capture_0 = seed + 10 = 17, capture_1 low 32 bits = 32, x = 5.
+        // capture_0 = seed + 10 = 17, capture_1 low 32 bits = 32, final x = 6.
         // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
         unsafe { module.test_closure_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
         let result = out_dev.to_host_vec(&stream)?;
-        assert_eq!(result[0], 54, "test_closure_debug failed");
-        println!("  ✓ Result: {} (expected 54)", result[0]);
+        assert_eq!(result[0], 55, "test_closure_debug failed");
+        println!("  ✓ Result: {} (expected 55)", result[0]);
+    }
+
+    // Test the optimized-MIR composite-fragment debug fixture.
+    println!("Testing: test_fragment_debug");
+    {
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        // fragment_pair = (17, 0x1_0000_0020), low 32 bits sum to 49.
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_fragment_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
+        let result = out_dev.to_host_vec(&stream)?;
+        assert_eq!(result[0], 49, "test_fragment_debug failed");
+        println!("  ✓ Result: {} (expected 49)", result[0]);
     }
 
     // Test for loop sum

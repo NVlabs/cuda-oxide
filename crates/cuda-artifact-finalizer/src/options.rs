@@ -21,11 +21,10 @@ impl DebugPolicy {
     /// Parse a `CUDA_OXIDE_DEBUG` value into a debug policy.
     ///
     /// This is the single alias table for the environment variable. The
-    /// rustc codegen backend uses it to select the DWARF emission level,
-    /// and cargo-oxide uses it to decide build policy (a full-debug build
-    /// disables MIR optimization so aggregate locals survive to DWARF).
-    /// Keeping both behind one parser means every accepted spelling, such
-    /// as `2` for `full`, drives the whole pipeline consistently.
+    /// rustc codegen backend and CUDA finalization stages use it to select the
+    /// DWARF emission and downstream optimization policy. rustc MIR optimization
+    /// remains independent, so full debug can preserve scalarized source-variable
+    /// fragments instead of forcing aggregate locals to survive unchanged.
     ///
     /// Returns `None` for unrecognized values so callers fall back to
     /// their own defaults.

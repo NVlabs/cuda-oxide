@@ -3078,7 +3078,8 @@ pub enum DeviceDebug {
     Off,
     /// Preserve source line mappings without disabling optimization.
     LineTables,
-    /// Emit full debug information; MIR optimization is disabled and libNVVM finalization runs unoptimized.
+    /// Emit full debug information; rustc MIR keeps its normal optimization
+    /// level while libNVVM finalization runs unoptimized.
     Full,
 }
 
@@ -3788,10 +3789,9 @@ pub fn codegen_show_pipeline(
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
-    // The shared codegen env (including the CLI debug level) must be on the
-    // command before the rustflags decision below: a full-debug request adds
-    // `-Zmir-opt-level=0`, and `apply_codegen_rustflags` reads the command's
-    // `CUDA_OXIDE_DEBUG` to see it. This is the same ordering build/run use.
+    // Apply the shared codegen environment before the fingerprint and rustflags
+    // setup, matching the ordering used by build/run. Full debug no longer
+    // overrides rustc MIR optimization; only the downstream debug policy changes.
     apply_common_codegen_env(
         &mut cmd,
         ctx,
@@ -5987,54 +5987,17 @@ fn strip_wrapper_owned_codegen_cfgs(flags: &mut Vec<String>) {
     *flags = retained;
 }
 
-fn command_requests_full_device_debug_with_env(
-    cmd: &Command,
-    inherited_debug: Option<&str>,
-) -> bool {
-    let effective_debug = match cmd
-        .get_envs()
-        .find(|(name, _)| *name == std::ffi::OsStr::new("CUDA_OXIDE_DEBUG"))
-    {
-        Some((_, Some(value))) => Some(value.to_string_lossy().into_owned()),
-        Some((_, None)) => None,
-        None => inherited_debug.map(str::to_owned),
-    };
-
-    // Shared alias table: the codegen backend parses `CUDA_OXIDE_DEBUG`
-    // with the same function, so every spelling the backend treats as
-    // full debug (including `2`) also disables MIR optimization here.
-    effective_debug.is_some_and(|value| {
-        cuda_artifact_finalizer::DebugPolicy::parse_env_override(&value)
-            == Some(cuda_artifact_finalizer::DebugPolicy::Full)
-    })
-}
-
-fn append_full_debug_mir_rustflag(
-    encoded: &mut String,
-    cmd: &Command,
-    inherited_debug: Option<&str>,
-) {
-    if !command_requests_full_device_debug_with_env(cmd, inherited_debug) {
-        return;
-    }
-    if !encoded.is_empty() {
-        encoded.push(ENCODED_RUSTFLAGS_SEPARATOR);
-    }
-    encoded.push_str("-Zmir-opt-level=0");
-}
-
 fn apply_codegen_rustflags(
     cmd: &mut Command,
     ctx: &Context,
     profile: CodegenProfilePolicy,
     device_cfgs: &[String],
 ) {
-    let mut encoded = build_encoded_rustflags(ctx, profile, device_cfgs);
-    let inherited_debug = std::env::var("CUDA_OXIDE_DEBUG").ok();
-    append_full_debug_mir_rustflag(&mut encoded, cmd, inherited_debug.as_deref());
-
-    cmd.env("CARGO_ENCODED_RUSTFLAGS", encoded)
-        .env_remove("RUSTFLAGS");
+    cmd.env(
+        "CARGO_ENCODED_RUSTFLAGS",
+        build_encoded_rustflags(ctx, profile, device_cfgs),
+    )
+    .env_remove("RUSTFLAGS");
 }
 
 /// Apply the two deliberately different Cargo cache boundaries:
@@ -11027,48 +10990,35 @@ edition = "2024"
     }
 
     #[test]
-    fn full_device_debug_disables_mir_optimization() {
-        let cmd = Command::new("cargo");
-        let mut encoded = "base".to_string();
+    fn full_device_debug_keeps_normal_mir_optimization() {
+        let ctx = test_context(OxideConfig::default());
+        let opts = CargoPassthroughOptions {
+            verbose: false,
+            emit_nvvm_ir: false,
+            arch: None,
+            features: None,
+            cargo_target_dir: None,
+            device_codegen_crate: None,
+            device_cfgs: &[],
+            no_fmad: false,
+            unchecked_indexing: false,
+            materialize_cubin: false,
+            device_debug: DeviceDebug::Full,
+        };
 
-        append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
+        let cmd = passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Build, &opts, &[])
+            .unwrap();
 
-        assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
-    }
-
-    #[test]
-    fn numeric_full_debug_alias_disables_mir_optimization() {
-        // The backend accepts `CUDA_OXIDE_DEBUG=2` as full debug; the shared
-        // parser guarantees the build policy agrees, so `2` must disable MIR
-        // optimization exactly like `full`.
-        let mut cmd = Command::new("cargo");
-        cmd.env("CUDA_OXIDE_DEBUG", "2");
-        let mut encoded = "base".to_string();
-
-        append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
-
-        assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
-    }
-
-    #[test]
-    fn line_tables_keep_normal_mir_optimization() {
-        let mut cmd = Command::new("cargo");
-        cmd.env("CUDA_OXIDE_DEBUG", "line");
-        let mut encoded = "base".to_string();
-
-        append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
-
-        assert_eq!(decoded_rustflags(&encoded), ["base"]);
-    }
-
-    #[test]
-    fn explicit_line_tables_override_inherited_full_debug_for_mir_optimization() {
-        let mut cmd = Command::new("cargo");
-        cmd.env("CUDA_OXIDE_DEBUG", "line");
-        let mut encoded = "base".to_string();
-
-        append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
-
-        assert_eq!(decoded_rustflags(&encoded), ["base"]);
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_DEBUG").as_deref(),
+            Some("full")
+        );
+        let encoded = command_env(&cmd, "CARGO_ENCODED_RUSTFLAGS").unwrap();
+        let flags = decoded_rustflags(&encoded);
+        assert!(flags.contains(&"-Copt-level=3"));
+        assert!(
+            !flags.iter().any(|flag| flag.starts_with("-Zmir-opt-level")),
+            "full debug must not override rustc MIR optimization: {flags:?}"
+        );
     }
 }

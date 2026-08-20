@@ -20,12 +20,14 @@
 //!   `#[launch_bounds(...)]`)
 
 use super::block;
+use super::rvalue;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
 use crate::translator::values::{self, SlotAddrSpaceMap, ValueMap};
-use dialect_mir::ops::MirFuncOp;
-use dialect_mir::types::address_space;
+use dialect_mir::attributes::FieldIndexAttr;
+use dialect_mir::ops::{MirAllocaOp, MirDbgValueOp, MirFieldAddrOp, MirFuncOp, MirStoreOp};
+use dialect_mir::types::{MirPtrType, address_space};
 use llvm_export::export::DebugKind;
 use llvm_export::ops::{
     DebugEnumDiscriminant, DebugEnumVariant, DebugFragment, DebugFragmentVariableInfo,
@@ -37,9 +39,12 @@ use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::context::{Context, Ptr};
 use pliron::identifier::{Identifier, Legaliser};
 use pliron::input_err_noloc;
+use pliron::linked_list::ContainsLinkedList;
 use pliron::location::Located;
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::r#type::TypeHandle;
+use pliron::value::Value;
 
 // Re-export rustc_public types for convenience
 use rustc_hash::FxHashMap;
@@ -565,11 +570,57 @@ struct LocalDebugInfo {
     source_scope: u32,
 }
 
+#[derive(Clone)]
+struct ConstantDebugFragment {
+    constant: mir::ConstOperand,
+    fragment: DebugFragmentVariableInfo,
+    loc: pliron::location::Location,
+}
+
+#[derive(Clone)]
+enum CompositeMirrorFragmentValue {
+    Constant {
+        constant: mir::ConstOperand,
+        loc: pliron::location::Location,
+    },
+    Place {
+        local: mir::Local,
+    },
+}
+
+#[derive(Clone)]
+struct CompositeMirrorFragment {
+    fragment: DebugFragmentVariableInfo,
+    field_index: usize,
+    field_ty: Ty,
+    value: CompositeMirrorFragmentValue,
+}
+
+#[derive(Clone)]
+struct CompositeDebugMirror {
+    variable: DebugLocalVariableInfo,
+    source_ty: Ty,
+    source_scope: u32,
+    declaration: Option<DebugSourcePosition>,
+    loc: pliron::location::Location,
+    fragments: Vec<CompositeMirrorFragment>,
+}
+
+#[derive(Clone, Copy)]
+struct CompositeMirrorPlaceBinding {
+    backing_slot: Value,
+    mirror_slot: Value,
+    field_index: usize,
+    field_ty: TypeHandle,
+}
+
 #[derive(Default)]
 struct CollectedDebugLocals {
     whole: FxHashMap<mir::Local, LocalDebugInfo>,
     projected: FxHashMap<mir::Local, Vec<DebugProjectedVariableInfo>>,
     fragments: FxHashMap<mir::Local, Vec<DebugFragmentVariableInfo>>,
+    constant_fragments: Vec<ConstantDebugFragment>,
+    composite_mirrors: Vec<CompositeDebugMirror>,
 }
 
 /// Build full-debug bindings for whole locals, supported place projections,
@@ -578,9 +629,10 @@ struct CollectedDebugLocals {
 /// A composite record describes one storage piece of a larger source variable.
 /// The stable MIR `composite.ty` is the complete source type and
 /// `composite.projection` identifies the piece inside it. For now fragments are
-/// accepted only when rustc stores the piece in a whole MIR local and the
-/// composite projection is a static `Field` chain. This is the scalar-replaced
-/// aggregate shape emitted by rustc and keeps the location semantics exact.
+/// accepted when rustc stores the piece in a whole MIR local or records it as
+/// a constant after propagation, and the composite projection is a static
+/// `Field` chain. These are the scalar-replaced aggregate shapes emitted by
+/// rustc and keep the location semantics exact.
 ///
 /// Ordinary projected bindings retain the existing support for static fields,
 /// forward constant indices, enum payload fields, and one leading thin-pointer
@@ -589,11 +641,186 @@ struct CollectedDebugLocals {
 /// skipped rather than approximated.
 fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLocals {
     let mut collected = CollectedDebugLocals::default();
+    let mut mirror_candidates: Vec<CompositeDebugMirror> = Vec::new();
+    let mut blocked_mirrors: Vec<(String, u32, Ty)> = Vec::new();
 
     for info in &body.var_debug_info {
         let name = info.name.to_string();
         if name.is_empty() {
             continue;
+        }
+
+        if let Some(composite) = &info.composite {
+            let Some(fragment) = debug_fragment(composite) else {
+                continue;
+            };
+            let Some(ty) = debug_type_for_ty(&composite.ty) else {
+                continue;
+            };
+            let fragment_info = DebugFragmentVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name: name.clone(),
+                    argument_index: info.argument_index,
+                    ty,
+                },
+                fragment,
+                source_scope: Some(info.source_info.scope),
+                declaration: debug_source_position(info.source_info.span),
+            };
+
+            let direct_field = match composite.projection.as_slice() {
+                [mir::ProjectionElem::Field(field_idx, field_ty)] => Some((*field_idx, *field_ty)),
+                _ => None,
+            };
+
+            let mirror_key_matches = |mirror: &CompositeDebugMirror| {
+                mirror.variable.name == name
+                    && mirror.source_scope == info.source_info.scope
+                    && mirror.source_ty == composite.ty
+            };
+            let blocked_key_matches = |key: &(String, u32, Ty)| {
+                key.0 == name && key.1 == info.source_info.scope && key.2 == composite.ty
+            };
+
+            match &info.value {
+                mir::VarDebugInfoContents::Const(constant) => {
+                    if layout_size_bits(&constant.ty()) != Some(fragment.size_bits) {
+                        if !blocked_mirrors.iter().any(blocked_key_matches) {
+                            blocked_mirrors.push((
+                                name.clone(),
+                                info.source_info.scope,
+                                composite.ty,
+                            ));
+                        }
+                        continue;
+                    }
+
+                    if let Some((field_index, field_ty)) = direct_field {
+                        let candidate_index = mirror_candidates
+                            .iter()
+                            .position(mirror_key_matches)
+                            .unwrap_or_else(|| {
+                                mirror_candidates.push(CompositeDebugMirror {
+                                    variable: fragment_info.variable.clone(),
+                                    source_ty: composite.ty,
+                                    source_scope: info.source_info.scope,
+                                    declaration: fragment_info.declaration.clone(),
+                                    loc: span_to_location(ctx, info.source_info.span),
+                                    fragments: Vec::new(),
+                                });
+                                mirror_candidates.len() - 1
+                            });
+                        mirror_candidates[candidate_index].fragments.push(
+                            CompositeMirrorFragment {
+                                fragment: fragment_info,
+                                field_index,
+                                field_ty,
+                                value: CompositeMirrorFragmentValue::Constant {
+                                    constant: constant.clone(),
+                                    loc: span_to_location(ctx, info.source_info.span),
+                                },
+                            },
+                        );
+                        continue;
+                    }
+
+                    if !blocked_mirrors.iter().any(blocked_key_matches) {
+                        blocked_mirrors.push((name.clone(), info.source_info.scope, composite.ty));
+                    }
+                    collected.constant_fragments.push(ConstantDebugFragment {
+                        constant: constant.clone(),
+                        fragment: fragment_info,
+                        loc: span_to_location(ctx, info.source_info.span),
+                    });
+                    continue;
+                }
+                mir::VarDebugInfoContents::Place(place) => {
+                    let local = place.local;
+                    let local_idx: usize = local;
+                    if local_idx == 0 {
+                        if !blocked_mirrors.iter().any(blocked_key_matches) {
+                            blocked_mirrors.push((
+                                name.clone(),
+                                info.source_info.scope,
+                                composite.ty,
+                            ));
+                        }
+                        continue;
+                    }
+
+                    // A promoted `dbg.value` for the backing local denotes the
+                    // fragment value itself. Supporting a projected storage
+                    // place would require extracting that subvalue after
+                    // promotion, so fail closed here.
+                    if !place.projection.is_empty() {
+                        if !blocked_mirrors.iter().any(blocked_key_matches) {
+                            blocked_mirrors.push((
+                                name.clone(),
+                                info.source_info.scope,
+                                composite.ty,
+                            ));
+                        }
+                        continue;
+                    }
+
+                    if fragment.offset_bits == 0
+                        && layout_size_bits(&composite.ty) == Some(fragment.size_bits)
+                    {
+                        if !blocked_mirrors.iter().any(blocked_key_matches) {
+                            blocked_mirrors.push((
+                                name.clone(),
+                                info.source_info.scope,
+                                composite.ty,
+                            ));
+                        }
+                        collected
+                            .whole
+                            .entry(local)
+                            .or_insert_with(|| LocalDebugInfo {
+                                variable: fragment_info.variable,
+                                loc: span_to_location(ctx, info.source_info.span),
+                                source_scope: info.source_info.scope,
+                            });
+                        continue;
+                    }
+
+                    if let Some((field_index, field_ty)) = direct_field {
+                        let candidate_index = mirror_candidates
+                            .iter()
+                            .position(mirror_key_matches)
+                            .unwrap_or_else(|| {
+                                mirror_candidates.push(CompositeDebugMirror {
+                                    variable: fragment_info.variable.clone(),
+                                    source_ty: composite.ty,
+                                    source_scope: info.source_info.scope,
+                                    declaration: fragment_info.declaration.clone(),
+                                    loc: span_to_location(ctx, info.source_info.span),
+                                    fragments: Vec::new(),
+                                });
+                                mirror_candidates.len() - 1
+                            });
+                        mirror_candidates[candidate_index].fragments.push(
+                            CompositeMirrorFragment {
+                                fragment: fragment_info,
+                                field_index,
+                                field_ty,
+                                value: CompositeMirrorFragmentValue::Place { local },
+                            },
+                        );
+                        continue;
+                    }
+
+                    if !blocked_mirrors.iter().any(blocked_key_matches) {
+                        blocked_mirrors.push((name.clone(), info.source_info.scope, composite.ty));
+                    }
+                    collected
+                        .fragments
+                        .entry(local)
+                        .or_default()
+                        .push(fragment_info);
+                    continue;
+                }
+            }
         }
 
         let mir::VarDebugInfoContents::Place(place) = &info.value else {
@@ -602,54 +829,6 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
         let local = place.local;
         let local_idx: usize = local;
         if local_idx == 0 {
-            continue;
-        }
-
-        if let Some(composite) = &info.composite {
-            // A promoted `dbg.value` for the backing local denotes the fragment
-            // value itself. Supporting a projected storage place would require
-            // extracting that subvalue after promotion, so fail closed here.
-            if !place.projection.is_empty() {
-                continue;
-            }
-            let Some(fragment) = debug_fragment(composite) else {
-                continue;
-            };
-            let Some(ty) = debug_type_for_ty(&composite.ty) else {
-                continue;
-            };
-            if fragment.offset_bits == 0
-                && layout_size_bits(&composite.ty) == Some(fragment.size_bits)
-            {
-                collected
-                    .whole
-                    .entry(local)
-                    .or_insert_with(|| LocalDebugInfo {
-                        variable: DebugLocalVariableInfo {
-                            name,
-                            argument_index: info.argument_index,
-                            ty,
-                        },
-                        loc: span_to_location(ctx, info.source_info.span),
-                        source_scope: info.source_info.scope,
-                    });
-                continue;
-            }
-
-            collected
-                .fragments
-                .entry(local)
-                .or_default()
-                .push(DebugFragmentVariableInfo {
-                    variable: DebugLocalVariableInfo {
-                        name,
-                        argument_index: info.argument_index,
-                        ty,
-                    },
-                    fragment,
-                    source_scope: Some(info.source_info.scope),
-                    declaration: debug_source_position(info.source_info.span),
-                });
             continue;
         }
 
@@ -701,6 +880,44 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
                 source_scope: Some(info.source_info.scope),
                 declaration: debug_source_position(info.source_info.span),
             });
+    }
+
+    for mirror in mirror_candidates {
+        let blocked = blocked_mirrors.iter().any(|key| {
+            key.0 == mirror.variable.name
+                && key.1 == mirror.source_scope
+                && key.2 == mirror.source_ty
+        });
+        let has_constant = mirror.fragments.iter().any(|fragment| {
+            matches!(
+                &fragment.value,
+                CompositeMirrorFragmentValue::Constant { .. }
+            )
+        });
+
+        if !blocked && has_constant {
+            collected.composite_mirrors.push(mirror);
+            continue;
+        }
+
+        for fragment in mirror.fragments {
+            match fragment.value {
+                CompositeMirrorFragmentValue::Constant { constant, loc } => {
+                    collected.constant_fragments.push(ConstantDebugFragment {
+                        constant,
+                        fragment: fragment.fragment,
+                        loc,
+                    });
+                }
+                CompositeMirrorFragmentValue::Place { local } => {
+                    collected
+                        .fragments
+                        .entry(local)
+                        .or_default()
+                        .push(fragment.fragment);
+                }
+            }
+        }
     }
 
     collected
@@ -1992,7 +2209,7 @@ pub fn translate_body(
     //
     // The `mem2reg` pass in `pipeline.rs` promotes the scalar slots back into
     // SSA before LLVM lowering.
-    let entry_last_op = emit_entry_allocas(
+    let mut entry_last_op = emit_entry_allocas(
         ctx,
         body,
         block_map[0],
@@ -2002,6 +2219,30 @@ pub fn translate_body(
         debug_source_scopes,
         &reachable,
     );
+
+    let mut composite_mirror_bindings = Vec::new();
+    if debug_kind == DebugKind::Full {
+        let debug_locals = collect_debug_locals(ctx, body);
+        entry_last_op = materialize_full_debug_constant_fragments(
+            ctx,
+            body,
+            block_map[0],
+            &mut value_map,
+            entry_last_op,
+            debug_locals.constant_fragments,
+        )?;
+        let (last_op, mirror_bindings) = materialize_full_debug_composite_mirrors(
+            ctx,
+            body,
+            block_map[0],
+            &mut value_map,
+            entry_last_op,
+            debug_source_scopes,
+            debug_locals.composite_mirrors,
+        )?;
+        entry_last_op = last_op;
+        composite_mirror_bindings = mirror_bindings;
+    }
 
     // -------------------------------------------------------------------------
     // PHASE 2: Translate reachable blocks
@@ -2050,7 +2291,290 @@ pub fn translate_body(
         }
     }
 
+    if debug_kind == DebugKind::Full {
+        materialize_full_debug_composite_mirror_updates(
+            ctx,
+            &block_map,
+            &composite_mirror_bindings,
+        );
+        materialize_full_debug_fragment_values(ctx, &block_map);
+    }
+
     Ok(op_ptr)
+}
+
+/// Materialize mixed constant/local scalarized composites into one debug mirror.
+///
+/// NVPTX can drop one fragment of a source aggregate even when that fragment
+/// is backed by a real SSA value. When MIR optimization turns one direct field
+/// into a constant and another into a local, full debug therefore reconstructs
+/// a single contiguous source object in debug-only memory. The mirror carries
+/// one ordinary whole-variable `dbg.declare`; field writes keep it synchronized
+/// with the optimized MIR locals without changing their program semantics.
+fn materialize_full_debug_composite_mirrors(
+    ctx: &mut Context,
+    body: &mir::Body,
+    entry_block: Ptr<BasicBlock>,
+    value_map: &mut ValueMap,
+    mut prev_op: Option<Ptr<Operation>>,
+    debug_source_scopes: Option<&DebugSourceScopeMap>,
+    mirrors: Vec<CompositeDebugMirror>,
+) -> TranslationResult<(Option<Ptr<Operation>>, Vec<CompositeMirrorPlaceBinding>)> {
+    let mut place_bindings = Vec::new();
+
+    for mirror in mirrors {
+        let mirror_ty = types::translate_type(ctx, &mirror.source_ty)?;
+        let (alloca_op, mirror_slot) = ValueMap::emit_alloca(ctx, mirror_ty, entry_block, prev_op);
+        llvm_export::ops::set_debug_local_variable(ctx, alloca_op, mirror.variable.clone());
+        if debug_source_scopes.is_some_and(|map| {
+            map.scopes
+                .iter()
+                .any(|scope| scope.id == mirror.source_scope)
+        }) {
+            llvm_export::ops::set_debug_local_source_scope(ctx, alloca_op, mirror.source_scope);
+        }
+        if let Some(declaration) = &mirror.declaration {
+            llvm_export::ops::set_debug_local_declaration_location(
+                ctx,
+                alloca_op,
+                declaration.file.clone(),
+                declaration.line,
+                declaration.column,
+            );
+        }
+        alloca_op.deref_mut(ctx).set_loc(mirror.loc.clone());
+        prev_op = Some(alloca_op);
+
+        for fragment in mirror.fragments {
+            let field_ty = types::translate_type(ctx, &fragment.field_ty)?;
+            match fragment.value {
+                CompositeMirrorFragmentValue::Constant { constant, loc } => {
+                    let operand = mir::Operand::Constant(constant);
+                    let (value, last_inserted) = rvalue::translate_operand(
+                        ctx,
+                        body,
+                        &operand,
+                        value_map,
+                        entry_block,
+                        prev_op,
+                        loc.clone(),
+                    )?;
+                    prev_op = last_inserted.or(prev_op);
+                    prev_op = Some(emit_full_debug_mirror_field_store(
+                        ctx,
+                        entry_block,
+                        prev_op,
+                        mirror_slot,
+                        fragment.field_index,
+                        field_ty,
+                        value,
+                        loc,
+                    ));
+                }
+                CompositeMirrorFragmentValue::Place { local } => {
+                    if let Some(backing_slot) = value_map.get_slot(local) {
+                        place_bindings.push(CompositeMirrorPlaceBinding {
+                            backing_slot,
+                            mirror_slot,
+                            field_index: fragment.field_index,
+                            field_ty,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok((prev_op, place_bindings))
+}
+
+/// Store one reconstructed source field into a whole-variable debug mirror.
+fn emit_full_debug_mirror_field_store(
+    ctx: &mut Context,
+    block: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    mirror_slot: Value,
+    field_index: usize,
+    field_ty: TypeHandle,
+    value: Value,
+    loc: pliron::location::Location,
+) -> Ptr<Operation> {
+    let field_ptr_ty = MirPtrType::get_generic(ctx, field_ty, true).into();
+    let field_addr_op = Operation::new(
+        ctx,
+        MirFieldAddrOp::get_concrete_op_info(),
+        vec![field_ptr_ty],
+        vec![mirror_slot],
+        vec![],
+        0,
+    );
+    field_addr_op.deref_mut(ctx).set_loc(loc.clone());
+    MirFieldAddrOp::new(field_addr_op)
+        .set_attr_field_index(ctx, FieldIndexAttr(field_index as u32));
+    match prev_op {
+        Some(prev) => field_addr_op.insert_after(ctx, prev),
+        None => field_addr_op.insert_at_front(block, ctx),
+    }
+
+    let field_ptr = field_addr_op.deref(ctx).get_result(0);
+    let (value, anchor) =
+        values::maybe_ptr_coerce(ctx, value, field_ty, block, Some(field_addr_op));
+    let store_op = Operation::new(
+        ctx,
+        MirStoreOp::get_concrete_op_info(),
+        vec![],
+        vec![field_ptr, value],
+        vec![],
+        0,
+    );
+    MirStoreOp::new(store_op).set_volatile(ctx, true);
+    store_op.deref_mut(ctx).set_loc(loc);
+    store_op.insert_after(ctx, anchor.unwrap_or(field_addr_op));
+    store_op
+}
+
+/// Mirror every write to a scalarized backing local into its source aggregate.
+fn materialize_full_debug_composite_mirror_updates(
+    ctx: &mut Context,
+    blocks: &[Ptr<BasicBlock>],
+    bindings: &[CompositeMirrorPlaceBinding],
+) {
+    if bindings.is_empty() {
+        return;
+    }
+
+    for &block in blocks {
+        let ops: Vec<_> = block.deref(ctx).iter(ctx).collect();
+        for op in ops {
+            let Some(store) = Operation::get_op::<MirStoreOp>(op, ctx) else {
+                continue;
+            };
+            let store_address = store.address_opd(ctx);
+            let store_value = store.value_opd(ctx);
+            let store_loc = op.deref(ctx).loc().clone();
+            let mut anchor = op;
+            for &binding in bindings {
+                if binding.backing_slot != store_address {
+                    continue;
+                }
+                anchor = emit_full_debug_mirror_field_store(
+                    ctx,
+                    block,
+                    Some(anchor),
+                    binding.mirror_slot,
+                    binding.field_index,
+                    binding.field_ty,
+                    store_value,
+                    store_loc.clone(),
+                );
+            }
+        }
+    }
+}
+
+/// Materialize constant composite fragments as value-based debug locations.
+///
+/// MIR optimization may scalar-replace an aggregate and then constant-propagate
+/// one of its pieces. rustc records that source fragment as
+/// `VarDebugInfoContents::Const`; there is no backing alloca/store for the
+/// later stack-slot salvage pass to observe. Emit the constant through the
+/// normal operand translator and attach the fragment metadata directly to a
+/// `mir.dbg_value` in the entry block.
+fn materialize_full_debug_constant_fragments(
+    ctx: &mut Context,
+    body: &mir::Body,
+    entry_block: Ptr<BasicBlock>,
+    value_map: &mut ValueMap,
+    mut prev_op: Option<Ptr<Operation>>,
+    fragments: Vec<ConstantDebugFragment>,
+) -> TranslationResult<Option<Ptr<Operation>>> {
+    for fragment in fragments {
+        let operand = mir::Operand::Constant(fragment.constant);
+        let (value, last_inserted) = rvalue::translate_operand(
+            ctx,
+            body,
+            &operand,
+            value_map,
+            entry_block,
+            prev_op,
+            fragment.loc.clone(),
+        )?;
+        prev_op = last_inserted.or(prev_op);
+
+        let dbg_value = MirDbgValueOp::new(ctx, value);
+        llvm_export::ops::set_debug_fragment_variables(
+            ctx,
+            dbg_value.get_operation(),
+            std::slice::from_ref(&fragment.fragment),
+        );
+        dbg_value
+            .get_operation()
+            .deref_mut(ctx)
+            .set_loc(fragment.loc);
+        match prev_op {
+            Some(prev) => dbg_value.get_operation().insert_after(ctx, prev),
+            None => dbg_value.get_operation().insert_at_front(entry_block, ctx),
+        }
+        prev_op = Some(dbg_value.get_operation());
+    }
+
+    Ok(prev_op)
+}
+
+/// Convert fragment-backed full-debug stack slots to value locations.
+///
+/// rustc MIR optimization can scalar-replace one source aggregate into several
+/// independent MIR locals. Keeping those pieces as separate `dbg.declare`
+/// locations makes cuda-gdb treat each fragment value as an address and can
+/// produce an invalid composite stack location. Full debug still keeps the
+/// actual allocas in memory, but each write to a fragment-backed slot also gets
+/// a `mir.dbg_value` that names the stored SSA value. The alloca fragment attrs
+/// are cleared so LLVM export emits only the value-based fragment locations.
+fn materialize_full_debug_fragment_values(ctx: &mut Context, blocks: &[Ptr<BasicBlock>]) {
+    let mut fragment_slots = FxHashMap::default();
+
+    for &block in blocks {
+        let ops: Vec<_> = block.deref(ctx).iter(ctx).collect();
+        for op in ops {
+            let Some(alloca) = Operation::get_op::<MirAllocaOp>(op, ctx) else {
+                continue;
+            };
+            let fragments = llvm_export::ops::debug_fragment_variables(ctx, op);
+            if fragments.is_empty() {
+                continue;
+            }
+
+            let slot = alloca.get_operation().deref(ctx).get_result(0);
+            fragment_slots.insert(slot, fragments);
+            llvm_export::ops::set_debug_fragment_variables(ctx, op, &[]);
+        }
+    }
+
+    if fragment_slots.is_empty() {
+        return;
+    }
+
+    for &block in blocks {
+        let ops: Vec<_> = block.deref(ctx).iter(ctx).collect();
+        for op in ops {
+            let Some(store) = Operation::get_op::<MirStoreOp>(op, ctx) else {
+                continue;
+            };
+            let Some(fragments) = fragment_slots.get(&store.address_opd(ctx)) else {
+                continue;
+            };
+
+            let dbg_value = MirDbgValueOp::new(ctx, store.value_opd(ctx));
+            llvm_export::ops::set_debug_fragment_variables(
+                ctx,
+                dbg_value.get_operation(),
+                fragments,
+            );
+            let loc = op.deref(ctx).loc().clone();
+            dbg_value.get_operation().deref_mut(ctx).set_loc(loc);
+            dbg_value.get_operation().insert_after(ctx, op);
+        }
+    }
 }
 
 /// Propagate `#[inline(always)]` as an LLVM `alwaysinline` function
@@ -2193,6 +2717,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn full_debug_fragment_stores_materialize_value_locations() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let i32_ty: pliron::r#type::TypeHandle = pliron::builtin::types::IntegerType::get(
+            &ctx,
+            32,
+            pliron::builtin::types::Signedness::Signless,
+        )
+        .into();
+        let block = BasicBlock::new(&mut ctx, None, vec![i32_ty]);
+        let (alloca_op, slot) = ValueMap::emit_alloca(&mut ctx, i32_ty, block, None);
+        let fragment = DebugFragmentVariableInfo {
+            variable: DebugLocalVariableInfo {
+                name: "pair".to_string(),
+                argument_index: None,
+                ty: DebugLocalTypeKind::Basic {
+                    name: "u64".to_string(),
+                    size_bits: 64,
+                    encoding: "DW_ATE_unsigned",
+                },
+            },
+            fragment: DebugFragment {
+                offset_bits: 0,
+                size_bits: 32,
+            },
+            source_scope: None,
+            declaration: None,
+        };
+        llvm_export::ops::set_debug_fragment_variables(
+            &mut ctx,
+            alloca_op,
+            std::slice::from_ref(&fragment),
+        );
+
+        let value = block.deref(&ctx).get_argument(0);
+        let store = Operation::new(
+            &mut ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![slot, value],
+            vec![],
+            0,
+        );
+        store.insert_after(&ctx, alloca_op);
+
+        materialize_full_debug_fragment_values(&mut ctx, &[block]);
+
+        assert!(llvm_export::ops::debug_fragment_variables(&ctx, alloca_op).is_empty());
+        let dbg_values: Vec<_> = block
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<MirDbgValueOp>(op, &ctx))
+            .collect();
+        assert_eq!(dbg_values.len(), 1);
+        assert_eq!(dbg_values[0].value(&ctx), value);
+        assert_eq!(
+            llvm_export::ops::debug_fragment_variables(&ctx, dbg_values[0].get_operation()),
+            vec![fragment]
+        );
+    }
+
     /// Exercise `debug_fragment` against composite `VarDebugInfo` produced by
     /// rustc's scalar-replacement pass instead of constructing synthetic types.
     ///
@@ -2321,6 +2908,152 @@ pub fn scalarized_pair(a: u32, b: u64) -> u64 {
         );
     }
 
+    /// Optimized closure debug info can mix local-backed and constant-backed
+    /// fragments after SROA and constant propagation.
+    ///
+    /// The literal `u64` capture is intentionally constant while the `u32`
+    /// capture depends on an argument. Full debug groups both direct fields
+    /// into one aggregate mirror so NVPTX sees a single source-variable
+    /// location without disabling MIR optimization.
+    #[test]
+    fn optimized_closure_constant_capture_uses_composite_debug_mirror() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_closure_constant_fragment_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("closure_constant_fragment_fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+pub fn closure_constant_fragment(seed: u32) -> u32 {
+    let captured_u32 = seed + 10;
+    let captured_u64 = 0x1_0000_0020u64;
+    let closure = move |x: u32| x + captured_u32 + captured_u64 as u32;
+    closure(5)
+}
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=closure_constant_fragment_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Cdebuginfo=2".to_string(),
+            "-Copt-level=3".to_string(),
+            "-Zmir-opt-level=3".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let result = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    let mut rustc_constant_fragments = 0usize;
+                    let mut mirror_constant_fragments = 0usize;
+                    let mut mirror_place_fragments = 0usize;
+
+                    for body in rustc_public::all_local_items()
+                        .into_iter()
+                        .filter_map(|item| item.body())
+                    {
+                        let has_closure_binding = body
+                            .var_debug_info
+                            .iter()
+                            .any(|info| info.name == "closure" && info.composite.is_some());
+                        if !has_closure_binding {
+                            continue;
+                        }
+
+                        rustc_constant_fragments += body
+                            .var_debug_info
+                            .iter()
+                            .filter(|info| {
+                                info.name == "closure"
+                                    && info.composite.is_some()
+                                    && matches!(&info.value, mir::VarDebugInfoContents::Const(_))
+                            })
+                            .count();
+
+                        let mut ctx = Context::new();
+                        let collected = collect_debug_locals(&mut ctx, &body);
+                        for mirror in collected
+                            .composite_mirrors
+                            .iter()
+                            .filter(|mirror| mirror.variable.name == "closure")
+                        {
+                            mirror_constant_fragments += mirror
+                                .fragments
+                                .iter()
+                                .filter(|fragment| {
+                                    matches!(
+                                        &fragment.value,
+                                        CompositeMirrorFragmentValue::Constant { .. }
+                                    )
+                                })
+                                .count();
+                            mirror_place_fragments += mirror
+                                .fragments
+                                .iter()
+                                .filter(|fragment| {
+                                    matches!(
+                                        &fragment.value,
+                                        CompositeMirrorFragmentValue::Place { .. }
+                                    )
+                                })
+                                .count();
+                        }
+                    }
+
+                    std::ops::ControlFlow::<(), _>::Continue((
+                        rustc_constant_fragments,
+                        mirror_constant_fragments,
+                        mirror_place_fragments,
+                    ))
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        std::fs::remove_dir_all(&root).ok();
+
+        assert!(
+            result.0 >= 1,
+            "optimized closure fixture should produce at least one constant composite fragment"
+        );
+        assert_eq!(
+            result.1, result.0,
+            "every rustc constant direct-field fragment should enter the composite debug mirror"
+        );
+        assert!(
+            result.2 >= 1,
+            "optimized closure fixture should mirror at least one local-backed fragment"
+        );
+    }
+
     /// Closure environments must be described as composite debug types with
     /// member offsets taken from rustc's real layout, not declaration order.
     ///
@@ -2328,9 +3061,10 @@ pub fn scalarized_pair(a: u32, b: u64) -> u64 {
     /// layouts only exist inside one), so this test drives the pinned rustc
     /// in-process on a small fixture via `rustc_public::run!`, extracts the
     /// closure-typed local, and asserts on the returned plain data outside
-    /// the session. The fixture is compiled with `-Zmir-opt-level=0`, the
-    /// same flag cargo-oxide adds for full device debug, so the closure
-    /// local survives to MIR exactly as in a real full-debug build.
+    /// the session. This fixture intentionally uses `-Zmir-opt-level=0` so the
+    /// closure local survives long enough to isolate composite-type layout. Full
+    /// device builds keep normal MIR optimization; the scalarized-fragment path
+    /// is covered by `scalar_replacement_debug_fragments_follow_rustc_layout_and_fail_closed`.
     ///
     /// The `u32`-before-`u64` capture order is deliberate: rustc's layout
     /// sorts closure fields by descending alignment, placing the `u64` at

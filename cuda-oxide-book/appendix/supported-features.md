@@ -163,7 +163,7 @@ Anonymous promoted allocations remain unsupported.
 | Local Clean | **Full** | `cargo oxide clean` removes project-local `target/` directories and generated device artifacts (`.ptx`, `.ll`, `.opt.ll`, `.ltoir`, `.cubin`, `.target`, `.options`, `.cubin.target`), never the shared `~/.cargo/cuda-oxide/` cache. |
 | Compute Sanitizer Wrapper | **Full** | `cargo oxide sanitize <example>` builds the example and runs the host binary under NVIDIA Compute Sanitizer (`memcheck`, `racecheck`, `initcheck`, or `synccheck`). |
 | cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug information on the PTX path and launches `cuda-gdb`. Legacy NVVM IR does not yet support debug metadata. |
-| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, structs/tuples/arrays, closure environments, and Rust enums with direct-tag or niche layouts, including active variants and payload fields. Static source projections through struct/tuple fields, fixed-array constant indices, and enum downcast payload fields are described with address-offset DWARF expressions. A single dereference through a thin pointer/reference, optionally followed by static field projections, is also described with DWARF dereference/address-offset expressions. rustc scalar-replacement fragments backed by whole MIR locals are carried as `DW_OP_LLVM_fragment` through both `dbg.declare` and salvaged `dbg.value` records. Full-debug currently still disables rustc MIR optimization, so ordinary `full` builds rarely produce those fragments until that compatibility guard is removed. ABI-split bare slices, dereference-plus-index and dereference-downcast chains, repeated dereferences, runtime indices, subslices, and non-field composite-fragment projections are not yet described. |
+| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` keeps rustc MIR at its normal optimization level while preserving the downstream `-G`-style policy: Pliron mem2reg and LLVM optimization remain disabled, and CUDA finalization stays in full-debug mode. Fragment-backed scalar slots keep their storage semantics but receive store-time `dbg.value` records, so ordinary scalarized composites use value locations instead of multiple stack-address fragment `dbg.declare` locations. When a direct-field composite mixes constant-propagated and local-backed pieces, full debug instead reconstructs one contiguous debug-only mirror of the complete source aggregate, updates its fields with volatile debug-only stores, and emits one whole-variable `dbg.declare`; this avoids NVPTX dropping constant-backed fragment locations. `info args`/`info locals` show real values for scalars, pointers/references, structs/tuples/arrays, closure environments, and Rust enums with direct-tag or niche layouts, including active variants and payload fields. Static source projections through struct/tuple fields, fixed-array constant indices, and enum downcast payload fields are described with address-offset DWARF expressions. A single dereference through a thin pointer/reference, optionally followed by static field projections, is also described with DWARF dereference/address-offset expressions. rustc scalar-replacement fragments backed entirely by whole MIR locals remain `DW_OP_LLVM_fragment` value locations; mixed constant/local direct-field composites use the whole-object mirror so optimized closure environments remain inspectable without a global `-Zmir-opt-level=0` override. ABI-split bare slices, dereference-plus-index and dereference-downcast chains, repeated dereferences, runtime indices, subslices, nested/non-field composite-mirror projections, and other composite shapes that cannot be mirrored exactly are not yet described. |
 
 ## Compiler: Inline PTX
 
@@ -217,7 +217,6 @@ Anonymous promoted allocations remain unsupported.
 | Warp Shuffle Operations | **Full** | `shuffle`, `shuffle_xor`, `shuffle_down`, `shuffle_up`. Unsuffixed forms take `u32`; `_f32`, `_u64`, `_f64` variants and a `_sync` form of each. |
 | Warp Vote Operations | **Full** | `all(pred)`, `any(pred)`, `ballot(pred)` → bitmask. |
 | Lane/Warp ID | **Full** | `lane_id()` (0–31), `warp_id()`. Direct register reads. |
-| Warp Reduction (`redux.sync`) | **Full** | One-instruction full-warp reduction. Integers on sm_80+: `redux_sync_add`, `_min_{u32,i32}`, `_max_{u32,i32}`, `_and`, `_or`, `_xor`. `f32` min/max with optional `.abs` and `.NaN` on `sm_100a`/`sm_100f`/`sm_103a`/`sm_103f`. No `f64` form. |
 
 ## Runtime Library: Cooperative Groups
 
@@ -260,24 +259,12 @@ Anonymous promoted allocations remain unsupported.
 
 ---
 
-## Runtime Library: Matrix and Tensor Cores
-
-| Feature | Status | Description |
-|:--------|:-------|:------------|
-| Warp-Level MMA (`wmma`) | **Full** | Register-only `mma.sync` shapes, `movmatrix`, and warp-cooperative `ldmatrix` loads. |
-| Sparse MMA | **Full** | Structured-sparsity `mma.sp` shapes alongside the dense ones, in the same `wmma` module. |
-| Warpgroup MMA (`wgmma`) | **Partial** | Hopper `sm_90a`: fence/commit/wait pipeline, shared-memory descriptors, and `m64n64k16` MMA with `bf16`/`f16` inputs and `f32` accumulate. Gap: the lowering covers specific proven loop patterns (`bf16` works in straight-line code, counted K-loops, and partial-wait pipelines; `f16` in straight-line code only), and `tf32` calls are rejected pending [#1076](https://github.com/NVlabs/cuda-oxide/issues/1076). |
-| Tensor Core Gen 5 (`tcgen05`) | **Full** | Blackwell sm_100+: TMEM alloc/dealloc, MMA, `stmatrix`, CTA-pair (cg2) variants. |
-| Accumulator Fragment Algebra (`mma_frag`) | **Full** | Index algebra for the `m16n8k16` accumulator, so a lane can address its own slots of the `[f32; 4]` fragment. |
-| FP8 / FP6 / FP4 Formats | **Partial** | Conversions (`convert::cvt_*` for `e4m3`/`e5m2`) and the matrix path (FP8 `mma.sync` shapes, the `mxf8f6f4` shapes, tcgen05 descriptors) ship; the `mma_mxf8f6f4` example compiles them. Gap: no *arithmetic* on these formats. There's no add/mul/min/max the way `f16` and `bf16` have, so values are carried as packed bit patterns and converted before use. |
-
----
-
 ## Not Yet Implemented
 
 | Feature | Status | Notes |
 |:--------|:-------|:------|
 | Rust `asm!` macro | **Planned** | Use `ptx_asm!` for CUDA inline PTX. Direct lowering of Rust MIR `InlineAsm` is not implemented. |
+| FP8 / MX Data Types | **Planned** | Roadmap item for Blackwell. No architectural limitation. |
 | Dynamic Dispatch (`dyn Trait`) | **N/A** | Use generics with static dispatch. Haven't found a real need for this. |
 | Heap Allocation (`Box`, `Vec`) | **N/A** | CUDA has a device-side heap (`malloc`/`free` in kernels), and the compiler allows the `alloc` crate through -- but no device-side `#[global_allocator]` is wired up today. Even if it were, device `malloc` is extremely slow (serialized, fragmented, uncoalesced). Use slices and `SharedArray`. |
 | `String` / `format_args!` | **N/A** | Use `gpu_printf!` for formatted output. |
