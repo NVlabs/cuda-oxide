@@ -12,7 +12,8 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_nvvm::ops::{
-    WgmmaMakeSmemDescOp, WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
+    WgmmaMakeSmemDescOp, WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op,
+    WgmmaMmaM64N64K16F32F16Op,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -281,6 +282,92 @@ pub fn emit_wgmma_mma_m64n64k16_f32_f16(
     }
 }
 
+/// Emit TF32 m64n64k8 WGMMA pointer form.
+///
+/// `mir-lower` accepts this variant only in a canonical linear full-drain
+/// region ending in `wait_group<0>`. Counted loops, partial-wait pipelines,
+/// and pointer fallback remain BF16-only.
+pub fn emit_wgmma_mma_m64n64k8_f32_tf32(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    if args.len() != 3 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "wgmma_mma_m64n64k8_f32_tf32 expects 3 arguments (acc_ptr, desc_a, desc_b), got {}",
+                args.len()
+            ))
+        );
+    }
+
+    let mut last_op = prev_op;
+    let (acc_ptr, next) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[0],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = next;
+    let (desc_a, next) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[1],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = next;
+    let (desc_b, next) = rvalue::translate_operand(
+        ctx,
+        body,
+        &args[2],
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = next;
+
+    let mma_op = Operation::new(
+        ctx,
+        WgmmaMmaM64N64K8F32Tf32Op::get_concrete_op_info(),
+        vec![],
+        vec![acc_ptr, desc_a, desc_b],
+        vec![],
+        0,
+    );
+    mma_op.deref_mut(ctx).set_loc(loc.clone());
+
+    if let Some(prev) = last_op {
+        mma_op.insert_after(ctx, prev);
+    } else {
+        mma_op.insert_at_front(block_ptr, ctx);
+    }
+
+    if let Some(target_idx) = target {
+        Ok(emit_goto(ctx, *target_idx, mma_op, block_map, loc))
+    } else {
+        input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "wgmma_mma_m64n64k8_f32_tf32 call without target block".to_string()
+            )
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CUSTOM_DESCRIPTOR_UNSUPPORTED, MMA_UNSUPPORTED, unsupported_diagnostic};
@@ -294,6 +381,7 @@ mod tests {
         for path in [
             "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_bf16",
             "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_f16",
+            "cuda_device::wgmma::wgmma_mma_m64n64k8_f32_tf32",
         ] {
             assert_eq!(unsupported_diagnostic(path), None);
         }

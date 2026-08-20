@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Fuse sound BF16 WGMMA sequences and canonical F16 full-drain regions before
-//! MIR-to-LLVM conversion.
+//! Fuse sound BF16 WGMMA sequences and canonical F16/TF32 full-drain regions
+//! before MIR-to-LLVM conversion.
 //!
 //! The public MMA operation exposes its accumulator through a pointer, but PTX
 //! requires all 32 accumulator registers to remain inaccessible until the
@@ -13,15 +13,17 @@
 //! canonical `[[f32; 8]; 4]` accumulator is adapted through 32 scalar SSA values;
 //! unsupported BF16 accumulator shapes retain the existing deferred pointer
 //! fallback.
-//! F16 is accepted only for the canonical accumulator in a linear full-drain
-//! region; counted loops, partial waits, and pointer fallback remain BF16-only.
+//! F16 and TF32 are accepted only for the canonical accumulator in a linear
+//! full-drain region; counted loops, partial waits, and pointer fallback remain
+//! BF16-only. TF32 uses the hardware `m64n64k8.f32.tf32.tf32` shape.
 //!
 //! Straight-line regions keep the existing shape:
 //!
 //! ```text
 //! wgmma.fence
-//! one or more homogeneous m64n64k16.f32.bf16.bf16 or
-//! m64n64k16.f32.f16.f16 MMA operations on one accumulator
+//! one or more homogeneous m64n64k16.f32.bf16.bf16,
+//! m64n64k16.f32.f16.f16, or m64n64k8.f32.tf32.tf32 MMA operations on one
+//! accumulator
 //! wgmma.commit_group
 //! wgmma.wait_group<0>
 //! ```
@@ -59,10 +61,11 @@ use dialect_mir::{
 };
 use dialect_nvvm::ops::{
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
-    WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32F16Op,
-    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaGroupValuesM64N64K8F32Tf32Op, WgmmaMmaGroupValuesM64N64K16F32Bf16Op,
+    WgmmaMmaGroupValuesM64N64K16F32F16Op, WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op,
+    WgmmaMmaM64N64K16F32F16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaWaitGroupSyncAlignedOp,
 };
 use mir_transforms::analyses::{induction, loop_info::LoopInfo};
 use pliron::{
@@ -101,6 +104,7 @@ const ACCUMULATOR_LEN: usize = ACCUMULATOR_ROWS * ACCUMULATOR_COLUMNS;
 enum LinearMmaKind {
     Bf16,
     F16,
+    Tf32,
 }
 
 struct FusionPlan {
@@ -891,6 +895,8 @@ fn linear_mma_kind(ctx: &Context, operation: Ptr<Operation>) -> Option<LinearMma
         Some(LinearMmaKind::Bf16)
     } else if Operation::get_op::<WgmmaMmaM64N64K16F32F16Op>(operation, ctx).is_some() {
         Some(LinearMmaKind::F16)
+    } else if Operation::get_op::<WgmmaMmaM64N64K8F32Tf32Op>(operation, ctx).is_some() {
+        Some(LinearMmaKind::Tf32)
     } else {
         None
     }
@@ -1158,6 +1164,9 @@ fn apply_value_plan(
         }
         LinearMmaKind::F16 => {
             WgmmaMmaGroupValuesM64N64K16F32F16Op::build(ctx, accumulator_values, descriptors)
+        }
+        LinearMmaKind::Tf32 => {
+            WgmmaMmaGroupValuesM64N64K8F32Tf32Op::build(ctx, accumulator_values, descriptors)
         }
     };
     group.deref_mut(ctx).set_loc(loc.clone());
@@ -1733,7 +1742,7 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
                 match kind {
                     Some(expected) if expected != current_kind => {
                         return pliron::input_err_noloc!(
-                            "one linear WGMMA full-drain region cannot mix BF16 and F16 MMA variants"
+                            "one linear WGMMA full-drain region cannot mix BF16, F16, and TF32 MMA variants"
                         );
                     }
                     None => kind = Some(current_kind),
@@ -1743,12 +1752,20 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
                 let operation_ref = operation.deref(ctx);
                 let current_accumulator = operation_ref.get_operand(0);
                 require_supported_accumulator(ctx, current_accumulator)?;
-                if current_kind == LinearMmaKind::F16
-                    && value_accumulator_shape(ctx, current_accumulator).is_none()
-                {
-                    return pliron::input_err_noloc!(
-                        "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
-                    );
+                if value_accumulator_shape(ctx, current_accumulator).is_none() {
+                    match current_kind {
+                        LinearMmaKind::Bf16 => {}
+                        LinearMmaKind::F16 => {
+                            return pliron::input_err_noloc!(
+                                "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
+                            );
+                        }
+                        LinearMmaKind::Tf32 => {
+                            return pliron::input_err_noloc!(
+                                "TF32 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
+                            );
+                        }
+                    }
                 }
                 match accumulator {
                     Some(expected) if expected != current_accumulator => {
@@ -1925,12 +1942,22 @@ fn apply_plan(ctx: &mut Context, plan: FusionPlan) -> Result<()> {
             row_type,
             element_type,
         );
-    } else if kind == LinearMmaKind::Bf16 {
-        apply_pointer_fallback(ctx, fence, mmas, commit, wait, accumulator, descriptors);
     } else {
-        return pliron::input_err_noloc!(
-            "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
-        );
+        match kind {
+            LinearMmaKind::Bf16 => {
+                apply_pointer_fallback(ctx, fence, mmas, commit, wait, accumulator, descriptors);
+            }
+            LinearMmaKind::F16 => {
+                return pliron::input_err_noloc!(
+                    "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
+                );
+            }
+            LinearMmaKind::Tf32 => {
+                return pliron::input_err_noloc!(
+                    "TF32 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
+                );
+            }
+        }
     }
 
     Ok(())
@@ -1972,7 +1999,7 @@ fn region_is_fully_reachable(ctx: &Context, region: Ptr<Region>) -> bool {
     reachable.len() == all_blocks.len()
 }
 
-/// Adapt every supported pointer-form BF16 WGMMA sequence in `module_op`.
+/// Adapt every supported pointer-form WGMMA sequence in `module_op`.
 ///
 /// Canonical counted loops are handled first because their fence and final wait
 /// live in different CFG blocks. Each successful loop rewrite bypasses the old

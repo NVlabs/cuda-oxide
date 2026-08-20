@@ -30,6 +30,7 @@ const COUNTED_PIPELINE_MAX_PENDING_GROUPS: u8 = 2;
 enum WgmmaInputKind {
     Bf16,
     F16,
+    Tf32,
 }
 
 /// Convert WGMMA make_smem_desc to inline PTX.
@@ -116,17 +117,27 @@ fn value_group_template(mma_count: usize, input_kind: WgmmaInputKind) -> String 
     let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
     let accumulators = value_accumulator_operand_list();
     let descriptor_base = VALUE_ACCUMULATOR_COUNT * 2;
-    let input_types = match input_kind {
-        WgmmaInputKind::Bf16 => "bf16.bf16",
-        WgmmaInputKind::F16 => "f16.f16",
+    let (opcode, controls) = match input_kind {
+        WgmmaInputKind::Bf16 => (
+            "wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16",
+            "1, 1, 1, 0, 0",
+        ),
+        WgmmaInputKind::F16 => (
+            "wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16",
+            "1, 1, 1, 0, 0",
+        ),
+        WgmmaInputKind::Tf32 => (
+            "wgmma.mma_async.sync.aligned.m64n64k8.f32.tf32.tf32",
+            "1, 1, 1",
+        ),
     };
 
     for mma_index in 0..mma_count {
         let desc_a = descriptor_base + mma_index * 2;
         let desc_b = desc_a + 1;
         template.push_str(&format!(
-            "    wgmma.mma_async.sync.aligned.m64n64k16.f32.{input_types} \
-             {{{accumulators}}}, ${desc_a}, ${desc_b}, 1, 1, 1, 0, 0;\n"
+            "    {opcode} \
+             {{{accumulators}}}, ${desc_a}, ${desc_b}, {controls};\n"
         ));
     }
 
@@ -356,6 +367,16 @@ pub(crate) fn convert_mma_group_values_f16(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     convert_mma_group_values_for_kind(ctx, rewriter, op, WgmmaInputKind::F16)
+}
+
+/// Lower a value-form TF32 K=8 WGMMA full-drain group to one inline-PTX scope.
+pub(crate) fn convert_mma_group_values_tf32(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mma_group_values_for_kind(ctx, rewriter, op, WgmmaInputKind::Tf32)
 }
 
 fn convert_mma_group_values_for_kind(
@@ -733,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn f16_value_template_changes_only_the_input_element_types() {
+    fn f16_value_template_uses_k16_with_transpose_controls() {
         let template = value_group_template(2, WgmmaInputKind::F16);
         assert_eq!(template.matches("wgmma.mma_async").count(), 2);
         assert!(template.contains("m64n64k16.f32.f16.f16"));
@@ -751,6 +772,30 @@ mod tests {
         assert!(!template.contains("st.f32"));
         assert!(template.contains("$64, $65"));
         assert!(template.contains("$66, $67"));
+    }
+
+    #[test]
+    fn tf32_value_template_uses_k8_without_transpose_controls() {
+        let template = value_group_template(2, WgmmaInputKind::Tf32);
+        assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+        assert!(template.contains("m64n64k8.f32.tf32.tf32"));
+        assert!(!template.contains("m64n64k16"));
+        assert!(!template.contains(".bf16.bf16"));
+        assert!(!template.contains(".f16.f16"));
+        assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+        assert_eq!(
+            template.matches("wgmma.commit_group.sync.aligned").count(),
+            1
+        );
+        assert_eq!(
+            template.matches("wgmma.wait_group.sync.aligned 0").count(),
+            1
+        );
+        assert!(!template.contains("ld.f32"));
+        assert!(!template.contains("st.f32"));
+        assert!(template.contains("$64, $65, 1, 1, 1;"));
+        assert!(template.contains("$66, $67, 1, 1, 1;"));
+        assert!(!template.contains("$64, $65, 1, 1, 1, 0, 0;"));
     }
 
     #[test]
