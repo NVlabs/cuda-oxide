@@ -18,7 +18,8 @@
 //!
 //! Run: `cargo oxide run repr_align_block_args`
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
 /// Over-aligned struct: abi_align = 16 on the MirStructType.

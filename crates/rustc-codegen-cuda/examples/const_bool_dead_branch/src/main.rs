@@ -4,7 +4,8 @@
 //! Regression for generic branches controlled by an associated constant.
 
 use core::marker::PhantomData;
-use cuda_core::{CudaContext, CudaStream, DeviceBuffer, DeviceCopy, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer, DeviceCopy};
 use cuda_device::{DisjointSlice, DynamicSharedArray, kernel, thread};
 use cuda_host::cuda_module;
 use std::sync::Arc;

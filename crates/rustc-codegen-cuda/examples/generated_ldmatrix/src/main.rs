@@ -16,7 +16,8 @@
 //! Build and run with:
 //!   cargo oxide run generated_ldmatrix
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::wmma::{
     ldmatrix_x1, ldmatrix_x1_trans, ldmatrix_x2, ldmatrix_x2_trans, ldmatrix_x4, ldmatrix_x4_trans,
 };

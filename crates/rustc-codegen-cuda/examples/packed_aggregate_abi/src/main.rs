@@ -26,7 +26,8 @@
 //! `b` at byte offset 2. The padding byte itself is intentionally not checked:
 //! Rust does not guarantee a stable value for padding bytes.
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{SharedArray, cuda_module, device, kernel};
 
 #[repr(C, packed)]

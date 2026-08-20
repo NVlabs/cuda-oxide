@@ -16,7 +16,8 @@
 //! not be classified as generic merely because the MIR `FnDef` operand carries
 //! substitutions or because the FQDN contains `<`, `>`, or `::`.
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
 #[derive(Clone, Copy)]

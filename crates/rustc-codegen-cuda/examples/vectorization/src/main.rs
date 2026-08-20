@@ -14,7 +14,8 @@
 //!
 //! Run: `cargo oxide run vectorization`
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{access, cuda_module};
 
 /// Elements (or quads, for the view kernel) per launch; one per thread.

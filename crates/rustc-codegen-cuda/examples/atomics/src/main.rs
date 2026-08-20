@@ -39,7 +39,8 @@
 //!   cargo oxide run atomics
 
 use core::sync::atomic::Ordering;
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::atomic::{
     AtomicOrdering, BlockAtomicU32, DeviceAtomicF32, DeviceAtomicF64, DeviceAtomicI32,
     DeviceAtomicI64, DeviceAtomicU32, DeviceAtomicU64,

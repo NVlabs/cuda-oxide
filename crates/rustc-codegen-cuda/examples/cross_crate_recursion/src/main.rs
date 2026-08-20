@@ -10,7 +10,8 @@
 //! defined LOCALLY in this crate always compiled, which isolates the axis to "cross-crate + not
 //! inlinable", not the function body. See PR "pass -Zalways-encode-mir ...".
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
 #[cuda_module]

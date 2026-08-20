@@ -3,7 +3,8 @@
 
 //! End-to-end example for packed f16x2 arithmetic intrinsics.
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::f16x2::{
     abs_f16x2, add_f16x2, fma_f16x2, fma_ftz_f16x2, fma_ftz_relu_f16x2, fma_ftz_sat_f16x2,
     fma_relu_f16x2, fma_sat_f16x2, max_f16x2, min_f16x2, mul_f16x2, neg_f16x2, sub_f16x2,

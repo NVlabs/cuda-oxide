@@ -20,7 +20,8 @@
 //! **Hardware Requirements:** Blackwell (B200, GB200) with SM 100+
 
 use core::ptr::addr_of_mut;
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::barrier::{
     Barrier, fence_proxy_async_shared_cta, mbarrier_arrive_expect_tx, mbarrier_init,
     mbarrier_try_wait_parity,

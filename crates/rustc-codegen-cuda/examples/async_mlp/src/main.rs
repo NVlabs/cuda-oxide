@@ -39,7 +39,7 @@ use cuda_async::device_box::DeviceBox;
 use cuda_async::device_context::init_device_contexts;
 use cuda_async::device_operation::{self, DeviceOperation, Zippable, value};
 use cuda_async::zip;
-use cuda_core::LaunchConfig;
+use cuda_core::simt::LaunchConfig;
 use cuda_core::memory::{malloc_async, memcpy_dtoh_async, memcpy_htod_async, memset_d8_async};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;

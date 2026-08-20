@@ -8,7 +8,7 @@ license = "Apache-2.0"
 [workspace]
 
 [dependencies]
-cuda-core = { path = "../../../cuda-core" }
+cuda-core = { git = "https://github.com/NVlabs/cutile-rs", branch = "feat/cuda-oxide-host-support" }
 cuda-macros = { path = "../../../../crates/cuda-macros" }
 cuda-device = { path = "../../../../crates/cuda-device" }
 cuda-host = { path = "../../../../crates/cuda-host" }

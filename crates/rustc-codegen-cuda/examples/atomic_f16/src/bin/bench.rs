@@ -12,7 +12,8 @@
 
 use std::sync::Arc;
 
-use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use cuda_device::atomic::{AtomicOrdering, DeviceAtomicF16, DeviceAtomicF32};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;

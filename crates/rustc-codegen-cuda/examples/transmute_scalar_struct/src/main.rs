@@ -18,7 +18,8 @@
 //!
 //! Run: cargo oxide run transmute_scalar_struct
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 

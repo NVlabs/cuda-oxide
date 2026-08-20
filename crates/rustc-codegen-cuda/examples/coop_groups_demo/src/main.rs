@@ -20,7 +20,8 @@
 //! op/type matrix. The generated `coop_groups_demo.ptx` is also handy
 //! for inspecting how each kernel actually lowers.
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig, LaunchConfig1D};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 use cuda_device::cooperative_groups::{
     ThreadGroup, WarpCollective, block_reduce, block_scan, coalesced_threads,
     ops::{BitAnd, BitOr, BitXor, Max, Min, Sum},

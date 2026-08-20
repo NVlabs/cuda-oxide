@@ -20,4 +20,4 @@ cuda-device = { path = "../../../cuda-device" }
 cuda-host = { path = "../../../cuda-host" }
 
 # Host-side CUDA runtime
-cuda-core = { path = "../../../cuda-core" }
+cuda-core = { git = "https://github.com/NVlabs/cutile-rs", branch = "feat/cuda-oxide-host-support" }

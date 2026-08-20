@@ -36,7 +36,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use hashbrown::HashMap as HbMap;
 use hashmap_v2::*;
 use rayon::prelude::*;

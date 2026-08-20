@@ -61,7 +61,8 @@
 
 use std::sync::Arc;
 
-use cuda_core::{CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaStream, DeviceBuffer};
 use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32, DeviceAtomicU64};
 use cuda_device::cooperative_groups::{ThreadGroup, WarpCollective, this_thread_block};
 use cuda_device::{DisjointSlice, kernel, thread, warp};

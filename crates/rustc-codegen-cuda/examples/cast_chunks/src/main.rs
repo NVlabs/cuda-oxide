@@ -15,7 +15,8 @@
 //!
 //! Run: `cargo oxide run cast_chunks`
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::cuda_module;
 
 /// A 16-byte-aligned quad of `f32`: the CUDA `float4` layout. Whole-quad

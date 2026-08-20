@@ -31,7 +31,8 @@
 //!
 //! Run: cargo oxide run row_width_slice
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_host::cuda_module;
 
 const SENTINEL: u32 = 0xDEAD_BEEF;

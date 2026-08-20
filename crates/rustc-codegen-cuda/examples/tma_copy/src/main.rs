@@ -17,15 +17,13 @@
 //! Build and run with:
 //!   cargo oxide run tma_copy
 
-use cuda_core::{
-    CudaContext, CudaStream, DeviceBuffer, LaunchConfig,
-    sys::{
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys::{
         self as cuda_sys, CUtensorMap, CUtensorMapDataType_enum_CU_TENSOR_MAP_DATA_TYPE_FLOAT32,
         CUtensorMapFloatOOBfill_enum_CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE,
         CUtensorMapInterleave_enum_CU_TENSOR_MAP_INTERLEAVE_NONE,
         CUtensorMapL2promotion_enum_CU_TENSOR_MAP_L2_PROMOTION_NONE,
-        CUtensorMapSwizzle_enum_CU_TENSOR_MAP_SWIZZLE_NONE, cuTensorMapEncodeTiled,
-    },
+        CUtensorMapSwizzle_enum_CU_TENSOR_MAP_SWIZZLE_NONE, cuTensorMapEncodeTiled},
 };
 use cuda_device::barrier::{
     Barrier, fence_proxy_async_shared_cta, mbarrier_arrive, mbarrier_arrive_expect_tx,

@@ -36,7 +36,8 @@
 //! Build and run with:
 //!   cargo oxide run gemm_sol
 
-use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use cuda_device::atomic::{AtomicOrdering, DeviceAtomicU32};
 use cuda_device::barrier::{
     Barrier, fence_mbarrier_init_release_cluster,

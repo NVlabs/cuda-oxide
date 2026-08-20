@@ -15,7 +15,7 @@ license = "Apache-2.0"
 [dependencies]
 cuda-device = { path = "../../../cuda-device" }
 cuda-host = { path = "../../../cuda-host", features = ["async"] }
-cuda-core = { path = "../../../cuda-core" }
-cuda-async = { path = "../../../cuda-async" }
-cuda-bindings = { path = "../../../cuda-bindings" }
+cuda-core = { git = "https://github.com/NVlabs/cutile-rs", branch = "feat/cuda-oxide-host-support" }
+cuda-async = { git = "https://github.com/NVlabs/cutile-rs", branch = "feat/cuda-oxide-host-support" }
+cuda-bindings = { git = "https://github.com/NVlabs/cutile-rs", branch = "feat/cuda-oxide-host-support" }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
