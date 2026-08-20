@@ -5005,6 +5005,10 @@ fn translate_place_addr_from_slot(
                                 loc.clone(),
                             );
 
+                            // Erased kind on purpose: this fat value is a projection-internal
+                            // reconstruction of the DST tail. A Rust kind is established only
+                            // when the value crosses an `Rvalue::Ref`/`AddressOf` boundary,
+                            // which retypes it to the declared kind.
                             let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
                             use dialect_mir::ops::MirConstructSliceOp;
                             let construct = Operation::new(
@@ -5202,6 +5206,10 @@ fn translate_place_addr_from_slot(
                         }
                         let tail_ptr = tail_addr.deref(ctx).get_result(0);
 
+                        // Erased kind on purpose: this fat value is a projection-internal
+                        // reconstruction of the DST tail. A Rust kind is established only
+                        // when the value crosses an `Rvalue::Ref`/`AddressOf` boundary,
+                        // which retypes it to the declared kind.
                         let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
                         use dialect_mir::ops::MirConstructSliceOp;
                         let construct = Operation::new(
@@ -6056,7 +6064,9 @@ pub fn translate_place_iterative(
                         let tail_ptr = tail_addr.deref(ctx).get_result(0);
 
                         // Reconstruct the semantic `[T]` value from the inline tail
-                        // address plus the metadata carried from the outer fat reference.
+                        // address plus the metadata carried from the outer fat reference,
+                        // with an intentionally Erased pointer kind: a Rust kind is
+                        // established only at the `Rvalue::Ref`/`AddressOf` boundary.
                         // A following Index or ConstantIndex can scalarize this
                         // MirSliceType to field 0 and reuse the existing pointer-offset
                         // + load path.
