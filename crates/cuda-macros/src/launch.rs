@@ -694,7 +694,7 @@ pub(crate) fn expand_cuda_launch_async(input: CudaLaunchAsyncInput) -> TokenStre
                         #error_ident,
                     )
                 });
-                let mut #launch_ident = cuda_async::launch::AsyncKernelLaunchBuilder::new(
+                let mut #launch_ident = cuda_async::simt::launch::AsyncKernelLaunchBuilder::new(
                     std::sync::Arc::new(#function_ident),
                 );
                 #(#arg_code)*
@@ -715,7 +715,7 @@ pub(crate) fn expand_cuda_launch_async(input: CudaLaunchAsyncInput) -> TokenStre
                         #error_ident,
                     )
                 });
-                let mut #launch_ident = cuda_async::launch::AsyncKernelLaunchBuilder::new(
+                let mut #launch_ident = cuda_async::simt::launch::AsyncKernelLaunchBuilder::new(
                     std::sync::Arc::new(#function_ident),
                 );
                 #(#arg_code)*
@@ -735,7 +735,7 @@ pub(crate) fn expand_cuda_launch_async(input: CudaLaunchAsyncInput) -> TokenStre
                         #error_ident,
                     )
                 });
-                let mut #launch_ident = cuda_async::launch::AsyncKernelLaunchBuilder::new(
+                let mut #launch_ident = cuda_async::simt::launch::AsyncKernelLaunchBuilder::new(
                     std::sync::Arc::new(#function_ident),
                 );
                 #(#arg_code)*

@@ -51,7 +51,8 @@
 //! ```ignore
 //! use cuda_device::{kernel, thread, DisjointSlice};
 //! use cuda_host::cuda_module;
-//! use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+//! use cuda_core::simt::LaunchConfig;
+//! use cuda_core::{CudaContext, DeviceBuffer};
 //!
 //! #[cuda_module]
 //! mod kernels {
@@ -123,7 +124,7 @@ pub use launch::{
 #[cfg(feature = "async")]
 pub use cuda_async;
 #[cfg(feature = "async")]
-pub use cuda_async::launch::{AsyncKernelLaunch, AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch};
+pub use cuda_async::simt::launch::{AsyncKernelLaunch, AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch};
 
 pub use embedded::{
     EmbeddedModuleError, load_all_ptx_bundles_merged, load_embedded_module,
@@ -146,7 +147,7 @@ pub use cuda_macros::{cuda_launch, cuda_module};
 
 /// Re-export of [`cuda_macros::cuda_launch_async`].
 ///
-/// Builds a lazy `cuda_async::launch::AsyncKernelLaunch`. Raw launch
+/// Builds a lazy `cuda_async::simt::launch::AsyncKernelLaunch`. Raw launch
 /// configuration is not tied to the kernel's indexing assumptions, so the
 /// macro must be called inside `unsafe`. Stream assignment is deferred to the
 /// scheduling policy -- call `.sync()` to block or `.await` to suspend.

@@ -25,9 +25,9 @@ members = [
     "crates/cargo-oxide",
     "crates/oxide-artifacts",
     # FFI bindings
-    "crates/cuda-bindings",
-    "crates/cuda-core",
-    "crates/cuda-async",
+    # cuda-bindings, cuda-core, and cuda-async are the shared host-side crates
+    # from cutile-rs now. The local copies stay on disk as standalone packages
+    # (rustc-codegen-cuda pattern) so the example workspaces build unchanged.
     "crates/libnvvm-sys",
     "crates/nvjitlink-sys",
     # Internal naming contract (workspace-private; publish = false)
@@ -80,9 +80,9 @@ cuda-host = { path = "crates/cuda-host" }
 # `cuda-host` names `features = ["host"]`, so anything that loads or launches a
 # module still gets it.
 cuda-macros = { path = "crates/cuda-macros", default-features = false }
-cuda-bindings = { path = "crates/cuda-bindings" }
-cuda-core = { path = "crates/cuda-core" }
-cuda-async = { path = "crates/cuda-async" }
+cuda-bindings = { git = "https://github.com/NVlabs/cutile-rs", branch = "feat/cuda-oxide-host-support" }
+cuda-core = { git = "https://github.com/NVlabs/cutile-rs", branch = "feat/cuda-oxide-host-support" }
+cuda-async = { git = "https://github.com/NVlabs/cutile-rs", branch = "feat/cuda-oxide-host-support" }
 libnvvm-sys = { path = "crates/libnvvm-sys" }
 nvjitlink-sys = { path = "crates/nvjitlink-sys" }
 reserved-oxide-symbols = { path = "crates/reserved-oxide-symbols" }
