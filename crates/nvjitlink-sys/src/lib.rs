@@ -11,12 +11,10 @@
 //!
 //! # Symbol naming
 //!
-//! `nvJitLink.h` `#define`s every public function to a versioned mangled
-//! name, e.g. `nvJitLinkCreate -> __nvJitLinkCreate_13_0`, but the library
-//! also exports the unversioned name with default ELF symbol versioning.
-//! That means `dlsym(handle, "nvJitLinkCreate")` resolves to the right
-//! function on every CUDA Toolkit version, so this binding does not need
-//! to probe per-CUDA-version symbol suffixes.
+//! `nvJitLink.h` maps every public function to a versioned mangled name,
+//! e.g. `nvJitLinkCreate -> __nvJitLinkCreate_13_0`. Toolkit installations
+//! may export either the public unsuffixed name or only the mangled name, so
+//! this binding probes both forms.
 //!
 //! # Example
 //!
@@ -30,7 +28,7 @@
 //! let cubin = linker.finish().unwrap();
 //! ```
 
-use libloading::{Library, Symbol};
+use libloading::Library;
 use std::borrow::Cow;
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::fs::File;
@@ -215,6 +213,16 @@ pub struct LibNvJitLink {
 unsafe impl Send for LibNvJitLink {}
 unsafe impl Sync for LibNvJitLink {}
 
+const NVJITLINK_ABI_SUFFIXES: [&str; 2] = ["_13_0", "_12_0"];
+
+fn symbol_names(name: &str) -> impl Iterator<Item = String> + '_ {
+    std::iter::once(name.to_owned()).chain(
+        NVJITLINK_ABI_SUFFIXES
+            .iter()
+            .map(move |suffix| format!("__{name}{suffix}")),
+    )
+}
+
 /// Resolve a required symbol to a function pointer of inferred type `T`.
 ///
 /// # Safety
@@ -224,12 +232,17 @@ unsafe impl Sync for LibNvJitLink {}
 /// alongside the owning `Library`, so the pointer's lifetime matches the
 /// `LibNvJitLink` instance.
 unsafe fn resolve<T: Copy>(lib: &Library, name: &'static str) -> Result<T, NvJitLinkError> {
-    let sym: Symbol<T> =
-        unsafe { lib.get(name.as_bytes()) }.map_err(|source| NvJitLinkError::SymbolNotFound {
-            symbol: name,
-            source,
-        })?;
-    Ok(unsafe { *sym.into_raw() })
+    let mut last_error = None;
+    for candidate in symbol_names(name) {
+        match unsafe { lib.get::<T>(candidate.as_bytes()) } {
+            Ok(sym) => return Ok(unsafe { *sym.into_raw() }),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(NvJitLinkError::SymbolNotFound {
+        symbol: name,
+        source: last_error.expect("symbol candidate list is nonempty"),
+    })
 }
 
 /// Resolve an optional symbol; returns `None` if missing.
@@ -241,8 +254,12 @@ unsafe fn resolve<T: Copy>(lib: &Library, name: &'static str) -> Result<T, NvJit
 ///
 /// Same as [`resolve`].
 unsafe fn resolve_optional<T: Copy>(lib: &Library, name: &'static str) -> Option<T> {
-    let sym: Symbol<T> = unsafe { lib.get(name.as_bytes()) }.ok()?;
-    Some(unsafe { *sym.into_raw() })
+    for candidate in symbol_names(name) {
+        if let Ok(sym) = unsafe { lib.get::<T>(candidate.as_bytes()) } {
+            return Some(unsafe { *sym.into_raw() });
+        }
+    }
+    None
 }
 
 impl LibNvJitLink {
@@ -794,6 +811,52 @@ fn cuda_roots_from_env(mut get_env: impl FnMut(&str) -> Option<String>) -> Vec<P
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libloading::Symbol;
+
+    #[test]
+    fn symbol_lookup_tries_public_then_vendor_abi_names() {
+        assert_eq!(
+            symbol_names("nvJitLinkCreate").collect::<Vec<_>>(),
+            [
+                "nvJitLinkCreate",
+                "__nvJitLinkCreate_13_0",
+                "__nvJitLinkCreate_12_0",
+            ]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resolve_accepts_cuda_12_mangled_symbol() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "nvjitlink-sys-versioned-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let source = directory.join("versioned.c");
+        let library_path = directory.join("libversioned.so");
+        std::fs::write(&source, "int __nvJitLinkCreate_12_0(void) { return 12; }\n").unwrap();
+        let status = std::process::Command::new("cc")
+            .args(["-shared", "-fPIC"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&library_path)
+            .status()
+            .expect("run C compiler for versioned symbol test");
+        assert!(status.success(), "C compiler failed with {status}");
+
+        let library = unsafe { Library::new(&library_path) }.unwrap();
+        let function: unsafe extern "C" fn() -> c_int =
+            unsafe { resolve(&library, "nvJitLinkCreate") }.unwrap();
+        assert_eq!(unsafe { function() }, 12);
+
+        drop(library);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[cfg(target_os = "linux")]
     fn compile_probe_library(source: &Path, output: &Path, value: i32) {
