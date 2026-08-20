@@ -9771,6 +9771,102 @@ fn test_pointer_form_wgmma_sequence_preserves_deferred_fallback() -> Result<(), 
 }
 
 #[test]
+fn test_pointer_form_wgmma_region_tolerates_kind_only_pointer_retype() -> Result<(), anyhow::Error>
+{
+    use dialect_mir::attributes::MirCastKindAttr;
+    use dialect_mir::types::{MirArrayType, MirPointerKind, MirPtrType};
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let row_ty = MirArrayType::get(&mut ctx, f32_ty.into(), 8);
+    let accumulator_ty = MirArrayType::get(&mut ctx, row_ty.into(), 4);
+    let erased_ptr_ty = MirPtrType::get_generic(&mut ctx, accumulator_ty.into(), true);
+    let unique_ptr_ty: pliron::r#type::TypeHandle = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        accumulator_ty.into(),
+        true,
+        MirPointerKind::UniqueRef,
+    )
+    .into();
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    let (module_ptr, entry) = build_test_kernel(
+        &mut ctx,
+        vec![erased_ptr_ty.into(), u64_ty.into(), u64_ty.into()],
+    );
+    let accumulator = entry.deref(&ctx).get_argument(0);
+    let desc_a = entry.deref(&ctx).get_argument(1);
+    let desc_b = entry.deref(&ctx).get_argument(2);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+
+    // The importer emits a kind-only retype at `Rvalue::Ref` between the
+    // fence and the MMA; the fused region must look through it.
+    let retype = Operation::new(
+        &mut ctx,
+        mir::MirCastOp::get_concrete_op_info(),
+        vec![unique_ptr_ty],
+        vec![accumulator],
+        vec![],
+        0,
+    );
+    mir::MirCastOp::new(retype).set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    retype.insert_at_back(entry, &ctx);
+    let retyped_accumulator = retype.deref(&ctx).get_result(0);
+
+    Operation::new(
+        &mut ctx,
+        nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![],
+        vec![retyped_accumulator, desc_a, desc_b],
+        vec![],
+        0,
+    )
+    .insert_at_back(entry, &ctx);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+
+    let zero_attr = IntegerAttr::new(u64_ty, APInt::from_i64(0, NonZeroUsize::new(64).unwrap()));
+    let zero = Operation::new(
+        &mut ctx,
+        mir::MirConstantOp::get_concrete_op_info(),
+        vec![u64_ty.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    mir::MirConstantOp::new(zero).set_attr_value(&ctx, zero_attr);
+    zero.insert_at_back(entry, &ctx);
+    let zero_value = zero.deref(&ctx).get_result(0);
+    nvvm::WgmmaWaitGroupSyncAlignedOp::build(&mut ctx, zero_value).insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let matching = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| {
+                    template.contains("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "a kind-only pointer retype inside the region must not break deferred fusion"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Result<(), anyhow::Error>
 {
     use dialect_mir::types::{MirArrayType, MirPtrType};
