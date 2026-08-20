@@ -42,7 +42,7 @@ use crate::convert::types::{
     build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
     llvm_packed_struct_contains_pointer_in_address_space, llvm_type_contains_i1,
     llvm_type_size_align, make_slice_struct, mir_element_stride, mir_type_abi_align,
-    packed_shared_internal_abi_info,
+    packed_shared_internal_abi_info, packed_shared_local_storage_info,
 };
 use dialect_mir::ops::{
     MirConstantOp, MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp,
@@ -54,7 +54,7 @@ use dialect_mir::types::{
 };
 use llvm_export::attributes::{ICmpPredicateAttr, IntegerOverflowFlagsAttr};
 use llvm_export::op_interfaces::{
-    CastOpInterface, CastOpWithNNegInterface, IntBinArithOpWithOverflowFlag,
+    CastOpInterface, CastOpWithNNegInterface, IntBinArithOpWithOverflowFlag, PointerTypeResult,
 };
 use llvm_export::ops as llvm;
 use llvm_export::types as llvm_types;
@@ -1797,6 +1797,23 @@ pub(crate) fn convert_field_addr(
 
     let map = build_struct_slot_map(ctx, &layout).map_err(anyhow_to_pliron)?;
 
+    // A compiler-owned packed-AS3 local may have a target-stable carrier
+    // allocation even though the MIR pointer still names the semantic struct.
+    // Use the carrier as the typed GEP source so the pointer field addresses
+    // generic-pointer storage. Arbitrary pointers keep the semantic layout and
+    // remain subject to the existing fail-closed whole-value memory rules.
+    let local_storage_ty = if let Some(info) =
+        packed_shared_local_storage_info(ctx, mir_ptr_pointee).map_err(anyhow_to_pliron)?
+    {
+        ptr_operand
+            .defining_op()
+            .and_then(|def| Operation::get_op::<llvm::AllocaOp>(def, ctx))
+            .filter(|alloca| alloca.result_pointee_type(ctx) == info.storage_ty)
+            .map(|_| info.storage_ty)
+    } else {
+        None
+    };
+
     let slot = match map.decl_to_llvm.get(field_index) {
         Some(Some(slot)) => *slot,
         Some(None) => {
@@ -1830,13 +1847,19 @@ pub(crate) fn convert_field_addr(
 
     let rustc_offset = layout.field_offsets.get(field_index).copied();
 
-    // Preserve the #859 address-path contract independently of the value
-    // representation. `build_struct_slot_map` retains the offsets the same
-    // fields would have under natural LLVM layout; when those differ from
-    // rustc's recorded offsets, keep using the original aggregate pointer plus
-    // a byte GEP. The semantic value type may now be an LLVM packed struct, but
-    // changing this established field-address path is outside this change.
-    if let Some(expected_offset) = rustc_offset {
+    // Preserve the #859 byte-address path for ordinary semantic aggregates:
+    // `build_struct_slot_map` retains the offsets the same fields would have
+    // under natural LLVM layout, and divergent layouts must keep using rustc's
+    // recorded byte offset. Carrier locals are different: they are
+    // intentionally addressed by storage slot. Their
+    // target-stable packed LLVM struct is the physical representation, so a
+    // typed GEP through that carrier is byte-faithful and preserves the proof
+    // that the resulting address is still rooted in the compiler-owned local.
+    // The #859 byte-GEP fallback remains necessary for ordinary semantic
+    // aggregates whose natural LLVM slot offsets diverge from rustc's layout.
+    if local_storage_ty.is_none()
+        && let Some(expected_offset) = rustc_offset
+    {
         let actual_offset = map
             .natural_slot_offsets
             .as_ref()
@@ -1862,7 +1885,8 @@ pub(crate) fn convert_field_addr(
     use llvm_export::ops::GepIndex;
     let gep_indices = vec![GepIndex::Constant(0), GepIndex::Constant(slot)];
 
-    let gep_op = llvm::GetElementPtrOp::new(ctx, ptr_operand, gep_indices, map.llvm_struct_ty);
+    let gep_source_ty = local_storage_ty.unwrap_or(map.llvm_struct_ty);
+    let gep_op = llvm::GetElementPtrOp::new(ctx, ptr_operand, gep_indices, gep_source_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
     stamp_field_address_alignment(
         ctx,

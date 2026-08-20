@@ -77,13 +77,15 @@ mod kernels {
     #[inline(never)]
     #[device]
     unsafe fn consume_packed_shared(
-        _value: PackedShared,
+        value: PackedShared,
         shared: *mut SharedArray<u32, 1>,
         out: *mut u32,
     ) {
+        let tag = value.tag;
+        let round_tripped = value.ptr;
         unsafe {
-            (&mut *shared)[0] = (&*shared)[0].wrapping_add(0x0102_0304);
-            out.write(0x22);
+            (&mut *round_tripped)[0] = (&*round_tripped)[0].wrapping_add(0x0102_0304);
+            out.write(u32::from(tag.wrapping_add(1)));
             out.add(1).write((&*shared)[0]);
         }
     }
@@ -126,10 +128,10 @@ mod kernels {
             ptr: raw,
         });
 
-        // Keep the packed AS3 aggregate in SSA across both internal device ABI
-        // boundaries. The raw shared pointer is passed separately for the
-        // observable runtime check so this regression does not require a
-        // target-dependent whole-value packed store/load.
+        // Project both fields from the returned packed value. The compiler-owned
+        // local slot uses the target-stable carrier representation, so the AS3
+        // pointer field is loaded as p0 and reconstructed to p3 before use. The
+        // separate raw pointer makes the round-trip observable at runtime.
         unsafe { consume_packed_shared(value, raw, out) };
     }
 

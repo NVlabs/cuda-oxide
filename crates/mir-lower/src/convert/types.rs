@@ -459,6 +459,55 @@ pub(crate) fn packed_shared_internal_abi_info(
     }))
 }
 
+/// Recognize the deliberately narrow packed-AS3 shape that may use a
+/// target-stable local stack slot.
+///
+/// This gate is intentionally independent of future widening of the internal
+/// device ABI classifier. Local storage currently admits only one direct AS3
+/// pointer leaf with scalar non-ZST siblings, matching issue #1036. Recursive
+/// aggregates, arrays, vectors, and multiple shared-pointer leaves remain a
+/// separate follow-up even when the internal call ABI supports them.
+pub(crate) fn packed_shared_local_storage_info(
+    ctx: &mut Context,
+    mir_ty: TypeHandle,
+) -> Result<Option<PackedSharedInternalAbiInfo>, anyhow::Error> {
+    let layout = {
+        let ty_ref = mir_ty.deref(ctx);
+        let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() else {
+            return Ok(None);
+        };
+        StructLayoutInfo::of_struct(struct_ty)
+    };
+
+    let map = build_struct_slot_map(ctx, &layout)?;
+    let mut direct_shared_pointers = 0_u64;
+    for field_ty in &map.field_llvm_types {
+        if is_zero_sized_type(ctx, *field_ty) {
+            continue;
+        }
+        let field_ref = field_ty.deref(ctx);
+        if let Some(pointer) = field_ref.downcast_ref::<llvm_types::PointerType>() {
+            if pointer.address_space() == llvm_types::address_space::SHARED {
+                direct_shared_pointers += 1;
+            }
+            continue;
+        }
+        if field_ref.is::<IntegerType>()
+            || field_ref.is::<llvm_types::HalfType>()
+            || field_ref.is::<FP32Type>()
+            || field_ref.is::<FP64Type>()
+        {
+            continue;
+        }
+        return Ok(None);
+    }
+    if direct_shared_pointers != 1 {
+        return Ok(None);
+    }
+
+    packed_shared_internal_abi_info(ctx, mir_ty)
+}
+
 /// Convert a type that crosses a function boundary as one LLVM value.
 ///
 /// A struct with a natural-layout divergence is legal by value only when
