@@ -314,8 +314,11 @@ pub fn emit_store_result_and_goto(
         );
     }
 
+    // The intrinsic's cuda-device signature declares the result's Rust type,
+    // so this store is a Rust-typed semantic boundary: an emitter-internal
+    // Erased pointer result takes the slot's declared kind here.
     let goto_prev = value_map
-        .store_local(
+        .store_local_at_rust_boundary(
             ctx,
             destination.local,
             result_value,

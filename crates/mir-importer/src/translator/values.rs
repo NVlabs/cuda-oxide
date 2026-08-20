@@ -184,6 +184,98 @@ impl ValueMap {
         insert_at(ctx, op, block, prev_op);
         Some(op)
     }
+
+    /// Emit `mir.store` of a compiler-recognized device operation's result
+    /// into `local`'s slot. Returns `None` for ZST / unset locals.
+    ///
+    /// Unlike [`Self::store_local`], this is a Rust-typed semantic boundary:
+    /// the intrinsic's cuda-device signature declares the result's pointer or
+    /// reference type, so the destination slot's declared type is
+    /// authoritative, exactly as it is for `Rvalue::Ref`/`Rvalue::AddressOf`.
+    /// An emitter-internal `Erased` result therefore takes the declared kind
+    /// here. The pointee/element shape must still match, so this cannot hide
+    /// an unrelated representation mismatch.
+    pub fn store_local_at_rust_boundary(
+        &self,
+        ctx: &mut Context,
+        local: mir::Local,
+        value: Value,
+        block: Ptr<BasicBlock>,
+        prev_op: Option<Ptr<Operation>>,
+    ) -> Option<Ptr<Operation>> {
+        let slot = self.get_slot(local)?;
+        let slot_elem_ty = slot_pointee(ctx, slot);
+        let (value, prev_op) =
+            establish_declared_pointer_type(ctx, value, slot_elem_ty, block, prev_op);
+        let op = Operation::new(
+            ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![slot, value],
+            vec![],
+            0,
+        );
+        insert_at(ctx, op, block, prev_op);
+        Some(op)
+    }
+}
+
+/// If `value` and `target_ty` are pointer-like MIR types with the same
+/// pointee/element shape, emit a `mir.cast <PtrToPtr>` to the exact declared
+/// target type, including its pointer kind.
+///
+/// Boundary counterpart of [`maybe_ptr_coerce`]: use it only where rustc has
+/// declared the result type of a new pointer-producing operation, never for
+/// generic storage normalization.
+pub(crate) fn establish_declared_pointer_type(
+    ctx: &mut Context,
+    value: Value,
+    target_ty: TypeHandle,
+    block: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+) -> (Value, Option<Ptr<Operation>>) {
+    let value_ty = value.get_type(ctx);
+    if value_ty == target_ty {
+        return (value, prev_op);
+    }
+
+    let compatible = {
+        let value_ref = value_ty.deref(ctx);
+        let target_ref = target_ty.deref(ctx);
+
+        match (
+            value_ref.downcast_ref::<MirPtrType>(),
+            target_ref.downcast_ref::<MirPtrType>(),
+        ) {
+            (Some(value_ptr), Some(target_ptr)) => value_ptr.pointee == target_ptr.pointee,
+            _ => match (
+                value_ref.downcast_ref::<MirSliceType>(),
+                target_ref.downcast_ref::<MirSliceType>(),
+            ) {
+                (Some(value_slice), Some(target_slice)) => {
+                    value_slice.element_ty == target_slice.element_ty
+                }
+                _ => false,
+            },
+        }
+    };
+
+    if !compatible {
+        return (value, prev_op);
+    }
+
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![target_ty],
+        vec![value],
+        vec![],
+        0,
+    );
+    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    insert_at(ctx, cast_op, block, prev_op);
+
+    (cast_op.deref(ctx).get_result(0), Some(cast_op))
 }
 
 /// Whether generic representation normalization may change `source` into `target`.
@@ -716,6 +808,65 @@ pub fn pointer_addr_space(ctx: &Context, elem_ty: TypeHandle) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rust_boundary_store_establishes_declared_kind_from_erased() {
+        use pliron::builtin::types::{IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        let pointee: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signed).into();
+        let erased: TypeHandle =
+            MirPtrType::get_shared_with_kind(&mut ctx, pointee, true, MirPointerKind::Erased)
+                .into();
+        let declared: TypeHandle =
+            MirPtrType::get_shared_with_kind(&mut ctx, pointee, true, MirPointerKind::RawMut)
+                .into();
+
+        let block = BasicBlock::new(&mut ctx, None, vec![erased]);
+        let value = block.deref(&ctx).get_argument(0);
+        let (retyped, cast) =
+            establish_declared_pointer_type(&mut ctx, value, declared, block, None);
+
+        assert_eq!(
+            retyped.get_type(&ctx),
+            declared,
+            "an intrinsic-result store is a Rust-typed boundary: the declared kind wins"
+        );
+        assert!(
+            cast.is_some(),
+            "the boundary retype must be an explicit cast"
+        );
+    }
+
+    #[test]
+    fn rust_boundary_store_requires_matching_pointee() {
+        use pliron::builtin::types::{IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        let source_pointee: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signed).into();
+        let target_pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let erased: TypeHandle = MirPtrType::get_generic(&mut ctx, source_pointee, true).into();
+        let declared: TypeHandle = MirPtrType::get_generic_with_kind(
+            &mut ctx,
+            target_pointee,
+            true,
+            MirPointerKind::RawMut,
+        )
+        .into();
+
+        let block = BasicBlock::new(&mut ctx, None, vec![erased]);
+        let value = block.deref(&ctx).get_argument(0);
+        let (unchanged, cast) =
+            establish_declared_pointer_type(&mut ctx, value, declared, block, None);
+
+        assert_eq!(unchanged.get_type(&ctx), erased);
+        assert!(
+            cast.is_none(),
+            "a boundary retype must not hide a pointee representation mismatch"
+        );
+    }
 
     #[test]
     fn pointer_like_local_coercion_does_not_recover_kind_from_erased() {

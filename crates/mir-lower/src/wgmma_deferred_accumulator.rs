@@ -55,10 +55,11 @@
 //! contains the final `wait_group<0>`. This form is selected before the
 //! single-slot counted loop.
 
+use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::{
     ops::{
-        MirAddOp, MirArrayElementAddrOp, MirCondBranchOp, MirConstantOp, MirFuncOp, MirGeOp,
-        MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirNotOp, MirStorageDeadOp,
+        MirAddOp, MirArrayElementAddrOp, MirCastOp, MirCondBranchOp, MirConstantOp, MirFuncOp,
+        MirGeOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirNotOp, MirStorageDeadOp,
         MirStorageLiveOp, MirStoreOp, MirSubOp,
     },
     types::{MirArrayType, MirPtrType, address_space},
@@ -297,6 +298,7 @@ fn counted_loop_operation_is_supported(ctx: &Context, operation: Ptr<Operation>)
         || Operation::get_op::<MirCondBranchOp>(operation, ctx).is_some()
         || Operation::get_op::<MirGotoOp>(operation, ctx).is_some()
         || wgmma_mma_kind(ctx, operation).is_some()
+        || is_representation_only_ptr_retype(ctx, operation)
 }
 
 fn pipelined_counted_loop_operation_is_supported(ctx: &Context, operation: Ptr<Operation>) -> bool {
@@ -1511,6 +1513,44 @@ fn is_ignorable(ctx: &Context, op: Ptr<Operation>) -> bool {
         || Operation::get_op::<MirStorageLiveOp>(op, ctx).is_some()
         || Operation::get_op::<MirStorageDeadOp>(op, ctx).is_some()
         || Operation::get_op::<MirGotoOp>(op, ctx).is_some()
+        || is_representation_only_ptr_retype(ctx, op)
+}
+
+/// A `mir.cast <PtrToPtr>` between thin MIR pointers with the same pointee and
+/// address space, differing only in pointer kind and/or mutability.
+///
+/// Pointer kinds are a Rust semantic distinction erased at lowering, so such a
+/// cast produces no instruction and cannot introduce a spill boundary inside a
+/// fused WGMMA region. The importer emits one whenever a Rust-typed boundary
+/// such as `Rvalue::Ref` retypes the accumulator address between the fence and
+/// the MMA.
+fn is_representation_only_ptr_retype(ctx: &Context, op: Ptr<Operation>) -> bool {
+    let Some(cast_op) = Operation::get_op::<MirCastOp>(op, ctx) else {
+        return false;
+    };
+    let is_ptr_to_ptr = cast_op
+        .get_attr_cast_kind(ctx)
+        .is_some_and(|kind| *kind == MirCastKindAttr::PtrToPtr);
+    if !is_ptr_to_ptr {
+        return false;
+    }
+    let op_ref = op.deref(ctx);
+    if op_ref.get_num_operands() != 1 || op_ref.get_num_results() != 1 {
+        return false;
+    }
+    let src_ty = op_ref.get_operand(0).get_type(ctx);
+    let dst_ty = op_ref.get_result(0).get_type(ctx);
+    let src_ref = src_ty.deref(ctx);
+    let dst_ref = dst_ty.deref(ctx);
+    match (
+        src_ref.downcast_ref::<MirPtrType>(),
+        dst_ref.downcast_ref::<MirPtrType>(),
+    ) {
+        (Some(src_ptr), Some(dst_ptr)) => {
+            src_ptr.pointee == dst_ptr.pointee && src_ptr.address_space() == dst_ptr.address_space()
+        }
+        _ => false,
+    }
 }
 
 fn next_linear_block(
