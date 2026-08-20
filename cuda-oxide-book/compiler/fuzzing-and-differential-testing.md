@@ -158,7 +158,7 @@ The runner prints one line per seed and then a full summary:
 
 ```text
 results:
-  seed 0: UNSUPPORTED [adapter] unsupported dumped type for Stage 2 adapter: *const i8 (...)
+  seed 0: UNSUPPORTED [adapter] unsupported return type for return-value tracing: *const i8 (...)
   seed 1: COMPILE_FAIL [backend] Unsupported construct: Type translation not yet implemented for: RigidTy(Char) (...)
 summary: COMPILE_FAIL=1, UNSUPPORTED=1
 ```
@@ -183,27 +183,38 @@ unsupported MIR type -- but the backend is the component that rejected it.
 refused to turn it into a smoke case. For example:
 
 ```text
-unsupported dumped type for Stage 2 adapter: *const i8
+unsupported return type for return-value tracing: *const i8
 ```
 
-That usually means the generated MIR had a `dump_var(...)` containing a type
-our trace API does not yet know how to hash. The trace hashes these scalars:
+That refusal comes from the function boundary, not from a dump site. rustlantis
+only dumps values it can hash, and the adapter accepts all of those. What the
+adapter can still refuse is the function itself: a return type the trace API
+cannot hash, or an argument type it has no literal for. The trace hashes these
+scalars:
 
 ```text
 bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, char,
 f32, f64
 ```
 
-It also hashes an array or a tuple of anything in that list, to any nesting
-depth, by folding the leaves -- so support is a recursive question rather than
-set membership. A tuple is hashed up to arity 5, matching the `TraceDump`
-implementations.
+It also hashes arrays and tuples of anything in that list, nested as deep as
+you like: the trace just hashes every scalar inside. Tuples work up to 5
+elements, matching the `TraceDump` implementations.
 
-What is left out is anything with no byte-wise value to fold: raw pointers and
-references, and tuples wider than arity 5. Many adapter-level unsupported cases
-are therefore not "bad MIR" and not cuda-oxide bugs. They are simply places
-where the fuzzer harness has not grown up yet. Compilers, like people, need
-snacks before they can hash a raw pointer.
+```text
+[u128; 4]                  hashes fine
+(u32, char)                hashes fine
+(i8, i8, i8, i8, i8, i8)   rejected: six elements
+*const i8                  rejected: pointer
+```
+
+What's left out: raw pointers and references, because the CPU and the GPU hold
+different addresses for the same object, so a pointer's hash could never match;
+and tuples with more than 5 elements. Many adapter-level unsupported cases are
+therefore not "bad MIR" and not cuda-oxide bugs. The pointer refusal is
+permanent by design; no amount of widening makes those hashes agree. The tuple
+limit is just a gap. The harness needs one more `TraceDump` impl, and maybe a
+snack, before it can hash a six-element tuple.
 
 ---
 
@@ -237,14 +248,15 @@ The current config is intentionally small. It keeps the first stage focused on
 scalar custom MIR and backend plumbing rather than every Rust construct at once.
 That is why many early seeds classify as `UNSUPPORTED [adapter]`.
 
-The widening plan is incremental. Two steps have landed: every Rust scalar the
-trace API can hash is now in the adapter's set, and arrays and tuples fold by
-their leaves ([#792](https://github.com/NVlabs/cuda-oxide/pull/792)). What
-remains:
+The widening plan is incremental, and two steps have already landed: the
+adapter now accepts every scalar the trace API can hash (f32 and f64 arrived
+last, in [#484](https://github.com/NVlabs/cuda-oxide/pull/484)), plus arrays
+and tuples built from them
+([#792](https://github.com/NVlabs/cuda-oxide/pull/792)). What remains:
 
 1. Decide whether and how to support `char` in cuda-oxide's type translation.
 2. Expand control-flow and cast coverage.
-3. Add structs and enums, the aggregates that folding does not yet reach.
+3. Add structs and enums; the trace can't look inside those yet.
 4. Add minimization for failing seeds.
 
 That order is deliberate. A fuzzer that generates everything on day one mostly
