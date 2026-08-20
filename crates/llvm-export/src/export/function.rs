@@ -45,6 +45,9 @@ use super::{
     },
 };
 
+const LLVM_PARAM_NOALIAS_ATTR_PREFIX: &str = "cuda_oxide_param_noalias_";
+const LLVM_PARAM_READONLY_ATTR_PREFIX: &str = "cuda_oxide_param_readonly_";
+
 /// Flatten a descriptive string so it cannot escape a single `;` comment line.
 ///
 /// An LLVM comment runs to end of line, so an embedded newline would turn the
@@ -508,6 +511,52 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
+    fn parameter_marker(&self, func: &FuncOp, prefix: &str, index: usize) -> bool {
+        let key: pliron::identifier::Identifier = format!("{prefix}{index}")
+            .as_str()
+            .try_into()
+            .expect("LLVM parameter marker attribute name is valid");
+        func.get_operation()
+            .deref(self.ctx)
+            .attributes
+            .get::<pliron::builtin::attributes::StringAttr>(&key)
+            .is_some()
+    }
+
+    fn export_parameter_attrs(
+        &self,
+        func: &FuncOp,
+        index: usize,
+        arg_ty: pliron::r#type::TypeHandle,
+        output: &mut String,
+    ) -> Result<(), String> {
+        let noalias = self.parameter_marker(func, LLVM_PARAM_NOALIAS_ATTR_PREFIX, index);
+        let readonly = self.parameter_marker(func, LLVM_PARAM_READONLY_ATTR_PREFIX, index);
+        if !noalias && !readonly {
+            return Ok(());
+        }
+        if readonly && !noalias {
+            return Err(format!(
+                "function `@{}` carries readonly without the matching noalias proof on argument {index}",
+                func.get_symbol_name(self.ctx)
+            ));
+        }
+
+        if !arg_ty.deref(self.ctx).is::<PointerType>() {
+            return Err(format!(
+                "function `@{}` carries reference parameter attributes on non-pointer argument {index}",
+                func.get_symbol_name(self.ctx)
+            ));
+        }
+        if noalias {
+            write!(output, " noalias").unwrap();
+        }
+        if readonly {
+            write!(output, " readonly").unwrap();
+        }
+        Ok(())
+    }
+
     pub(super) fn export_function(
         &mut self,
         func: &FuncOp,
@@ -741,6 +790,7 @@ impl<'a> ModuleExportState<'a> {
                 } else {
                     self.export_type(*arg_ty, output)?;
                 }
+                self.export_parameter_attrs(func, i, *arg_ty, output)?;
             }
             write!(output, ")").unwrap();
 
@@ -796,28 +846,18 @@ impl<'a> ModuleExportState<'a> {
 
             let block = entry_block.deref(self.ctx);
             let args = block.arguments();
-            // Parameters are emitted bare: `<type> %vN` with no LLVM parameter
-            // attributes (no `noalias`, `nocapture`, `dereferenceable`, etc.).
-            // This is deliberate and load-bearing for `DisjointSlice`.
-            //
-            // `DisjointSlice::from_raw_parts` is `unsafe fn` whose contract
-            // says callers must not construct two slices over the same range.
-            // Violating that contract creates two `&mut T` to the same byte —
-            // which is simply UB. Today, because we don't tag pointer
-            // parameters with `noalias`, LLVM treats them conservatively and
-            // the violation doesn't *miscompile*; it just runs as written.
-            //
-            // If a future change here adds `noalias` (e.g. for a perf win on
-            // read-only `&[T]` inputs), that property goes away and any code
-            // that double-constructed a `DisjointSlice` starts seeing folded
-            // writes / reordered reads on PTX. Don't add parameter attributes
-            // here without re-auditing the `from_raw_parts` callers.
+            // Rust-derived parameter attributes arrive as explicit LLVM-dialect
+            // marker attributes produced by mir-lower after source-argument ABI
+            // flattening. The exporter does not infer aliasing from pointer type,
+            // mutability, address space, or `DisjointSlice`; it only serializes
+            // the already-audited `noalias` / `readonly` proof bits.
             for (i, arg) in args.enumerate() {
                 if i > 0 {
                     write!(output, ", ").unwrap();
                 }
                 let arg_ty = arg.get_type(self.ctx);
                 self.export_type(arg_ty, output)?;
+                self.export_parameter_attrs(func, i, arg_ty, output)?;
                 let name = format!("%v{next_value_id}");
                 value_names.insert(arg, name.clone());
                 write!(output, " {name}").unwrap();

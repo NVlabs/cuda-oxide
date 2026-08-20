@@ -1045,6 +1045,73 @@ fn test_mir_func_verify() {
 }
 
 #[test]
+fn test_mir_func_reference_param_attrs_verify() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let shared: pliron::r#type::TypeHandle = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        i32_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    )
+    .into();
+    let unique: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef)
+            .into();
+    let raw: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::RawMut)
+            .into();
+    let func_ty = FunctionType::get(&ctx, vec![shared, unique, raw], vec![]);
+    let func_ty_attr = TypeAttr::new(func_ty.into());
+
+    let make_func = |ctx: &mut Context| {
+        let op = Operation::new(
+            ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let func = MirFuncOp::new(ctx, op, func_ty_attr.clone());
+        let region = func.get_operation().deref(ctx).get_region(0);
+        BasicBlock::new(ctx, None, vec![shared, unique, raw]).insert_at_front(region, ctx);
+        func
+    };
+
+    let valid = make_func(&mut ctx);
+    valid.set_reference_param_attrs(&mut ctx, 0, true, true);
+    valid.set_reference_param_attrs(&mut ctx, 1, true, false);
+    assert!(
+        valid.verify(&ctx).is_ok(),
+        "audited reference facts are valid"
+    );
+
+    let raw_noalias = make_func(&mut ctx);
+    raw_noalias.set_reference_param_attrs(&mut ctx, 2, true, false);
+    assert!(
+        raw_noalias.verify(&ctx).is_err(),
+        "raw pointers must not acquire reference-derived noalias"
+    );
+
+    let unique_readonly = make_func(&mut ctx);
+    unique_readonly.set_reference_param_attrs(&mut ctx, 1, true, true);
+    assert!(
+        unique_readonly.verify(&ctx).is_err(),
+        "readonly is restricted to proven shared references"
+    );
+
+    let out_of_range = make_func(&mut ctx);
+    out_of_range.set_reference_param_attrs(&mut ctx, 3, true, false);
+    assert!(
+        out_of_range.verify(&ctx).is_err(),
+        "parameter proof indices must be in range"
+    );
+}
+
+#[test]
 fn test_mir_assign_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);

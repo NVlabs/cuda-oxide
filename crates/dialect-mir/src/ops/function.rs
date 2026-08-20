@@ -14,7 +14,7 @@ use pliron::{
     attribute::attr_cast,
     builtin::{
         attr_interfaces::TypedAttrInterface,
-        attributes::TypeAttr,
+        attributes::{StringAttr, TypeAttr},
         op_interfaces::{
             ATTR_KEY_SYM_NAME, IsolatedFromAboveInterface, NOpdsInterface, NRegionsInterface,
             NResultsInterface, OneRegionInterface, SymbolOpInterface,
@@ -43,6 +43,18 @@ use pliron::{
 };
 use pliron_derive::pliron_op;
 
+use crate::types::{MirPointerKind, MirPtrType, MirSliceType};
+
+/// Per-source-argument marker populated only after rustc has proved the LLVM
+/// `noalias` contract for that Rust reference. The index is the MIR function
+/// argument index before aggregate flattening.
+pub const MIR_PARAM_NOALIAS_ATTR_PREFIX: &str = "mir_param_noalias_";
+
+/// Per-source-argument marker populated only after rustc has proved the LLVM
+/// `readonly` contract for that Rust shared reference. The index is the MIR
+/// function argument index before aggregate flattening.
+pub const MIR_PARAM_READONLY_ATTR_PREFIX: &str = "mir_param_readonly_";
+
 /// MIR function operation.
 ///
 /// Represents a function in MIR. Contains a single region with basic blocks.
@@ -54,6 +66,8 @@ use pliron_derive::pliron_op;
 /// |----------------|-----------|------------------------------------|
 /// | `sym_name`     | StringAttr| Function name (from SymbolOpInterface) |
 /// | `mir_func_type`| TypeAttr  | Function type (mir.func_type)      |
+/// | `mir_param_noalias_N` | StringAttr | rustc-proven `noalias` for source arg N |
+/// | `mir_param_readonly_N` | StringAttr | rustc-proven `readonly` for source arg N |
 /// ```
 ///
 /// # Verification
@@ -99,6 +113,92 @@ impl MirFuncOp {
             .unwrap()
             .get_type(ctx);
         TypedHandle::from_handle(ty, ctx).unwrap()
+    }
+
+    /// Record rustc-proven aliasing facts for one source-level function argument.
+    ///
+    /// These facts are attached to the MIR argument index, before slices are
+    /// flattened into `(ptr, len)` by `mir-lower`. `readonly` is intentionally
+    /// represented separately from pointer kind: `SharedRef` alone is not
+    /// sufficient when the pointee contains `UnsafeCell`.
+    pub fn set_reference_param_attrs(
+        &self,
+        ctx: &mut Context,
+        index: usize,
+        noalias: bool,
+        readonly: bool,
+    ) {
+        if noalias {
+            set_param_marker(
+                ctx,
+                self.get_operation(),
+                MIR_PARAM_NOALIAS_ATTR_PREFIX,
+                index,
+            );
+        }
+        if readonly {
+            set_param_marker(
+                ctx,
+                self.get_operation(),
+                MIR_PARAM_READONLY_ATTR_PREFIX,
+                index,
+            );
+        }
+    }
+
+    /// Whether rustc proved that this source-level argument may carry LLVM `noalias`.
+    pub fn param_noalias(&self, ctx: &Context, index: usize) -> bool {
+        has_param_marker(
+            ctx,
+            self.get_operation(),
+            MIR_PARAM_NOALIAS_ATTR_PREFIX,
+            index,
+        )
+    }
+
+    /// Whether rustc proved that this source-level argument may carry LLVM `readonly`.
+    pub fn param_readonly(&self, ctx: &Context, index: usize) -> bool {
+        has_param_marker(
+            ctx,
+            self.get_operation(),
+            MIR_PARAM_READONLY_ATTR_PREFIX,
+            index,
+        )
+    }
+}
+
+fn param_marker_key(prefix: &str, index: usize) -> Identifier {
+    format!("{prefix}{index}")
+        .as_str()
+        .try_into()
+        .expect("parameter marker attribute name is valid")
+}
+
+fn set_param_marker(ctx: &mut Context, op: Ptr<Operation>, prefix: &str, index: usize) {
+    let key = param_marker_key(prefix, index);
+    op.deref_mut(ctx)
+        .attributes
+        .set(key, StringAttr::new("true".to_string()));
+}
+
+fn has_param_marker(ctx: &Context, op: Ptr<Operation>, prefix: &str, index: usize) -> bool {
+    let key = param_marker_key(prefix, index);
+    op.deref(ctx).attributes.get::<StringAttr>(&key).is_some()
+}
+
+fn marker_index(key: &Identifier, prefix: &str) -> Option<Result<usize, ()>> {
+    let key = key.to_string();
+    key.strip_prefix(prefix)
+        .map(|suffix| suffix.parse::<usize>().map_err(|_| ()))
+}
+
+fn pointer_kind_for_function_input(ctx: &Context, ty: TypeHandle) -> Option<MirPointerKind> {
+    let ty = ty.deref(ctx);
+    if let Some(pointer) = ty.downcast_ref::<MirPtrType>() {
+        Some(pointer.pointer_kind())
+    } else {
+        ty.downcast_ref::<MirSliceType>()
+            .map(MirSliceType::pointer_kind)
     }
 }
 
@@ -199,14 +299,81 @@ impl Verify for MirFuncOp {
             }
         };
 
+        let inputs = interface.arg_types();
+
+        // Reference-derived optimizer facts are deliberately audited here,
+        // before MIR-to-LLVM flattening. Raw/erased pointers must never acquire
+        // Rust reference guarantees, and `readonly` is only valid for a shared
+        // reference for which the importer also proved `noalias`.
+        for key in op.attributes.0.keys() {
+            let marker = marker_index(key, MIR_PARAM_NOALIAS_ATTR_PREFIX)
+                .map(|index| (index, false))
+                .or_else(|| {
+                    marker_index(key, MIR_PARAM_READONLY_ATTR_PREFIX).map(|index| (index, true))
+                });
+            let Some((index, is_readonly)) = marker else {
+                continue;
+            };
+            let index = match index {
+                Ok(index) => index,
+                Err(()) => {
+                    return verify_err!(
+                        op.loc(),
+                        "MirFuncOp has malformed reference-parameter attribute `{}`",
+                        key
+                    );
+                }
+            };
+            if index >= inputs.len() {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp reference-parameter attribute `{}` indexes argument {}, but the function has only {} arguments",
+                    key,
+                    index,
+                    inputs.len()
+                );
+            }
+
+            let kind = pointer_kind_for_function_input(ctx, inputs[index]);
+            if is_readonly {
+                if kind != Some(MirPointerKind::SharedRef) {
+                    return verify_err!(
+                        op.loc(),
+                        "MirFuncOp readonly proof on argument {} requires a SharedRef pointer kind",
+                        index
+                    );
+                }
+                if !self.param_noalias(ctx, index) {
+                    return verify_err!(
+                        op.loc(),
+                        "MirFuncOp readonly proof on argument {} must carry the matching noalias proof",
+                        index
+                    );
+                }
+            } else if !matches!(
+                kind,
+                Some(MirPointerKind::SharedRef | MirPointerKind::UniqueRef)
+            ) {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp noalias proof on argument {} requires a Rust reference pointer kind",
+                    index
+                );
+            } else if kind == Some(MirPointerKind::SharedRef) && !self.param_readonly(ctx, index) {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp SharedRef noalias proof on argument {} must carry the matching readonly proof",
+                    index
+                );
+            }
+        }
+
         // Verify region arguments match function type inputs
         let region = op.get_region(0).deref(ctx);
 
         // Check if there is an entry block
         if let Some(entry_block_ptr) = region.get_head() {
             let entry_block = entry_block_ptr.deref(ctx);
-            let inputs = interface.arg_types();
-
             if entry_block.get_num_arguments() != inputs.len() {
                 return verify_err!(
                     op.loc(),
