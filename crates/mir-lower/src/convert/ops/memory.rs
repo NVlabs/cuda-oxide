@@ -244,6 +244,9 @@ fn copy_debug_local_variable(ctx: &mut Context, mir_op: Ptr<Operation>, llvm_op:
             ctx, llvm_op, file, pos.line, pos.column,
         );
     }
+    if let Some(expression) = llvm_export::ops::debug_value_expression(ctx, mir_op) {
+        llvm_export::ops::set_debug_value_expression(ctx, llvm_op, &expression);
+    }
 }
 
 /// Carry Rust-local provenance from the MIR alloca to the LLVM alloca.
@@ -523,6 +526,33 @@ pub(crate) fn convert_dbg_value(
     let value = op.deref(ctx).get_operand(0);
     let loc = op.deref(ctx).loc().clone();
     let llvm_dbg_value = llvm::DebugValueOp::new(ctx, value);
+    llvm_dbg_value.get_operation().deref_mut(ctx).set_loc(loc);
+    copy_debug_local_variable(ctx, op, llvm_dbg_value.get_operation());
+    rewriter.insert_operation(ctx, llvm_dbg_value.get_operation());
+    rewriter.erase_operation(ctx, op);
+    Ok(())
+}
+
+/// Convert `mir.dbg_value_list` to the LLVM-export multi-value debug marker.
+///
+/// The ordered operands become a `DIArgList` during textual export. The typed
+/// location recipe is carried as generic metadata and copied unchanged here.
+pub(crate) fn convert_dbg_value_list(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let values: Vec<_> = op.deref(ctx).operands().collect();
+    if values.len() < 2 {
+        return pliron::input_err_noloc!("mir.dbg_value_list requires at least two operands");
+    }
+    if llvm_export::ops::debug_value_expression(ctx, op).is_none() {
+        return pliron::input_err_noloc!("mir.dbg_value_list is missing its debug expression");
+    }
+
+    let loc = op.deref(ctx).loc().clone();
+    let llvm_dbg_value = llvm::DebugValueListOp::new(ctx, values);
     llvm_dbg_value.get_operation().deref_mut(ctx).set_loc(loc);
     copy_debug_local_variable(ctx, op, llvm_dbg_value.get_operation());
     rewriter.insert_operation(ctx, llvm_dbg_value.get_operation());
@@ -2518,6 +2548,56 @@ mod tests {
                 size_bits: 32,
                 encoding: "DW_ATE_signed",
             }
+        );
+    }
+
+    #[test]
+    fn convert_dbg_value_list_preserves_operands_and_expression() {
+        let mut ctx = make_ctx();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, false);
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
+
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty.into(), i64_ty], vec![]);
+        let base = block.deref(&ctx).get_argument(0);
+        let index = block.deref(&ctx).get_argument(1);
+
+        let dbg_op = mir::MirDbgValueListOp::new(&mut ctx, vec![base, index]);
+        llvm::set_debug_local_variable(
+            &mut ctx,
+            dbg_op.get_operation(),
+            llvm::DebugLocalVariableInfo {
+                name: "item".to_string(),
+                argument_index: None,
+                ty: llvm::DebugLocalTypeKind::Basic {
+                    name: "u32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_unsigned",
+                },
+            },
+        );
+        let expression = llvm::DebugValueExpression::new(vec![
+            llvm::DebugValueExpressionOp::Arg(0),
+            llvm::DebugValueExpressionOp::Arg(1),
+            llvm::DebugValueExpressionOp::ConstU(4),
+            llvm::DebugValueExpressionOp::Mul,
+            llvm::DebugValueExpressionOp::Plus,
+            llvm::DebugValueExpressionOp::Deref,
+        ]);
+        llvm::set_debug_value_expression(&mut ctx, dbg_op.get_operation(), &expression);
+        dbg_op.get_operation().insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(count_ops::<mir::MirDbgValueListOp>(&ctx, &body), 0);
+        let dbg_value = find_first::<llvm::DebugValueListOp>(&ctx, &body)
+            .expect("expected lowered llvm.dbg_value_list marker");
+        assert_eq!(dbg_value.values(&ctx), vec![base, index]);
+        assert_eq!(
+            llvm::debug_value_expression(&ctx, dbg_value.get_operation()),
+            Some(expression)
         );
     }
 

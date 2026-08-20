@@ -29,12 +29,12 @@ use dialect_mir::ops::{
     MirBitXorOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp, MirCheckedSubOp, MirCmpOp,
     MirCondBranchOp, MirConstantOp, MirConstructArrayOp, MirConstructDisjointSliceOp,
     MirConstructEnumOp, MirConstructSliceOp, MirConstructStructOp, MirConstructTupleOp,
-    MirDbgValueOp, MirDivOp, MirEnumPayloadOp, MirEqOp, MirExtractArrayElementOp,
-    MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp, MirGetDiscriminantOp,
-    MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp, MirMemcpyOp, MirMemmoveOp,
-    MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirReturnOp,
-    MirSetDiscriminantOp, MirShlOp, MirShrOp, MirStorageDeadOp, MirStorageLiveOp, MirStoreOp,
-    MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
+    MirDbgValueListOp, MirDbgValueOp, MirDivOp, MirEnumPayloadOp, MirEqOp,
+    MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp, MirFloatConstantOp, MirGeOp,
+    MirGetDiscriminantOp, MirGotoOp, MirGtOp, MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp,
+    MirMemcpyOp, MirMemmoveOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp,
+    MirRemOp, MirReturnOp, MirSetDiscriminantOp, MirShlOp, MirShrOp, MirStorageDeadOp,
+    MirStorageLiveOp, MirStoreOp, MirSubOp, MirUndefOp, MirUnreachableOp, MirUnrollHintOp,
 };
 use dialect_nvvm::ops::{
     AssertFailOp, CvtaGenericToSharedOffsetOp, InlinePtxOp, NvvmAtomicCmpxchgOp, NvvmAtomicFenceOp,
@@ -451,6 +451,23 @@ impl MirToLlvmConversion for MirDbgValueOp {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::ops::memory::convert_dbg_value(ctx, rewriter, self.get_operation(), operands_info)
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for MirDbgValueListOp {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::ops::memory::convert_dbg_value_list(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
     }
 }
 
