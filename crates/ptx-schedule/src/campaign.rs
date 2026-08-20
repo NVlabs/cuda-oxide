@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 //! End-to-end schedule campaigns for existing cuda-oxide examples.
 //!
 //! A campaign builds an example once, mutates the generated PTX in memory,
@@ -77,6 +82,9 @@ pub enum RunKind {
     Mismatch,
     OutputChanged,
     GpuWedged,
+    /// The harness failed to perturb or patch this seed, so the variant
+    /// never ran. Not a schedule finding.
+    HarnessError,
 }
 
 impl RunKind {
@@ -87,7 +95,7 @@ impl RunKind {
             Self::Hang => Some("TIMEOUT CANDIDATE"),
             Self::Crash => Some("CRASH CANDIDATE"),
             Self::GpuWedged => Some("GPU WEDGE CANDIDATE"),
-            Self::Pass | Self::Skipped => None,
+            Self::Pass | Self::Skipped | Self::HarnessError => None,
         }
     }
 
@@ -258,88 +266,22 @@ pub fn run_campaign(options: &CampaignOptions) -> Result<CampaignSummary, Campai
 
     let mut seeds = Vec::new();
     for seed in options.seed_start..options.seed_end {
-        let rewrite = crate::perturb_ptx(
-            &pristine,
-            &InjectionOptions {
-                seed,
-                intensity: options.intensity,
-                max_sleep_ns: options.max_sleep_ns,
-                focus: options.focus.clone(),
-            },
-        )?;
         let artifact_dir = output_dir.join(format!("seed-{seed}"));
-        fs::create_dir_all(&artifact_dir)?;
-        let mutated_ptx = artifact_dir.join("module.ptx");
-        let report_path = artifact_dir.join("report.json");
-        let stdout_path = artifact_dir.join("stdout.log");
-        let stderr_path = artifact_dir.join("stderr.log");
-        let replay_path = artifact_dir.join("replay.sh");
-        fs::write(&mutated_ptx, &rewrite.ptx)?;
-        fs::write(&report_path, serde_json::to_vec_pretty(&rewrite.report)?)?;
-
-        let variant_executable =
-            artifact_dir.join(executable.file_name().ok_or_else(|| {
-                CampaignError::ArtifactPatch("executable has no file name".into())
-            })?);
-        patch_executable(
-            &executable,
-            &variant_executable,
-            pristine.as_bytes(),
-            rewrite.ptx.as_bytes(),
-        )?;
-        write_replay_script(&replay_path, &example_dir, &variant_executable)?;
-
-        let mut run = run_variant(
-            &variant_executable,
+        // A perturbation or patching failure is scoped to this seed: record
+        // it and keep going so the campaign still covers the remaining seeds
+        // and still writes summary.json.
+        let result = run_seed(
+            options,
+            seed,
+            &artifact_dir,
+            &pristine,
             &executable,
             &example_dir,
-            options.timeout,
-        );
-        classify_output_change(&baseline, &mut run, options.compare_output);
-
-        fs::write(&stdout_path, &run.stdout)?;
-        fs::write(&stderr_path, &run.stderr)?;
-        let confirmation = if run.kind.is_finding() && options.confirm_runs > 1 {
-            let mut outcomes = vec![run.kind.clone()];
-            let mut findings = 1;
-            for attempt in 1..options.confirm_runs {
-                let mut confirmed_run = run_variant(
-                    &variant_executable,
-                    &executable,
-                    &example_dir,
-                    options.timeout,
-                );
-                classify_output_change(&baseline, &mut confirmed_run, options.compare_output);
-                if confirmed_run.kind.is_finding() {
-                    findings += 1;
-                }
-                fs::write(
-                    artifact_dir.join(format!("confirm-{attempt}-stdout.log")),
-                    &confirmed_run.stdout,
-                )?;
-                fs::write(
-                    artifact_dir.join(format!("confirm-{attempt}-stderr.log")),
-                    &confirmed_run.stderr,
-                )?;
-                outcomes.push(confirmed_run.kind);
-            }
-            Some(ConfirmationSummary {
-                attempts: options.confirm_runs,
-                findings,
-                confirmed: findings == options.confirm_runs,
-                outcomes,
-            })
-        } else {
-            None
-        };
-        let result = SeedResult {
-            seed,
-            artifact_dir,
-            report: rewrite.report,
-            run,
-            confirmation,
-            replay: replay_path,
-        };
+            &baseline,
+        )
+        .unwrap_or_else(|error| {
+            harness_error_result(seed, options.intensity, artifact_dir, &error)
+        });
         print_seed_result(&result);
         let stop = matches!(result.run.kind, RunKind::GpuWedged) && !options.keep_going;
         seeds.push(result);
@@ -365,9 +307,141 @@ pub fn run_campaign(options: &CampaignOptions) -> Result<CampaignSummary, Campai
     Ok(summary)
 }
 
+fn run_seed(
+    options: &CampaignOptions,
+    seed: u64,
+    artifact_dir: &Path,
+    pristine: &str,
+    executable: &Path,
+    example_dir: &Path,
+    baseline: &RunResult,
+) -> Result<SeedResult, CampaignError> {
+    let rewrite = crate::perturb_ptx(
+        pristine,
+        &InjectionOptions {
+            seed,
+            intensity: options.intensity,
+            max_sleep_ns: options.max_sleep_ns,
+            focus: options.focus.clone(),
+        },
+    )?;
+    fs::create_dir_all(artifact_dir)?;
+    let mutated_ptx = artifact_dir.join("module.ptx");
+    let report_path = artifact_dir.join("report.json");
+    let stdout_path = artifact_dir.join("stdout.log");
+    let stderr_path = artifact_dir.join("stderr.log");
+    let replay_path = artifact_dir.join("replay.sh");
+    fs::write(&mutated_ptx, &rewrite.ptx)?;
+    fs::write(&report_path, serde_json::to_vec_pretty(&rewrite.report)?)?;
+
+    let variant_executable = artifact_dir.join(
+        executable
+            .file_name()
+            .ok_or_else(|| CampaignError::ArtifactPatch("executable has no file name".into()))?,
+    );
+    patch_executable(
+        executable,
+        &variant_executable,
+        pristine.as_bytes(),
+        rewrite.ptx.as_bytes(),
+    )?;
+    write_replay_script(&replay_path, example_dir, &variant_executable)?;
+
+    let mut run = run_variant(
+        &variant_executable,
+        executable,
+        example_dir,
+        options.timeout,
+    );
+    classify_output_change(baseline, &mut run, options.compare_output);
+
+    fs::write(&stdout_path, &run.stdout)?;
+    fs::write(&stderr_path, &run.stderr)?;
+    let confirmation = if run.kind.is_finding() && options.confirm_runs > 1 {
+        let mut outcomes = vec![run.kind.clone()];
+        let mut findings = 1;
+        for attempt in 1..options.confirm_runs {
+            let mut confirmed_run = run_variant(
+                &variant_executable,
+                executable,
+                example_dir,
+                options.timeout,
+            );
+            classify_output_change(baseline, &mut confirmed_run, options.compare_output);
+            if confirmed_run.kind.is_finding() {
+                findings += 1;
+            }
+            fs::write(
+                artifact_dir.join(format!("confirm-{attempt}-stdout.log")),
+                &confirmed_run.stdout,
+            )?;
+            fs::write(
+                artifact_dir.join(format!("confirm-{attempt}-stderr.log")),
+                &confirmed_run.stderr,
+            )?;
+            outcomes.push(confirmed_run.kind);
+        }
+        Some(ConfirmationSummary {
+            attempts: options.confirm_runs,
+            findings,
+            confirmed: findings == options.confirm_runs,
+            outcomes,
+        })
+    } else {
+        None
+    };
+    Ok(SeedResult {
+        seed,
+        artifact_dir: artifact_dir.to_path_buf(),
+        report: rewrite.report,
+        run,
+        confirmation,
+        replay: replay_path,
+    })
+}
+
+/// The seed's variant never ran. The error text lands in the run's stderr,
+/// a zeroed rewrite report keeps summary.json uniform, and the replay path
+/// names where the script would have been written.
+fn harness_error_result(
+    seed: u64,
+    intensity: f64,
+    artifact_dir: PathBuf,
+    error: &CampaignError,
+) -> SeedResult {
+    let replay = artifact_dir.join("replay.sh");
+    SeedResult {
+        seed,
+        artifact_dir,
+        report: RewriteReport {
+            seed,
+            intensity,
+            sites_total: 0,
+            sites_injected: 0,
+            injected_ns_per_visit: 0,
+            decisions: Vec::new(),
+        },
+        run: RunResult {
+            kind: RunKind::HarnessError,
+            exit_code: None,
+            timed_out: false,
+            stdout: String::new(),
+            stderr: error.to_string(),
+        },
+        confirmation: None,
+        replay,
+    }
+}
+
 fn print_seed_result(result: &SeedResult) {
-    if let Some(label) = result.run.kind.finding_label() {
-        println!("schedule-fuzz: FINDING seed={} — {}", result.seed, label);
+    if matches!(result.run.kind, RunKind::HarnessError) {
+        println!(
+            "schedule-fuzz: seed={} HARNESS ERROR: {}",
+            result.seed,
+            result.run.stderr.trim()
+        );
+    } else if let Some(label) = result.run.kind.finding_label() {
+        println!("schedule-fuzz: FINDING seed={}: {}", result.seed, label);
         if let Some(confirmation) = &result.confirmation {
             println!(
                 "  confirmation: {}/{} reproductions{}",
@@ -402,11 +476,20 @@ fn print_campaign_result(summary: &CampaignSummary, output_dir: &Path) {
         .filter(|result| result.run.kind.finding_label().is_some())
         .collect();
 
+    let harness_errors = summary
+        .seeds
+        .iter()
+        .filter(|result| matches!(result.run.kind, RunKind::HarnessError))
+        .count();
+
     println!();
     println!("=== schedule-fuzz result ===");
     println!("example: {}", summary.example);
     println!("baseline: PASS");
     println!("variants: {}", summary.seeds.len());
+    if harness_errors > 0 {
+        println!("harness errors: {harness_errors} (seeds not run, not schedule findings)");
+    }
     if findings.is_empty() {
         println!("RESULT: no schedule-sensitive failures found");
     } else {
@@ -476,7 +559,7 @@ fn format_site_kinds(sites_by_kind: &BTreeMap<String, usize>) -> String {
 }
 
 fn write_replay_script(path: &Path, cwd: &Path, executable: &Path) -> Result<(), CampaignError> {
-    let mut script = format!("#!/bin/sh\nset -eu\n");
+    let mut script = "#!/bin/sh\nset -eu\n".to_string();
     for key in [
         "CUDA_VISIBLE_DEVICES",
         "CUDA_LAUNCH_BLOCKING",
@@ -536,49 +619,39 @@ fn find_executable(example_dir: &Path, example: &str) -> Result<PathBuf, Campaig
         .get("target_directory")
         .and_then(Value::as_str)
         .ok_or_else(|| CampaignError::Metadata("target_directory is missing".to_string()))?;
-    let package = document
+    let packages = document
         .get("packages")
         .and_then(Value::as_array)
-        .and_then(|packages| packages.first())
         .ok_or_else(|| CampaignError::Metadata("package is missing".to_string()))?;
-    let default_run = package.get("default_run").and_then(Value::as_str);
+    // Examples with a nested kernel-lib crate are multi-package workspaces,
+    // and cargo does not put the binary package first, so every package's bin
+    // targets are candidates. A bin named after the example or picked by its
+    // package's default_run wins; otherwise the first bin found is used.
     let normalized_example = example.replace('-', "_");
-    let target_name = package
-        .get("targets")
-        .and_then(Value::as_array)
-        .and_then(|targets| {
-            targets.iter().find_map(|target| {
-                let is_bin = target
-                    .get("kind")
-                    .and_then(Value::as_array)
-                    .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")));
-                let name = target.get("name").and_then(Value::as_str)?;
-                if is_bin && (Some(name) == default_run || name == normalized_example) {
-                    Some(name)
-                } else {
-                    None
-                }
-            })
-        })
-        .or_else(|| {
-            package
-                .get("targets")
+    let mut bins: Vec<(&str, bool)> = Vec::new();
+    for package in packages {
+        let default_run = package.get("default_run").and_then(Value::as_str);
+        let Some(targets) = package.get("targets").and_then(Value::as_array) else {
+            continue;
+        };
+        for target in targets {
+            let is_bin = target
+                .get("kind")
                 .and_then(Value::as_array)
-                .and_then(|targets| {
-                    targets.iter().find_map(|target| {
-                        let is_bin =
-                            target
-                                .get("kind")
-                                .and_then(Value::as_array)
-                                .is_some_and(|kinds| {
-                                    kinds.iter().any(|kind| kind.as_str() == Some("bin"))
-                                });
-                        is_bin
-                            .then(|| target.get("name").and_then(Value::as_str))
-                            .flatten()
-                    })
-                })
-        })
+                .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")));
+            let Some(name) = target.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            if is_bin {
+                bins.push((name, Some(name) == default_run));
+            }
+        }
+    }
+    let target_name = bins
+        .iter()
+        .find(|(name, is_default_run)| *is_default_run || *name == normalized_example)
+        .or_else(|| bins.first())
+        .map(|(name, _)| *name)
         .ok_or_else(|| CampaignError::Metadata("no binary target found".to_string()))?;
     let executable = PathBuf::from(target_dir).join("release").join(target_name);
     if executable.is_file() {
@@ -629,6 +702,12 @@ fn run_binary(executable: &Path, cwd: &Path, timeout: Duration) -> RunResult {
             stderr: "could not start example executable".to_string(),
         };
     };
+    // Drain both pipes on their own threads while the watchdog polls. A child
+    // that writes more than a pipe buffer would otherwise block on the full
+    // pipe until the watchdog kills it, turning a large failure dump into a
+    // spurious hang.
+    let stdout_reader = drain_pipe(child.stdout.take());
+    let stderr_reader = drain_pipe(child.stderr.take());
     let deadline = Instant::now() + timeout;
     let mut timed_out = false;
     loop {
@@ -644,15 +723,12 @@ fn run_binary(executable: &Path, cwd: &Path, timeout: Duration) -> RunResult {
         }
     }
 
-    let output = child.wait_with_output();
-    let (exit_code, success, stdout, stderr) = match output {
-        Ok(output) => (
-            output.status.code(),
-            output.status.success(),
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ),
-        Err(error) => (None, false, String::new(), error.to_string()),
+    let status = child.wait();
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    let (exit_code, success, stderr) = match status {
+        Ok(status) => (status.code(), status.success(), stderr),
+        Err(error) => (None, false, error.to_string()),
     };
     let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
     let kind = if timed_out {
@@ -673,6 +749,16 @@ fn run_binary(executable: &Path, cwd: &Path, timeout: Duration) -> RunResult {
         stdout,
         stderr,
     }
+}
+
+fn drain_pipe<R: io::Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<String> {
+    thread::spawn(move || {
+        let mut buffer = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut buffer);
+        }
+        String::from_utf8_lossy(&buffer).into_owned()
+    })
 }
 
 fn patch_executable(
@@ -838,5 +924,41 @@ mod tests {
     #[test]
     fn shell_quotes_replay_values() {
         assert_eq!(shell_quote_value("a'b"), "'a'\\''b'");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_binary_drains_output_larger_than_a_pipe_buffer() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("ptx-schedule-drain-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("spam.sh");
+        // 1 MiB of stdout, far beyond the pipe buffer the watchdog loop used
+        // to deadlock against before the reader threads were added.
+        fs::write(
+            &script,
+            "#!/bin/sh\ndd if=/dev/zero bs=65536 count=16 2>/dev/null | tr '\\0' 'a'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+        let result = run_binary(&script, &dir, Duration::from_secs(30));
+        fs::remove_dir_all(&dir).ok();
+        assert!(matches!(result.kind, RunKind::Pass), "{:?}", result.kind);
+        assert!(!result.timed_out);
+        assert_eq!(result.stdout.len(), 16 * 65536);
+    }
+
+    #[test]
+    fn harness_errors_are_recorded_without_becoming_findings() {
+        let error = CampaignError::ArtifactPatch("objcopy failed".into());
+        let result = harness_error_result(7, 1.5, PathBuf::from("seed-7"), &error);
+        assert!(matches!(result.run.kind, RunKind::HarnessError));
+        assert!(!result.run.kind.is_finding());
+        assert!(result.run.stderr.contains("objcopy failed"));
+        assert_eq!(result.seed, 7);
+        assert_eq!(result.report.seed, 7);
+        assert_eq!(result.report.sites_injected, 0);
     }
 }

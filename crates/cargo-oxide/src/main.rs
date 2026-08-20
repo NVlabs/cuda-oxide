@@ -560,10 +560,13 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
         Commands::Run { .. }
         | Commands::Sanitize { .. }
         | Commands::Build { .. }
-        | Commands::FuzzSchedule { .. }
         | Commands::Test { .. }
         | Commands::Pipeline { .. }
         | Commands::Debug { .. } => Ok(()),
+        Commands::FuzzSchedule { .. } => Err(
+            "--materialize-cubin cannot be used with fuzz-schedule because the campaign patches the embedded PTX and cannot run on cubin-materialized bundles"
+                .to_string(),
+        ),
         Commands::Inspect { .. } => Err(
             "--materialize-cubin cannot be used with inspect because inspect displays PTX"
                 .to_string(),
