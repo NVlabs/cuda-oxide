@@ -41,9 +41,9 @@ use dialect_nvvm::ops::{
     NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, ReadPtxSregClusterIdxOp,
     ReadPtxSregNclusterIdOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
     WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32F16Op,
-    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaGroupValuesM64N128K16F32Bf16Op, WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
+    WgmmaMmaM64N128K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -1068,6 +1068,18 @@ impl MirToLlvmConversion for WgmmaMmaM64N64K16F32F16Op {
 }
 
 #[op_interface_impl]
+impl MirToLlvmConversion for WgmmaMmaM64N128K16F32Bf16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wgmma::convert_mma(ctx, rewriter, self.get_operation(), operands_info)
+    }
+}
+
+#[op_interface_impl]
 impl MirToLlvmConversion for WgmmaMmaGroupM64N64K16F32Bf16Op {
     fn convert(
         &self,
@@ -1110,6 +1122,23 @@ impl MirToLlvmConversion for WgmmaMmaGroupValuesM64N64K16F32F16Op {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::wgmma::convert_mma_group_values_f16(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for WgmmaMmaGroupValuesM64N128K16F32Bf16Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wgmma::convert_mma_group_values_m64n128_bf16(
             ctx,
             rewriter,
             self.get_operation(),

@@ -8294,8 +8294,9 @@ fn build_wgmma_pointer_test_kernel(
     )
 }
 
-fn build_wgmma_canonical_pointer_test_kernel(
+fn build_wgmma_canonical_pointer_test_kernel_with_rows(
     ctx: &mut Context,
+    accumulator_rows: u64,
     accumulator_count: usize,
     descriptor_count: usize,
 ) -> (
@@ -8309,7 +8310,7 @@ fn build_wgmma_canonical_pointer_test_kernel(
 
     let f32_ty = FP32Type::get(ctx);
     let row_ty = MirArrayType::get(ctx, f32_ty.into(), 8);
-    let accumulator_ty = MirArrayType::get(ctx, row_ty.into(), 4);
+    let accumulator_ty = MirArrayType::get(ctx, row_ty.into(), accumulator_rows);
     let accumulator_ptr_ty = MirPtrType::get_generic(ctx, accumulator_ty.into(), true);
     let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
 
@@ -8329,6 +8330,32 @@ fn build_wgmma_canonical_pointer_test_kernel(
     (module_ptr, entry, accumulators, descriptors)
 }
 
+fn build_wgmma_canonical_pointer_test_kernel(
+    ctx: &mut Context,
+    accumulator_count: usize,
+    descriptor_count: usize,
+) -> (
+    pliron::context::Ptr<Operation>,
+    pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    Vec<pliron::value::Value>,
+    Vec<pliron::value::Value>,
+) {
+    build_wgmma_canonical_pointer_test_kernel_with_rows(ctx, 4, accumulator_count, descriptor_count)
+}
+
+fn build_wgmma_m64n128_canonical_pointer_test_kernel(
+    ctx: &mut Context,
+    accumulator_count: usize,
+    descriptor_count: usize,
+) -> (
+    pliron::context::Ptr<Operation>,
+    pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    Vec<pliron::value::Value>,
+    Vec<pliron::value::Value>,
+) {
+    build_wgmma_canonical_pointer_test_kernel_with_rows(ctx, 8, accumulator_count, descriptor_count)
+}
+
 fn append_pointer_wgmma_mma(
     ctx: &mut Context,
     block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
@@ -8339,6 +8366,24 @@ fn append_pointer_wgmma_mma(
     Operation::new(
         ctx,
         nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![],
+        vec![accumulator, desc_a, desc_b],
+        vec![],
+        0,
+    )
+    .insert_at_back(block, ctx);
+}
+
+fn append_pointer_wgmma_mma_m64n128(
+    ctx: &mut Context,
+    block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    accumulator: pliron::value::Value,
+    desc_a: pliron::value::Value,
+    desc_b: pliron::value::Value,
+) {
+    Operation::new(
+        ctx,
+        nvvm::WgmmaMmaM64N128K16F32Bf16Op::get_concrete_op_info(),
         vec![],
         vec![accumulator, desc_a, desc_b],
         vec![],
@@ -9218,6 +9263,91 @@ fn test_value_form_wgmma_group_lowers_to_tied_register_inline_ptx() -> Result<()
 }
 
 #[test]
+fn test_value_form_m64n128_bf16_wgmma_group_lowers_to_sixty_four_tied_registers()
+-> Result<(), anyhow::Error> {
+    use llvm_export::types as llvm_types;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::r#type::Typed;
+
+    const ACCUMULATOR_LEN: usize = 64;
+    const DESCRIPTOR_COUNT: usize = 4;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let argument_types = (0..ACCUMULATOR_LEN)
+        .map(|_| f32_ty.into())
+        .chain((0..DESCRIPTOR_COUNT).map(|_| u64_ty.into()))
+        .collect::<Vec<pliron::r#type::TypeHandle>>();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+
+    let accumulators = (0..ACCUMULATOR_LEN)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    let descriptors = (0..DESCRIPTOR_COUNT)
+        .map(|index| entry.deref(&ctx).get_argument(ACCUMULATOR_LEN + index))
+        .collect::<Vec<_>>();
+
+    nvvm::WgmmaMmaGroupValuesM64N128K16F32Bf16Op::build(&mut ctx, accumulators, descriptors)
+        .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let matching = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("m64n128k16.f32.bf16.bf16"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+
+    let asm = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("m64n128 value-form WGMMA template");
+    assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+    assert!(template.contains("m64n128k16.f32.bf16.bf16"));
+    assert!(template.contains("$128, $129"));
+    assert!(template.contains("$130, $131"));
+    assert!(!template.contains("ld.f32"));
+    assert!(!template.contains("st.f32"));
+
+    let constraints = asm
+        .get_attr_inline_asm_constraints(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("m64n128 value-form WGMMA constraints");
+    assert_eq!(
+        constraints
+            .split(',')
+            .filter(|value| *value == "=f")
+            .count(),
+        64
+    );
+    assert_eq!(
+        constraints.split(',').filter(|value| *value == "l").count(),
+        4
+    );
+    assert!(constraints.ends_with("~{memory}"));
+
+    let aggregate = asm.get_operation().deref(&ctx).get_result(0);
+    let aggregate_ty = aggregate.get_type(&ctx);
+    let aggregate_ty = aggregate_ty.deref(&ctx);
+    let struct_ty = aggregate_ty
+        .downcast_ref::<llvm_types::StructType>()
+        .expect("m64n128 inline asm must return an LLVM struct");
+    assert_eq!(struct_ty.num_fields(), ACCUMULATOR_LEN);
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+
+    Ok(())
+}
+
+#[test]
 fn test_value_form_f16_wgmma_group_lowers_to_tied_register_inline_ptx() -> Result<(), anyhow::Error>
 {
     use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
@@ -9557,6 +9687,65 @@ fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Resu
         ACCUMULATOR_LEN,
         "all WGMMA accumulator results must be recovered as scalar SSA values"
     );
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_m64n128_bf16_linear_full_drain_uses_sixty_four_value_adapter()
+-> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_m64n128_canonical_pointer_test_kernel(&mut ctx, 1, 4);
+    let accumulator = accumulators[0];
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma_m64n128(&mut ctx, entry, accumulator, descriptors[0], descriptors[1]);
+    append_pointer_wgmma_mma_m64n128(&mut ctx, entry, accumulator, descriptors[2], descriptors[3]);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let matching = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("m64n128k16.f32.bf16.bf16"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+
+    let asm = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("m64n128 pointer-form WGMMA template");
+    assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+    assert!(template.contains("m64n128k16.f32.bf16.bf16"));
+    assert!(!template.contains("ld.f32"));
+    assert!(!template.contains("st.f32"));
+
+    let constraints = asm
+        .get_attr_inline_asm_constraints(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("m64n128 pointer-form WGMMA constraints");
+    assert_eq!(
+        constraints
+            .split(',')
+            .filter(|value| *value == "=f")
+            .count(),
+        64
+    );
+    assert_eq!(
+        constraints.split(',').filter(|value| *value == "l").count(),
+        4
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
 
     Ok(())
 }
@@ -10849,6 +11038,27 @@ fn test_f16_wgmma_counted_k_loop_remains_unsupported() -> Result<(), anyhow::Err
 }
 
 #[test]
+fn test_m64n128_wgmma_noncanonical_accumulator_has_no_pointer_fallback() -> Result<(), anyhow::Error>
+{
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma_m64n128(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA linear full-drain lowering for this variant requires a canonical [[f32; 8]; 8] accumulator",
+    );
+    Ok(())
+}
+
+#[test]
 fn test_f16_wgmma_noncanonical_accumulator_has_no_pointer_fallback() -> Result<(), anyhow::Error> {
     let mut ctx = make_test_ctx();
     let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
@@ -10863,7 +11073,7 @@ fn test_f16_wgmma_noncanonical_accumulator_has_no_pointer_fallback() -> Result<(
     assert_wgmma_lowering_rejected(
         &mut ctx,
         module_ptr,
-        "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator",
+        "WGMMA linear full-drain lowering for this variant requires a canonical [[f32; 8]; 4] accumulator",
     );
     Ok(())
 }
@@ -10885,7 +11095,7 @@ fn test_linear_wgmma_full_drain_rejects_mixed_bf16_and_f16() -> Result<(), anyho
     assert_wgmma_lowering_rejected(
         &mut ctx,
         module_ptr,
-        "one linear WGMMA full-drain region cannot mix BF16 and F16 MMA variants",
+        "one linear WGMMA full-drain region cannot mix MMA variants or shapes",
     );
     Ok(())
 }

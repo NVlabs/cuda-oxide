@@ -40,9 +40,9 @@ use dialect_nvvm::ops::{
     ThreadfenceSystemOp, VoteSyncAllOp, VoteSyncAnyOp, VoteSyncBallotOp, VoteSyncUniOp, VprintfOp,
     WgmmaMakeSmemDescOp, WgmmaMaxPendingAttr, WgmmaMmaGroupM64N64K16F32Bf16Op,
     WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32F16Op,
-    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaGroupValuesM64N128K16F32Bf16Op, WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
+    WgmmaMmaM64N128K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
 
 #[test]
@@ -92,9 +92,11 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("memory.rs", "CvtaGenericToSharedOffsetOp"),
         ("wgmma.rs", "WgmmaMakeSmemDescOp"),
         ("wgmma.rs", "WgmmaMmaM64N64K16F32Bf16Op"),
+        ("wgmma.rs", "WgmmaMmaM64N128K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaM64N64K16F32F16Op"),
         ("wgmma.rs", "WgmmaMmaGroupM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaGroupValuesM64N64K16F32Bf16Op"),
+        ("wgmma.rs", "WgmmaMmaGroupValuesM64N128K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaGroupValuesM64N64K16F32F16Op"),
         ("wgmma.rs", "WgmmaMmaLoopValuesM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op"),
@@ -4691,6 +4693,58 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     );
     assert!(
         WgmmaMmaGroupValuesM64N64K16F32Bf16Op::new(wrong_result_type)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let wide_mma = Operation::new(
+        &mut ctx,
+        WgmmaMmaM64N128K16F32Bf16Op::get_concrete_op_info(),
+        vec![],
+        vec![accumulator_pointer, u64_value, u64_value],
+        vec![],
+        0,
+    );
+    assert!(
+        WgmmaMmaM64N128K16F32Bf16Op::new(wide_mma)
+            .verify(&ctx)
+            .is_ok()
+    );
+
+    let wide_value_group = WgmmaMmaGroupValuesM64N128K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 64],
+        vec![u64_value, u64_value],
+    );
+    {
+        let group_ref = wide_value_group.deref(&ctx);
+        assert_eq!(group_ref.get_num_operands(), 66);
+        assert_eq!(group_ref.get_num_results(), 64);
+    }
+    assert!(
+        WgmmaMmaGroupValuesM64N128K16F32Bf16Op::new(wide_value_group)
+            .verify(&ctx)
+            .is_ok()
+    );
+
+    let wide_too_few = WgmmaMmaGroupValuesM64N128K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 63],
+        vec![u64_value, u64_value],
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N128K16F32Bf16Op::new(wide_too_few)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let wide_incomplete_pair = WgmmaMmaGroupValuesM64N128K16F32Bf16Op::build(
+        &mut ctx,
+        vec![f32_value; 64],
+        vec![u64_value, u64_value, u64_value],
+    );
+    assert!(
+        WgmmaMmaGroupValuesM64N128K16F32Bf16Op::new(wide_incomplete_pair)
             .verify(&ctx)
             .is_err()
     );

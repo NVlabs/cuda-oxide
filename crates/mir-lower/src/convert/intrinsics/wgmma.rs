@@ -23,6 +23,7 @@ use pliron::result::Result;
 use pliron::r#type::TypeHandle;
 
 const VALUE_ACCUMULATOR_COUNT: usize = 32;
+const M64N128_VALUE_ACCUMULATOR_COUNT: usize = 64;
 const COUNTED_LOOP_CONTROL_COUNT: usize = 5;
 const COUNTED_PIPELINE_MAX_PENDING_GROUPS: u8 = 2;
 
@@ -105,27 +106,27 @@ fn deferred_group_template(mma_count: usize) -> String {
     template
 }
 
-fn value_accumulator_operand_list() -> String {
-    (0..VALUE_ACCUMULATOR_COUNT)
+fn value_accumulator_operand_list(accumulator_count: usize) -> String {
+    (0..accumulator_count)
         .map(|index| format!("${index}"))
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-fn value_group_template(mma_count: usize, input_kind: WgmmaInputKind) -> String {
+fn value_group_template_for_mnemonic(
+    mma_count: usize,
+    accumulator_count: usize,
+    mnemonic: &str,
+) -> String {
     let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
-    let accumulators = value_accumulator_operand_list();
-    let descriptor_base = VALUE_ACCUMULATOR_COUNT * 2;
-    let input_types = match input_kind {
-        WgmmaInputKind::Bf16 => "bf16.bf16",
-        WgmmaInputKind::F16 => "f16.f16",
-    };
+    let accumulators = value_accumulator_operand_list(accumulator_count);
+    let descriptor_base = accumulator_count * 2;
 
     for mma_index in 0..mma_count {
         let desc_a = descriptor_base + mma_index * 2;
         let desc_b = desc_a + 1;
         template.push_str(&format!(
-            "    wgmma.mma_async.sync.aligned.m64n64k16.f32.{input_types} \
+            "    {mnemonic} \
              {{{accumulators}}}, ${desc_a}, ${desc_b}, 1, 1, 1, 0, 0;\n"
         ));
     }
@@ -136,16 +137,38 @@ fn value_group_template(mma_count: usize, input_kind: WgmmaInputKind) -> String 
     template
 }
 
-fn value_group_constraints(descriptor_count: usize) -> String {
-    let mut constraints = vec!["=f".to_owned(); VALUE_ACCUMULATOR_COUNT];
-    constraints.extend((0..VALUE_ACCUMULATOR_COUNT).map(|index| index.to_string()));
+fn value_group_template(mma_count: usize, input_kind: WgmmaInputKind) -> String {
+    let input_types = match input_kind {
+        WgmmaInputKind::Bf16 => "bf16.bf16",
+        WgmmaInputKind::F16 => "f16.f16",
+    };
+    let mnemonic = format!("wgmma.mma_async.sync.aligned.m64n64k16.f32.{input_types}");
+    value_group_template_for_mnemonic(mma_count, VALUE_ACCUMULATOR_COUNT, &mnemonic)
+}
+
+fn value_group_template_m64n128_bf16(mma_count: usize) -> String {
+    value_group_template_for_mnemonic(
+        mma_count,
+        M64N128_VALUE_ACCUMULATOR_COUNT,
+        "wgmma.mma_async.sync.aligned.m64n128k16.f32.bf16.bf16",
+    )
+}
+
+fn value_group_constraints_for_count(accumulator_count: usize, descriptor_count: usize) -> String {
+    let mut constraints = vec!["=f".to_owned(); accumulator_count];
+    constraints.extend((0..accumulator_count).map(|index| index.to_string()));
     constraints.extend((0..descriptor_count).map(|_| "l".to_owned()));
     constraints.push("~{memory}".to_owned());
     constraints.join(",")
 }
 
+#[cfg(test)]
+fn value_group_constraints(descriptor_count: usize) -> String {
+    value_group_constraints_for_count(VALUE_ACCUMULATOR_COUNT, descriptor_count)
+}
+
 fn counted_loop_template() -> String {
-    let accumulators = value_accumulator_operand_list();
+    let accumulators = value_accumulator_operand_list(VALUE_ACCUMULATOR_COUNT);
     let descriptor_base = VALUE_ACCUMULATOR_COUNT * 2;
     let desc_a_base = descriptor_base;
     let desc_b_base = descriptor_base + 1;
@@ -358,41 +381,72 @@ pub(crate) fn convert_mma_group_values_f16(
     convert_mma_group_values_for_kind(ctx, rewriter, op, WgmmaInputKind::F16)
 }
 
+/// Lower a value-form BF16 m64n128 WGMMA full-drain group.
+pub(crate) fn convert_mma_group_values_m64n128_bf16(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mma_group_values_for_shape(
+        ctx,
+        rewriter,
+        op,
+        M64N128_VALUE_ACCUMULATOR_COUNT,
+        value_group_template_m64n128_bf16,
+    )
+}
+
 fn convert_mma_group_values_for_kind(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     input_kind: WgmmaInputKind,
 ) -> Result<()> {
+    convert_mma_group_values_for_shape(ctx, rewriter, op, VALUE_ACCUMULATOR_COUNT, |mma_count| {
+        value_group_template(mma_count, input_kind)
+    })
+}
+
+fn convert_mma_group_values_for_shape<F>(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    accumulator_count: usize,
+    template_builder: F,
+) -> Result<()>
+where
+    F: FnOnce(usize) -> String,
+{
     let loc = op.deref(ctx).loc();
     let result_count = op.deref(ctx).get_num_results();
     let operands: Vec<_> = op.deref(ctx).operands().collect();
 
-    if result_count != VALUE_ACCUMULATOR_COUNT {
+    if result_count != accumulator_count {
         return pliron::input_err_noloc!(
-            "value-form WGMMA group requires exactly 32 accumulator results"
+            "value-form WGMMA group requires exactly {accumulator_count} accumulator results"
         );
     }
-    if operands.len() < VALUE_ACCUMULATOR_COUNT + 2 {
+    if operands.len() < accumulator_count + 2 {
         return pliron::input_err_noloc!(
-            "value-form WGMMA group requires 32 accumulator inputs and one or more descriptor pairs"
+            "value-form WGMMA group requires {accumulator_count} accumulator inputs and one or more descriptor pairs"
         );
     }
 
-    let descriptor_count = operands.len() - VALUE_ACCUMULATOR_COUNT;
+    let descriptor_count = operands.len() - accumulator_count;
     if !descriptor_count.is_multiple_of(2) {
         return pliron::input_err_noloc!("value-form WGMMA group descriptors must form pairs");
     }
 
     let mma_count = descriptor_count / 2;
-    let template = value_group_template(mma_count, input_kind);
-    let constraints = value_group_constraints(descriptor_count);
+    let template = template_builder(mma_count);
+    let constraints = value_group_constraints_for_count(accumulator_count, descriptor_count);
 
     let f32_ty = FP32Type::get(ctx);
     let struct_ty: TypeHandle = llvm_types::StructType::get_unnamed(
         ctx,
         (
-            vec![f32_ty.into(); VALUE_ACCUMULATOR_COUNT],
+            vec![f32_ty.into(); accumulator_count],
             llvm_types::StructLayout::Unpacked,
         ),
     )
@@ -409,20 +463,15 @@ fn convert_mma_group_values_for_kind(
     );
 
     let aggregate = asm_op.deref(ctx).get_result(0);
-
-    let mut extracted_values = Vec::with_capacity(VALUE_ACCUMULATOR_COUNT);
-
-    for index in 0..VALUE_ACCUMULATOR_COUNT {
+    let mut extracted_values = Vec::with_capacity(accumulator_count);
+    for index in 0..accumulator_count {
         let extract = llvm::ExtractValueOp::new(ctx, aggregate, vec![index as u32])
             .map_err(|error| pliron::input_error!(loc.clone(), "{}", error))?;
-
         rewriter.insert_operation(ctx, extract.get_operation());
-
         extracted_values.push(extract.get_operation().deref(ctx).get_result(0));
     }
 
     rewriter.replace_operation_with_values(ctx, op, extracted_values);
-
     Ok(())
 }
 
@@ -674,6 +723,7 @@ mod tests {
         WgmmaInputKind, counted_loop_constraints, counted_loop_template,
         counted_pipeline_constraints, counted_pipeline_template, deferred_group_template,
         pipeline_constraints, pipeline_template, value_group_constraints, value_group_template,
+        value_group_template_m64n128_bf16,
     };
 
     #[test]
@@ -751,6 +801,19 @@ mod tests {
         assert!(!template.contains("st.f32"));
         assert!(template.contains("$64, $65"));
         assert!(template.contains("$66, $67"));
+    }
+
+    #[test]
+    fn m64n128_value_template_uses_sixty_four_tied_accumulators() {
+        let template = value_group_template_m64n128_bf16(2);
+        assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+        assert!(template.contains("m64n128k16.f32.bf16.bf16"));
+        assert!(template.contains("{$0, $1, $2"));
+        assert!(template.contains("$63}"));
+        assert!(template.contains("$128, $129"));
+        assert!(template.contains("$130, $131"));
+        assert!(!template.contains("ld.f32"));
+        assert!(!template.contains("st.f32"));
     }
 
     #[test]

@@ -7,21 +7,23 @@
 //! MIR-to-LLVM conversion.
 //!
 //! The public MMA operation exposes its accumulator through a pointer, but PTX
-//! requires all 32 accumulator registers to remain inaccessible until the
-//! corresponding `wgmma.wait_group` completes. This pass recognizes both closed
+//! requires accumulator registers to remain inaccessible until the corresponding
+//! `wgmma.wait_group` completes. This pass recognizes both closed
 //! straight-line regions and one deliberately narrow counted K-loop shape. The
-//! canonical `[[f32; 8]; 4]` accumulator is adapted through 32 scalar SSA values;
-//! unsupported BF16 accumulator shapes retain the existing deferred pointer
-//! fallback.
-//! F16 is accepted only for the canonical accumulator in a linear full-drain
-//! region; counted loops, partial waits, and pointer fallback remain BF16-only.
+//! canonical m64n64 `[[f32; 8]; 4]` accumulator is adapted through 32 scalar SSA
+//! values. BF16 m64n128 linear full drains use a canonical `[[f32; 8]; 8]`
+//! accumulator and 64 scalar SSA values. Unsupported m64n64 BF16 accumulator
+//! shapes retain the existing deferred pointer fallback. F16 m64n64 and BF16
+//! m64n128 are accepted only for canonical linear full-drain regions; counted
+//! loops, partial waits, and pointer fallback remain m64n64-BF16-only.
 //!
 //! Straight-line regions keep the existing shape:
 //!
 //! ```text
 //! wgmma.fence
-//! one or more homogeneous m64n64k16.f32.bf16.bf16 or
-//! m64n64k16.f32.f16.f16 MMA operations on one accumulator
+//! one or more homogeneous m64n64k16.f32.bf16.bf16,
+//! m64n64k16.f32.f16.f16, or m64n128k16.f32.bf16.bf16 MMA operations
+//! on one shape-correct accumulator
 //! wgmma.commit_group
 //! wgmma.wait_group<0>
 //! ```
@@ -60,9 +62,10 @@ use dialect_mir::{
 use dialect_nvvm::ops::{
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
     WgmmaMmaGroupValuesM64N64K16F32Bf16Op, WgmmaMmaGroupValuesM64N64K16F32F16Op,
-    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaGroupValuesM64N128K16F32Bf16Op, WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
+    WgmmaMmaM64N128K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaWaitGroupSyncAlignedOp,
 };
 use mir_transforms::analyses::{induction, loop_info::LoopInfo};
 use pliron::{
@@ -96,11 +99,14 @@ use std::num::NonZeroUsize;
 const ACCUMULATOR_ROWS: usize = 4;
 const ACCUMULATOR_COLUMNS: usize = 8;
 const ACCUMULATOR_LEN: usize = ACCUMULATOR_ROWS * ACCUMULATOR_COLUMNS;
+const M64N128_ACCUMULATOR_ROWS: usize = 8;
+const M64N128_ACCUMULATOR_LEN: usize = M64N128_ACCUMULATOR_ROWS * ACCUMULATOR_COLUMNS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LinearMmaKind {
-    Bf16,
-    F16,
+    Bf16M64N64,
+    F16M64N64,
+    Bf16M64N128,
 }
 
 struct FusionPlan {
@@ -888,9 +894,11 @@ fn require_pointer_mma_shape(ctx: &Context, operation: Ptr<Operation>) -> Result
 
 fn linear_mma_kind(ctx: &Context, operation: Ptr<Operation>) -> Option<LinearMmaKind> {
     if Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some() {
-        Some(LinearMmaKind::Bf16)
+        Some(LinearMmaKind::Bf16M64N64)
     } else if Operation::get_op::<WgmmaMmaM64N64K16F32F16Op>(operation, ctx).is_some() {
-        Some(LinearMmaKind::F16)
+        Some(LinearMmaKind::F16M64N64)
+    } else if Operation::get_op::<WgmmaMmaM64N128K16F32Bf16Op>(operation, ctx).is_some() {
+        Some(LinearMmaKind::Bf16M64N128)
     } else {
         None
     }
@@ -922,7 +930,11 @@ fn require_supported_accumulator(ctx: &Context, accumulator: Value) -> Result<()
     Ok(())
 }
 
-fn value_accumulator_shape(ctx: &Context, accumulator: Value) -> Option<(TypeHandle, TypeHandle)> {
+fn value_accumulator_shape_for_rows(
+    ctx: &Context,
+    accumulator: Value,
+    rows: usize,
+) -> Option<(TypeHandle, TypeHandle)> {
     let accumulator_type = accumulator.get_type(ctx);
     let accumulator_type_ref = accumulator_type.deref(ctx);
     let pointer_type = accumulator_type_ref.downcast_ref::<MirPtrType>()?;
@@ -933,7 +945,7 @@ fn value_accumulator_shape(ctx: &Context, accumulator: Value) -> Option<(TypeHan
     let outer_type = pointer_type.pointee;
     let outer_type_ref = outer_type.deref(ctx);
     let outer_array = outer_type_ref.downcast_ref::<MirArrayType>()?;
-    if outer_array.size() != ACCUMULATOR_ROWS as u64 {
+    if outer_array.size() != rows as u64 {
         return None;
     }
 
@@ -948,6 +960,25 @@ fn value_accumulator_shape(ctx: &Context, accumulator: Value) -> Option<(TypeHan
     element_type.deref(ctx).downcast_ref::<FP32Type>()?;
 
     Some((row_type, element_type))
+}
+
+fn value_accumulator_shape(ctx: &Context, accumulator: Value) -> Option<(TypeHandle, TypeHandle)> {
+    value_accumulator_shape_for_rows(ctx, accumulator, ACCUMULATOR_ROWS)
+}
+
+fn linear_accumulator_rows(kind: LinearMmaKind) -> usize {
+    match kind {
+        LinearMmaKind::Bf16M64N64 | LinearMmaKind::F16M64N64 => ACCUMULATOR_ROWS,
+        LinearMmaKind::Bf16M64N128 => M64N128_ACCUMULATOR_ROWS,
+    }
+}
+
+fn linear_value_accumulator_shape(
+    ctx: &Context,
+    accumulator: Value,
+    kind: LinearMmaKind,
+) -> Option<(TypeHandle, TypeHandle)> {
+    value_accumulator_shape_for_rows(ctx, accumulator, linear_accumulator_rows(kind))
 }
 
 fn insert_u64_constant_before(ctx: &mut Context, value: u64, before: Ptr<Operation>) -> Value {
@@ -987,28 +1018,30 @@ fn erase_original_sequence(
     rewriter.erase_operation(ctx, wait);
 }
 
-fn load_accumulator_values_before(
+fn load_accumulator_values_before_for_rows(
     ctx: &mut Context,
     before: Ptr<Operation>,
     accumulator: Value,
     row_type: TypeHandle,
     element_type: TypeHandle,
+    rows: usize,
     loc: pliron::location::Location,
 ) -> (Vec<Value>, Vec<Value>) {
     let row_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, row_type, true).into();
     let element_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, element_type, true).into();
 
-    let row_indices = (0..ACCUMULATOR_ROWS)
+    let row_indices = (0..rows)
         .map(|index| insert_u64_constant_before(ctx, index as u64, before))
         .collect::<Vec<_>>();
     let column_indices = (0..ACCUMULATOR_COLUMNS)
         .map(|index| insert_u64_constant_before(ctx, index as u64, before))
         .collect::<Vec<_>>();
 
-    let mut element_pointers = Vec::with_capacity(ACCUMULATOR_LEN);
-    let mut accumulator_values = Vec::with_capacity(ACCUMULATOR_LEN);
+    let accumulator_len = rows * ACCUMULATOR_COLUMNS;
+    let mut element_pointers = Vec::with_capacity(accumulator_len);
+    let mut accumulator_values = Vec::with_capacity(accumulator_len);
 
-    for row in 0..ACCUMULATOR_ROWS {
+    for row in 0..rows {
         let row_address = Operation::new(
             ctx,
             MirArrayElementAddrOp::get_concrete_op_info(),
@@ -1053,6 +1086,25 @@ fn load_accumulator_values_before(
     (element_pointers, accumulator_values)
 }
 
+fn load_accumulator_values_before(
+    ctx: &mut Context,
+    before: Ptr<Operation>,
+    accumulator: Value,
+    row_type: TypeHandle,
+    element_type: TypeHandle,
+    loc: pliron::location::Location,
+) -> (Vec<Value>, Vec<Value>) {
+    load_accumulator_values_before_for_rows(
+        ctx,
+        before,
+        accumulator,
+        row_type,
+        element_type,
+        ACCUMULATOR_ROWS,
+        loc,
+    )
+}
+
 fn store_accumulator_values_before(
     ctx: &mut Context,
     before: Ptr<Operation>,
@@ -1074,7 +1126,7 @@ fn store_accumulator_values_before(
     }
 }
 
-fn store_canonical_accumulator_values_before(
+fn store_canonical_accumulator_values_before_for_rows(
     ctx: &mut Context,
     before: Ptr<Operation>,
     accumulator: Value,
@@ -1083,18 +1135,19 @@ fn store_canonical_accumulator_values_before(
     accumulator_results: &[Value],
     loc: pliron::location::Location,
 ) {
-    debug_assert_eq!(accumulator_results.len(), ACCUMULATOR_LEN);
+    debug_assert_eq!(accumulator_results.len() % ACCUMULATOR_COLUMNS, 0);
+    let rows = accumulator_results.len() / ACCUMULATOR_COLUMNS;
 
     let row_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, row_type, true).into();
     let element_pointer_type: TypeHandle = MirPtrType::get_generic(ctx, element_type, true).into();
-    let row_indices = (0..ACCUMULATOR_ROWS)
+    let row_indices = (0..rows)
         .map(|index| insert_u64_constant_before(ctx, index as u64, before))
         .collect::<Vec<_>>();
     let column_indices = (0..ACCUMULATOR_COLUMNS)
         .map(|index| insert_u64_constant_before(ctx, index as u64, before))
         .collect::<Vec<_>>();
 
-    for row in 0..ACCUMULATOR_ROWS {
+    for row in 0..rows {
         let row_address = Operation::new(
             ctx,
             MirArrayElementAddrOp::get_concrete_op_info(),
@@ -1135,6 +1188,26 @@ fn store_canonical_accumulator_values_before(
     }
 }
 
+fn store_canonical_accumulator_values_before(
+    ctx: &mut Context,
+    before: Ptr<Operation>,
+    accumulator: Value,
+    row_type: TypeHandle,
+    element_type: TypeHandle,
+    accumulator_results: &[Value],
+    loc: pliron::location::Location,
+) {
+    store_canonical_accumulator_values_before_for_rows(
+        ctx,
+        before,
+        accumulator,
+        row_type,
+        element_type,
+        accumulator_results,
+        loc,
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn apply_value_plan(
     ctx: &mut Context,
@@ -1149,24 +1222,51 @@ fn apply_value_plan(
     element_type: TypeHandle,
 ) {
     let loc = fence.deref(ctx).loc();
-    let (element_pointers, accumulator_values) =
-        load_accumulator_values_before(ctx, wait, accumulator, row_type, element_type, loc.clone());
+    let rows = linear_accumulator_rows(kind);
+    let accumulator_count = rows * ACCUMULATOR_COLUMNS;
+    debug_assert!(
+        kind != LinearMmaKind::Bf16M64N128 || accumulator_count == M64N128_ACCUMULATOR_LEN
+    );
+    let (element_pointers, accumulator_values) = load_accumulator_values_before_for_rows(
+        ctx,
+        wait,
+        accumulator,
+        row_type,
+        element_type,
+        rows,
+        loc.clone(),
+    );
 
     let group = match kind {
-        LinearMmaKind::Bf16 => {
+        LinearMmaKind::Bf16M64N64 => {
             WgmmaMmaGroupValuesM64N64K16F32Bf16Op::build(ctx, accumulator_values, descriptors)
         }
-        LinearMmaKind::F16 => {
+        LinearMmaKind::F16M64N64 => {
             WgmmaMmaGroupValuesM64N64K16F32F16Op::build(ctx, accumulator_values, descriptors)
+        }
+        LinearMmaKind::Bf16M64N128 => {
+            WgmmaMmaGroupValuesM64N128K16F32Bf16Op::build(ctx, accumulator_values, descriptors)
         }
     };
     group.deref_mut(ctx).set_loc(loc.clone());
-    let accumulator_results = (0..ACCUMULATOR_LEN)
+    let accumulator_results = (0..accumulator_count)
         .map(|index| group.deref(ctx).get_result(index))
         .collect::<Vec<_>>();
     group.insert_before(ctx, wait);
 
-    store_accumulator_values_before(ctx, wait, element_pointers, accumulator_results, loc);
+    if kind == LinearMmaKind::Bf16M64N128 {
+        store_canonical_accumulator_values_before_for_rows(
+            ctx,
+            wait,
+            accumulator,
+            row_type,
+            element_type,
+            &accumulator_results,
+            loc,
+        );
+    } else {
+        store_accumulator_values_before(ctx, wait, element_pointers, accumulator_results, loc);
+    }
 
     erase_original_sequence(ctx, fence, mmas, commit, wait);
 }
@@ -1733,7 +1833,7 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
                 match kind {
                     Some(expected) if expected != current_kind => {
                         return pliron::input_err_noloc!(
-                            "one linear WGMMA full-drain region cannot mix BF16 and F16 MMA variants"
+                            "one linear WGMMA full-drain region cannot mix MMA variants or shapes"
                         );
                     }
                     None => kind = Some(current_kind),
@@ -1743,11 +1843,19 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
                 let operation_ref = operation.deref(ctx);
                 let current_accumulator = operation_ref.get_operand(0);
                 require_supported_accumulator(ctx, current_accumulator)?;
-                if current_kind == LinearMmaKind::F16
-                    && value_accumulator_shape(ctx, current_accumulator).is_none()
+                if matches!(
+                    current_kind,
+                    LinearMmaKind::F16M64N64 | LinearMmaKind::Bf16M64N128
+                ) && linear_value_accumulator_shape(ctx, current_accumulator, current_kind)
+                    .is_none()
                 {
+                    let expected = match current_kind {
+                        LinearMmaKind::F16M64N64 => "[[f32; 8]; 4]",
+                        LinearMmaKind::Bf16M64N128 => "[[f32; 8]; 8]",
+                        LinearMmaKind::Bf16M64N64 => unreachable!(),
+                    };
                     return pliron::input_err_noloc!(
-                        "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
+                        "WGMMA linear full-drain lowering for this variant requires a canonical {expected} accumulator"
                     );
                 }
                 match accumulator {
@@ -1912,7 +2020,7 @@ fn apply_plan(ctx: &mut Context, plan: FusionPlan) -> Result<()> {
         kind,
     } = plan;
 
-    if let Some((row_type, element_type)) = value_accumulator_shape(ctx, accumulator) {
+    if let Some((row_type, element_type)) = linear_value_accumulator_shape(ctx, accumulator, kind) {
         apply_value_plan(
             ctx,
             fence,
@@ -1925,11 +2033,16 @@ fn apply_plan(ctx: &mut Context, plan: FusionPlan) -> Result<()> {
             row_type,
             element_type,
         );
-    } else if kind == LinearMmaKind::Bf16 {
+    } else if kind == LinearMmaKind::Bf16M64N64 {
         apply_pointer_fallback(ctx, fence, mmas, commit, wait, accumulator, descriptors);
     } else {
+        let expected = match kind {
+            LinearMmaKind::F16M64N64 => "[[f32; 8]; 4]",
+            LinearMmaKind::Bf16M64N128 => "[[f32; 8]; 8]",
+            LinearMmaKind::Bf16M64N64 => unreachable!(),
+        };
         return pliron::input_err_noloc!(
-            "F16 WGMMA linear full-drain lowering requires a canonical [[f32; 8]; 4] accumulator"
+            "WGMMA linear full-drain lowering for this variant requires a canonical {expected} accumulator"
         );
     }
 
