@@ -13045,7 +13045,6 @@ fn is_cluster_sreg_source(source_record: &str) -> bool {
 #[derive(Clone)]
 struct ClusterSregRecipe {
     id: String,
-    abi_id: String,
     operation_key: String,
     source_suffix: String,
     llvm_suffix: String,
@@ -13064,7 +13063,6 @@ struct ClusterSregRecipe {
 #[derive(Clone, Copy)]
 struct ClusterSregXyzFamilyRecipe {
     id_prefix: &'static str,
-    abi_start: u16,
     operation_key_prefix: &'static str,
     source_prefix: &'static str,
     llvm_prefix: &'static str,
@@ -13086,7 +13084,6 @@ const CLUSTER_SREG_AXES: [&str; 3] = ["x", "y", "z"];
 const CLUSTER_SREG_XYZ_FAMILIES: [ClusterSregXyzFamilyRecipe; 4] = [
     ClusterSregXyzFamilyRecipe {
         id_prefix: "cluster_block_idx",
-        abi_start: 263,
         operation_key_prefix: "launch.cluster.block_index",
         source_prefix: "cluster_ctaid_",
         llvm_prefix: "cluster.ctaid.",
@@ -13104,7 +13101,6 @@ const CLUSTER_SREG_XYZ_FAMILIES: [ClusterSregXyzFamilyRecipe; 4] = [
     },
     ClusterSregXyzFamilyRecipe {
         id_prefix: "cluster_dim",
-        abi_start: 266,
         operation_key_prefix: "launch.cluster.dimension",
         source_prefix: "cluster_nctaid_",
         llvm_prefix: "cluster.nctaid.",
@@ -13122,7 +13118,6 @@ const CLUSTER_SREG_XYZ_FAMILIES: [ClusterSregXyzFamilyRecipe; 4] = [
     },
     ClusterSregXyzFamilyRecipe {
         id_prefix: "cluster_idx",
-        abi_start: 269,
         operation_key_prefix: "launch.cluster.index",
         source_prefix: "clusterid_",
         llvm_prefix: "clusterid.",
@@ -13140,7 +13135,6 @@ const CLUSTER_SREG_XYZ_FAMILIES: [ClusterSregXyzFamilyRecipe; 4] = [
     },
     ClusterSregXyzFamilyRecipe {
         id_prefix: "cluster_grid_dim",
-        abi_start: 272,
         operation_key_prefix: "launch.cluster.grid_dimension",
         source_prefix: "nclusterid_",
         llvm_prefix: "nclusterid.",
@@ -13161,11 +13155,10 @@ const CLUSTER_SREG_XYZ_FAMILIES: [ClusterSregXyzFamilyRecipe; 4] = [
 fn cluster_sreg_recipes() -> Vec<ClusterSregRecipe> {
     let mut recipes = Vec::with_capacity(14);
     for family in CLUSTER_SREG_XYZ_FAMILIES {
-        for (axis_index, axis) in CLUSTER_SREG_AXES.into_iter().enumerate() {
+        for axis in CLUSTER_SREG_AXES {
             let axis_upper = axis.to_ascii_uppercase();
             recipes.push(ClusterSregRecipe {
                 id: format!("{}_{axis}", family.id_prefix),
-                abi_id: format!("i{:04}", family.abi_start + axis_index as u16),
                 operation_key: format!("{}.{axis}", family.operation_key_prefix),
                 source_suffix: format!("{}{axis}", family.source_prefix),
                 llvm_suffix: format!("{}{axis}", family.llvm_prefix),
@@ -13191,7 +13184,6 @@ fn cluster_sreg_recipes() -> Vec<ClusterSregRecipe> {
     recipes.extend([
         ClusterSregRecipe {
             id: "cluster_block_rank".into(),
-            abi_id: "i0275".into(),
             operation_key: "launch.cluster.block_rank".into(),
             source_suffix: "cluster_ctarank".into(),
             llvm_suffix: "cluster.ctarank".into(),
@@ -13210,7 +13202,6 @@ fn cluster_sreg_recipes() -> Vec<ClusterSregRecipe> {
         },
         ClusterSregRecipe {
             id: "cluster_block_count".into(),
-            abi_id: "i0276".into(),
             operation_key: "launch.cluster.block_count".into(),
             source_suffix: "cluster_nctarank".into(),
             llvm_suffix: "cluster.nctarank".into(),
@@ -13252,7 +13243,7 @@ fn cluster_sreg_policy(recipe: ClusterSregRecipe) -> OverlayIntrinsic {
     let compatibility_rust_paths = recipe.compatibility_path.iter().cloned().collect();
     OverlayIntrinsic {
         id: recipe.id.clone(),
-        abi_id: recipe.abi_id,
+        abi_id: String::new(),
         operation_key: recipe.operation_key,
         family: "sreg".into(),
         source: None,
@@ -13362,8 +13353,7 @@ fn validate_cluster_sreg_policy(
         .cloned()
         .collect::<Vec<_>>();
     ensure!(
-        policy.abi_id == recipe.abi_id
-            && policy.operation_key == recipe.operation_key
+        policy.operation_key == recipe.operation_key
             && policy.source.is_none()
             && policy.source_record.as_deref() == Some(source_record.as_str())
             && policy.llvm_symbol.as_deref() == Some(llvm_symbol.as_str())
@@ -21701,8 +21691,6 @@ fn is_f8f6f4_mma_target_matrix_policy(policy: &OverlayIntrinsic) -> bool {
 struct RegisterMmaF8F6F4Contract {
     accumulator: RegisterMmaAccumulator,
     scalar_name: &'static str,
-    first_abi_number: usize,
-    first_abi_id: &'static str,
     rust_arguments: [&'static str; 3],
     rust_result: &'static str,
     dialect_operands: &'static [&'static str],
@@ -21721,8 +21709,6 @@ fn register_mma_f8f6f4_contract(
         RegisterMmaAccumulator::F16 => Ok(RegisterMmaF8F6F4Contract {
             accumulator,
             scalar_name: "f16",
-            first_abi_number: 479,
-            first_abi_id: "i0479",
             rust_arguments: ["[u32; 2]", "[u32; 4]", "[u32; 2]"],
             rust_result: "[u32; 2]",
             dialect_operands: &["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"],
@@ -21736,8 +21722,6 @@ fn register_mma_f8f6f4_contract(
         RegisterMmaAccumulator::F32 => Ok(RegisterMmaF8F6F4Contract {
             accumulator,
             scalar_name: "f32",
-            first_abi_number: 454,
-            first_abi_id: "i0454",
             rust_arguments: ["[f32; 4]", "[u32; 4]", "[u32; 2]"],
             rust_result: "[f32; 4]",
             dialect_operands: &[
@@ -21756,18 +21740,6 @@ fn register_mma_f8f6f4_contract(
     }
 }
 
-fn register_mma_f8f6f4_abi_id(
-    accumulator: RegisterMmaAccumulator,
-    a_index: usize,
-    b_index: usize,
-) -> Result<String> {
-    let contract = register_mma_f8f6f4_contract(accumulator)?;
-    Ok(format!(
-        "i{:04}",
-        contract.first_abi_number + a_index * REGISTER_MMA_F8F6F4_ELEMENTS.len() + b_index
-    ))
-}
-
 fn expand_register_mma_f8f6f4_admission(
     admission: &RegisterMmaF8F6F4Admission,
     accumulator: RegisterMmaAccumulator,
@@ -21781,12 +21753,6 @@ fn expand_register_mma_f8f6f4_admission(
         !admission.llvm_evidence_profile.trim().is_empty()
             && !admission.libnvvm_evidence_profile.trim().is_empty(),
         "dense f8f6f4 MMA admission requires both backend evidence profiles"
-    );
-    ensure!(
-        admission.first_abi_id == contract.first_abi_id,
-        "dense f8f6f4 {} MMA admission must begin at ABI {}",
-        contract.summary_accumulator,
-        contract.first_abi_id
     );
     ensure!(
         admission.a_elements == REGISTER_MMA_F8F6F4_ELEMENTS
@@ -21805,8 +21771,8 @@ fn expand_register_mma_f8f6f4_admission(
     );
 
     let mut records = Vec::with_capacity(admission.product_count);
-    for (a_index, &a_element) in admission.a_elements.iter().enumerate() {
-        for (b_index, &b_element) in admission.b_elements.iter().enumerate() {
+    for &a_element in &admission.a_elements {
+        for &b_element in &admission.b_elements {
             let a = register_mma_f8f6f4_element_name(a_element)
                 .expect("validated dense f8f6f4 A element");
             let b = register_mma_f8f6f4_element_name(b_element)
@@ -21836,7 +21802,7 @@ fn expand_register_mma_f8f6f4_admission(
 
             records.push(OverlayIntrinsic {
                 id: id.clone(),
-                abi_id: register_mma_f8f6f4_abi_id(accumulator, a_index, b_index)?,
+                abi_id: String::new(),
                 operation_key: format!(
                     "matrix.mma.m16n8k32.row.col.kind_f8f6f4.{scalar}.{a}.{b}.{scalar}"
                 ),
@@ -21974,18 +21940,6 @@ fn expand_register_mma_f8f6f4_admission(
     Ok(records)
 }
 
-const REGISTER_MMA_MXF8F6F4_FIRST_ABI_NUMBER: usize = 858;
-const REGISTER_MMA_MXF8F6F4_FIRST_ABI_ID: &str = "i0858";
-
-fn register_mma_mxf8f6f4_abi_id(a_index: usize, b_index: usize) -> String {
-    format!(
-        "i{:04}",
-        REGISTER_MMA_MXF8F6F4_FIRST_ABI_NUMBER
-            + a_index * REGISTER_MMA_F8F6F4_ELEMENTS.len()
-            + b_index
-    )
-}
-
 fn expand_register_mma_mxf8f6f4_admission(
     admission: &RegisterMmaF8F6F4Admission,
 ) -> Result<Vec<OverlayIntrinsic>> {
@@ -21997,11 +21951,6 @@ fn expand_register_mma_mxf8f6f4_admission(
         !admission.llvm_evidence_profile.trim().is_empty()
             && !admission.libnvvm_evidence_profile.trim().is_empty(),
         "dense mxf8f6f4 MMA admission requires both backend evidence profiles"
-    );
-    ensure!(
-        admission.first_abi_id == REGISTER_MMA_MXF8F6F4_FIRST_ABI_ID,
-        "dense mxf8f6f4 F32 MMA admission must begin at ABI {}",
-        REGISTER_MMA_MXF8F6F4_FIRST_ABI_ID
     );
     ensure!(
         admission.a_elements == REGISTER_MMA_F8F6F4_ELEMENTS
@@ -22033,8 +21982,8 @@ fn expand_register_mma_mxf8f6f4_admission(
     let dialect_results = ["f32", "f32", "f32", "f32"];
 
     let mut records = Vec::with_capacity(admission.product_count);
-    for (a_index, &a_element) in admission.a_elements.iter().enumerate() {
-        for (b_index, &b_element) in admission.b_elements.iter().enumerate() {
+    for &a_element in &admission.a_elements {
+        for &b_element in &admission.b_elements {
             let a = register_mma_f8f6f4_element_name(a_element)
                 .expect("validated dense mxf8f6f4 A element");
             let b = register_mma_f8f6f4_element_name(b_element)
@@ -22064,7 +22013,7 @@ fn expand_register_mma_mxf8f6f4_admission(
 
             records.push(OverlayIntrinsic {
                 id: id.clone(),
-                abi_id: register_mma_mxf8f6f4_abi_id(a_index, b_index),
+                abi_id: String::new(),
                 operation_key: format!(
                     "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.{a}.{b}.f32.ue8m0"
                 ),
@@ -22230,16 +22179,6 @@ fn register_mma_fp8_minimum_ptx(
     }
 }
 
-fn register_mma_fp8_abi_id(
-    shape_index: usize,
-    accumulator_index: usize,
-    a_index: usize,
-    b_index: usize,
-) -> String {
-    let offset = shape_index * 8 + accumulator_index * 4 + a_index * 2 + b_index;
-    format!("i{:04}", 504 + offset)
-}
-
 fn expand_register_mma_fp8_admission(
     admission: &RegisterMmaFp8Admission,
 ) -> Result<Vec<OverlayIntrinsic>> {
@@ -22253,8 +22192,7 @@ fn expand_register_mma_fp8_admission(
         "standard FP8 MMA admission requires both backend evidence profiles"
     );
     ensure!(
-        admission.first_abi_id == "i0504"
-            && admission.shapes == REGISTER_MMA_FP8_SHAPES
+        admission.shapes == REGISTER_MMA_FP8_SHAPES
             && admission.accumulators == REGISTER_MMA_FP8_ACCUMULATORS
             && admission.a_elements == REGISTER_MMA_FP8_ELEMENTS
             && admission.b_elements == REGISTER_MMA_FP8_ELEMENTS
@@ -22263,9 +22201,9 @@ fn expand_register_mma_fp8_admission(
     );
 
     let mut records = Vec::with_capacity(admission.product_count);
-    for (shape_index, &shape) in admission.shapes.iter().enumerate() {
+    for &shape in &admission.shapes {
         let (shape_name, a_count, b_count) = register_mma_fp8_shape_contract(shape)?;
-        for (accumulator_index, &accumulator) in admission.accumulators.iter().enumerate() {
+        for &accumulator in &admission.accumulators {
             let minimum_ptx = register_mma_fp8_minimum_ptx(shape, accumulator);
             let (scalar, rust_arguments, rust_result, dialect_operands, dialect_results, adapter) =
                 match accumulator {
@@ -22337,8 +22275,8 @@ fn expand_register_mma_fp8_admission(
             };
             let result_count = dialect_results.len();
 
-            for (a_index, &a_element) in admission.a_elements.iter().enumerate() {
-                for (b_index, &b_element) in admission.b_elements.iter().enumerate() {
+            for &a_element in &admission.a_elements {
+                for &b_element in &admission.b_elements {
                     let a = register_mma_fp8_element_name(a_element)
                         .expect("validated standard FP8 A element");
                     let b = register_mma_fp8_element_name(b_element)
@@ -22365,12 +22303,7 @@ fn expand_register_mma_fp8_admission(
                     };
                     records.push(OverlayIntrinsic {
                         id: id.clone(),
-                        abi_id: register_mma_fp8_abi_id(
-                            shape_index,
-                            accumulator_index,
-                            a_index,
-                            b_index,
-                        ),
+                        abi_id: String::new(),
                         operation_key: format!(
                             "matrix.mma.{shape_name}.row.col.standard_fp8.{scalar}.{a}.{b}.{scalar}"
                         ),
@@ -22519,17 +22452,15 @@ fn expand_register_mma_ampere_float_admission(
         "Ampere floating-point MMA admission requires both backend evidence profiles"
     );
     ensure!(
-        admission.first_abi_id == "i0520"
-            && admission.product_count == REGISTER_MMA_AMPERE_FLOAT_VARIANTS.len()
+        admission.product_count == REGISTER_MMA_AMPERE_FLOAT_VARIANTS.len()
             && admission.variants == REGISTER_MMA_AMPERE_FLOAT_VARIANTS,
-        "Ampere floating-point MMA admission must retain the five reviewed variants in ABI order"
+        "Ampere floating-point MMA admission must retain the five reviewed variants in canonical order"
     );
 
     admission
         .variants
         .iter()
-        .enumerate()
-        .map(|(index, variant)| {
+        .map(|variant| {
             let adapter = match (variant.shape, variant.accumulator) {
                 (RegisterMmaShape::M16n8k4, RegisterMmaAccumulator::F32)
                 | (RegisterMmaShape::M16n8k8, RegisterMmaAccumulator::F32) => {
@@ -22561,15 +22492,9 @@ fn expand_register_mma_ampere_float_admission(
             let recipe = register_mma_recipe(&mma).with_context(|| {
                 "Ampere floating-point MMA admission requests a variant outside the closed recipe set"
             })?;
-            let expected_abi_id = format!("i{:04}", 520 + index);
-            ensure!(
-                recipe.abi_id == expected_abi_id,
-                "Ampere floating-point MMA recipe changed ABI order"
-            );
-
             Ok(OverlayIntrinsic {
                 id: recipe.id.into(),
-                abi_id: recipe.abi_id.into(),
+                abi_id: String::new(),
                 operation_key: recipe.operation_key.into(),
                 family: "register_mma".into(),
                 source: None,
@@ -23470,26 +23395,6 @@ const SPARSE_MMA_F8F6F4_ELEMENTS: [SparseMmaElement; 5] = [
     SparseMmaElement::E5m2,
 ];
 
-fn sparse_mma_f8f6f4_f16_abi_id(a_index: usize, b_index: usize) -> String {
-    format!(
-        "i{:04}",
-        525 + a_index * SPARSE_MMA_F8F6F4_ELEMENTS.len() + b_index
-    )
-}
-
-fn sparse_mma_f8f6f4_f16_expected_abi_id(mma: &SparseMma) -> Option<String> {
-    if mma.accumulator != SparseMmaAccumulator::F16 {
-        return None;
-    }
-    let a_index = SPARSE_MMA_F8F6F4_ELEMENTS
-        .iter()
-        .position(|&element| element == mma.a_element)?;
-    let b_index = SPARSE_MMA_F8F6F4_ELEMENTS
-        .iter()
-        .position(|&element| element == mma.b_element)?;
-    Some(sparse_mma_f8f6f4_f16_abi_id(a_index, b_index))
-}
-
 fn expand_sparse_mma_f8f6f4_f16_admission(
     admission: &SparseMmaF8F6F4F16Admission,
 ) -> Result<Vec<OverlayIntrinsic>> {
@@ -23503,10 +23408,6 @@ fn expand_sparse_mma_f8f6f4_f16_admission(
         "sparse f8f6f4 F16 MMA admission requires both backend evidence profiles"
     );
     ensure!(
-        admission.first_abi_id == "i0525",
-        "sparse f8f6f4 F16 MMA admission must begin at ABI i0525"
-    );
-    ensure!(
         admission.a_elements == SPARSE_MMA_F8F6F4_ELEMENTS
             && admission.b_elements == SPARSE_MMA_F8F6F4_ELEMENTS
             && admission.product_count == 25,
@@ -23514,8 +23415,8 @@ fn expand_sparse_mma_f8f6f4_f16_admission(
     );
 
     let mut records = Vec::with_capacity(admission.product_count);
-    for (a_index, &a_element) in admission.a_elements.iter().enumerate() {
-        for (b_index, &b_element) in admission.b_elements.iter().enumerate() {
+    for &a_element in &admission.a_elements {
+        for &b_element in &admission.b_elements {
             let carrier = sparse_mma_f8f6f4_f16_carrier_recipe(
                 SparseMmaShape::M16n8k64,
                 a_element,
@@ -23548,7 +23449,7 @@ fn expand_sparse_mma_f8f6f4_f16_admission(
                 sparse_mma_element_name(b_element),
             );
             records.push(sparse_mma_overlay_record(
-                sparse_mma_f8f6f4_f16_abi_id(a_index, b_index),
+                String::new(),
                 mma,
                 recipe,
                 &admission.llvm_evidence_profile,
@@ -23684,11 +23585,8 @@ fn validate_sparse_mma_policy(
     let identity = &recipe.identity;
     let minimum_ptx = sparse_mma_minimum_ptx(mma);
     let (targets, minimum_sm) = sparse_mma_hardware(mma);
-    let abi_matches =
-        sparse_mma_f8f6f4_f16_expected_abi_id(mma).is_none_or(|abi_id| policy.abi_id == abi_id);
     ensure!(
-        abi_matches
-            && policy.id == identity.id
+        policy.id == identity.id
             && policy.operation_key == identity.operation_key
             && policy.source.is_none()
             && policy.source_record.as_deref() == Some(identity.source_record.as_str())
@@ -23799,9 +23697,17 @@ fn validate_register_mma_policy(
     }
     let recipe = register_mma_recipe(mma)
         .with_context(|| format!("{} requests an unsupported register-MMA variant", policy.id))?;
+    let abi_matches = matches!(
+        recipe.id,
+        "mma_m16n8k4_f32_tf32"
+            | "mma_m16n8k8_f16_f16"
+            | "mma_m16n8k8_f32_bf16"
+            | "mma_m16n8k8_f32_f16"
+            | "mma_m16n8k16_f16_f16"
+    ) || policy.abi_id == recipe.abi_id;
     ensure!(
         policy.id == recipe.id
-            && policy.abi_id == recipe.abi_id
+            && abi_matches
             && policy.operation_key == recipe.operation_key
             && policy.source.is_none()
             && policy.source_record.as_deref() == Some(recipe.source_record)
@@ -23864,12 +23770,12 @@ fn validate_register_mma_policy(
         policy.id
     );
     // These are imported facts. The BF16 selection is underconstrained.
-    let ampere_float_predicates = match recipe.abi_id {
-        "i0520" | "i0524" => Some([
+    let ampere_float_predicates = match recipe.id {
+        "mma_m16n8k4_f32_tf32" | "mma_m16n8k16_f16_f16" => Some([
             "Subtarget->getSmVersion() >= 80",
             "Subtarget->getPTXVersion() >= 70",
         ]),
-        "i0521" | "i0522" | "i0523" => Some([
+        "mma_m16n8k8_f16_f16" | "mma_m16n8k8_f32_bf16" | "mma_m16n8k8_f32_f16" => Some([
             "Subtarget->getPTXVersion() >= 65",
             "Subtarget->getSmVersion() >= 75",
         ]),
@@ -23922,22 +23828,26 @@ fn validate_register_mma_fp8_policy(
     declaration: &ImportedIntrinsic,
     mma: &RegisterMma,
 ) -> Result<()> {
-    let shape_index = REGISTER_MMA_FP8_SHAPES
-        .iter()
-        .position(|value| *value == mma.shape)
-        .with_context(|| format!("{} has an unsupported standard FP8 shape", policy.id))?;
-    let accumulator_index = REGISTER_MMA_FP8_ACCUMULATORS
-        .iter()
-        .position(|value| *value == mma.accumulator)
-        .with_context(|| format!("{} has an unsupported standard FP8 accumulator", policy.id))?;
-    let a_index = REGISTER_MMA_FP8_ELEMENTS
-        .iter()
-        .position(|value| *value == mma.a_element)
-        .with_context(|| format!("{} has an unsupported standard FP8 A element", policy.id))?;
-    let b_index = REGISTER_MMA_FP8_ELEMENTS
-        .iter()
-        .position(|value| *value == mma.b_element)
-        .with_context(|| format!("{} has an unsupported standard FP8 B element", policy.id))?;
+    ensure!(
+        REGISTER_MMA_FP8_SHAPES.contains(&mma.shape),
+        "{} has an unsupported standard FP8 shape",
+        policy.id
+    );
+    ensure!(
+        REGISTER_MMA_FP8_ACCUMULATORS.contains(&mma.accumulator),
+        "{} has an unsupported standard FP8 accumulator",
+        policy.id
+    );
+    ensure!(
+        REGISTER_MMA_FP8_ELEMENTS.contains(&mma.a_element),
+        "{} has an unsupported standard FP8 A element",
+        policy.id
+    );
+    ensure!(
+        REGISTER_MMA_FP8_ELEMENTS.contains(&mma.b_element),
+        "{} has an unsupported standard FP8 B element",
+        policy.id
+    );
     let (shape_name, a_count, b_count) = register_mma_fp8_shape_contract(mma.shape)?;
     let minimum_ptx = register_mma_fp8_minimum_ptx(mma.shape, mma.accumulator);
     let a = register_mma_fp8_element_name(mma.a_element).expect("validated A element");
@@ -24022,8 +23932,6 @@ fn validate_register_mma_fp8_policy(
 
     ensure!(
         policy.id == expected_id
-            && policy.abi_id
-                == register_mma_fp8_abi_id(shape_index, accumulator_index, a_index, b_index)
             && policy.operation_key
                 == format!(
                     "matrix.mma.{shape_name}.row.col.standard_fp8.{scalar}.{a}.{b}.{scalar}"
@@ -24159,14 +24067,6 @@ fn validate_register_mma_f8f6f4_policy(
         .with_context(|| format!("{} has a non-f8f6f4 A format", policy.id))?;
     let b = register_mma_f8f6f4_element_name(mma.b_element)
         .with_context(|| format!("{} has a non-f8f6f4 B format", policy.id))?;
-    let a_index = REGISTER_MMA_F8F6F4_ELEMENTS
-        .iter()
-        .position(|element| *element == mma.a_element)
-        .expect("validated A format");
-    let b_index = REGISTER_MMA_F8F6F4_ELEMENTS
-        .iter()
-        .position(|element| *element == mma.b_element)
-        .expect("validated B format");
     let scalar = contract.scalar_name;
     let expected_id = format!("mma_m16n8k32_{scalar}_{a}_{b}");
     let expected_source =
@@ -24175,7 +24075,6 @@ fn validate_register_mma_f8f6f4_policy(
         format!("llvm.nvvm.mma.m16n8k32.row.col.kind.f8f6f4.{scalar}.{a}.{b}.{scalar}");
     ensure!(
         policy.id == expected_id
-            && policy.abi_id == register_mma_f8f6f4_abi_id(contract.accumulator, a_index, b_index)?
             && policy.operation_key
                 == format!("matrix.mma.m16n8k32.row.col.kind_f8f6f4.{scalar}.{a}.{b}.{scalar}")
             && policy.source.is_none()
@@ -24323,14 +24222,6 @@ fn validate_register_mma_mxf8f6f4_policy(
         .with_context(|| format!("{} has a non-mxf8f6f4 A format", policy.id))?;
     let b = register_mma_f8f6f4_element_name(mma.b_element)
         .with_context(|| format!("{} has a non-mxf8f6f4 B format", policy.id))?;
-    let a_index = REGISTER_MMA_F8F6F4_ELEMENTS
-        .iter()
-        .position(|element| *element == mma.a_element)
-        .expect("validated A format");
-    let b_index = REGISTER_MMA_F8F6F4_ELEMENTS
-        .iter()
-        .position(|element| *element == mma.b_element)
-        .expect("validated B format");
     let expected_id = format!("mma_m16n8k32_mxf8f6f4_f32_{a}_{b}");
     let expected_source =
         format!("int_nvvm_mma_block_scale_m16n8k32_row_col_mxf8f6f4_f32_{a}_{b}_f32_ue8m0");
@@ -24350,7 +24241,6 @@ fn validate_register_mma_mxf8f6f4_policy(
     let results = ["f32", "f32", "f32", "f32"];
     ensure!(
         policy.id == expected_id
-            && policy.abi_id == register_mma_mxf8f6f4_abi_id(a_index, b_index)
             && policy.operation_key
                 == format!(
                     "matrix.mma.m16n8k32.row.col.kind_mxf8f6f4.scale_vec_1x.f32.{a}.{b}.f32.ue8m0"
@@ -31665,7 +31555,7 @@ mod tests {
             llvm_evidence_profile: "llvm-test".into(),
             libnvvm_evidence_profile: "libnvvm-test".into(),
             runtime_validation: RuntimeValidation::Unexecuted,
-            first_abi_id: "i0525".into(),
+            _legacy_first_abi_id: Some("i0525".into()),
             a_elements: SPARSE_MMA_F8F6F4_ELEMENTS.into(),
             b_elements: SPARSE_MMA_F8F6F4_ELEMENTS.into(),
             product_count: 25,
@@ -31673,15 +31563,14 @@ mod tests {
     }
 
     fn test_register_mma_f8f6f4_admission(
-        accumulator: RegisterMmaAccumulator,
+        _accumulator: RegisterMmaAccumulator,
     ) -> RegisterMmaF8F6F4Admission {
-        let contract = register_mma_f8f6f4_contract(accumulator).unwrap();
         let formats = REGISTER_MMA_F8F6F4_ELEMENTS.to_vec();
         RegisterMmaF8F6F4Admission {
             llvm_evidence_profile: "llvm-test".into(),
             libnvvm_evidence_profile: "libnvvm-test".into(),
             runtime_validation: RuntimeValidation::Unexecuted,
-            first_abi_id: contract.first_abi_id.into(),
+            _legacy_first_abi_id: None,
             a_elements: formats.clone(),
             b_elements: formats,
             product_count: 25,
@@ -31696,7 +31585,7 @@ mod tests {
             llvm_evidence_profile: "llvm-fp8-test".into(),
             libnvvm_evidence_profile: "libnvvm-fp8-test".into(),
             runtime_validation: RuntimeValidation::Unexecuted,
-            first_abi_id: "i0504".into(),
+            _legacy_first_abi_id: Some("i0504".into()),
             shapes: REGISTER_MMA_FP8_SHAPES.into(),
             accumulators: REGISTER_MMA_FP8_ACCUMULATORS.into(),
             a_elements: REGISTER_MMA_FP8_ELEMENTS.into(),
@@ -31710,7 +31599,7 @@ mod tests {
             llvm_evidence_profile: "llvm-ampere-float-test".into(),
             libnvvm_evidence_profile: "libnvvm-ampere-float-test".into(),
             runtime_validation: RuntimeValidation::Unexecuted,
-            first_abi_id: "i0520".into(),
+            _legacy_first_abi_id: Some("i0520".into()),
             product_count: 5,
             variants: REGISTER_MMA_AMPERE_FLOAT_VARIANTS.into(),
         }
@@ -32992,8 +32881,9 @@ scope = "system"
     #[test]
     fn pinned_cluster_sregs_preserve_helpers_and_reject_unused_w_components() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let (overlay, _) =
+        let (mut overlay, _) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        bind_pinned_abi_ids(&repo_root, &mut overlay);
         let imported: ImportedFile =
             read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
         let declarations = imported
@@ -33113,8 +33003,13 @@ scope = "system"
         let admission = test_sparse_mma_f8f6f4_f16_admission();
         let records = expand_sparse_mma_f8f6f4_f16_admission(&admission).unwrap();
         assert_eq!(records.len(), 25);
+        assert!(records.iter().all(|record| record.abi_id.is_empty()));
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut bound = overlay_file(records.clone());
+        bind_pinned_abi_ids(&repo_root, &mut bound);
         assert_eq!(
-            records
+            bound
+                .intrinsics
                 .iter()
                 .map(|record| record.abi_id.clone())
                 .collect::<Vec<_>>(),
@@ -33203,9 +33098,14 @@ scope = "system"
         wrong_count.product_count = 24;
         assert!(expand_sparse_mma_f8f6f4_f16_admission(&wrong_count).is_err());
 
-        let mut wrong_first_id = admission.clone();
-        wrong_first_id.first_abi_id = "i0526".into();
-        assert!(expand_sparse_mma_f8f6f4_f16_admission(&wrong_first_id).is_err());
+        let mut legacy_first_id = admission.clone();
+        legacy_first_id._legacy_first_abi_id = Some("i9999".into());
+        assert!(
+            expand_sparse_mma_f8f6f4_f16_admission(&legacy_first_id)
+                .unwrap()
+                .iter()
+                .all(|record| record.abi_id.is_empty())
+        );
 
         let mut missing_evidence = admission.clone();
         missing_evidence.llvm_evidence_profile.clear();
@@ -33261,8 +33161,13 @@ scope = "system"
             let admission = test_register_mma_f8f6f4_admission(accumulator);
             let records = expand_register_mma_f8f6f4_admission(&admission, accumulator).unwrap();
             assert_eq!(records.len(), 25);
+            assert!(records.iter().all(|record| record.abi_id.is_empty()));
+            let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            let mut bound = overlay_file(records.clone());
+            bind_pinned_abi_ids(&repo_root, &mut bound);
             assert_eq!(
-                records
+                bound
+                    .intrinsics
                     .iter()
                     .map(|record| record.abi_id.clone())
                     .collect::<Vec<_>>(),
@@ -33298,9 +33203,14 @@ scope = "system"
             wrong_count.product_count = 24;
             assert!(expand_register_mma_f8f6f4_admission(&wrong_count, accumulator).is_err());
 
-            let mut wrong_first_id = admission.clone();
-            wrong_first_id.first_abi_id = "i9999".into();
-            assert!(expand_register_mma_f8f6f4_admission(&wrong_first_id, accumulator).is_err());
+            let mut legacy_first_id = admission.clone();
+            legacy_first_id._legacy_first_abi_id = Some("i9999".into());
+            assert!(
+                expand_register_mma_f8f6f4_admission(&legacy_first_id, accumulator)
+                    .unwrap()
+                    .iter()
+                    .all(|record| record.abi_id.is_empty())
+            );
 
             let mut reordered_targets = admission.clone();
             reordered_targets.targets.swap(0, 1);
@@ -33326,8 +33236,13 @@ scope = "system"
         let admission = test_register_mma_fp8_admission();
         let records = expand_register_mma_fp8_admission(&admission).unwrap();
         assert_eq!(records.len(), 16);
+        assert!(records.iter().all(|record| record.abi_id.is_empty()));
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut bound = overlay_file(records.clone());
+        bind_pinned_abi_ids(&repo_root, &mut bound);
         assert_eq!(
-            records
+            bound
+                .intrinsics
                 .iter()
                 .map(|record| record.abi_id.clone())
                 .collect::<Vec<_>>(),
@@ -33439,9 +33354,14 @@ scope = "system"
         let mut wrong = admission.clone();
         wrong.product_count = 15;
         assert!(expand_register_mma_fp8_admission(&wrong).is_err());
-        let mut wrong = admission.clone();
-        wrong.first_abi_id = "i0505".into();
-        assert!(expand_register_mma_fp8_admission(&wrong).is_err());
+        let mut legacy_first_id = admission.clone();
+        legacy_first_id._legacy_first_abi_id = Some("i9999".into());
+        assert!(
+            expand_register_mma_fp8_admission(&legacy_first_id)
+                .unwrap()
+                .iter()
+                .all(|record| record.abi_id.is_empty())
+        );
         let mut wrong = admission;
         wrong.runtime_validation = RuntimeValidation::Executed;
         assert!(expand_register_mma_fp8_admission(&wrong).is_err());
@@ -33452,8 +33372,13 @@ scope = "system"
         let admission = test_register_mma_ampere_float_admission();
         let records = expand_register_mma_ampere_float_admission(&admission).unwrap();
         assert_eq!(records.len(), 5);
+        assert!(records.iter().all(|record| record.abi_id.is_empty()));
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut bound = overlay_file(records.clone());
+        bind_pinned_abi_ids(&repo_root, &mut bound);
         assert_eq!(
-            records
+            bound
+                .intrinsics
                 .iter()
                 .map(|record| (record.abi_id.as_str(), record.id.as_str()))
                 .collect::<Vec<_>>(),
@@ -33485,9 +33410,14 @@ scope = "system"
         let mut reordered = admission.clone();
         reordered.variants.swap(0, 1);
         assert!(expand_register_mma_ampere_float_admission(&reordered).is_err());
-        let mut wrong = admission.clone();
-        wrong.first_abi_id = "i0521".into();
-        assert!(expand_register_mma_ampere_float_admission(&wrong).is_err());
+        let mut legacy_first_id = admission.clone();
+        legacy_first_id._legacy_first_abi_id = Some("i9999".into());
+        assert!(
+            expand_register_mma_ampere_float_admission(&legacy_first_id)
+                .unwrap()
+                .iter()
+                .all(|record| record.abi_id.is_empty())
+        );
         let mut wrong = admission.clone();
         wrong.product_count = 4;
         assert!(expand_register_mma_ampere_float_admission(&wrong).is_err());
@@ -33518,6 +33448,9 @@ scope = "system"
             expand_register_mma_ampere_float_admission(&test_register_mma_ampere_float_admission())
                 .unwrap();
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut overlay = overlay_file(records);
+        bind_pinned_abi_ids(&repo_root, &mut overlay);
+        let records = overlay.intrinsics;
         let imported: ImportedFile =
             read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
         let declarations = imported
@@ -33529,8 +33462,8 @@ scope = "system"
         for record in &records {
             let declaration = declarations[record.source_record.as_deref().unwrap()];
             validate_imported_policy(record, declaration).unwrap();
-            let expected_predicates = match record.abi_id.as_str() {
-                "i0520" | "i0524" => [
+            let expected_predicates = match record.id.as_str() {
+                "mma_m16n8k4_f32_tf32" | "mma_m16n8k16_f16_f16" => [
                     "Subtarget->getSmVersion() >= 80",
                     "Subtarget->getPTXVersion() >= 70",
                 ],
@@ -33579,6 +33512,9 @@ scope = "system"
         let records =
             expand_register_mma_fp8_admission(&test_register_mma_fp8_admission()).unwrap();
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut overlay = overlay_file(records);
+        bind_pinned_abi_ids(&repo_root, &mut overlay);
+        let records = overlay.intrinsics;
         let imported: ImportedFile =
             read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
         let declarations = imported
@@ -36478,8 +36414,9 @@ scope = "system"
     #[test]
     fn pinned_register_mma_records_match_the_closed_recipes_and_fail_closed() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let (overlay, _) =
+        let (mut overlay, _) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        bind_pinned_abi_ids(&repo_root, &mut overlay);
         let imported: ImportedFile =
             read_json(&repo_root.join("intrinsics/imported.json")).unwrap();
         let declarations: BTreeMap<_, _> = imported
@@ -37369,11 +37306,6 @@ scope = "system"
         assert!(validate_imported_policy(&widened_architecture, f8f6f4_declaration).is_err());
 
         let f8f6f4_f16 = f16_records[0];
-        let f8f6f4_f16_declaration = declarations[f8f6f4_f16.source_record.as_deref().unwrap()];
-        let mut wrong_abi = f8f6f4_f16.clone();
-        wrong_abi.abi_id = "i0526".into();
-        assert!(validate_imported_policy(&wrong_abi, f8f6f4_f16_declaration).is_err());
-
         for block_scale in [f8f6f4, f8f6f4_f16] {
             let mut missing_predicate =
                 declarations[block_scale.source_record.as_deref().unwrap()].clone();
