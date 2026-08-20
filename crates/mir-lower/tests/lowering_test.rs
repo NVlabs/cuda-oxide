@@ -10690,12 +10690,14 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
 }
 
 #[test]
-fn test_f16_wgmma_counted_k_loop_remains_unsupported() -> Result<(), anyhow::Error> {
+fn test_f16_wgmma_counted_k_loop_stays_register_resident() -> Result<(), anyhow::Error> {
     use dialect_mir::types::{MirArrayType, MirPtrType};
     use pliron::basic_block::BasicBlock;
     use pliron::builtin::op_interfaces::OperandSegmentInterface;
     use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
 
+    const ACCUMULATOR_LEN: usize = 32;
+    const LOOP_CONTROL_COUNT: usize = 5;
     const TRIP_COUNT: u64 = 4;
     const DESC_A_STEP: u64 = 16;
     const DESC_B_STEP: u64 = 32;
@@ -10840,11 +10842,130 @@ fn test_f16_wgmma_counted_k_loop_remains_unsupported() -> Result<(), anyhow::Err
     append_wgmma_wait_group_constant(&mut ctx, exit, 0);
     append_return(&mut ctx, exit);
 
-    assert_wgmma_lowering_rejected(
-        &mut ctx,
-        module_ptr,
-        "WGMMA MMA reached lowering without deferred accumulator fusion",
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let matching = body
+        .iter()
+        .copied()
+        .filter_map(|operation| {
+            Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx)
+                .map(|inline_asm| (operation, inline_asm))
+        })
+        .filter(|(_, asm)| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("L__wgmma_loop_${:uid}:"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected one fused F16 counted-loop WGMMA asm"
     );
+
+    let (asm_operation, asm) = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("F16 counted-loop WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(
+        template
+            .matches("wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16")
+            .count(),
+        1,
+        "the F16 counted-loop template must contain exactly one F16 MMA"
+    );
+    assert!(!template.contains(".bf16.bf16"));
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    assert!(template.contains("mov.u64 %desc_a, $64;"));
+    assert!(template.contains("mov.u64 %desc_b, $65;"));
+    assert!(template.contains("add.u64 %desc_a, %desc_a, $66;"));
+    assert!(template.contains("add.u64 %desc_b, %desc_b, $67;"));
+    assert!(template.contains("mov.u64 %remaining, $68;"));
+    assert!(template.contains("@%loop_more bra.uni L__wgmma_done_${:uid};"));
+    assert!(template.contains("@%loop_more bra.uni L__wgmma_loop_${:uid};"));
+    assert!(template.contains("L__wgmma_done_${:uid}:"));
+    assert!(
+        !template.contains(".reg .f32")
+            && !template.contains("ld.f32")
+            && !template.contains("st.f32"),
+        "F16 counted-loop WGMMA must keep accumulator memory outside asm: {template}"
+    );
+
+    let mut expected_constraints = vec!["=f".to_owned(); ACCUMULATOR_LEN];
+    expected_constraints.extend((0..ACCUMULATOR_LEN).map(|index| index.to_string()));
+    expected_constraints.extend((0..LOOP_CONTROL_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+    assert_eq!(
+        asm_operation.deref(&ctx).get_num_operands(),
+        ACCUMULATOR_LEN + LOOP_CONTROL_COUNT
+    );
+
+    let asm_position = body
+        .iter()
+        .position(|operation| operation == asm_operation)
+        .expect("F16 counted-loop WGMMA asm must be in the lowered kernel body");
+
+    let load_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::LoadOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        load_positions.len(),
+        ACCUMULATOR_LEN,
+        "F16 K-loop accumulator must be loaded exactly once"
+    );
+    assert!(load_positions.iter().all(|index| *index < asm_position));
+
+    let store_positions = body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, operation)| {
+            Operation::get_op::<llvm::StoreOp>(*operation, &ctx)
+                .is_some()
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        store_positions.len(),
+        ACCUMULATOR_LEN,
+        "F16 K-loop accumulator must be stored exactly once after the final wait"
+    );
+    assert!(store_positions.iter().all(|index| *index > asm_position));
+
+    assert_eq!(
+        body.iter()
+            .filter(
+                |operation| Operation::get_op::<llvm::ExtractValueOp>(**operation, &ctx).is_some()
+            )
+            .count(),
+        ACCUMULATOR_LEN
+    );
+
     Ok(())
 }
 
