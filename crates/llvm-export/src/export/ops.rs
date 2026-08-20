@@ -838,6 +838,10 @@ impl<'a> ModuleExportState<'a> {
         }
     }
 
+    fn debug_expression_for_fragment(offset_bits: u64, size_bits: u64) -> String {
+        format!("!DIExpression(DW_OP_LLVM_fragment, {offset_bits}, {size_bits})")
+    }
+
     fn emit_debug_declare_for_alloca(
         &mut self,
         op: &ops::AllocaOp,
@@ -889,6 +893,31 @@ impl<'a> ModuleExportState<'a> {
             emitted = true;
         }
 
+        for fragment in crate::ops::debug_fragment_variables(self.ctx, op.get_operation()) {
+            let projected = crate::ops::DebugProjectedVariableInfo {
+                variable: fragment.variable,
+                dereference_base: false,
+                offset_bytes: 0,
+                source_scope: fragment.source_scope,
+                declaration: fragment.declaration,
+            };
+            let Some((var_id, loc_id)) =
+                self.debug_projected_variable_for_scope(scope, loc, &projected)
+            else {
+                continue;
+            };
+            let expression = Self::debug_expression_for_fragment(
+                fragment.fragment.offset_bits,
+                fragment.fragment.size_bits,
+            );
+            writeln!(
+                output,
+                "  call void @llvm.dbg.declare(metadata ptr {alloca_name}, metadata !{var_id}, metadata {expression}), !dbg !{loc_id}"
+            )
+            .unwrap();
+            emitted = true;
+        }
+
         if emitted {
             self.debug_declare_used = true;
         }
@@ -910,27 +939,57 @@ impl<'a> ModuleExportState<'a> {
         let Some(scope) = debug_scope else {
             return Ok(());
         };
-        let Some(info) = crate::ops::debug_local_variable(self.ctx, op.get_operation()) else {
-            return Ok(());
-        };
-        let Some((var_id, loc_id)) =
-            self.debug_local_variable_for_scope(scope, loc, op.get_operation(), &info)
-        else {
-            return Ok(());
-        };
-
         let value = op.value(self.ctx);
-        write!(output, "  call void @llvm.dbg.value(metadata ").unwrap();
-        self.export_type(value.get_type(self.ctx), output)?;
-        write!(output, " ").unwrap();
-        self.export_value(value, value_names, output)?;
-        writeln!(
-            output,
-            ", metadata !{var_id}, metadata !DIExpression()), !dbg !{loc_id}"
-        )
-        .unwrap();
-        self.debug_value_used = true;
+        let mut emitted = false;
 
+        if let Some(info) = crate::ops::debug_local_variable(self.ctx, op.get_operation())
+            && let Some((var_id, loc_id)) =
+                self.debug_local_variable_for_scope(scope, loc, op.get_operation(), &info)
+        {
+            write!(output, "  call void @llvm.dbg.value(metadata ").unwrap();
+            self.export_type(value.get_type(self.ctx), output)?;
+            write!(output, " ").unwrap();
+            self.export_value(value, value_names, output)?;
+            writeln!(
+                output,
+                ", metadata !{var_id}, metadata !DIExpression()), !dbg !{loc_id}"
+            )
+            .unwrap();
+            emitted = true;
+        }
+
+        for fragment in crate::ops::debug_fragment_variables(self.ctx, op.get_operation()) {
+            let projected = crate::ops::DebugProjectedVariableInfo {
+                variable: fragment.variable,
+                dereference_base: false,
+                offset_bytes: 0,
+                source_scope: fragment.source_scope,
+                declaration: fragment.declaration,
+            };
+            let Some((var_id, loc_id)) =
+                self.debug_projected_variable_for_scope(scope, loc, &projected)
+            else {
+                continue;
+            };
+            let expression = Self::debug_expression_for_fragment(
+                fragment.fragment.offset_bits,
+                fragment.fragment.size_bits,
+            );
+            write!(output, "  call void @llvm.dbg.value(metadata ").unwrap();
+            self.export_type(value.get_type(self.ctx), output)?;
+            write!(output, " ").unwrap();
+            self.export_value(value, value_names, output)?;
+            writeln!(
+                output,
+                ", metadata !{var_id}, metadata {expression}), !dbg !{loc_id}"
+            )
+            .unwrap();
+            emitted = true;
+        }
+
+        if emitted {
+            self.debug_value_used = true;
+        }
         Ok(())
     }
 
