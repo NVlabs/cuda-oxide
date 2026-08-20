@@ -46,8 +46,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use cuda_async::device_box::DeviceBox;
     use cuda_async::device_context::init_device_contexts;
     use cuda_async::device_operation::DeviceOperation;
-    use cuda_core::simt::LaunchConfig;
     use cuda_core::memory::{malloc_async, memcpy_dtoh_async, memcpy_htod_async};
+    use cuda_core::simt::LaunchConfig;
     use std::mem;
 
     println!("=== Async Vector Addition (cuda-async) ===\n");

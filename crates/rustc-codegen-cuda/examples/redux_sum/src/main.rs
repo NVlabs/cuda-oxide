@@ -75,7 +75,7 @@ mod kernels {
 
 fn main() {
     use cuda_core::simt::LaunchConfig;
-use cuda_core::{CudaContext, DeviceBuffer};
+    use cuda_core::{CudaContext, DeviceBuffer};
 
     println!("=== redux.sync.add Warp Reduction (sm_80+) ===\n");
 

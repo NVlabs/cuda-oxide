@@ -24,10 +24,10 @@
 //! example needs a CUDA 12.1+ toolkit: cuda-core compiles out the
 //! multicast wrappers on older toolkits (see its build script probe).
 
+use cuda_core::CudaContext;
 use cuda_core::error::IntoResult;
-use cuda_core::vmm;
 use cuda_core::simt::LaunchConfig;
-use cuda_core::{CudaContext};
+use cuda_core::vmm;
 use cuda_device::{cuda_module, kernel, ptx_asm};
 use std::mem::MaybeUninit;
 use std::sync::Arc;

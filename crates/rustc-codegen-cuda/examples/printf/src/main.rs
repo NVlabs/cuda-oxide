@@ -173,7 +173,7 @@ mod kernels {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use cuda_core::simt::LaunchConfig;
-use cuda_core::{CudaContext, DeviceBuffer};
+    use cuda_core::{CudaContext, DeviceBuffer};
 
     println!("=== GPU Printf Test (Unified) ===\n");
 

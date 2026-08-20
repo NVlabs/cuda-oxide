@@ -323,7 +323,7 @@ fn main() {
     println!("=== Unified Compilation: Closures ===\n");
 
     use cuda_core::simt::LaunchConfig;
-use cuda_core::{CudaContext, DeviceBuffer};
+    use cuda_core::{CudaContext, DeviceBuffer};
 
     let ctx = CudaContext::new(0).expect("Failed to create CUDA context");
     let stream = ctx.default_stream();
