@@ -3146,6 +3146,92 @@ mod tests {
         );
     }
 
+    #[test]
+    fn packed_struct_construction_with_bounded_shared_pointer_array_stays_semantic_in_ssa() {
+        use dialect_mir::ops::{MirConstructArrayOp, MirConstructStructOp};
+
+        let mut ctx = make_ctx();
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let array_ty: TypeHandle = MirArrayType::get(&mut ctx, shared_ty, 2).into();
+        let packed_ty: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedArray".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![u8_ty, array_ty],
+            vec![0, 1],
+            vec![0, 1],
+            17,
+            1,
+        )
+        .into();
+
+        let (module, block) = build_kernel(&mut ctx, vec![u8_ty, shared_ty, shared_ty], vec![]);
+        let tag = block.deref(&ctx).get_argument(0);
+        let left = block.deref(&ctx).get_argument(1);
+        let right = block.deref(&ctx).get_argument(2);
+
+        let array = Operation::new(
+            &mut ctx,
+            MirConstructArrayOp::get_concrete_op_info(),
+            vec![array_ty],
+            vec![left, right],
+            vec![],
+            0,
+        );
+        array.insert_at_back(block, &ctx);
+        let array_value = array.deref(&ctx).get_result(0);
+
+        let outer = Operation::new(
+            &mut ctx,
+            MirConstructStructOp::get_concrete_op_info(),
+            vec![packed_ty],
+            vec![tag, array_value],
+            vec![],
+            0,
+        );
+        outer.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect("a bounded AS3 array in a packed SSA aggregate must lower");
+
+        let body = kernel_blocks(&ctx, module);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            0,
+            "semantic construction must keep array elements in AS3"
+        );
+
+        let inserts = find_all::<llvm::InsertValueOp>(&ctx, &body);
+        let packed_result = inserts
+            .iter()
+            .filter_map(|insert| {
+                let result_ty = insert
+                    .get_operation()
+                    .deref(&ctx)
+                    .get_result(0)
+                    .get_type(&ctx);
+                let is_packed = result_ty
+                    .deref(&ctx)
+                    .downcast_ref::<llvm_types::StructType>()
+                    .is_some_and(|ty| ty.layout() == llvm_types::StructLayout::Packed);
+                is_packed.then_some(result_ty)
+            })
+            .last()
+            .expect("outer packed array construction must produce a packed LLVM struct");
+        assert_eq!(llvm_type_size_align(&ctx, packed_result), Some((17, 1)));
+        assert!(
+            llvm_packed_struct_contains_pointer_in_address_space(
+                &ctx,
+                packed_result,
+                llvm_types::address_space::SHARED,
+            ),
+            "the semantic packed value must retain AS3 array elements"
+        );
+    }
+
     /// Packed LLVM element types carry the same allocation size as rustc, so
     /// typed array GEPs now stride by the correct packed byte count.
     #[test]

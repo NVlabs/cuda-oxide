@@ -378,6 +378,15 @@ pub(crate) struct PackedSharedInternalAbiInfo {
     pub storage_ty: TypeHandle,
 }
 
+/// Maximum number of shared-pointer leaves introduced by fixed-array expansion
+/// in one packed-AS3 internal return carrier.
+///
+/// Struct/tuple nesting and direct pointer leaves remain proportional to source
+/// structure. Arrays can encode an arbitrarily large number of per-element
+/// extract/cast/insert sequences compactly, so only array-expanded AS3 leaves
+/// count against this code-shape budget.
+pub(crate) const MAX_PACKED_SHARED_INTERNAL_ABI_ARRAY_REWRITE_LEAVES: u64 = 16;
+
 /// Whether a MIR type converts to a zero-sized LLVM type.
 ///
 /// MIR-side mirror of [`is_zero_sized_type`]: zero-length arrays, arrays of
@@ -406,12 +415,12 @@ fn mir_type_is_zero_sized(ctx: &Context, ty: TypeHandle) -> bool {
 
 /// Whether a MIR value shape belongs to the recursive packed-AS3 ABI lane.
 ///
-/// Structs and tuples may nest arbitrarily and may contain any number of scalar
-/// pointer leaves. Zero-sized fields are skipped, matching the post-conversion
-/// field scan this predicate replaced. Arrays and vectors remain deliberately
-/// excluded here: an AS3 array would expand into one conversion per element and
-/// belongs to the separately bounded array follow-up. Other aggregate kinds
-/// keep their existing fail-closed behavior.
+/// Structs, tuples, and fixed arrays may nest recursively and may contain any
+/// number of scalar pointer leaves. Zero-sized fields are skipped, matching the
+/// post-conversion field scan this predicate replaced. The array-specific
+/// expansion budget is enforced after conversion from the storage rewrite's
+/// exact AS3 leaf count. Vectors and unrelated aggregate kinds remain
+/// deliberately fail-closed.
 fn packed_shared_internal_abi_mir_shape_is_supported(ctx: &Context, mir_ty: TypeHandle) -> bool {
     let children = {
         let ty_ref = mir_ty.deref(ctx);
@@ -427,10 +436,12 @@ fn packed_shared_internal_abi_mir_shape_is_supported(ctx: &Context, mir_ty: Type
         }
         if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
             Some(struct_ty.field_types.clone())
+        } else if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
+            Some(tuple_ty.get_types().to_vec())
         } else {
             ty_ref
-                .downcast_ref::<MirTupleType>()
-                .map(|tuple_ty| tuple_ty.get_types().to_vec())
+                .downcast_ref::<MirArrayType>()
+                .map(|array_ty| vec![array_ty.element_type()])
         }
     };
 
@@ -444,11 +455,11 @@ fn packed_shared_internal_abi_mir_shape_is_supported(ctx: &Context, mir_ty: Type
 
 /// Recognize a recursive packed-AS3 internal ABI shape.
 ///
-/// The root must remain a byte-faithful packed struct. Nested structs/tuples
-/// and multiple AS3 leaves are admitted, while arrays, vectors, and unrelated
-/// aggregate kinds remain out of scope. The target-stable storage utility owns
-/// the recursive AS3 -> generic rewrite and this classifier only decides which
-/// semantic shapes may use it.
+/// The root must remain a byte-faithful packed struct. Nested structs/tuples,
+/// multiple AS3 leaves, and bounded fixed arrays are admitted. Vectors and
+/// unrelated aggregate kinds remain out of scope. The target-stable storage
+/// utility owns the recursive AS3 -> generic rewrite and this classifier only
+/// decides which semantic shapes may use it.
 pub(crate) fn packed_shared_internal_abi_info(
     ctx: &mut Context,
     mir_ty: TypeHandle,
@@ -486,7 +497,9 @@ pub(crate) fn packed_shared_internal_abi_info(
         },
         "packed shared internal ABI",
     )?;
-    if rewrite.shared_pointer_leaves == 0 || rewrite.array_shared_pointer_leaves != 0 {
+    if rewrite.shared_pointer_leaves == 0
+        || rewrite.array_shared_pointer_leaves > MAX_PACKED_SHARED_INTERNAL_ABI_ARRAY_REWRITE_LEAVES
+    {
         return Ok(None);
     }
     let Some((storage_size, _)) = llvm_type_size_align(ctx, rewrite.ty) else {
@@ -5363,7 +5376,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_shared_internal_abi_keeps_shared_pointer_arrays_out_of_scope() {
+    fn packed_shared_internal_abi_genericizes_bounded_shared_pointer_array() {
         let mut ctx = make_ctx();
         let pointee = mir_uint(&mut ctx, 32);
         let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
@@ -5381,11 +5394,113 @@ mod tests {
         )
         .into();
 
+        let abi = packed_shared_internal_abi_info(&mut ctx, outer)
+            .expect("classification must not error")
+            .expect("a bounded AS3 array must use the target-stable internal carrier");
+        assert_eq!(llvm_type_size_align(&ctx, abi.semantic_ty), Some((17, 1)));
+        assert_eq!(llvm_type_size_align(&ctx, abi.storage_ty), Some((17, 1)));
+        assert!(!llvm_type_contains_pointer_in_address_space(
+            &ctx,
+            abi.storage_ty,
+            llvm_types::address_space::SHARED,
+        ));
+
+        let outer_fields = struct_fields(&ctx, abi.storage_ty);
+        let array_ref = outer_fields[1].deref(&ctx);
+        let array = array_ref
+            .downcast_ref::<llvm_types::ArrayType>()
+            .expect("bounded array field must remain an LLVM array");
+        assert_eq!(array.size(), 2);
+        let element = array.elem_type();
+        let element_ref = element.deref(&ctx);
+        let pointer = element_ref
+            .downcast_ref::<llvm_types::PointerType>()
+            .expect("array elements must remain pointer-typed");
+        assert_eq!(pointer.address_space(), llvm_types::address_space::GENERIC);
+    }
+
+    #[test]
+    fn packed_shared_internal_abi_accepts_array_rewrite_at_exact_bound() {
+        let mut ctx = make_ctx();
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let count = MAX_PACKED_SHARED_INTERNAL_ABI_ARRAY_REWRITE_LEAVES;
+        let shared_array: TypeHandle = MirArrayType::get(&mut ctx, shared, count).into();
+        let tag = mir_uint(&mut ctx, 8);
+        let outer: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedArrayAtBound".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![tag, shared_array],
+            vec![0, 1],
+            vec![0, 1],
+            1 + 8 * count,
+            1,
+        )
+        .into();
+
+        assert!(
+            packed_shared_internal_abi_info(&mut ctx, outer)
+                .expect("classification must not error")
+                .is_some(),
+            "the exact bounded-array rewrite limit must remain supported"
+        );
+    }
+
+    #[test]
+    fn packed_shared_internal_abi_rejects_array_rewrite_above_bound() {
+        let mut ctx = make_ctx();
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let count = MAX_PACKED_SHARED_INTERNAL_ABI_ARRAY_REWRITE_LEAVES + 1;
+        let shared_array: TypeHandle = MirArrayType::get(&mut ctx, shared, count).into();
+        let tag = mir_uint(&mut ctx, 8);
+        let outer: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedArrayAboveBound".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![tag, shared_array],
+            vec![0, 1],
+            vec![0, 1],
+            1 + 8 * count,
+            1,
+        )
+        .into();
+
         assert!(
             packed_shared_internal_abi_info(&mut ctx, outer)
                 .expect("classification must not error")
                 .is_none(),
-            "AS3 arrays remain reserved for the bounded-array follow-up"
+            "array-expanded AS3 leaves above the explicit budget must fail closed"
+        );
+    }
+
+    #[test]
+    fn packed_shared_internal_abi_rejects_shared_pointer_vector() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let shared_pointer: TypeHandle =
+            llvm_types::PointerType::get(&ctx, llvm_types::address_space::SHARED).into();
+        let shared_vector: TypeHandle =
+            llvm_types::VectorType::get(&ctx, shared_pointer, 2, llvm_types::VectorTypeKind::Fixed)
+                .into();
+        let outer: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedVector".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![tag, shared_vector],
+            vec![0, 1],
+            vec![0, 1],
+            17,
+            1,
+        )
+        .into();
+
+        assert!(
+            packed_shared_internal_abi_info(&mut ctx, outer)
+                .expect("classification must not error")
+                .is_none(),
+            "shared-pointer vectors must remain outside the packed-AS3 internal ABI lane"
         );
     }
 
