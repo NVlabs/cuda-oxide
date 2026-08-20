@@ -183,18 +183,22 @@ own entry point.
 
 The `.NaN` forms matter for reductions that must not lose a NaN. The plain and
 `.abs` forms *ignore* NaN inputs; the `.NaN` forms propagate NaN when any lane
-contributes one. Pick deliberately -- the two differ only when a lane holds a
-NaN, which is exactly when it matters.
+contributes one. Pick deliberately. The two differ only when a lane holds a
+NaN, and that is when the choice matters.
 
-**This is Blackwell-only, and narrower than "sm_100+".** The catalog records
-the family at PTX 8.6 with a target union of
-`sm_100a|sm_100f|sm_103a|sm_103f`, so it is not selected on `sm_110a` or
-`sm_120a` -- consumer Blackwell included. Build for one of those four targets
-or the intrinsic will not lower.
+Say one lane holds `NaN` and the smallest ordinary value in the warp is `-1.0`:
 
-The `redux_f32` example is the working reference. It pins `sm_100a`, so CI
-compiles it and checks the emitted PTX rather than running it, and its `main`
-skips unless the device reports exactly `sm_100`.
+- `redux_sync_min_f32(mask, v)` returns `-1.0` (the NaN is ignored)
+- `redux_sync_min_nan_f32(mask, v)` returns `NaN` (the NaN propagates)
+
+**This is Blackwell-only, and narrower than "sm_100+".** The f32 forms need
+PTX 8.6 and exist only on `sm_100a`, `sm_100f`, `sm_103a`, and `sm_103f`. They
+are not available on `sm_110a` or `sm_120a`, so consumer Blackwell is out.
+Build for one of those four targets or compilation fails.
+
+The `redux_f32` example is the working reference. It builds for `sm_100a`, so
+CI compiles it and checks the emitted PTX rather than running it. Its `main`
+skips unless the device reports `sm_100` and nothing else.
 
 ---
 
