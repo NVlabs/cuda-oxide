@@ -7075,3 +7075,10 @@ status = "active"
 catalog_id = "tcgen05_mma_e2m1"
 operation_key = "tcgen05.mma.shared.e2m1"
 raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i1016"
+status = "active"
+catalog_id = "ex2_approx_f16"
+operation_key = "scalar.math.ex2.approx.f16"
+raw_rust_signature = { safe = true, arguments = ["u16"], result = "u16" }

@@ -12,7 +12,7 @@ use llvm_export::{
     types as llvm_types,
 };
 use pliron::{
-    builtin::types::{FP32Type, FP64Type},
+    builtin::types::{FP32Type, FP64Type, IntegerType, Signedness},
     context::{Context, Ptr},
     irbuild::{
         dialect_conversion::DialectConversionRewriter, inserter::Inserter, rewriter::Rewriter,
@@ -22,12 +22,14 @@ use pliron::{
     result::Result,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn convert_generated_scalar_math(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     intrinsic_name: &str,
     ptx_mnemonic: &str,
+    is_f16: bool,
     is_f64: bool,
     llvm_inline_ptx: bool,
 ) -> Result<()> {
@@ -38,7 +40,9 @@ pub(crate) fn convert_generated_scalar_math(
         );
     }
 
-    let result_ty = if is_f64 {
+    let result_ty = if is_f16 {
+        IntegerType::get(ctx, 16, Signedness::Unsigned).into()
+    } else if is_f64 {
         FP64Type::get(ctx).into()
     } else {
         FP32Type::get(ctx).into()
@@ -58,7 +62,13 @@ pub(crate) fn convert_generated_scalar_math(
             call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, operands)?
         }
         IntrinsicBackend::LlvmNvptx | IntrinsicBackend::LibNvvm => {
-            let constraint = if is_f64 { "=d,d" } else { "=f,f" };
+            let constraint = if is_f16 {
+                "=h,h"
+            } else if is_f64 {
+                "=d,d"
+            } else {
+                "=f,f"
+            };
             let inline_asm = llvm::InlineAsmOp::build(
                 ctx,
                 result_ty,

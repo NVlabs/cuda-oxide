@@ -748,14 +748,15 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
             ),
             "scalar_math" => ensure!(
                 record.scalar_math.as_ref().is_some_and(|math| {
-                    let ty = match math.format {
-                        ScalarMathFormat::F32 => "f32",
-                        ScalarMathFormat::F64 => "f64",
+                    let (rust_ty, dialect_ty) = match math.format {
+                        ScalarMathFormat::F16 => ("u16", "i16"),
+                        ScalarMathFormat::F32 => ("f32", "f32"),
+                        ScalarMathFormat::F64 => ("f64", "f64"),
                     };
-                    record.rust.arguments == [ty]
-                        && record.rust.result == ty
-                        && record.dialect.operands == [ty]
-                        && record.dialect.results == [ty]
+                    record.rust.arguments == [rust_ty]
+                        && record.rust.result == rust_ty
+                        && record.dialect.operands == [dialect_ty]
+                        && record.dialect.results == [dialect_ty]
                         && record.semantics.pure
                 })
                     && record.rust.module == "float"
@@ -2248,6 +2249,7 @@ fn scalar_math_contract(record: &CatalogIntrinsic) -> &crate::model::ScalarMath 
 
 fn scalar_math_format_attr(record: &CatalogIntrinsic) -> &'static str {
     match scalar_math_contract(record).format {
+        ScalarMathFormat::F16 => "ScalarMathFormatAttr::F16",
         ScalarMathFormat::F32 => "ScalarMathFormatAttr::F32",
         ScalarMathFormat::F64 => "ScalarMathFormatAttr::F64",
     }
@@ -2285,6 +2287,7 @@ fn scalar_math_subnormal_attr(record: &CatalogIntrinsic) -> &'static str {
 
 fn scalar_math_llvm_type(record: &CatalogIntrinsic) -> &'static str {
     match scalar_math_contract(record).format {
+        ScalarMathFormat::F16 => "i16",
         ScalarMathFormat::F32 => "float",
         ScalarMathFormat::F64 => "double",
     }
@@ -7404,6 +7407,7 @@ fn render_compat_float(catalog: &CatalogFile, hash: &str) -> String {
             .find(|path| path.starts_with("cuda_device::float::"))
             .expect("scalar-math compatibility path");
         let ty = match scalar_math_contract(record).format {
+            ScalarMathFormat::F16 => "u16",
             ScalarMathFormat::F32 => "f32",
             ScalarMathFormat::F64 => "f64",
         };
@@ -10362,7 +10366,7 @@ fn render_dialect_scalar_math(catalog: &CatalogFile, hash: &str) -> String {
 
 use pliron::{
     attribute::Attribute,
-    builtin::{op_interfaces::{NOpdsInterface, NResultsInterface}, types::{FP32Type, FP64Type}},
+    builtin::{op_interfaces::{NOpdsInterface, NResultsInterface}, types::{FP32Type, FP64Type, IntegerType, Signedness}},
     common_traits::Verify,
     context::{Context, Ptr},
     location::Located,
@@ -10377,7 +10381,7 @@ use pliron_derive::{pliron_attr, pliron_op};
 
 #[pliron_attr(name = "nvvm.scalar_math_format", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum ScalarMathFormatAttr { F32, F64 }
+pub enum ScalarMathFormatAttr { F16, F32, F64 }
 
 #[pliron_attr(name = "nvvm.scalar_math_operation", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -10417,6 +10421,7 @@ impl ScalarMathOp {
         subnormal: ScalarMathSubnormalAttr,
     ) -> Ptr<Operation> {
         let result_ty = match &format {
+            ScalarMathFormatAttr::F16 => IntegerType::get(ctx, 16, Signedness::Unsigned).into(),
             ScalarMathFormatAttr::F32 => FP32Type::get(ctx).into(),
             ScalarMathFormatAttr::F64 => FP64Type::get(ctx).into(),
         };
@@ -10482,6 +10487,7 @@ impl Verify for ScalarMathOp {
             );
         }
         let type_matches = |ty: pliron::r#type::TypeHandle| match &*format {
+            ScalarMathFormatAttr::F16 => ty.deref(ctx).downcast_ref::<IntegerType>().is_some_and(|integer| integer.width() == 16),
             ScalarMathFormatAttr::F32 => ty.deref(ctx).downcast_ref::<FP32Type>().is_some(),
             ScalarMathFormatAttr::F64 => ty.deref(ctx).downcast_ref::<FP64Type>().is_some(),
         };
@@ -15803,20 +15809,21 @@ fn convert_generated_tcgen05_load(
             };
             writeln!(
                 output,
-                "            (Some(&{}), Some(&{}), Some(&{}), Some(&{})) => ({:?}, {:?}, {}, {}),",
+                "            (Some(&{}), Some(&{}), Some(&{}), Some(&{})) => ({:?}, {:?}, {}, {}, {}),",
                 scalar_math_format_attr(record),
                 scalar_math_operation_attr(record),
                 scalar_math_precision_attr(record),
                 scalar_math_subnormal_attr(record),
                 intrinsic_name,
                 scalar_math_ptx_mnemonic(record),
+                scalar_math_contract(record).format == ScalarMathFormat::F16,
                 scalar_math_contract(record).format == ScalarMathFormat::F64,
                 scalar_math_llvm_mechanism(record) == BackendLoweringMechanism::InlinePtx,
             )
             .unwrap();
         }
         output.push_str(
-            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_math variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_math(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3,\n        )\n    }\n}\n\n",
+            "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_math variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_math(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
         );
     }
     if extended_minmax(catalog).next().is_some() {
@@ -19892,7 +19899,11 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 .unwrap();
             }
             BackendLoweringMechanism::InlinePtx => {
-                let register = if ty == "double" { "d" } else { "f" };
+                let register = match ty {
+                    "double" => "d",
+                    "i16" => "h",
+                    _ => "f",
+                };
                 writeln!(
                     output,
                     "  %result = call {ty} asm {:?}, {:?}({arguments})",
@@ -22789,7 +22800,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 1015);
+        assert_eq!(catalog.intrinsics.len(), 1016);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 154);
         let generated_records = records
@@ -24843,7 +24854,7 @@ mod tests {
                 .contains("pub fn fma_rp_ftz_sat_f32(arg0: f32, arg1: f32, arg2: f32) -> f32")
         );
         assert!(compatibility.contains("pub fn add_rp_ftz_sat_f32(arg0: f32, arg1: f32) -> f32"));
-        assert_eq!(compatibility.matches("#[must_use]").count(), 112);
+        assert_eq!(compatibility.matches("#[must_use]").count(), 113);
 
         let dialect = render_dialect_scalar_arithmetic(&catalog, "test-hash");
         assert_eq!(dialect.matches("pub struct ScalarArithmeticOp").count(), 1);

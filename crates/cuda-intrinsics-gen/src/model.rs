@@ -227,6 +227,8 @@ pub struct ScalarMathAdmission {
 #[serde(deny_unknown_fields)]
 pub struct ScalarMathAdmissionVariant {
     pub abi_id: String,
+    #[serde(default)]
+    pub libnvvm_evidence_profile: Option<String>,
     pub format: ScalarMathFormat,
     pub operation: ScalarMathOperation,
     pub precision: ScalarMathPrecision,
@@ -2792,6 +2794,7 @@ pub struct ScalarMath {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScalarMathFormat {
+    F16,
     F32,
     F64,
 }

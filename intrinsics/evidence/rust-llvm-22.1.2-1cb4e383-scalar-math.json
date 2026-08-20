@@ -131,6 +131,32 @@
           "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
         }
       ]
+    },
+    {
+      "id": "scalar_math_ex2_f16_sm75_ptx70",
+      "coverage_count": 1,
+      "stages": [
+        {
+          "targets": ["sm_75", "ptx70"],
+          "representation": "llvm.nvvm.ex2.approx.f16 lowered at the documented hardware and PTX floor",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "Pinned llc selected ex2.approx.f16 for sm_75 with +ptx70; PTX SHA-256 21a1d2fe684434a6c71b2454ff0a26463002def6ab7c09e00252a70d9770b7df. The same probe fails selection at sm_70 or +ptx65. llvm.nvvm.ex2.approx.ftz.f16 and llvm.nvvm.ex2.approx.bf16 fail selection; llvm.nvvm.ex2.approx.ftz.bf16 selects at sm_90 with +ptx78."
+        },
+        {
+          "targets": ["sm_75", "ptx70"],
+          "representation": "single ex2.approx.f16 instruction assembled at its admission floor",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 12.0 ptxas assembled the 640-byte sm_75/PTX 7.0 output into a 680-byte cubin with SHA-256 44e56608ae38e0b15d4203d125168cf7953228cc650c30ff1c42e2d279d32be5.",
+          "tool_path": "/usr/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 12.0, V12.0.140",
+          "tool_sha256": "332c1b822fcab8d86db02236973deac3661cd4b122e0e54158ae38fd7f6d1def"
+        }
+      ]
     }
   ],
   "matrices": [
@@ -1069,6 +1095,54 @@
           ],
           "concrete_llvm_results": [
             "f64"
+          ]
+        }
+      }
+    },
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "ex2_approx_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "scalar_math_ex2_f16_sm75_ptx70"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_ex2_approx",
+        "llvm_symbol": "llvm.nvvm.ex2.approx",
+        "facts": {
+          "llvm_arguments": [
+            "anonymous_14"
+          ],
+          "llvm_results": [
+            "anyfloat"
+          ],
+          "concrete_llvm_arguments": [
+            "f16"
+          ],
+          "concrete_llvm_results": [
+            "f16"
+          ]
+        },
+        "expected_ptx": {
+          "mnemonic": "ex2",
+          "modifiers": [
+            "approx",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
           ]
         }
       }
