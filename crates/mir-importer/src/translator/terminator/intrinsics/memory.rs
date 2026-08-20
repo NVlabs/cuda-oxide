@@ -766,14 +766,13 @@ pub fn emit_shared_array_as_ptr(
         loc.clone(),
     )?;
 
-    // Get the element type from the shared pointer type
-    let elem_ty = {
+    // Validate that the translated receiver is pointer-like. The pointee type is
+    // no longer used to synthesize the result: rustc's declared destination type
+    // is authoritative for the RawConst/RawMut result kind.
+    {
         let shared_ptr_ty = shared_ptr.get_type(ctx);
         let shared_ptr_obj = shared_ptr_ty.deref(ctx);
-
-        if let Some(mir_ptr) = shared_ptr_obj.downcast_ref::<MirPtrType>() {
-            mir_ptr.pointee
-        } else {
+        if shared_ptr_obj.downcast_ref::<MirPtrType>().is_none() {
             return input_err!(
                 loc.clone(),
                 TranslationErr::unsupported(format!(
@@ -782,18 +781,45 @@ pub fn emit_shared_array_as_ptr(
                 ))
             );
         }
-    }; // shared_ptr_obj borrow ends here
+    }
 
-    // Create generic pointer type (addrspace 0) with same element type
-    // For simplicity, we use immutable here - mutability is just a Rust concept
-    let generic_ptr_ty = MirPtrType::get(ctx, elem_ty, false, 0);
+    // This compiler-recognized Rust API is a semantic boundary: rustc's
+    // declared result type is authoritative for raw-pointer kind. `as_ptr`
+    // returns `*const T`, while `as_mut_ptr` and `as_raw_mut_ptr` return
+    // `*mut T`. Preserve that RawConst/RawMut distinction while narrowing
+    // the shared-memory address into the generic address space.
+    let result_rust_ty = match destination.ty(body.locals()) {
+        Ok(ty) => ty,
+        Err(error) => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "SharedArray pointer conversion: failed to resolve result type: {error:?}"
+                ))
+            );
+        }
+    };
+    let generic_ptr_ty = types::translate_type(ctx, &result_rust_ty)?;
+    if generic_ptr_ty
+        .deref(ctx)
+        .downcast_ref::<MirPtrType>()
+        .is_none()
+    {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!(
+                "SharedArray pointer conversion: expected raw-pointer result type, got {:?}",
+                result_rust_ty
+            ))
+        );
+    }
 
     // Emit cast: shared (3) -> generic (0)
     // This is an addrspace cast but we use MirCastOp which is generic enough
     let cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
-        vec![generic_ptr_ty.into()],
+        vec![generic_ptr_ty],
         vec![shared_ptr],
         vec![],
         0,

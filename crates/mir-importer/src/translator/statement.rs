@@ -872,10 +872,18 @@ pub fn translate_statement(
             Ok(prev_op)
         }
 
-        // Codegen-irrelevant statements: borrow-check / type-system / coverage
-        // hints that have no runtime effect. Skipping is correct.
+        // `Retag` refines rustc's dynamic alias/provenance model but has no
+        // runtime effect. `dialect-mir` preserves the static source category
+        // (`&T`, `&mut T`, `*const T`, `*mut T`) in its pointer types, but it
+        // does not model Stacked/Tree Borrows tags or retag epochs. Therefore
+        // Retag remains an intentional no-op. Any future LLVM alias metadata
+        // must be based on an explicit audited policy, never inferred from the
+        // fact that Retag was skipped or from `MirPtrType::is_mutable`.
+        mir::StatementKind::Retag(..) => Ok(prev_op),
+
+        // Other codegen-irrelevant borrow-check / type-system / coverage hints
+        // have no runtime effect and are intentionally skipped.
         mir::StatementKind::FakeRead(..)
-        | mir::StatementKind::Retag(..)
         | mir::StatementKind::PlaceMention(..)
         | mir::StatementKind::AscribeUserType { .. }
         | mir::StatementKind::Coverage(..)
@@ -1205,6 +1213,9 @@ pub(crate) fn emit_array_element_store(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> Ptr<Operation> {
+    // This is an address produced solely to perform the store, not a Rust
+    // reference/raw-pointer value. The legacy constructor intentionally gives
+    // it `MirPointerKind::Erased` provenance.
     let elem_ptr_ty =
         dialect_mir::types::MirPtrType::get(ctx, element_ty, true, address_space).into();
 
@@ -1243,7 +1254,8 @@ pub(crate) fn emit_array_element_store(
 /// callers of the statement module sometimes thread pointers coming from
 /// other sources (loads, field-addr ops, ...), which may be immutable.
 /// Derived addresses inherit the base pointer's mutability to keep pliron
-/// type checking consistent.
+/// type checking consistent. This bit is not an aliasing or uniqueness proof;
+/// source-level reference kind is tracked separately by `MirPointerKind`.
 pub(crate) fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);
