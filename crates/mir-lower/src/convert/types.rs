@@ -378,13 +378,40 @@ pub(crate) struct PackedSharedInternalAbiInfo {
     pub storage_ty: TypeHandle,
 }
 
+/// Whether a MIR type converts to a zero-sized LLVM type.
+///
+/// MIR-side mirror of [`is_zero_sized_type`]: zero-length arrays, arrays of
+/// zero-sized elements, and structs/tuples whose fields are all zero-sized
+/// (including empty ones such as `PhantomData`) vanish at the LLVM level and
+/// must not affect ABI-lane classification.
+fn mir_type_is_zero_sized(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty_ref = ty.deref(ctx);
+    if let Some(array_ty) = ty_ref.downcast_ref::<MirArrayType>() {
+        return array_ty.size() == 0 || mir_type_is_zero_sized(ctx, array_ty.element_type());
+    }
+    if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
+        return struct_ty
+            .field_types
+            .iter()
+            .all(|field| mir_type_is_zero_sized(ctx, *field));
+    }
+    if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
+        return tuple_ty
+            .get_types()
+            .iter()
+            .all(|field| mir_type_is_zero_sized(ctx, *field));
+    }
+    false
+}
+
 /// Whether a MIR value shape belongs to the recursive packed-AS3 ABI lane.
 ///
 /// Structs and tuples may nest arbitrarily and may contain any number of scalar
-/// pointer leaves. Arrays and vectors remain deliberately excluded here: an
-/// AS3 array would expand into one conversion per element and belongs to the
-/// separately bounded array follow-up. Other aggregate kinds keep their
-/// existing fail-closed behavior.
+/// pointer leaves. Zero-sized fields are skipped, matching the post-conversion
+/// field scan this predicate replaced. Arrays and vectors remain deliberately
+/// excluded here: an AS3 array would expand into one conversion per element and
+/// belongs to the separately bounded array follow-up. Other aggregate kinds
+/// keep their existing fail-closed behavior.
 fn packed_shared_internal_abi_mir_shape_is_supported(ctx: &Context, mir_ty: TypeHandle) -> bool {
     let children = {
         let ty_ref = mir_ty.deref(ctx);
@@ -408,9 +435,10 @@ fn packed_shared_internal_abi_mir_shape_is_supported(ctx: &Context, mir_ty: Type
     };
 
     children.is_some_and(|children| {
-        children
-            .into_iter()
-            .all(|child| packed_shared_internal_abi_mir_shape_is_supported(ctx, child))
+        children.into_iter().all(|child| {
+            mir_type_is_zero_sized(ctx, child)
+                || packed_shared_internal_abi_mir_shape_is_supported(ctx, child)
+        })
     })
 }
 
@@ -5300,6 +5328,38 @@ mod tests {
             .expect("nested tuple leaf must remain pointer-typed");
         assert_eq!(pointer.address_space(), llvm_types::address_space::GENERIC);
         assert_eq!(llvm_type_size_align(&ctx, abi.storage_ty), Some((17, 1)));
+    }
+
+    #[test]
+    fn packed_shared_internal_abi_skips_zero_sized_fields() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let byte = mir_uint(&mut ctx, 8);
+        let marker: TypeHandle = MirArrayType::get(&mut ctx, byte, 0).into();
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedZstMarker".into(),
+            vec!["tag".into(), "marker".into(), "ptr".into()],
+            vec![tag, marker, shared],
+            vec![0, 1, 2],
+            vec![0, 1, 1],
+            9,
+            1,
+        )
+        .into();
+
+        let abi = packed_shared_internal_abi_info(&mut ctx, packed)
+            .expect("ABI classification must succeed")
+            .expect("a zero-sized field must not knock the struct out of the ABI lane");
+        assert_eq!(llvm_type_size_align(&ctx, abi.semantic_ty), Some((9, 1)));
+        assert_eq!(llvm_type_size_align(&ctx, abi.storage_ty), Some((9, 1)));
+        assert!(!llvm_type_contains_pointer_in_address_space(
+            &ctx,
+            abi.storage_ty,
+            llvm_types::address_space::SHARED,
+        ));
     }
 
     #[test]
