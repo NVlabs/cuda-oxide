@@ -19903,11 +19903,11 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
 /// Escape a value for a GFM table cell.
 ///
 /// A `|` splits the row before inline parsing runs, so it splits the cell even
-/// inside a code span; GFM's own rule is that a literal pipe must be written
-/// `\|` wherever it appears. Three catalog entries carry one today -- the
-/// `elect.sync` and `match.all.sync` PTX patterns write their two destinations
-/// as `<register|predicate>` -- and their rows rendered with a seventh cell,
-/// which drops the backend-evidence column.
+/// inside a code span. GFM's own rule is that a literal pipe must be written
+/// `\|` wherever it appears. Three catalog entries carry a literal pipe today:
+/// the `elect.sync` and `match.all.sync` PTX patterns write their two
+/// destinations as `<register|predicate>`. Their rows rendered with a seventh
+/// cell, which dropped the backend-evidence column.
 fn escape_table_cell(value: impl std::fmt::Display) -> String {
     value.to_string().replace('|', "\\|")
 }
