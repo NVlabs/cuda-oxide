@@ -238,9 +238,9 @@ Semantic markers for the codegen backend (pass-through -- no code transformation
 ### `#[constant]` -- Constant-Memory Statics
 
 Marks a module-scope `static` as a CUDA constant-memory global. The static must
-be typed `ConstantMemory<T>`, whose `UnsafeCell<T>` semantics on the device stop
-the compiler constant-folding the initializer, so the host's `cuMemcpyHtoD`
-writes stay observable from kernels.
+be typed `ConstantMemory<T>`. Its `UnsafeCell<T>` interior stops the compiler
+from constant-folding the initializer, so the writes the host makes with
+`cuMemcpyHtoD` stay visible to kernels.
 
 ```rust
 #[cuda_module]
@@ -259,12 +259,14 @@ setters:
 - `module.set_<name>_blocking(&value)` -- synchronous `cuMemcpyHtoD`, for
   one-shot initialization with no stream in scope.
 
-Three restrictions worth knowing before you reach for it: the initializer must
-be `ConstantMemory::UNINIT` (non-zero initializers are not honored yet, so
-populate from the host before any kernel reads), the attribute must appear
-inside a `#[cuda_module]` (elsewhere it silently produces an unreachable symbol
-with no setter), and the identifier must not start with the reserved cuda-oxide
-prefix.
+Three restrictions worth knowing before you reach for it:
+
+- The initializer must be all-zeros, which in practice means
+  `ConstantMemory::UNINIT`. Non-zero initializers are not honored yet, so
+  populate from the host before any kernel reads.
+- The attribute must appear inside a `#[cuda_module]`. Anywhere else it
+  silently produces an unreachable symbol with no setter.
+- The identifier must not start with the reserved `cuda_oxide_` prefix.
 
 ## `#[cuda_module]` -- Typed Embedded Module Loading
 
@@ -519,18 +521,18 @@ combined with clobbers. `options(may_diverge)` must be paired with
 
 The crate's one derive macro. It implements the `unsafe` trait
 `cuda_core::DeviceCopy` for a type whose fields are all themselves
-`DeviceCopy`. That trait is the promise that every byte pattern of the type is a
+`DeviceCopy`. That trait is the promise that every bit pattern of the type is a
 valid value, which is what `DeviceBuffer` needs to turn raw device bytes back
 into initialized Rust values. `Copy` alone is not enough: `bool`, `char` and
 `NonZeroU32` are all `Copy`, and none of them accepts every bit pattern.
 
-Structs and unions only. Enums are rejected with a diagnostic, because a
-product type is `DeviceCopy` when every field is, and no such rule holds for a
-discriminated union.
+Structs and unions only. Enums are rejected with a diagnostic: a struct is
+`DeviceCopy` whenever all its fields are, but an enum's discriminant makes most
+bit patterns invalid, so no field-by-field rule can prove it safe.
 
-Unlike the macros above it is re-exported from `cuda_core`, next to the trait it
-implements, so one import brings both into scope in the serde `Serialize`
-trait-and-derive style:
+Unlike the macros above, this one is re-exported from `cuda_core`, next to the
+trait it implements. One import brings both into scope, the same way serde
+pairs `Serialize` with its derive:
 
 ```rust
 use cuda_core::DeviceCopy;
