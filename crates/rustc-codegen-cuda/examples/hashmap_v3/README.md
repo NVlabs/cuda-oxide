@@ -28,7 +28,7 @@ What v2 had that v3 dropped (with the empirical reason):
   v2's perf table showed Protocol B (payload-first) beat it by ~20 %
   at every load. The `RESERVED` tag is reused in v3 for a different
   purpose — the `DELETED -> RESERVED -> FULL(h2)` reclaim handshake.
-- **Raw `warp::ballot` / `warp::shfl` find kernel.** v3 uses only the
+- **Raw `warp::ballot` / `warp::shuffle` find kernel.** v3 uses only the
   typed cooperative-groups API; the `~12 %` non-inlining penalty
   (documented in the v2 perf section) is real, but `WarpTile<16>` more
   than makes it back at moderate load.
