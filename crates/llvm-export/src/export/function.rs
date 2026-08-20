@@ -47,6 +47,9 @@ use super::{
 
 const LLVM_PARAM_NOALIAS_ATTR_PREFIX: &str = "cuda_oxide_param_noalias_";
 const LLVM_PARAM_READONLY_ATTR_PREFIX: &str = "cuda_oxide_param_readonly_";
+const LLVM_PARAM_NONNULL_ATTR_PREFIX: &str = "cuda_oxide_param_nonnull_";
+const LLVM_PARAM_POINTEE_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_param_pointee_align_";
+const LLVM_PARAM_DEREFERENCEABLE_ATTR_PREFIX: &str = "cuda_oxide_param_dereferenceable_";
 
 /// Flatten a descriptive string so it cannot escape a single `;` comment line.
 ///
@@ -523,6 +526,18 @@ impl<'a> ModuleExportState<'a> {
             .is_some()
     }
 
+    fn parameter_value(&self, func: &FuncOp, prefix: &str, index: usize) -> Option<u64> {
+        let key: pliron::identifier::Identifier = format!("{prefix}{index}")
+            .as_str()
+            .try_into()
+            .expect("LLVM parameter value attribute name is valid");
+        func.get_operation()
+            .deref(self.ctx)
+            .attributes
+            .get::<pliron::builtin::attributes::IntegerAttr>(&key)
+            .map(|value| value.value().to_u64())
+    }
+
     fn export_parameter_attrs(
         &self,
         func: &FuncOp,
@@ -532,14 +547,14 @@ impl<'a> ModuleExportState<'a> {
     ) -> Result<(), String> {
         let noalias = self.parameter_marker(func, LLVM_PARAM_NOALIAS_ATTR_PREFIX, index);
         let readonly = self.parameter_marker(func, LLVM_PARAM_READONLY_ATTR_PREFIX, index);
-        if !noalias && !readonly {
+        let nonnull = self.parameter_marker(func, LLVM_PARAM_NONNULL_ATTR_PREFIX, index);
+        let pointee_align = self.parameter_value(func, LLVM_PARAM_POINTEE_ALIGN_ATTR_PREFIX, index);
+        let dereferenceable =
+            self.parameter_value(func, LLVM_PARAM_DEREFERENCEABLE_ATTR_PREFIX, index);
+
+        if !noalias && !readonly && !nonnull && pointee_align.is_none() && dereferenceable.is_none()
+        {
             return Ok(());
-        }
-        if readonly && !noalias {
-            return Err(format!(
-                "function `@{}` carries readonly without the matching noalias proof on argument {index}",
-                func.get_symbol_name(self.ctx)
-            ));
         }
 
         if !arg_ty.deref(self.ctx).is::<PointerType>() {
@@ -548,11 +563,49 @@ impl<'a> ModuleExportState<'a> {
                 func.get_symbol_name(self.ctx)
             ));
         }
+        if readonly && !noalias {
+            return Err(format!(
+                "function `@{}` carries readonly without the matching noalias proof on argument {index}",
+                func.get_symbol_name(self.ctx)
+            ));
+        }
+        if let Some(align) = pointee_align
+            && (align <= 1 || !align.is_power_of_two())
+        {
+            return Err(format!(
+                "function `@{}` carries invalid pointee alignment {align} on argument {index}",
+                func.get_symbol_name(self.ctx)
+            ));
+        }
+        if let Some(bytes) = dereferenceable {
+            if bytes == 0 {
+                return Err(format!(
+                    "function `@{}` carries dereferenceable(0) on argument {index}",
+                    func.get_symbol_name(self.ctx)
+                ));
+            }
+            if !nonnull {
+                return Err(format!(
+                    "function `@{}` carries dereferenceable({bytes}) without the matching nonnull proof on argument {index}",
+                    func.get_symbol_name(self.ctx)
+                ));
+            }
+        }
+
         if noalias {
             write!(output, " noalias").unwrap();
         }
         if readonly {
             write!(output, " readonly").unwrap();
+        }
+        if nonnull {
+            write!(output, " nonnull").unwrap();
+        }
+        if let Some(align) = pointee_align {
+            write!(output, " align {align}").unwrap();
+        }
+        if let Some(bytes) = dereferenceable {
+            write!(output, " dereferenceable({bytes})").unwrap();
         }
         Ok(())
     }
@@ -847,10 +900,9 @@ impl<'a> ModuleExportState<'a> {
             let block = entry_block.deref(self.ctx);
             let args = block.arguments();
             // Rust-derived parameter attributes arrive as explicit LLVM-dialect
-            // marker attributes produced by mir-lower after source-argument ABI
-            // flattening. The exporter does not infer aliasing from pointer type,
-            // mutability, address space, or `DisjointSlice`; it only serializes
-            // the already-audited `noalias` / `readonly` proof bits.
+            // markers produced by mir-lower after source-argument ABI flattening.
+            // The exporter never infers Rust semantics from pointer shape,
+            // mutability, address space, or `DisjointSlice`.
             for (i, arg) in args.enumerate() {
                 if i > 0 {
                     write!(output, ", ").unwrap();

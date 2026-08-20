@@ -14,13 +14,13 @@ use pliron::{
     attribute::attr_cast,
     builtin::{
         attr_interfaces::TypedAttrInterface,
-        attributes::{StringAttr, TypeAttr},
+        attributes::{IntegerAttr, StringAttr, TypeAttr},
         op_interfaces::{
             ATTR_KEY_SYM_NAME, IsolatedFromAboveInterface, NOpdsInterface, NRegionsInterface,
             NResultsInterface, OneRegionInterface, SymbolOpInterface,
         },
         type_interfaces::FunctionTypeInterface,
-        types::FunctionType,
+        types::{FunctionType, IntegerType, Signedness},
     },
     common_traits::Verify,
     context::{Context, Ptr},
@@ -39,9 +39,11 @@ use pliron::{
     region::Region,
     result::Error,
     r#type::{TypeHandle, Typed, TypedHandle, type_cast},
+    utils::apint::APInt,
     verify_err,
 };
 use pliron_derive::pliron_op;
+use std::num::NonZero;
 
 use crate::types::{MirPointerKind, MirPtrType, MirSliceType};
 
@@ -54,6 +56,15 @@ pub const MIR_PARAM_NOALIAS_ATTR_PREFIX: &str = "mir_param_noalias_";
 /// `readonly` contract for that Rust shared reference. The index is the MIR
 /// function argument index before aggregate flattening.
 pub const MIR_PARAM_READONLY_ATTR_PREFIX: &str = "mir_param_readonly_";
+
+/// Per-source-argument marker proving that the source Rust reference cannot be null.
+pub const MIR_PARAM_NONNULL_ATTR_PREFIX: &str = "mir_param_nonnull_";
+
+/// Per-source-argument marker carrying the rustc-proven pointee alignment in bytes.
+pub const MIR_PARAM_POINTEE_ALIGN_ATTR_PREFIX: &str = "mir_param_pointee_align_";
+
+/// Per-source-argument marker carrying the rustc-proven dereferenceable byte count.
+pub const MIR_PARAM_DEREFERENCEABLE_ATTR_PREFIX: &str = "mir_param_dereferenceable_";
 
 /// MIR function operation.
 ///
@@ -68,6 +79,9 @@ pub const MIR_PARAM_READONLY_ATTR_PREFIX: &str = "mir_param_readonly_";
 /// | `mir_func_type`| TypeAttr  | Function type (mir.func_type)      |
 /// | `mir_param_noalias_N` | StringAttr | rustc-proven `noalias` for source arg N |
 /// | `mir_param_readonly_N` | StringAttr | rustc-proven `readonly` for source arg N |
+/// | `mir_param_nonnull_N` | StringAttr | rustc-proven `nonnull` for source arg N |
+/// | `mir_param_pointee_align_N` | IntegerAttr | rustc-proven pointee alignment in bytes |
+/// | `mir_param_dereferenceable_N` | IntegerAttr | rustc-proven dereferenceable bytes |
 /// ```
 ///
 /// # Verification
@@ -116,11 +130,6 @@ impl MirFuncOp {
     }
 
     /// Record rustc-proven aliasing facts for one source-level function argument.
-    ///
-    /// These facts are attached to the MIR argument index, before slices are
-    /// flattened into `(ptr, len)` by `mir-lower`. `readonly` is intentionally
-    /// represented separately from pointer kind: `SharedRef` alone is not
-    /// sufficient when the pointee contains `UnsafeCell`.
     pub fn set_reference_param_attrs(
         &self,
         ctx: &mut Context,
@@ -146,7 +155,43 @@ impl MirFuncOp {
         }
     }
 
-    /// Whether rustc proved that this source-level argument may carry LLVM `noalias`.
+    /// Record rustc-proven pointer validity facts for one source-level reference argument.
+    pub fn set_reference_param_validity_attrs(
+        &self,
+        ctx: &mut Context,
+        index: usize,
+        nonnull: bool,
+        pointee_align: Option<u64>,
+        dereferenceable: Option<u64>,
+    ) {
+        if nonnull {
+            set_param_marker(
+                ctx,
+                self.get_operation(),
+                MIR_PARAM_NONNULL_ATTR_PREFIX,
+                index,
+            );
+        }
+        if let Some(align) = pointee_align {
+            set_param_value(
+                ctx,
+                self.get_operation(),
+                MIR_PARAM_POINTEE_ALIGN_ATTR_PREFIX,
+                index,
+                align,
+            );
+        }
+        if let Some(bytes) = dereferenceable {
+            set_param_value(
+                ctx,
+                self.get_operation(),
+                MIR_PARAM_DEREFERENCEABLE_ATTR_PREFIX,
+                index,
+                bytes,
+            );
+        }
+    }
+
     pub fn param_noalias(&self, ctx: &Context, index: usize) -> bool {
         has_param_marker(
             ctx,
@@ -156,12 +201,38 @@ impl MirFuncOp {
         )
     }
 
-    /// Whether rustc proved that this source-level argument may carry LLVM `readonly`.
     pub fn param_readonly(&self, ctx: &Context, index: usize) -> bool {
         has_param_marker(
             ctx,
             self.get_operation(),
             MIR_PARAM_READONLY_ATTR_PREFIX,
+            index,
+        )
+    }
+
+    pub fn param_nonnull(&self, ctx: &Context, index: usize) -> bool {
+        has_param_marker(
+            ctx,
+            self.get_operation(),
+            MIR_PARAM_NONNULL_ATTR_PREFIX,
+            index,
+        )
+    }
+
+    pub fn param_pointee_align(&self, ctx: &Context, index: usize) -> Option<u64> {
+        param_value(
+            ctx,
+            self.get_operation(),
+            MIR_PARAM_POINTEE_ALIGN_ATTR_PREFIX,
+            index,
+        )
+    }
+
+    pub fn param_dereferenceable(&self, ctx: &Context, index: usize) -> Option<u64> {
+        param_value(
+            ctx,
+            self.get_operation(),
+            MIR_PARAM_DEREFERENCEABLE_ATTR_PREFIX,
             index,
         )
     }
@@ -181,9 +252,26 @@ fn set_param_marker(ctx: &mut Context, op: Ptr<Operation>, prefix: &str, index: 
         .set(key, StringAttr::new("true".to_string()));
 }
 
+fn set_param_value(ctx: &mut Context, op: Ptr<Operation>, prefix: &str, index: usize, value: u64) {
+    let key = param_marker_key(prefix, index);
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let value = APInt::from_u64(value, NonZero::new(64).unwrap());
+    op.deref_mut(ctx)
+        .attributes
+        .set(key, IntegerAttr::new(u64_ty, value));
+}
+
 fn has_param_marker(ctx: &Context, op: Ptr<Operation>, prefix: &str, index: usize) -> bool {
     let key = param_marker_key(prefix, index);
     op.deref(ctx).attributes.get::<StringAttr>(&key).is_some()
+}
+
+fn param_value(ctx: &Context, op: Ptr<Operation>, prefix: &str, index: usize) -> Option<u64> {
+    let key = param_marker_key(prefix, index);
+    op.deref(ctx)
+        .attributes
+        .get::<IntegerAttr>(&key)
+        .map(|value| value.value().to_u64())
 }
 
 fn marker_index(key: &Identifier, prefix: &str) -> Option<Result<usize, ()>> {
@@ -301,17 +389,22 @@ impl Verify for MirFuncOp {
 
         let inputs = interface.arg_types();
 
-        // Reference-derived optimizer facts are deliberately audited here,
-        // before MIR-to-LLVM flattening. Raw/erased pointers must never acquire
-        // Rust reference guarantees, and `readonly` is only valid for a shared
-        // reference for which the importer also proved `noalias`.
+        // Reference-derived optimizer facts are audited before MIR-to-LLVM flattening.
         for key in op.attributes.0.keys() {
-            let marker = marker_index(key, MIR_PARAM_NOALIAS_ATTR_PREFIX)
-                .map(|index| (index, false))
-                .or_else(|| {
-                    marker_index(key, MIR_PARAM_READONLY_ATTR_PREFIX).map(|index| (index, true))
-                });
-            let Some((index, is_readonly)) = marker else {
+            let mut matched_prefix = None;
+            for (prefix, kind) in [
+                (MIR_PARAM_NOALIAS_ATTR_PREFIX, "noalias"),
+                (MIR_PARAM_READONLY_ATTR_PREFIX, "readonly"),
+                (MIR_PARAM_NONNULL_ATTR_PREFIX, "nonnull"),
+                (MIR_PARAM_POINTEE_ALIGN_ATTR_PREFIX, "align"),
+                (MIR_PARAM_DEREFERENCEABLE_ATTR_PREFIX, "dereferenceable"),
+            ] {
+                if let Some(index) = marker_index(key, prefix) {
+                    matched_prefix = Some((index, kind));
+                    break;
+                }
+            }
+            let Some((index, attr_kind)) = matched_prefix else {
                 continue;
             };
             let index = match index {
@@ -334,37 +427,87 @@ impl Verify for MirFuncOp {
                 );
             }
 
-            let kind = pointer_kind_for_function_input(ctx, inputs[index]);
-            if is_readonly {
-                if kind != Some(MirPointerKind::SharedRef) {
-                    return verify_err!(
-                        op.loc(),
-                        "MirFuncOp readonly proof on argument {} requires a SharedRef pointer kind",
-                        index
-                    );
-                }
-                if !self.param_noalias(ctx, index) {
-                    return verify_err!(
-                        op.loc(),
-                        "MirFuncOp readonly proof on argument {} must carry the matching noalias proof",
-                        index
-                    );
-                }
-            } else if !matches!(
-                kind,
+            let pointer_kind = pointer_kind_for_function_input(ctx, inputs[index]);
+            if !matches!(
+                pointer_kind,
                 Some(MirPointerKind::SharedRef | MirPointerKind::UniqueRef)
             ) {
                 return verify_err!(
                     op.loc(),
-                    "MirFuncOp noalias proof on argument {} requires a Rust reference pointer kind",
+                    "MirFuncOp {} proof on argument {} requires a Rust reference pointer kind",
+                    attr_kind,
                     index
                 );
-            } else if kind == Some(MirPointerKind::SharedRef) && !self.param_readonly(ctx, index) {
-                return verify_err!(
-                    op.loc(),
-                    "MirFuncOp SharedRef noalias proof on argument {} must carry the matching readonly proof",
-                    index
-                );
+            }
+
+            match attr_kind {
+                "readonly" => {
+                    if pointer_kind != Some(MirPointerKind::SharedRef) {
+                        return verify_err!(
+                            op.loc(),
+                            "MirFuncOp readonly proof on argument {} requires a SharedRef pointer kind",
+                            index
+                        );
+                    }
+                    if !self.param_noalias(ctx, index) {
+                        return verify_err!(
+                            op.loc(),
+                            "MirFuncOp readonly proof on argument {} must carry the matching noalias proof",
+                            index
+                        );
+                    }
+                }
+                "noalias"
+                    if pointer_kind == Some(MirPointerKind::SharedRef)
+                        && !self.param_readonly(ctx, index) =>
+                {
+                    return verify_err!(
+                        op.loc(),
+                        "MirFuncOp SharedRef noalias proof on argument {} must carry the matching readonly proof",
+                        index
+                    );
+                }
+                "noalias" => {}
+                "align" => {
+                    let Some(align) = self.param_pointee_align(ctx, index) else {
+                        return verify_err!(
+                            op.loc(),
+                            "MirFuncOp pointee alignment proof on argument {} is not a valid integer",
+                            index
+                        );
+                    };
+                    if align <= 1 || !align.is_power_of_two() {
+                        return verify_err!(
+                            op.loc(),
+                            "MirFuncOp pointee alignment proof on argument {} must be a power of two greater than one",
+                            index
+                        );
+                    }
+                }
+                "dereferenceable" => {
+                    let Some(bytes) = self.param_dereferenceable(ctx, index) else {
+                        return verify_err!(
+                            op.loc(),
+                            "MirFuncOp dereferenceable proof on argument {} is not a valid integer",
+                            index
+                        );
+                    };
+                    if bytes == 0 {
+                        return verify_err!(
+                            op.loc(),
+                            "MirFuncOp dereferenceable proof on argument {} must be non-zero",
+                            index
+                        );
+                    }
+                    if !self.param_nonnull(ctx, index) {
+                        return verify_err!(
+                            op.loc(),
+                            "MirFuncOp dereferenceable proof on argument {} requires the matching nonnull proof",
+                            index
+                        );
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -374,6 +517,7 @@ impl Verify for MirFuncOp {
         // Check if there is an entry block
         if let Some(entry_block_ptr) = region.get_head() {
             let entry_block = entry_block_ptr.deref(ctx);
+
             if entry_block.get_num_arguments() != inputs.len() {
                 return verify_err!(
                     op.loc(),

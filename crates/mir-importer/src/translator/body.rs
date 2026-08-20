@@ -1498,36 +1498,65 @@ fn emit_entry_allocas(
 struct ReferenceParamAttrs {
     noalias: bool,
     readonly: bool,
+    nonnull: bool,
+    pointee_align: Option<u64>,
+    dereferenceable: Option<u64>,
 }
 
-/// Reproduce rustc's reference-derived LLVM argument policy for the two
-/// attributes this backend currently understands. The decision is made while
-/// the original Rust `Ty` and the compiler type context are still available;
-/// downstream passes only propagate the resulting proof bits.
+/// Compute rustc-proven LLVM parameter facts while the original Rust `Ty`
+/// and compiler type context are still available.
 ///
-/// rustc currently permits:
-/// - `&T`: `noalias + readonly` only when `T: Freeze`;
-/// - `&mut T`: `noalias` only when `T: Unpin`;
-/// - raw pointers: neither attribute.
+/// Alias facts follow rustc's conservative `Freeze` / `Unpin` policy.
+/// Validity facts in this follow-up are intentionally restricted to sized
+/// Rust references. Raw pointers and unsized references receive none of
+/// `nonnull`, pointee `align`, or `dereferenceable` here.
 fn reference_param_attrs(ty: &Ty) -> ReferenceParamAttrs {
     let TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) = ty.kind() else {
         return ReferenceParamAttrs::default();
     };
 
+    let layout_facts = pointee.layout().ok().and_then(|layout| {
+        let shape = layout.shape();
+        u64::try_from(shape.size.bytes())
+            .ok()
+            .map(|size| (size, shape.abi_align))
+    });
+
     rustc_middle::ty::tls::with(|tcx| {
         let pointee = rustc_public::rustc_internal::internal(tcx, pointee);
         let typing_env = rustc_middle::ty::TypingEnv::fully_monomorphized();
 
-        match mutability {
-            mir::Mutability::Not if pointee.is_freeze(tcx, typing_env) => ReferenceParamAttrs {
-                noalias: true,
-                readonly: true,
-            },
-            mir::Mutability::Mut if pointee.is_unpin(tcx, typing_env) => ReferenceParamAttrs {
-                noalias: true,
-                readonly: false,
-            },
-            _ => ReferenceParamAttrs::default(),
+        let (noalias, readonly) = match mutability {
+            mir::Mutability::Not if pointee.is_freeze(tcx, typing_env) => (true, true),
+            mir::Mutability::Mut if pointee.is_unpin(tcx, typing_env) => (true, false),
+            _ => (false, false),
+        };
+
+        if !pointee.is_sized(tcx, typing_env) {
+            return ReferenceParamAttrs {
+                noalias,
+                readonly,
+                ..ReferenceParamAttrs::default()
+            };
+        }
+
+        let Some((size, align)) = layout_facts else {
+            return ReferenceParamAttrs {
+                noalias,
+                readonly,
+                ..ReferenceParamAttrs::default()
+            };
+        };
+
+        ReferenceParamAttrs {
+            noalias,
+            readonly,
+            nonnull: true,
+            pointee_align: (align > 1).then_some(align),
+            // LLVM `dereferenceable(N)` carries a lifetime/no-free guarantee.
+            // rustc only has that guarantee here under the same `Freeze` /
+            // `Unpin` conditions that justify the alias fact above.
+            dereferenceable: (noalias && size != 0).then_some(size),
         }
     })
 }
@@ -1727,11 +1756,18 @@ pub fn translate_body(
     };
     mir_func_op.set_symbol_name(ctx, legaliser.legalise(&name_str));
 
-    // Keep rustc's aliasing decision attached to the source-level argument
-    // index. Slices are still one MIR argument here; mir-lower remaps the
-    // proof to the pointer component after ABI flattening.
+    // Keep all Rust-semantic decisions attached to the source argument index.
+    // MIR lowering remaps them to physical LLVM pointer arguments after ABI
+    // flattening; llvm-export only serializes the resulting proof facts.
     for (arg_index, attrs) in reference_param_attrs_by_arg.into_iter().enumerate() {
         mir_func_op.set_reference_param_attrs(ctx, arg_index, attrs.noalias, attrs.readonly);
+        mir_func_op.set_reference_param_validity_attrs(
+            ctx,
+            arg_index,
+            attrs.nonnull,
+            attrs.pointee_align,
+            attrs.dereferenceable,
+        );
     }
 
     // Check if the function has the #[cuda_oxide::kernel] attribute (passed via is_kernel flag)
@@ -2156,29 +2192,33 @@ mod tests {
     }
 
     #[test]
-    fn reference_param_attrs_follow_rustc_freeze_and_unpin_rules() {
+    fn reference_param_attrs_follow_rustc_reference_validity_rules() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time before unix epoch")
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "cuda_oxide_reference_attrs_{}_{}",
+            "cuda_oxide_reference_validity_attrs_{}_{}",
             std::process::id(),
             unique
         ));
         std::fs::create_dir_all(&root).unwrap();
-        let fixture = root.join("reference_attrs_fixture.rs");
+        let fixture = root.join("reference_validity_attrs_fixture.rs");
         std::fs::write(
             &fixture,
             r#"
 use core::cell::UnsafeCell;
 use core::marker::PhantomPinned;
 
+#[repr(align(16))]
+pub struct AlignedZst;
+
 pub fn reference_attrs(
     shared: &u32,
     interior_mutable: &UnsafeCell<u32>,
     unique: &mut u32,
     pinned: &mut PhantomPinned,
+    aligned_zst: &AlignedZst,
     shared_slice: &[u32],
     interior_mutable_slice: &[UnsafeCell<u32>],
     unique_slice: &mut [u32],
@@ -2190,6 +2230,7 @@ pub fn reference_attrs(
         interior_mutable,
         unique,
         pinned,
+        aligned_zst,
         shared_slice,
         interior_mutable_slice,
         unique_slice,
@@ -2216,7 +2257,7 @@ pub fn reference_attrs(
             "rustc".to_string(),
             "--edition=2024".to_string(),
             "--crate-type=rlib".to_string(),
-            "--crate-name=reference_attrs_fixture".to_string(),
+            "--crate-name=reference_validity_attrs_fixture".to_string(),
             "--emit=metadata".to_string(),
             "-Zmir-opt-level=0".to_string(),
             format!("--out-dir={}", root.display()),
@@ -2237,7 +2278,7 @@ pub fn reference_attrs(
                         .locals()
                         .iter()
                         .skip(1)
-                        .take(9)
+                        .take(10)
                         .map(|decl| reference_param_attrs(&decl.ty))
                         .collect::<Vec<_>>();
                     std::ops::ControlFlow::<(), _>::Continue(attrs)
@@ -2256,21 +2297,44 @@ pub fn reference_attrs(
                 ReferenceParamAttrs {
                     noalias: true,
                     readonly: true,
+                    nonnull: true,
+                    pointee_align: Some(4),
+                    dereferenceable: Some(4),
                 },
-                ReferenceParamAttrs::default(),
+                ReferenceParamAttrs {
+                    nonnull: true,
+                    pointee_align: Some(4),
+                    ..ReferenceParamAttrs::default()
+                },
                 ReferenceParamAttrs {
                     noalias: true,
-                    readonly: false,
+                    nonnull: true,
+                    pointee_align: Some(4),
+                    dereferenceable: Some(4),
+                    ..ReferenceParamAttrs::default()
                 },
-                ReferenceParamAttrs::default(),
+                ReferenceParamAttrs {
+                    nonnull: true,
+                    ..ReferenceParamAttrs::default()
+                },
                 ReferenceParamAttrs {
                     noalias: true,
                     readonly: true,
+                    nonnull: true,
+                    pointee_align: Some(16),
+                    dereferenceable: None,
+                },
+                // This PR deliberately restricts validity facts to sized
+                // references. #1089 still supplies alias facts for slices.
+                ReferenceParamAttrs {
+                    noalias: true,
+                    readonly: true,
+                    ..ReferenceParamAttrs::default()
                 },
                 ReferenceParamAttrs::default(),
                 ReferenceParamAttrs {
                     noalias: true,
-                    readonly: false,
+                    ..ReferenceParamAttrs::default()
                 },
                 ReferenceParamAttrs::default(),
                 ReferenceParamAttrs::default(),

@@ -193,16 +193,32 @@ fn export_reference_parameter_attrs_on_definitions() {
         false,
     );
     let func = FuncOp::new(&mut ctx, "reference_attrs".try_into().unwrap(), func_ty);
+
     for key in [
         "cuda_oxide_param_noalias_0",
         "cuda_oxide_param_readonly_0",
+        "cuda_oxide_param_nonnull_0",
         "cuda_oxide_param_noalias_2",
+        "cuda_oxide_param_nonnull_2",
     ] {
         func.get_operation()
             .deref_mut(&ctx)
             .attributes
             .set(key.try_into().unwrap(), StringAttr::new("true".to_string()));
     }
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    for (key, value) in [
+        ("cuda_oxide_param_pointee_align_0", 16u64),
+        ("cuda_oxide_param_dereferenceable_0", 16u64),
+        ("cuda_oxide_param_pointee_align_2", 4u64),
+        ("cuda_oxide_param_dereferenceable_2", 4u64),
+    ] {
+        func.get_operation().deref_mut(&ctx).attributes.set(
+            key.try_into().unwrap(),
+            IntegerAttr::new(u64_ty, APInt::from_u64(value, NonZero::new(64).unwrap())),
+        );
+    }
+
     let entry = func.get_or_create_entry_block(&mut ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()
@@ -212,7 +228,7 @@ fn export_reference_parameter_attrs_on_definitions() {
     let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
     assert!(
         ir.contains(
-            "define void @reference_attrs(ptr noalias readonly %v0, i64 %v1, ptr noalias %v2)"
+            "define void @reference_attrs(ptr noalias readonly nonnull align 16 dereferenceable(16) %v0, i64 %v1, ptr noalias nonnull align 4 dereferenceable(4) %v2)"
         ),
         "{ir}"
     );
@@ -232,12 +248,28 @@ fn legacy_export_reference_parameter_attrs_follow_typed_pointer() {
         "legacy_reference_attrs".try_into().unwrap(),
         func_ty,
     );
-    for key in ["cuda_oxide_param_noalias_0", "cuda_oxide_param_readonly_0"] {
+
+    for key in [
+        "cuda_oxide_param_noalias_0",
+        "cuda_oxide_param_readonly_0",
+        "cuda_oxide_param_nonnull_0",
+    ] {
         func.get_operation()
             .deref_mut(&ctx)
             .attributes
             .set(key.try_into().unwrap(), StringAttr::new("true".to_string()));
     }
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    for (key, value) in [
+        ("cuda_oxide_param_pointee_align_0", 8u64),
+        ("cuda_oxide_param_dereferenceable_0", 8u64),
+    ] {
+        func.get_operation().deref_mut(&ctx).attributes.set(
+            key.try_into().unwrap(),
+            IntegerAttr::new(u64_ty, APInt::from_u64(value, NonZero::new(64).unwrap())),
+        );
+    }
+
     let entry = func.get_or_create_entry_block(&mut ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()
@@ -248,7 +280,9 @@ fn legacy_export_reference_parameter_attrs_follow_typed_pointer() {
     let ir = export_module_to_string_with_config(&ctx, &module, &config)
         .expect("legacy export succeeds");
     assert!(
-        ir.contains("define void @legacy_reference_attrs(i8* noalias readonly %v0)"),
+        ir.contains(
+            "define void @legacy_reference_attrs(i8* noalias readonly nonnull align 8 dereferenceable(8) %v0)"
+        ),
         "{ir}"
     );
 }
@@ -264,7 +298,7 @@ fn export_rejects_reference_attrs_on_non_pointer_parameter() {
     let func_ty = FuncType::get(&ctx, void_ty.into(), vec![i32_ty.into()], false);
     let func = FuncOp::new(&mut ctx, "bad_reference_attrs".try_into().unwrap(), func_ty);
     func.get_operation().deref_mut(&ctx).attributes.set(
-        "cuda_oxide_param_noalias_0".try_into().unwrap(),
+        "cuda_oxide_param_nonnull_0".try_into().unwrap(),
         StringAttr::new("true".to_string()),
     );
     let entry = func.get_or_create_entry_block(&mut ctx);
@@ -276,6 +310,35 @@ fn export_rejects_reference_attrs_on_non_pointer_parameter() {
     let error = export_module_to_string(&ctx, &module)
         .expect_err("non-pointer parameter attributes must be rejected");
     assert!(error.contains("non-pointer argument 0"), "{error}");
+}
+
+#[test]
+fn export_rejects_invalid_reference_validity_attrs() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "bad_validity_attrs".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let ptr_ty = PointerType::get(&ctx, 0);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.into(), vec![ptr_ty.into()], false);
+    let func = FuncOp::new(&mut ctx, "bad_validity_attrs".try_into().unwrap(), func_ty);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    func.get_operation().deref_mut(&ctx).attributes.set(
+        "cuda_oxide_param_dereferenceable_0".try_into().unwrap(),
+        IntegerAttr::new(u64_ty, APInt::from_u64(4, NonZero::new(64).unwrap())),
+    );
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let error = export_module_to_string(&ctx, &module)
+        .expect_err("dereferenceable without nonnull must be rejected");
+    assert!(
+        error.contains("without the matching nonnull proof"),
+        "{error}"
+    );
 }
 
 #[test]

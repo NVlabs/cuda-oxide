@@ -61,6 +61,9 @@ const KERNEL_PARAM_ABI_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_param_abi_align_";
 const RETURN_ABI_ALIGN_ATTR: &str = "cuda_oxide_return_abi_align";
 const LLVM_PARAM_NOALIAS_ATTR_PREFIX: &str = "cuda_oxide_param_noalias_";
 const LLVM_PARAM_READONLY_ATTR_PREFIX: &str = "cuda_oxide_param_readonly_";
+const LLVM_PARAM_NONNULL_ATTR_PREFIX: &str = "cuda_oxide_param_nonnull_";
+const LLVM_PARAM_POINTEE_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_param_pointee_align_";
+const LLVM_PARAM_DEREFERENCEABLE_ATTR_PREFIX: &str = "cuda_oxide_param_dereferenceable_";
 
 // ============================================================================
 // Dynamic shared-memory contract propagation
@@ -540,8 +543,13 @@ fn mir_func_has_reference_param_attrs(ctx: &Context, mir_func: &MirFuncOp) -> bo
     use pliron::builtin::type_interfaces::FunctionTypeInterface;
 
     let arg_count = mir_func.get_type(ctx).deref(ctx).arg_types().len();
-    (0..arg_count)
-        .any(|index| mir_func.param_noalias(ctx, index) || mir_func.param_readonly(ctx, index))
+    (0..arg_count).any(|index| {
+        mir_func.param_noalias(ctx, index)
+            || mir_func.param_readonly(ctx, index)
+            || mir_func.param_nonnull(ctx, index)
+            || mir_func.param_pointee_align(ctx, index).is_some()
+            || mir_func.param_dereferenceable(ctx, index).is_some()
+    })
 }
 
 fn mir_argument_is_reference(ctx: &Context, ty: TypeHandle) -> bool {
@@ -554,9 +562,8 @@ fn mir_argument_is_reference(ctx: &Context, ty: TypeHandle) -> bool {
     }
 }
 
-/// Map source-level MIR reference arguments to the physical LLVM pointer
-/// parameter that carries their address after ABI flattening. In particular,
-/// a `MirSliceType` maps only to the first field of `(ptr, len, ...)`.
+/// Map a source-level MIR reference argument to the physical LLVM pointer
+/// parameter that carries its address after ABI flattening.
 fn reference_param_llvm_mapping(
     ctx: &mut Context,
     mir_func_type: pliron::r#type::TypedHandle<pliron::builtin::types::FunctionType>,
@@ -653,6 +660,31 @@ fn set_llvm_param_marker(ctx: &mut Context, llvm_func: &llvm::FuncOp, prefix: &s
         .set(key, StringAttr::new("true".to_string()));
 }
 
+fn set_llvm_param_value(
+    ctx: &mut Context,
+    llvm_func: &llvm::FuncOp,
+    prefix: &str,
+    index: usize,
+    value: u64,
+) {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZero;
+
+    let key: pliron::identifier::Identifier = format!("{prefix}{index}")
+        .as_str()
+        .try_into()
+        .expect("LLVM parameter value attribute name is valid");
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let value = APInt::from_u64(value, NonZero::new(64).unwrap());
+    llvm_func
+        .get_operation()
+        .deref_mut(ctx)
+        .attributes
+        .set(key, IntegerAttr::new(u64_ty, value));
+}
+
 fn propagate_reference_param_attrs(
     ctx: &mut Context,
     mir_func: &MirFuncOp,
@@ -662,7 +694,12 @@ fn propagate_reference_param_attrs(
     for mir_index in 0..mapping.len() {
         let noalias = mir_func.param_noalias(ctx, mir_index);
         let readonly = mir_func.param_readonly(ctx, mir_index);
-        if !noalias && !readonly {
+        let nonnull = mir_func.param_nonnull(ctx, mir_index);
+        let pointee_align = mir_func.param_pointee_align(ctx, mir_index);
+        let dereferenceable = mir_func.param_dereferenceable(ctx, mir_index);
+
+        if !noalias && !readonly && !nonnull && pointee_align.is_none() && dereferenceable.is_none()
+        {
             continue;
         }
 
@@ -671,11 +708,33 @@ fn propagate_reference_param_attrs(
                 "Rust reference proof on MIR argument {mir_index} has no physical LLVM pointer parameter"
             )
         })?;
+
         if noalias {
             set_llvm_param_marker(ctx, llvm_func, LLVM_PARAM_NOALIAS_ATTR_PREFIX, llvm_index);
         }
         if readonly {
             set_llvm_param_marker(ctx, llvm_func, LLVM_PARAM_READONLY_ATTR_PREFIX, llvm_index);
+        }
+        if nonnull {
+            set_llvm_param_marker(ctx, llvm_func, LLVM_PARAM_NONNULL_ATTR_PREFIX, llvm_index);
+        }
+        if let Some(align) = pointee_align {
+            set_llvm_param_value(
+                ctx,
+                llvm_func,
+                LLVM_PARAM_POINTEE_ALIGN_ATTR_PREFIX,
+                llvm_index,
+                align,
+            );
+        }
+        if let Some(bytes) = dereferenceable {
+            set_llvm_param_value(
+                ctx,
+                llvm_func,
+                LLVM_PARAM_DEREFERENCEABLE_ATTR_PREFIX,
+                llvm_index,
+                bytes,
+            );
         }
     }
     Ok(())

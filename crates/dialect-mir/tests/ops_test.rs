@@ -1083,17 +1083,19 @@ fn test_mir_func_reference_param_attrs_verify() {
 
     let valid = make_func(&mut ctx);
     valid.set_reference_param_attrs(&mut ctx, 0, true, true);
+    valid.set_reference_param_validity_attrs(&mut ctx, 0, true, Some(4), Some(4));
     valid.set_reference_param_attrs(&mut ctx, 1, true, false);
+    valid.set_reference_param_validity_attrs(&mut ctx, 1, true, Some(4), Some(4));
     assert!(
         valid.verify(&ctx).is_ok(),
         "audited reference facts are valid"
     );
 
-    let raw_noalias = make_func(&mut ctx);
-    raw_noalias.set_reference_param_attrs(&mut ctx, 2, true, false);
+    let raw_nonnull = make_func(&mut ctx);
+    raw_nonnull.set_reference_param_validity_attrs(&mut ctx, 2, true, Some(4), Some(4));
     assert!(
-        raw_noalias.verify(&ctx).is_err(),
-        "raw pointers must not acquire reference-derived noalias"
+        raw_nonnull.verify(&ctx).is_err(),
+        "raw pointers must not acquire reference-derived validity facts"
     );
 
     let unique_readonly = make_func(&mut ctx);
@@ -1103,8 +1105,22 @@ fn test_mir_func_reference_param_attrs_verify() {
         "readonly is restricted to proven shared references"
     );
 
+    let bad_align = make_func(&mut ctx);
+    bad_align.set_reference_param_validity_attrs(&mut ctx, 0, true, Some(3), None);
+    assert!(
+        bad_align.verify(&ctx).is_err(),
+        "pointee alignment must be a power of two greater than one"
+    );
+
+    let deref_without_nonnull = make_func(&mut ctx);
+    deref_without_nonnull.set_reference_param_validity_attrs(&mut ctx, 0, false, None, Some(4));
+    assert!(
+        deref_without_nonnull.verify(&ctx).is_err(),
+        "dereferenceable requires the matching nonnull proof"
+    );
+
     let out_of_range = make_func(&mut ctx);
-    out_of_range.set_reference_param_attrs(&mut ctx, 3, true, false);
+    out_of_range.set_reference_param_validity_attrs(&mut ctx, 3, true, Some(4), Some(4));
     assert!(
         out_of_range.verify(&ctx).is_err(),
         "parameter proof indices must be in range"

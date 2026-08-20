@@ -92,6 +92,8 @@ categories keep the same physical LLVM pointer/fat-pointer representation.
 Function arguments carry separate, audited proof markers when rustc's own type
 semantics justify LLVM parameter attributes:
 
+Alias facts follow rustc's conservative reference policy:
+
 | Source argument | Additional proof | LLVM parameter attributes |
 |-----------------|------------------|---------------------------|
 | `&T` / `&[T]` | pointee is `Freeze` | `noalias readonly` |
@@ -99,19 +101,33 @@ semantics justify LLVM parameter attributes:
 | raw pointer | none | none |
 | erased/compiler pointer | none | none |
 
-The importer computes these facts while the original rustc `Ty` and trait
-queries are available and stores them on `mir.func` by source argument index.
-`mir-lower` remaps those indices after ABI flattening, so a slice applies the
-attributes only to its pointer component and never to its length. The LLVM
-exporter serializes the resulting proof bits without inferring anything from
-mutability, address space, or pointer kind on its own. In particular, a shared
-reference containing `UnsafeCell` is not `readonly`, and raw `*mut T` never
-acquires `noalias` merely because it is writable.
+Sized references additionally carry validity facts derived from the rustc
+pointee layout:
 
-`dereferenceable` and other provenance-sensitive attributes remain outside this
-policy. For GPU-specific abstractions such as `SharedArray`, CUDA address space
-remains independent from Rust reference kind and from these function-boundary
-proofs.
+| Source argument | Condition | Additional LLVM attributes |
+|-----------------|-----------|----------------------------|
+| `&T` | `T: Sized` | `nonnull`, and `align N` when `N > 1` |
+| `&mut T` | `T: Sized` | `nonnull`, and `align N` when `N > 1` |
+| `&T` | `T: Sized + Freeze`, `size_of::<T>() > 0` | `dereferenceable(size_of::<T>())` |
+| `&mut T` | `T: Sized + Unpin`, `size_of::<T>() > 0` | `dereferenceable(size_of::<T>())` |
+| unsized reference | any | no validity attributes in this policy |
+| raw pointer | any | no reference-derived validity attributes |
+
+`align 1` is omitted as redundant, and zero-sized pointees never produce
+`dereferenceable(0)`. An over-aligned ZST can therefore carry `nonnull align N`
+without `dereferenceable`.
+
+The importer computes all Rust-semantic facts while the original rustc `Ty`,
+layout, and trait queries are available and stores them on `mir.func` by source
+argument index. `mir-lower` remaps those indices after ABI flattening. For a
+slice, only the alias facts from the first table may reach the pointer component;
+the sized-reference validity policy deliberately does not annotate the slice
+pointer. The LLVM exporter serializes the resulting proof bits without
+inferring anything from mutability, address space, pointer kind, or
+`DisjointSlice` on its own.
+
+For GPU-specific abstractions such as `SharedArray`, CUDA address space remains
+independent from Rust reference kind and from these function-boundary proofs.
 
 ### Address Spaces
 
