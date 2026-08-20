@@ -14,8 +14,8 @@ use dialect_mir::{
         MirPtrOffsetOp, MirRemOp, MirReturnOp, MirSetDiscriminantOp, MirStoreOp, MirSubOp,
     },
     types::{
-        EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirTupleType,
-        MirUnionType,
+        EnumVariant, MirDisjointSliceType, MirEnumType, MirPointerKind, MirPtrType, MirSliceType,
+        MirTupleType, MirUnionType,
     },
 };
 use pliron::{
@@ -189,6 +189,94 @@ fn test_mir_control_flow_verify() {
         MirAssertOp::new(op_assert_bad).verify(&ctx).is_err(),
         "Assert cond type mismatch"
     );
+}
+
+#[test]
+fn test_mir_pointer_kind_distinguishes_references_from_raw_pointers() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let pointee: pliron::r#type::TypeHandle = i32_ty.into();
+
+    let shared_ref =
+        MirPtrType::get_generic_with_kind(&mut ctx, pointee, false, MirPointerKind::SharedRef);
+    let raw_const =
+        MirPtrType::get_generic_with_kind(&mut ctx, pointee, false, MirPointerKind::RawConst);
+    let unique_ref =
+        MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::UniqueRef);
+    let raw_mut =
+        MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::RawMut);
+
+    assert_ne!(
+        shared_ref, raw_const,
+        "&T must remain distinct from *const T"
+    );
+    assert_ne!(
+        unique_ref, raw_mut,
+        "&mut T must remain distinct from *mut T"
+    );
+    assert_ne!(
+        shared_ref, unique_ref,
+        "&T must remain distinct from &mut T"
+    );
+    assert_ne!(
+        raw_const, raw_mut,
+        "*const T must remain distinct from *mut T"
+    );
+
+    assert_eq!(
+        shared_ref.deref(&ctx).pointer_kind(),
+        MirPointerKind::SharedRef
+    );
+    assert_eq!(
+        unique_ref.deref(&ctx).pointer_kind(),
+        MirPointerKind::UniqueRef
+    );
+    assert_eq!(
+        raw_const.deref(&ctx).pointer_kind(),
+        MirPointerKind::RawConst
+    );
+    assert_eq!(raw_mut.deref(&ctx).pointer_kind(), MirPointerKind::RawMut);
+}
+
+#[test]
+fn test_mir_slice_preserves_pointer_kind() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let element: pliron::r#type::TypeHandle = u8_ty.into();
+
+    let shared = MirSliceType::get_with_kind(&mut ctx, element, MirPointerKind::SharedRef);
+    let raw = MirSliceType::get_with_kind(&mut ctx, element, MirPointerKind::RawConst);
+
+    assert_ne!(shared, raw, "&[T] must remain distinct from *const [T]");
+    assert_eq!(shared.deref(&ctx).pointer_kind(), MirPointerKind::SharedRef);
+    assert_eq!(raw.deref(&ctx).pointer_kind(), MirPointerKind::RawConst);
+}
+
+#[test]
+fn test_mir_pointer_kind_mutability_consistency_verify() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let invalid_shared = MirPtrType {
+        pointee: i32_ty.into(),
+        is_mutable: true,
+        address_space: 0,
+        kind: MirPointerKind::SharedRef,
+    };
+    let invalid_raw_mut = MirPtrType {
+        pointee: i32_ty.into(),
+        is_mutable: false,
+        address_space: 0,
+        kind: MirPointerKind::RawMut,
+    };
+
+    assert!(invalid_shared.verify(&ctx).is_err());
+    assert!(invalid_raw_mut.verify(&ctx).is_err());
 }
 
 #[test]

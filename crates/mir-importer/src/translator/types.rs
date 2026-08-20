@@ -17,8 +17,8 @@
 //! | `char`              | `ui32`                              |
 //! | `(A, B, C)`         | `MirTupleType`                      |
 //! | `[T; N]`            | `ArrayType`                         |
-//! | `*const T`, `*mut T`| `MirPtrType` (generic addrspace)    |
-//! | `[T]`, `&[T]`       | `MirSliceType`                      |
+//! | `*const T`, `*mut T`| `MirPtrType` + raw pointer kind     |
+//! | `[T]`, `&[T]`       | `MirSliceType` + pointer kind       |
 //! | `struct S { .. }`   | `MirStructType`                     |
 //! | `union U { .. }`    | `MirUnionType`                      |
 //! | `enum E { .. }`     | `MirEnumType`                       |
@@ -44,8 +44,8 @@ use rustc_public_bridge::IndexedVal;
 
 // Re-export types from dialect_mir for convenience
 pub use dialect_mir::types::{
-    EnumEncoding, EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType,
-    MirTupleType, MirUnionType, StructAbiKind,
+    EnumEncoding, EnumVariant, MirDisjointSliceType, MirEnumType, MirPointerKind, MirPtrType,
+    MirSliceType, MirTupleType, MirUnionType, StructAbiKind,
 };
 use rustc_public::mir::Mutability;
 
@@ -314,15 +314,17 @@ pub(super) fn slice_tail_element_ty(ty: &rustc_public::ty::Ty) -> Option<rustc_p
 
 /// Translates a raw-pointer or reference type to its `dialect-mir` equivalent.
 ///
-/// Most pointers become generic-addrspace `MirPtrType`, but a few Rust-level
-/// types are stand-ins for shared-memory objects in a CUDA kernel. We detect
-/// those here and produce the correct `addrspace(3)` pointer so that the
-/// alloca slot for such a local matches the pointer value produced by
-/// shared-memory intrinsics (e.g. `MirSharedAllocOp`). See module docs.
+/// `pointer_kind` is the source-level distinction that must survive this
+/// boundary: `&T`, `&mut T`, `*const T`, and `*mut T` remain different MIR
+/// types even when their physical pointee, mutability bit, and address space
+/// match. Most pointers use the generic address space; CUDA stand-ins such as
+/// `SharedArray` and `Barrier` retain the same source pointer kind while using
+/// their concrete shared-memory address space.
 fn translate_pointer_like(
     ctx: &mut Context,
     pointee: &rustc_public::ty::Ty,
     is_mutable: bool,
+    pointer_kind: MirPointerKind,
 ) -> TranslationResult<TypeHandle> {
     match pointee.kind() {
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(elem_ty)) => {
@@ -333,7 +335,7 @@ fn translate_pointer_like(
             // the alloca slot even though Rust considers these freely
             // interconvertible.
             let elem = translate_type(ctx, &elem_ty)?;
-            Ok(MirSliceType::get(ctx, elem).into())
+            Ok(MirSliceType::get_with_kind(ctx, elem, pointer_kind).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Str) => {
             // `&str` / `*const str` is a fat pointer (data ptr + length),
@@ -347,7 +349,7 @@ fn translate_pointer_like(
                 pliron::builtin::types::Signedness::Unsigned,
             )
             .into();
-            Ok(MirSliceType::get(ctx, u8_ty).into())
+            Ok(MirSliceType::get_with_kind(ctx, u8_ty, pointer_kind).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, substs))
             if adt_def.trimmed_name() == "SharedArray" =>
@@ -357,7 +359,13 @@ fn translate_pointer_like(
             // `[T; N]`. Match the intrinsic-emitted shared-alloc pointer so
             // the alloca slot and the rvalue agree on type.
             let elem = shared_array_element_type(ctx, &substs, "SharedArray")?;
-            Ok(dialect_mir::types::MirPtrType::get_shared(ctx, elem, is_mutable).into())
+            Ok(dialect_mir::types::MirPtrType::get_shared_with_kind(
+                ctx,
+                elem,
+                is_mutable,
+                pointer_kind,
+            )
+            .into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, _substs))
             if adt_def.trimmed_name() == "Barrier" =>
@@ -370,7 +378,13 @@ fn translate_pointer_like(
                 pliron::builtin::types::Signedness::Unsigned,
             )
             .into();
-            Ok(dialect_mir::types::MirPtrType::get_shared(ctx, u64_ty, is_mutable).into())
+            Ok(dialect_mir::types::MirPtrType::get_shared_with_kind(
+                ctx,
+                u64_ty,
+                is_mutable,
+                pointer_kind,
+            )
+            .into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(..))
             if slice_tail_element_ty(pointee).is_some() =>
@@ -390,11 +404,11 @@ fn translate_pointer_like(
             // extracts the data pointer (the struct's address) first; see
             // the place-address walker in `rvalue.rs`.
             let struct_model = translate_type(ctx, pointee)?;
-            Ok(MirSliceType::get(ctx, struct_model).into())
+            Ok(MirSliceType::get_with_kind(ctx, struct_model, pointer_kind).into())
         }
         _ => {
             let pointee_ty = translate_type(ctx, pointee)?;
-            Ok(MirPtrType::get_generic(ctx, pointee_ty, is_mutable).into())
+            Ok(MirPtrType::get_generic_with_kind(ctx, pointee_ty, is_mutable, pointer_kind).into())
         }
     }
 }
@@ -652,7 +666,8 @@ pub fn translate_type(
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::RawPtr(ty, mutability)) => {
             let is_mutable = mutability == Mutability::Mut;
-            translate_pointer_like(ctx, &ty, is_mutable)
+            let pointer_kind = MirPointerKind::from_raw_mutability(is_mutable);
+            translate_pointer_like(ctx, &ty, is_mutable, pointer_kind)
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(
             _region,
@@ -660,7 +675,8 @@ pub fn translate_type(
             mutability,
         )) => {
             let is_mutable = mutability == Mutability::Mut;
-            translate_pointer_like(ctx, &ty, is_mutable)
+            let pointer_kind = MirPointerKind::from_reference_mutability(is_mutable);
+            translate_pointer_like(ctx, &ty, is_mutable, pointer_kind)
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, substs)) => {
             // Get the trimmed name (just the type name without path)
