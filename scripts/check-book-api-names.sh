@@ -6,9 +6,9 @@
 #
 # Scope is the book plus every crate and example README. The book half is the
 # original; the READMEs were added after one of them was found naming
-# `warp::shfl`, which has never existed -- `cuda-device` exports 32
-# `shuffle*` functions and no `shfl`, which is the cooperative-groups *method*
-# name. Example READMEs carry over a hundred qualified device names and are
+# `warp::shfl`, which has never existed. `cuda-device` exports 32 `shuffle*`
+# functions and no `shfl`; `shfl` is the cooperative-groups *method* name.
+# Example READMEs carry over a hundred qualified device names and are
 # the first thing a reader of an example opens, so they rot the same way the
 # book does and were checked by nothing.
 #
@@ -17,10 +17,10 @@
 # same sweep later found `warp::shuffle_xor_i32` in the API quick reference,
 # advertised as an "i32 variant" that has never existed, and a dispatch helper
 # in the compiler pages that had been replaced by generated code. Nothing fails
-# when the book names a function the tree does not have: it renders, it builds,
+# when a page names a function the tree does not have: it renders, it builds,
 # and a reader finds out by pasting it.
 #
-# Two passes, because the book names APIs two ways:
+# Two passes, because the docs name APIs two ways:
 #
 #   * A call in a ```rust fenced block -- `warp::foo(...)` -- which a reader
 #     pastes, so the name has to exist.
@@ -40,7 +40,7 @@
 # Scope otherwise unchanged, so the guard stays precise rather than merely broad:
 #
 #   * Only the device modules -- `warp`, `thread`, `grid`, `cluster`. Those are
-#     the paths the book uses in kernel examples and the ones that rot. Host
+#     the paths the docs use in kernel examples and the ones that rot. Host
 #     APIs are checked by rustdoc, which builds under `-D warnings`.
 #   * Existence only, never arity or types. Those change for good reasons and
 #     the compiler catches them; a name that is simply absent is the silent case.
@@ -155,14 +155,17 @@ for page in pages:
             mentions.setdefault((match.group(1), name), set()).add(page)
 
 if blocks < 20:
-    sys.exit(f"parse self-test failed: read {blocks} rust code blocks from the book")
+    sys.exit(
+        f"parse self-test failed: read {blocks} rust code blocks from the book "
+        "and READMEs"
+    )
 
 # Both passes have to find something, or a rot in either regex reads as a clean
-# book rather than a broken check.
+# tree rather than a broken check.
 if len(mentions) < 5:
     sys.exit(
         f"parse self-test failed: found {len(mentions)} qualified device names in "
-        "the book's prose and tables"
+        "the docs' prose and tables"
     )
 
 exported = set()
@@ -203,9 +206,9 @@ def report(found, heading, closing):
 
 failed = report(
     unresolved(calls),
-    "error: the book calls device functions that cuda-device does not export:",
+    "error: the docs call device functions that cuda-device does not export:",
     "A Rust code block is something a reader pastes. Either the function was\n"
-    "renamed and the book missed it, or the example was written from memory.",
+    "renamed and the docs missed it, or the example was written from memory.",
 )
 failed = (
     report(
