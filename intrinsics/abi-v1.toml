@@ -7040,3 +7040,38 @@ status = "active"
 catalog_id = "redux_sync_max_abs_nan_f32"
 operation_key = "warp.redux.sync.max.abs.nan.f32"
 raw_rust_signature = { safe = false, arguments = ["u32", "f32"], result = "f32" }
+
+[[entry]]
+abi_id = "i1011"
+status = "active"
+catalog_id = "tcgen05_mma_e4m3"
+operation_key = "tcgen05.mma.shared.e4m3"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i1012"
+status = "active"
+catalog_id = "tcgen05_mma_e5m2"
+operation_key = "tcgen05.mma.shared.e5m2"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i1013"
+status = "active"
+catalog_id = "tcgen05_mma_e2m3"
+operation_key = "tcgen05.mma.shared.e2m3"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i1014"
+status = "active"
+catalog_id = "tcgen05_mma_e3m2"
+operation_key = "tcgen05.mma.shared.e3m2"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i1015"
+status = "active"
+catalog_id = "tcgen05_mma_e2m1"
+operation_key = "tcgen05.mma.shared.e2m1"
+raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }

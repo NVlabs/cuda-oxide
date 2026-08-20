@@ -443,9 +443,9 @@ pub(crate) fn test_catalog_with_tcgen05(repo_root: &Path) -> Result<CatalogFile>
         .filter(|record| record.family == "tcgen05")
         .count();
     match active_count {
-        228 => return Ok(catalog),
+        233 => return Ok(catalog),
         0 => {}
-        count => bail!("active tcgen05 catalog has {count} of 228 records"),
+        count => bail!("active tcgen05 catalog has {count} of 233 records"),
     }
     let imported: ImportedFile = read_json(&repo_root.join("intrinsics/imported.json"))?;
     let imported_by_record = index_imported_intrinsics(&imported)?;
@@ -1535,19 +1535,20 @@ fn shares_tma_prefetch_tile_symbol(record: &OverlayIntrinsic, symbol: &str) -> b
     symbol == expected_symbol
 }
 
-fn shares_tcgen05_mma_ws_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
-    symbol == "llvm.nvvm.tcgen05.mma.ws.tensor"
-        && record.tcgen05.as_ref().is_some_and(|tcgen05| {
-            matches!(
+fn shares_tcgen05_mma_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
+    record.tcgen05.as_ref().is_some_and(|tcgen05| {
+        (symbol == "llvm.nvvm.tcgen05.mma.ws.tensor"
+            && matches!(
                 tcgen05.operation,
                 Tcgen05Operation::MmaWsF16
                     | Tcgen05Operation::MmaWsBf16
                     | Tcgen05Operation::MmaWsTf32
-            ) || tcgen05
+            ))
+            || tcgen05
                 .mma
                 .as_ref()
-                .is_some_and(|mma| mma.form == Tcgen05MmaForm::WsTensor)
-        })
+                .is_some_and(|mma| symbol == tcgen05_mma_llvm_symbol(mma.form))
+    })
 }
 
 fn shares_tcgen05_ld_symbol(record: &OverlayIntrinsic, symbol: &str) -> bool {
@@ -1649,7 +1650,7 @@ fn validate_unique_overlay(records: &[OverlayIntrinsic], intrinsic_abi: u32) -> 
             let is_resolved = record.resolved_llvm_symbol.is_some();
             let shares_reviewed_symbol = shares_tma_2d_g2s_symbol(record, symbol)
                 || shares_tma_prefetch_tile_symbol(record, symbol)
-                || shares_tcgen05_mma_ws_symbol(record, symbol)
+                || shares_tcgen05_mma_symbol(record, symbol)
                 || shares_tcgen05_ld_symbol(record, symbol)
                 || shares_tcgen05_st_symbol(record, symbol);
             if let Some((previous_was_resolved, previous_shared_symbol)) =
@@ -2545,14 +2546,25 @@ fn selection_matches_policy(
         };
         if let Some(mma) = &tcgen05.mma {
             let expected = if mma.alias.is_some() {
-                BTreeSet::from([tcgen05_mma_selection_asm(
-                    Tcgen05MmaForm::WsTensor,
-                    Tcgen05MmaKind::F8f6f4,
-                    1,
-                    None,
-                    Some(0),
-                    Some(Tcgen05MmaBUsage::Discard),
-                )])
+                BTreeSet::from([if tcgen05_mma_is_ws(mma.form) {
+                    tcgen05_mma_selection_asm(
+                        mma.form,
+                        Tcgen05MmaKind::F8f6f4,
+                        1,
+                        None,
+                        Some(0),
+                        Some(Tcgen05MmaBUsage::Discard),
+                    )
+                } else {
+                    tcgen05_mma_selection_asm(
+                        mma.form,
+                        Tcgen05MmaKind::F8f6f4,
+                        1,
+                        Some("discard"),
+                        None,
+                        None,
+                    )
+                }])
             } else {
                 tcgen05_mma_valid_selection_asms(mma.form)
             };
@@ -7475,13 +7487,17 @@ fn tcgen05_mma_expected_ptx(
 }
 
 fn tcgen05_mma_rust_arguments(form: Tcgen05MmaForm, alias: Option<Tcgen05MmaAlias>) -> Vec<String> {
-    if alias.is_some() {
+    if alias.is_some() && form == Tcgen05MmaForm::WsTensor {
         return ["u32", "u32", "u64", "u64", "u32", "bool"]
             .into_iter()
             .map(str::to_owned)
             .collect();
     }
-    tcgen05_mma_llvm_arguments(form)
+    let mut arguments = tcgen05_mma_llvm_arguments(form);
+    if alias.is_some() {
+        arguments.truncate(arguments.len() - 3);
+    }
+    arguments
         .iter()
         .map(|argument| match argument.as_str() {
             "tmem_ptr" | "i32" => "u32",
@@ -7495,14 +7511,8 @@ fn tcgen05_mma_rust_arguments(form: Tcgen05MmaForm, alias: Option<Tcgen05MmaAlia
 
 fn tcgen05_mma_dialect_operands(
     form: Tcgen05MmaForm,
-    alias: Option<Tcgen05MmaAlias>,
+    _alias: Option<Tcgen05MmaAlias>,
 ) -> Vec<String> {
-    if alias.is_some() {
-        return ["i32", "i32", "i64", "i32", "i1"]
-            .into_iter()
-            .map(str::to_owned)
-            .collect();
-    }
     let mut arguments = tcgen05_mma_llvm_arguments(form);
     arguments.truncate(arguments.len() - 3);
     arguments
@@ -7517,6 +7527,37 @@ fn tcgen05_mma_dialect_operands(
         .collect()
 }
 
+fn tcgen05_mma_public_id(form: Tcgen05MmaForm, alias: Option<Tcgen05MmaAlias>) -> String {
+    alias.map_or_else(
+        || format!("tcgen05_mma_{}", tcgen05_mma_form_name(form)),
+        |alias| {
+            let alias = tcgen05_mma_alias_name(alias);
+            if form == Tcgen05MmaForm::WsTensor {
+                format!("tcgen05_mma_ws_{alias}")
+            } else {
+                format!("tcgen05_mma_{alias}")
+            }
+        },
+    )
+}
+
+fn tcgen05_mma_operation_key(form: Tcgen05MmaForm, alias: Option<Tcgen05MmaAlias>) -> String {
+    let base = tcgen05_mma_form_name(form).replace('_', ".");
+    alias.map_or_else(
+        || format!("tcgen05.mma.{base}"),
+        |alias| format!("tcgen05.mma.{base}.{}", tcgen05_mma_alias_name(alias)),
+    )
+}
+
+fn tcgen05_mma_adapter(form: Tcgen05MmaForm, alias: Option<Tcgen05MmaAlias>) -> Tcgen05Adapter {
+    match alias {
+        Some(_) if form == Tcgen05MmaForm::WsTensor => {
+            Tcgen05Adapter::MmaWsFixedSelectorsDropLegacyADescriptor
+        }
+        _ => Tcgen05Adapter::MmaDirectSelectors,
+    }
+}
+
 fn materialize_tcgen05_mma_variant(
     admission: &Tcgen05Admission,
     variant: &Tcgen05MmaAdmissionVariant,
@@ -7525,19 +7566,8 @@ fn materialize_tcgen05_mma_variant(
 ) -> OverlayIntrinsic {
     let form = variant.form;
     let alias = variant.alias;
-    let id = alias.map_or_else(
-        || format!("tcgen05_mma_{}", tcgen05_mma_form_name(form)),
-        |alias| format!("tcgen05_mma_ws_{}", tcgen05_mma_alias_name(alias)),
-    );
-    let operation_key = alias.map_or_else(
-        || {
-            format!(
-                "tcgen05.mma.{}",
-                tcgen05_mma_form_name(form).replace('_', ".")
-            )
-        },
-        |alias| format!("tcgen05.mma.ws.tensor.{}", tcgen05_mma_alias_name(alias)),
-    );
+    let id = tcgen05_mma_public_id(form, alias);
+    let operation_key = tcgen05_mma_operation_key(form, alias);
     let llvm_arguments = tcgen05_mma_llvm_arguments(form);
     let rust_arguments = tcgen05_mma_rust_arguments(form, alias);
     let dialect_operands = tcgen05_mma_dialect_operands(form, alias);
@@ -7658,11 +7688,7 @@ fn materialize_tcgen05_mma_variant(
                 llvm_target: llvm_target.clone(),
                 libnvvm_target: libnvvm_target.clone(),
             }),
-            adapter: if alias.is_some() {
-                Tcgen05Adapter::MmaWsFixedSelectorsDropLegacyADescriptor
-            } else {
-                Tcgen05Adapter::MmaDirectSelectors
-            },
+            adapter: tcgen05_mma_adapter(form, alias),
             source_contract: Tcgen05SourceContract::TablegenSelectionChangesPtx,
             runtime_validation: admission.runtime_validation,
         }),
@@ -7671,10 +7697,14 @@ fn materialize_tcgen05_mma_variant(
         ldmatrix_adapter: None,
         selected_address_space: None,
         expected_ptx: tcgen05_mma_expected_ptx(form, alias),
-        summary: if alias.is_some() {
-            "Issues one f8f6f4 warp-specialized tensor-memory MMA.".into()
-        } else {
-            "Issues one selector-controlled tensor-memory MMA.".into()
+        summary: match (form, alias) {
+            (Tcgen05MmaForm::WsTensor, Some(_)) => {
+                "Issues one f8f6f4 warp-specialized tensor-memory MMA.".into()
+            }
+            (Tcgen05MmaForm::Shared, Some(_)) => {
+                "Issues one f8f6f4 standard tensor-memory MMA.".into()
+            }
+            _ => "Issues one selector-controlled tensor-memory MMA.".into(),
         },
     }
 }
@@ -8863,6 +8893,11 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                     .into_iter()
                     .map(|alias| (Tcgen05MmaForm::WsTensor, Some(alias))),
             )
+            .chain(
+                TCGEN05_MMA_ALIASES
+                    .into_iter()
+                    .map(|alias| (Tcgen05MmaForm::Shared, Some(alias))),
+            )
             .collect::<Vec<_>>();
         ensure!(
             admission
@@ -8870,7 +8905,7 @@ fn expand_tcgen05_admission(admission: &Tcgen05Admission) -> Result<Vec<OverlayI
                 .iter()
                 .map(|variant| (variant.form, variant.alias))
                 .eq(expected_variants),
-            "compact tcgen05 MMA admission must list all 19 APIs in canonical order"
+            "compact tcgen05 MMA admission must list all 24 APIs in canonical order"
         );
         for variant in &admission.mma_variants {
             validate_abi_id(&variant.abi_id)?;
@@ -9028,26 +9063,16 @@ fn validate_tcgen05_mma_policy(
     ensure!(
         match alias {
             Some(alias) => {
-                form == Tcgen05MmaForm::WsTensor && TCGEN05_MMA_ALIASES.contains(&alias)
+                matches!(form, Tcgen05MmaForm::Shared | Tcgen05MmaForm::WsTensor)
+                    && TCGEN05_MMA_ALIASES.contains(&alias)
             }
             None => TCGEN05_MMA_FORMS.contains(&form),
         },
         "{} has an unsupported tcgen05 MMA identity",
         policy.id
     );
-    let id = alias.map_or_else(
-        || format!("tcgen05_mma_{}", tcgen05_mma_form_name(form)),
-        |alias| format!("tcgen05_mma_ws_{}", tcgen05_mma_alias_name(alias)),
-    );
-    let operation_key = alias.map_or_else(
-        || {
-            format!(
-                "tcgen05.mma.{}",
-                tcgen05_mma_form_name(form).replace('_', ".")
-            )
-        },
-        |alias| format!("tcgen05.mma.ws.tensor.{}", tcgen05_mma_alias_name(alias)),
-    );
+    let id = tcgen05_mma_public_id(form, alias);
+    let operation_key = tcgen05_mma_operation_key(form, alias);
     let llvm_arguments = tcgen05_mma_llvm_arguments(form);
     let expected_fixed = alias.map(|_| Tcgen05MmaFixedSelectors {
         kind: Tcgen05MmaKind::F8f6f4,
@@ -9116,12 +9141,7 @@ fn validate_tcgen05_mma_policy(
             && tcgen05.st.is_none()
             && mma.selector_layout == tcgen05_mma_selector_layout(form)
             && mma.fixed_selectors == expected_fixed
-            && tcgen05.adapter
-                == if alias.is_some() {
-                    Tcgen05Adapter::MmaWsFixedSelectorsDropLegacyADescriptor
-                } else {
-                    Tcgen05Adapter::MmaDirectSelectors
-                }
+            && tcgen05.adapter == tcgen05_mma_adapter(form, alias)
             && tcgen05.source_contract == Tcgen05SourceContract::TablegenSelectionChangesPtx
             && tcgen05.runtime_validation == RuntimeValidation::Unexecuted,
         "{} tcgen05 MMA semantics or selector contract changed",
@@ -9196,14 +9216,18 @@ fn validate_tcgen05_mma_policy(
 
     let expected_all = tcgen05_mma_all_selection_asms(form);
     let expected_valid = if alias.is_some() {
-        BTreeSet::from([tcgen05_mma_selection_asm(
-            Tcgen05MmaForm::WsTensor,
-            Tcgen05MmaKind::F8f6f4,
-            1,
-            None,
-            Some(0),
-            Some(Tcgen05MmaBUsage::Discard),
-        )])
+        BTreeSet::from([if tcgen05_mma_is_ws(form) {
+            tcgen05_mma_selection_asm(
+                form,
+                Tcgen05MmaKind::F8f6f4,
+                1,
+                None,
+                Some(0),
+                Some(Tcgen05MmaBUsage::Discard),
+            )
+        } else {
+            tcgen05_mma_selection_asm(form, Tcgen05MmaKind::F8f6f4, 1, Some("discard"), None, None)
+        }])
     } else {
         tcgen05_mma_valid_selection_asms(form)
     };
@@ -31444,7 +31468,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 64);
-        assert_eq!(overlay.intrinsics.len(), 1010);
+        assert_eq!(overlay.intrinsics.len(), 1015);
         assert_eq!(
             overlay
                 .intrinsics
@@ -32083,6 +32107,16 @@ mod tests {
                 form,
                 alias,
             })
+            .chain(
+                TCGEN05_MMA_ALIASES
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, alias)| Tcgen05MmaAdmissionVariant {
+                        abi_id: format!("i{:04}", 1011 + index),
+                        form: Tcgen05MmaForm::Shared,
+                        alias: Some(alias),
+                    }),
+            )
             .collect();
         admission
     }
@@ -34763,9 +34797,9 @@ scope = "system"
     #[test]
     fn compact_tcgen05_mma_admission_closes_sources_selectors_and_targets() {
         let records = expand_tcgen05_admission(&test_tcgen05_mma_admission()).unwrap();
-        assert_eq!(records.len(), 46);
+        assert_eq!(records.len(), 51);
         let mma = &records[27..];
-        assert_eq!(mma.len(), 19);
+        assert_eq!(mma.len(), 24);
         assert_eq!(
             mma.iter()
                 .map(|record| (record.abi_id.as_str(), record.id.as_str()))
@@ -34790,6 +34824,11 @@ scope = "system"
                 ("i0779", "tcgen05_mma_ws_e2m3"),
                 ("i0780", "tcgen05_mma_ws_e3m2"),
                 ("i0781", "tcgen05_mma_ws_e2m1"),
+                ("i1011", "tcgen05_mma_e4m3"),
+                ("i1012", "tcgen05_mma_e5m2"),
+                ("i1013", "tcgen05_mma_e2m3"),
+                ("i1014", "tcgen05_mma_e3m2"),
+                ("i1015", "tcgen05_mma_e2m1"),
             ]
         );
         assert!(mma.iter().all(|record| {
@@ -34854,6 +34893,9 @@ scope = "system"
         assert!(mma[14].expected_ptx.matches(
             "tcgen05.mma.ws.cta_group::1.kind::f8f6f4.collector::b0::discard [%r1], [%r2], %rd1, %r3, %enable_pred;"
         ).unwrap());
+        assert!(mma[19].expected_ptx.matches(
+            "tcgen05.mma.cta_group::1.kind::f8f6f4.collector::a::discard [%r1], %rd1, %rd2, %r2, %enable_pred;"
+        ).unwrap());
 
         let canonical = &mma[..14];
         assert_eq!(
@@ -34879,7 +34921,7 @@ scope = "system"
         assert_eq!(newly_matched, 608);
         assert_eq!(selected_count(&canonical[12]), 64);
         assert_eq!(canonical.iter().map(selected_count).sum::<usize>(), 672);
-        assert_eq!(mma[14..].iter().map(selected_count).sum::<usize>(), 5);
+        assert_eq!(mma[14..].iter().map(selected_count).sum::<usize>(), 10);
         assert_eq!(
             [2, 5]
                 .into_iter()
@@ -34929,7 +34971,7 @@ scope = "system"
                 [6, 6, 2, 6]
             );
         }
-        for record in &mma[14..] {
+        for record in &mma[14..19] {
             assert_eq!(
                 record.compatibility_rust_paths,
                 [format!("cuda_device::tcgen05::{}", record.id)]
@@ -34947,6 +34989,34 @@ scope = "system"
                     b_buffer: 0,
                     b_usage: Tcgen05MmaBUsage::Discard,
                 })
+            );
+            let CatalogHardwareTarget::TargetMatrix { contracts } = &contract.llvm_target.hardware
+            else {
+                panic!("fixed LLVM tcgen05 MMA target must be a matrix")
+            };
+            assert_eq!(contracts.len(), 1);
+            assert_eq!(contracts[0].selectors[0].value, "f8f6f4");
+        }
+        for record in &mma[19..] {
+            assert_eq!(
+                record.compatibility_rust_paths,
+                [format!("cuda_device::tcgen05::{}", record.id)]
+            );
+            assert_eq!(record.rust_arguments, ["u32", "u64", "u64", "u32", "bool"]);
+            assert_eq!(record.dialect_operands, ["i32", "i64", "i64", "i32", "i1"]);
+            let contract = record.tcgen05.as_ref().unwrap().mma.as_ref().unwrap();
+            assert_eq!(contract.form, Tcgen05MmaForm::Shared);
+            assert_eq!(
+                contract.fixed_selectors,
+                Some(Tcgen05MmaFixedSelectors {
+                    kind: Tcgen05MmaKind::F8f6f4,
+                    b_buffer: 0,
+                    b_usage: Tcgen05MmaBUsage::Discard,
+                })
+            );
+            assert_eq!(
+                record.tcgen05.as_ref().unwrap().adapter,
+                Tcgen05Adapter::MmaDirectSelectors
             );
             let CatalogHardwareTarget::TargetMatrix { contracts } = &contract.llvm_target.hardware
             else {
