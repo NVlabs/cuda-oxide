@@ -149,8 +149,9 @@ an inner loop.
 
 Three constraints:
 
-- **Integers only.** There is no `f32`/`f64` form before `sm_100`, so float
-  reductions keep the butterfly.
+- **Integers only on Ampere.** There is an `f32` form, but it needs Blackwell;
+  see the next subsection. `f64` has no `redux.sync` form at all, so `f64`
+  reductions keep the butterfly everywhere.
 - **A full, converged warp.** All 32 lanes must be live and must reach the same
   call with the same mask -- the same contract the shuffle reductions already
   require. Sub-warp tiles and short tail warps keep the shuffle path (see
@@ -163,6 +164,41 @@ Three constraints:
 automatically needs a way for device code to know its target architecture,
 which is the open question in
 [#811](https://github.com/NVlabs/cuda-oxide/issues/811).
+
+### Floats on Blackwell: `redux.sync` for `f32`
+
+`redux.sync` gained an `f32` min/max form, exposed as eight functions. Each
+takes `(mask: u32, value: f32)` and returns `f32`, like the integer ones:
+
+| function | reduces |
+|:---------|:--------|
+| `warp::redux_sync_min_f32` / `warp::redux_sync_max_f32` | minimum / maximum, NaN inputs ignored |
+| `warp::redux_sync_min_abs_f32` / `warp::redux_sync_max_abs_f32` | same, over the absolute values (`.abs`) |
+| `warp::redux_sync_min_nan_f32` / `warp::redux_sync_max_nan_f32` | NaN-propagating (`.NaN`) |
+| `warp::redux_sync_min_abs_nan_f32` / `warp::redux_sync_max_abs_nan_f32` | both modifiers |
+
+So unlike the integer family this is not one function per operation: `.abs`
+and `.NaN` are independent instruction modifiers, and each combination is its
+own entry point.
+
+The `.NaN` forms matter for reductions that must not lose a NaN. The plain and
+`.abs` forms *ignore* NaN inputs; the `.NaN` forms propagate NaN when any lane
+contributes one. Pick deliberately. The two differ only when a lane holds a
+NaN, and that is when the choice matters.
+
+Say one lane holds `NaN` and the smallest ordinary value in the warp is `-1.0`:
+
+- `redux_sync_min_f32(mask, v)` returns `-1.0` (the NaN is ignored)
+- `redux_sync_min_nan_f32(mask, v)` returns `NaN` (the NaN propagates)
+
+**This is Blackwell-only, and narrower than "sm_100+".** The f32 forms need
+PTX 8.6 and exist only on `sm_100a`, `sm_100f`, `sm_103a`, and `sm_103f`. They
+are not available on `sm_110a` or `sm_120a`, so consumer Blackwell is out.
+Build for one of those four targets or compilation fails.
+
+The `redux_f32` example is the working reference. It builds for `sm_100a`, so
+CI compiles it and checks the emitted PTX rather than running it. Its `main`
+skips unless the device reports `sm_100` and nothing else.
 
 ---
 

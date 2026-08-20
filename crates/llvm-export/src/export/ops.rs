@@ -52,7 +52,7 @@ use super::{
 /// textual export touches four places in this file:
 ///
 /// 1. Add a variant to `LlvmOp` below.
-/// 2. Add a matching entry in the [`classify_op!`] invocation.
+/// 2. Add a matching entry in the `classify_op!` invocation below.
 /// 3. Add an `emit_*` helper method on [`ModuleExportState`].
 /// 4. Add a `Some(LlvmOp::X(op)) => self.emit_x(...)` arm in `export_op`.
 ///

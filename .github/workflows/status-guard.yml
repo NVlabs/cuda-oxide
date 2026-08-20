@@ -93,10 +93,12 @@ jobs:
       - name: Verify the book documents every cargo oxide subcommand
         run: bash scripts/check-cli-doc-coverage.sh
 
-  # A Rust code block in the book is something a reader pastes. When a device
-  # function is renamed the book keeps compiling and rendering, so the stale name
+  # A Rust code block in the book or a README is something a reader pastes. When
+  # a device function is renamed the docs still render, so the stale name
   # survives until someone tries it -- #797 and the `warp::shuffle_xor_i32` entry
-  # in the API quick reference were both found by hand, months apart.
+  # in the API quick reference were both found by hand, months apart. An example
+  # README naming `warp::shfl`, which has never existed, widened the scope to
+  # the crate and example READMEs.
   book-api-names:
     name: book device-API names
     runs-on: ubuntu-latest
@@ -105,7 +107,8 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v4
 
-      # Reads the book and cuda-device's sources: no cargo, no build, no network.
+      # Reads the book, the crate and example READMEs, and cuda-device's
+      # sources: no cargo, no build, no network.
       - name: Verify every device call the book shows resolves
         run: bash scripts/check-book-api-names.sh
 

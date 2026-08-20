@@ -12,6 +12,45 @@ The execution harness is still the example at
 `crates/rustc-codegen-cuda/examples/rustlantis-smoke`. The fuzzer tools rewrite
 only `src/generated_case.rs`; `src/main.rs` remains the stable CPU/GPU harness.
 
+## Schedule fuzzing of existing examples
+
+The schedule campaign is implemented in Rust and runs the existing examples.
+It builds one example, discovers its generated PTX and host executable,
+inserts deterministic `nanosleep.u32` delays at structural synchronization
+sites, patches a copy of the executable's embedded artifact, and runs each
+variant behind a watchdog:
+
+```bash
+nix develop --command cargo oxide fuzz-schedule mcast_barrier_test \
+  --seeds 0..100 --confirm-runs 3
+```
+
+`0..100` is half-open, so this runs seeds 0 through 99. Useful controls are
+`--focus mbarrier`, `--intensity 1.5`, `--timeout-secs 20`, `--arch sm_100`,
+and `--compare-output`. A finding is rerun up to `--confirm-runs` times;
+`--fail-on-finding` makes the command suitable for CI. Mutated PTX, site
+decisions, stdout/stderr, confirmation logs, `replay.sh`, `sites.json`, and
+`summary.json` are written under
+`crates/fuzzer/artifacts/schedule/<example>/`. A timeout is rechecked with
+pristine PTX so a wedged device is distinguished from a variant hang.
+
+The campaign reports schedule-sensitive outcomes rather than claiming to
+prove a data race or deadlock:
+
+- `SCHEDULE-SENSITIVE CORRECTNESS FAILURE`: the example's own validator
+  reported incorrect output.
+- `SCHEDULE-SENSITIVE OUTPUT CHANGE`: enabled with `--compare-output` when
+  stdout changes without an explicit failure marker.
+- `TIMEOUT CANDIDATE`: the variant exceeded the watchdog.
+- `CRASH CANDIDATE`: the variant exited abnormally.
+- `GPU WEDGE CANDIDATE`: the pristine health check also failed after a
+  timeout.
+
+The static site inventory in `sites.json` records the PTX operations that were
+eligible for perturbation, grouped by site kind. A finding directory's
+`replay.sh` reruns the exact patched executable from the original example
+working directory.
+
 ## Basic usage
 
 Run one seed:
