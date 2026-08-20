@@ -386,8 +386,14 @@ fn assert_host_layout() {
         1 + core::mem::size_of::<usize>()
     );
 
-    assert_eq!(core::mem::size_of::<SharedPair>(), 2 * core::mem::size_of::<usize>());
-    assert_eq!(core::mem::align_of::<SharedPair>(), core::mem::align_of::<usize>());
+    assert_eq!(
+        core::mem::size_of::<SharedPair>(),
+        2 * core::mem::size_of::<usize>()
+    );
+    assert_eq!(
+        core::mem::align_of::<SharedPair>(),
+        core::mem::align_of::<usize>()
+    );
     assert_eq!(core::mem::offset_of!(SharedPair, left), 0);
     assert_eq!(
         core::mem::offset_of!(SharedPair, right),
