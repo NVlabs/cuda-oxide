@@ -124,7 +124,9 @@ pub use launch::{
 #[cfg(feature = "async")]
 pub use cuda_async;
 #[cfg(feature = "async")]
-pub use cuda_async::simt::launch::{AsyncKernelLaunch, AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch};
+pub use cuda_async::simt::launch::{
+    AsyncKernelLaunch, AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch,
+};
 
 pub use embedded::{
     EmbeddedModuleError, load_all_ptx_bundles_merged, load_embedded_module,

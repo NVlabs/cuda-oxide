@@ -551,7 +551,9 @@ where
         self.prepared
             .validate_stream(context.get_cuda_stream())
             .map_err(|error| cuda_async::simt::error::DeviceError::Launch(error.to_string()))?;
-        unsafe { cuda_async::simt::device_operation::DeviceOperation::execute(self.launch, context) }
+        unsafe {
+            cuda_async::simt::device_operation::DeviceOperation::execute(self.launch, context)
+        }
     }
 }
 
@@ -568,7 +570,9 @@ where
             cuda_async::simt::scheduling_policies::SchedulingPolicy::schedule(policy, self)
         }) {
             Ok(Ok(future)) => future,
-            Ok(Err(error)) | Err(error) => cuda_async::simt::device_future::DeviceFuture::failed(error),
+            Ok(Err(error)) | Err(error) => {
+                cuda_async::simt::device_future::DeviceFuture::failed(error)
+            }
         }
     }
 }
@@ -589,7 +593,9 @@ where
         self.prepared
             .validate_stream(context.get_cuda_stream())
             .map_err(|error| cuda_async::simt::error::DeviceError::Launch(error.to_string()))?;
-        unsafe { cuda_async::simt::device_operation::DeviceOperation::execute(self.launch, context) }
+        unsafe {
+            cuda_async::simt::device_operation::DeviceOperation::execute(self.launch, context)
+        }
     }
 }
 
@@ -607,7 +613,9 @@ where
             cuda_async::simt::scheduling_policies::SchedulingPolicy::schedule(policy, self)
         }) {
             Ok(Ok(future)) => future,
-            Ok(Err(error)) | Err(error) => cuda_async::simt::device_future::DeviceFuture::failed(error),
+            Ok(Err(error)) | Err(error) => {
+                cuda_async::simt::device_future::DeviceFuture::failed(error)
+            }
         }
     }
 }

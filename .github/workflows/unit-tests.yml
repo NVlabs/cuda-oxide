@@ -22,11 +22,12 @@ jobs:
         # no live GPU. `needs_cuda: true` installs the CUDA toolkit for build-
         # time bindgen (every crate that transitively depends on
         # `cuda-bindings` needs `cuda.h` to compile). `test_args` overrides
-        # the default `--all-targets`, used by `cuda-core` to skip its
-        # GPU-only `tests/vmm_p2p.rs` integration test.
+        # the default `--all-targets` where a crate needs a narrower set.
+        #
+        # cuda-bindings, cuda-core, and cuda-async are the shared host-side
+        # crates from cutile-rs now; their unit tests run in cutile-rs CI.
         #
         # Crates intentionally not in this matrix:
-        #   * `cuda-bindings` — generated sys bindings covered transitively.
         #   * `fuzzer` — differential-testing infra with no unit tests.
         #   * `rustc-codegen-cuda` — its own [workspace] that links against
         #     `rustc-private` dylibs; covered by the separate job below.
@@ -91,14 +92,6 @@ jobs:
           # Running it on a runner with NO toolkit installed is the
           # regression gate for issue #87.
           - package: cargo-oxide
-          # async DeviceOperation pipeline; transitively pulls cuda-bindings
-          - package: cuda-async
-            needs_cuda: true
-          # CUDA driver wrappers; `--lib` skips the GPU-only VMM/P2P
-          # integration test in `tests/vmm_p2p.rs`.
-          - package: cuda-core
-            needs_cuda: true
-            test_args: --lib
 
     steps:
       - name: Clone repository

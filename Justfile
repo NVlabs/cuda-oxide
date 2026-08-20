@@ -81,8 +81,7 @@ test:
 # loader failure, not a test failure. CI runs them on driverless runners by
 # shadowing the toolkit's link-time stub under that name; see unit-tests.yml.
 #
-# `--lib` for cuda-core skips the GPU-only VMM/P2P test in tests/vmm_p2p.rs.
-# Run the five CUDA-linked packages (shadows the libcuda stub if no driver)
+# Run the CUDA-linked packages (shadows the libcuda stub if no driver)
 test-cuda:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -106,9 +105,10 @@ test-cuda:
             fi
         done
     fi
+    # cuda-core and cuda-async are the shared host-side crates from cutile-rs
+    # now; their unit tests run in cutile-rs CI.
     cargo test --all-targets \
-        -p cuda-oxide-codegen -p cuda-macros -p cuda-host -p cuda-async
-    cargo test -p cuda-core --lib
+        -p cuda-oxide-codegen -p cuda-macros -p cuda-host
 
 # Mirror unit-tests.yml's third job, `generated-intrinsics`: the three gates a
 # change under crates/cuda-intrinsics-gen has to pass. Nothing else here ran

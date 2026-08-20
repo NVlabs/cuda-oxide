@@ -23,4 +23,9 @@ wildcards = "allow"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/pliron-org/pliron"]
+allow-git = [
+    "https://github.com/pliron-org/pliron",
+    # Shared host-side crates, pinned to a cutile-rs branch until 0.3.1 is on
+    # crates.io; the pin moves with the branch.
+    "https://github.com/NVlabs/cutile-rs",
+]

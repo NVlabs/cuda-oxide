@@ -1185,7 +1185,7 @@ dependencies = [
  "ptx-parse",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
