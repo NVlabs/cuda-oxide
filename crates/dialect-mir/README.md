@@ -87,16 +87,31 @@ declared by rustc.
 but does not attempt to model dynamic Stacked Borrows / Tree Borrows tags or
 retag epochs.
 
-MIR-to-LLVM lowering deliberately erases `MirPointerKind`. All four Rust source
-categories keep the same LLVM pointer/fat-pointer representation, and this
-change does not emit `noalias`, `readonly`, `dereferenceable`, or related
-metadata. Any future alias metadata requires a separate audited policy; it must
-not be inferred from `is_mutable` alone.
+MIR-to-LLVM type conversion still erases `MirPointerKind`; all four Rust source
+categories keep the same physical LLVM pointer/fat-pointer representation.
+Function arguments carry separate, audited proof markers when rustc's own type
+semantics justify LLVM parameter attributes:
 
-For GPU-specific abstractions such as `SharedArray`, the Rust reference kind is
-still retained when the source type is a reference, while the CUDA address
-space remains an independent property. The compiler does not currently turn a
-`UniqueRef` to shared memory into cross-thread LLVM alias guarantees.
+| Source argument | Additional proof | LLVM parameter attributes |
+|-----------------|------------------|---------------------------|
+| `&T` / `&[T]` | pointee is `Freeze` | `noalias readonly` |
+| `&mut T` / `&mut [T]` | pointee is `Unpin` | `noalias` |
+| raw pointer | none | none |
+| erased/compiler pointer | none | none |
+
+The importer computes these facts while the original rustc `Ty` and trait
+queries are available and stores them on `mir.func` by source argument index.
+`mir-lower` remaps those indices after ABI flattening, so a slice applies the
+attributes only to its pointer component and never to its length. The LLVM
+exporter serializes the resulting proof bits without inferring anything from
+mutability, address space, or pointer kind on its own. In particular, a shared
+reference containing `UnsafeCell` is not `readonly`, and raw `*mut T` never
+acquires `noalias` merely because it is writable.
+
+`dereferenceable` and other provenance-sensitive attributes remain outside this
+policy. For GPU-specific abstractions such as `SharedArray`, CUDA address space
+remains independent from Rust reference kind and from these function-boundary
+proofs.
 
 ### Address Spaces
 

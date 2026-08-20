@@ -34,7 +34,7 @@ use crate::convert::types::{
 };
 
 use dialect_mir::ops::MirFuncOp;
-use dialect_mir::types::{MirDisjointSliceType, MirSliceType, MirStructType};
+use dialect_mir::types::{MirDisjointSliceType, MirPtrType, MirSliceType, MirStructType};
 use llvm_export::ops as llvm;
 use pliron::{
     basic_block::BasicBlock,
@@ -59,6 +59,8 @@ const DYNAMIC_SHARED_ALIGNMENT_ATTR: &str = "dynamic_shared_alignment";
 // outside the reserved-oxide-symbols kernel prefix family on purpose.
 const KERNEL_PARAM_ABI_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_param_abi_align_";
 const RETURN_ABI_ALIGN_ATTR: &str = "cuda_oxide_return_abi_align";
+const LLVM_PARAM_NOALIAS_ATTR_PREFIX: &str = "cuda_oxide_param_noalias_";
+const LLVM_PARAM_READONLY_ATTR_PREFIX: &str = "cuda_oxide_param_readonly_";
 
 // ============================================================================
 // Dynamic shared-memory contract propagation
@@ -264,8 +266,16 @@ pub fn convert_func(
     };
     let return_abi_alignment =
         function_return_abi_alignment(ctx, func_type, llvm_func_type).map_err(anyhow_to_pliron)?;
+    let reference_param_mapping = if mir_func_has_reference_param_attrs(ctx, &mir_func) {
+        reference_param_llvm_mapping(ctx, func_type, llvm_func_type, is_kernel)
+            .map_err(anyhow_to_pliron)?
+    } else {
+        Vec::new()
+    };
 
     let llvm_func = llvm::FuncOp::new(ctx, name, llvm_func_type);
+    propagate_reference_param_attrs(ctx, &mir_func, &llvm_func, &reference_param_mapping)
+        .map_err(anyhow_to_pliron)?;
     llvm::copy_debug_source_scope_map(ctx, op, llvm_func.get_operation());
 
     if is_kernel {
@@ -524,6 +534,151 @@ fn propagate_kernel_param_abi_alignments(
             .attributes
             .set(key, IntegerAttr::new(u64_ty, value));
     }
+}
+
+fn mir_func_has_reference_param_attrs(ctx: &Context, mir_func: &MirFuncOp) -> bool {
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+
+    let arg_count = mir_func.get_type(ctx).deref(ctx).arg_types().len();
+    (0..arg_count)
+        .any(|index| mir_func.param_noalias(ctx, index) || mir_func.param_readonly(ctx, index))
+}
+
+fn mir_argument_is_reference(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty = ty.deref(ctx);
+    if let Some(pointer) = ty.downcast_ref::<MirPtrType>() {
+        pointer.pointer_kind().is_reference()
+    } else {
+        ty.downcast_ref::<MirSliceType>()
+            .is_some_and(|slice| slice.pointer_kind().is_reference())
+    }
+}
+
+/// Map source-level MIR reference arguments to the physical LLVM pointer
+/// parameter that carries their address after ABI flattening. In particular,
+/// a `MirSliceType` maps only to the first field of `(ptr, len, ...)`.
+fn reference_param_llvm_mapping(
+    ctx: &mut Context,
+    mir_func_type: pliron::r#type::TypedHandle<pliron::builtin::types::FunctionType>,
+    llvm_func_type: pliron::r#type::TypedHandle<llvm_export::types::FuncType>,
+    is_kernel_entry: bool,
+) -> std::result::Result<Vec<Option<usize>>, anyhow::Error> {
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+
+    let mir_args = {
+        let func_ref = mir_func_type.deref(ctx);
+        func_ref.arg_types().to_vec()
+    };
+    let llvm_args = {
+        let func_ref = llvm_func_type.deref(ctx);
+        func_ref.arg_types().to_vec()
+    };
+
+    let mut mapping = vec![None; mir_args.len()];
+    let mut llvm_arg_index = 0usize;
+
+    for (mir_index, mir_ty) in mir_args.into_iter().enumerate() {
+        let is_reference = mir_argument_is_reference(ctx, mir_ty);
+        let physical_index = match classify_argument_type(ctx, mir_ty, is_kernel_entry)? {
+            ReconstructKind::Slice { space_fields } => {
+                let index = llvm_arg_index;
+                llvm_arg_index = llvm_arg_index
+                    .checked_add(2 + space_fields)
+                    .ok_or_else(|| anyhow::anyhow!("reference parameter index overflow"))?;
+                is_reference.then_some(index)
+            }
+            ReconstructKind::TransparentScalar | ReconstructKind::None => {
+                let index = llvm_arg_index;
+                llvm_arg_index = llvm_arg_index
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("reference parameter index overflow"))?;
+                is_reference.then_some(index)
+            }
+            ReconstructKind::Zst => {
+                if is_reference {
+                    return Err(anyhow::anyhow!(
+                        "Rust reference argument {mir_index} unexpectedly lowered as a ZST"
+                    ));
+                }
+                None
+            }
+            ReconstructKind::Struct(field_count) => {
+                if is_reference {
+                    return Err(anyhow::anyhow!(
+                        "Rust reference argument {mir_index} unexpectedly lowered as a flattened struct"
+                    ));
+                }
+                llvm_arg_index = llvm_arg_index
+                    .checked_add(field_count)
+                    .ok_or_else(|| anyhow::anyhow!("reference parameter index overflow"))?;
+                None
+            }
+        };
+
+        if let Some(index) = physical_index {
+            let llvm_ty = *llvm_args.get(index).ok_or_else(|| {
+                anyhow::anyhow!("reference argument {mir_index} maps past LLVM argument {index}")
+            })?;
+            if !llvm_ty.deref(ctx).is::<llvm_export::types::PointerType>() {
+                return Err(anyhow::anyhow!(
+                    "reference argument {mir_index} maps to non-pointer LLVM argument {index}"
+                ));
+            }
+            mapping[mir_index] = Some(index);
+        }
+    }
+
+    if llvm_arg_index != llvm_args.len() {
+        return Err(anyhow::anyhow!(
+            "reference parameter mapping consumed {} LLVM arguments, expected {}",
+            llvm_arg_index,
+            llvm_args.len()
+        ));
+    }
+
+    Ok(mapping)
+}
+
+fn set_llvm_param_marker(ctx: &mut Context, llvm_func: &llvm::FuncOp, prefix: &str, index: usize) {
+    use pliron::builtin::attributes::StringAttr;
+
+    let key: pliron::identifier::Identifier = format!("{prefix}{index}")
+        .as_str()
+        .try_into()
+        .expect("LLVM parameter marker attribute name is valid");
+    llvm_func
+        .get_operation()
+        .deref_mut(ctx)
+        .attributes
+        .set(key, StringAttr::new("true".to_string()));
+}
+
+fn propagate_reference_param_attrs(
+    ctx: &mut Context,
+    mir_func: &MirFuncOp,
+    llvm_func: &llvm::FuncOp,
+    mapping: &[Option<usize>],
+) -> std::result::Result<(), anyhow::Error> {
+    for mir_index in 0..mapping.len() {
+        let noalias = mir_func.param_noalias(ctx, mir_index);
+        let readonly = mir_func.param_readonly(ctx, mir_index);
+        if !noalias && !readonly {
+            continue;
+        }
+
+        let llvm_index = mapping[mir_index].ok_or_else(|| {
+            anyhow::anyhow!(
+                "Rust reference proof on MIR argument {mir_index} has no physical LLVM pointer parameter"
+            )
+        })?;
+        if noalias {
+            set_llvm_param_marker(ctx, llvm_func, LLVM_PARAM_NOALIAS_ATTR_PREFIX, llvm_index);
+        }
+        if readonly {
+            set_llvm_param_marker(ctx, llvm_func, LLVM_PARAM_READONLY_ATTR_PREFIX, llvm_index);
+        }
+    }
+    Ok(())
 }
 
 fn propagate_return_abi_alignment(
@@ -1172,6 +1327,35 @@ mod transparent_scalar_abi_tests {
             llvm_struct.layout(),
             llvm_export::types::StructLayout::Packed
         );
+    }
+
+    #[test]
+    fn reference_param_mapping_targets_only_physical_pointer_components() {
+        use dialect_mir::types::MirPointerKind;
+
+        let mut ctx = make_ctx();
+        let value = u32_ty(&mut ctx);
+        let shared_ref: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, value, false, MirPointerKind::SharedRef)
+                .into();
+        let scalar = u32_ty(&mut ctx);
+        let shared_slice: TypeHandle =
+            MirSliceType::get_with_kind(&mut ctx, value, MirPointerKind::SharedRef).into();
+        let raw_mut: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, value, true, MirPointerKind::RawMut).into();
+
+        let mir_func_type = FunctionType::get(
+            &ctx,
+            vec![shared_ref, scalar, shared_slice, raw_mut],
+            vec![],
+        );
+        let llvm_func_type = convert_function_type(&mut ctx, mir_func_type, true)
+            .expect("reference arguments must lower");
+
+        let mapping = reference_param_llvm_mapping(&mut ctx, mir_func_type, llvm_func_type, true)
+            .expect("reference parameter mapping must succeed");
+
+        assert_eq!(mapping, vec![Some(0), None, Some(2), None]);
     }
 
     #[test]

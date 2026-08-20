@@ -1494,6 +1494,44 @@ fn emit_entry_allocas(
     prev_op
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ReferenceParamAttrs {
+    noalias: bool,
+    readonly: bool,
+}
+
+/// Reproduce rustc's reference-derived LLVM argument policy for the two
+/// attributes this backend currently understands. The decision is made while
+/// the original Rust `Ty` and the compiler type context are still available;
+/// downstream passes only propagate the resulting proof bits.
+///
+/// rustc currently permits:
+/// - `&T`: `noalias + readonly` only when `T: Freeze`;
+/// - `&mut T`: `noalias` only when `T: Unpin`;
+/// - raw pointers: neither attribute.
+fn reference_param_attrs(ty: &Ty) -> ReferenceParamAttrs {
+    let TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) = ty.kind() else {
+        return ReferenceParamAttrs::default();
+    };
+
+    rustc_middle::ty::tls::with(|tcx| {
+        let pointee = rustc_public::rustc_internal::internal(tcx, pointee);
+        let typing_env = rustc_middle::ty::TypingEnv::fully_monomorphized();
+
+        match mutability {
+            mir::Mutability::Not if pointee.is_freeze(tcx, typing_env) => ReferenceParamAttrs {
+                noalias: true,
+                readonly: true,
+            },
+            mir::Mutability::Mut if pointee.is_unpin(tcx, typing_env) => ReferenceParamAttrs {
+                noalias: true,
+                readonly: false,
+            },
+            _ => ReferenceParamAttrs::default(),
+        }
+    })
+}
+
 /// Translates a MIR function body to a pliron IR `mir.func` operation.
 ///
 /// # Process
@@ -1568,6 +1606,7 @@ pub fn translate_body(
     // Get function argument types for the first block
     // In MIR, locals[0] is the return value, locals[1..arg_count+1] are function arguments
     let mut arg_types = Vec::new();
+    let mut reference_param_attrs_by_arg = Vec::new();
 
     // Determine argument count from the function type in the instance
     // Get the function signature to determine the number of arguments
@@ -1627,6 +1666,7 @@ pub fn translate_body(
         let ty = &local_decl.ty;
         let arg_type = types::translate_type(ctx, ty)?;
         arg_types.push(arg_type);
+        reference_param_attrs_by_arg.push(reference_param_attrs(ty));
     }
 
     // Get return type (local 0)
@@ -1686,6 +1726,13 @@ pub fn translate_body(
         instance.name().to_string()
     };
     mir_func_op.set_symbol_name(ctx, legaliser.legalise(&name_str));
+
+    // Keep rustc's aliasing decision attached to the source-level argument
+    // index. Slices are still one MIR argument here; mir-lower remaps the
+    // proof to the pointer component after ABI flattening.
+    for (arg_index, attrs) in reference_param_attrs_by_arg.into_iter().enumerate() {
+        mir_func_op.set_reference_param_attrs(ctx, arg_index, attrs.noalias, attrs.readonly);
+    }
 
     // Check if the function has the #[cuda_oxide::kernel] attribute (passed via is_kernel flag)
     if is_kernel {
@@ -2105,6 +2152,129 @@ mod tests {
                 .0
                 .contains_key(&key),
             "`is_inline_always` must become an LLVM dialect alwaysinline attribute before export",
+        );
+    }
+
+    #[test]
+    fn reference_param_attrs_follow_rustc_freeze_and_unpin_rules() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_reference_attrs_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("reference_attrs_fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+use core::cell::UnsafeCell;
+use core::marker::PhantomPinned;
+
+pub fn reference_attrs(
+    shared: &u32,
+    interior_mutable: &UnsafeCell<u32>,
+    unique: &mut u32,
+    pinned: &mut PhantomPinned,
+    shared_slice: &[u32],
+    interior_mutable_slice: &[UnsafeCell<u32>],
+    unique_slice: &mut [u32],
+    raw_const: *const u32,
+    raw_mut: *mut u32,
+) {
+    let _ = (
+        shared,
+        interior_mutable,
+        unique,
+        pinned,
+        shared_slice,
+        interior_mutable_slice,
+        unique_slice,
+        raw_const,
+        raw_mut,
+    );
+}
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=reference_attrs_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Zmir-opt-level=0".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let attrs = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    let body = rustc_public::all_local_items()
+                        .into_iter()
+                        .filter_map(|item| item.body())
+                        .next()
+                        .expect("fixture function body");
+                    let attrs = body
+                        .locals()
+                        .iter()
+                        .skip(1)
+                        .take(9)
+                        .map(|decl| reference_param_attrs(&decl.ty))
+                        .collect::<Vec<_>>();
+                    std::ops::ControlFlow::<(), _>::Continue(attrs)
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(
+            attrs,
+            vec![
+                ReferenceParamAttrs {
+                    noalias: true,
+                    readonly: true,
+                },
+                ReferenceParamAttrs::default(),
+                ReferenceParamAttrs {
+                    noalias: true,
+                    readonly: false,
+                },
+                ReferenceParamAttrs::default(),
+                ReferenceParamAttrs {
+                    noalias: true,
+                    readonly: true,
+                },
+                ReferenceParamAttrs::default(),
+                ReferenceParamAttrs {
+                    noalias: true,
+                    readonly: false,
+                },
+                ReferenceParamAttrs::default(),
+                ReferenceParamAttrs::default(),
+            ]
         );
     }
 
