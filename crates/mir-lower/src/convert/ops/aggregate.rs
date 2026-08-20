@@ -37,12 +37,15 @@
 //! introduces no extra tag.
 
 use crate::convert::enum_payload_storage::{coerce_enum_payload_value, enum_payload_storage_type};
+use crate::convert::ops::memory::{
+    set_target_stable_storage_pointee, target_stable_storage_pointee,
+};
 use crate::convert::types::{
     EnumSlotMap, StructLayoutInfo, StructSlotMap, build_enum_slot_map, build_struct_slot_map,
     build_union_storage_type, convert_type, is_zero_sized_type, llvm_byte_faithful_twin,
     llvm_packed_struct_contains_pointer_in_address_space, llvm_type_contains_i1,
     llvm_type_size_align, make_slice_struct, mir_element_stride, mir_type_abi_align,
-    packed_shared_internal_abi_info, packed_shared_local_storage_info,
+    packed_shared_internal_abi_info,
 };
 use dialect_mir::ops::{
     MirConstantOp, MirConstructEnumOp, MirEnumPayloadOp, MirExtractFieldOp, MirFieldAddrOp,
@@ -54,7 +57,7 @@ use dialect_mir::types::{
 };
 use llvm_export::attributes::{ICmpPredicateAttr, IntegerOverflowFlagsAttr};
 use llvm_export::op_interfaces::{
-    CastOpInterface, CastOpWithNNegInterface, IntBinArithOpWithOverflowFlag, PointerTypeResult,
+    CastOpInterface, CastOpWithNNegInterface, IntBinArithOpWithOverflowFlag,
 };
 use llvm_export::ops as llvm;
 use llvm_export::types as llvm_types;
@@ -1625,6 +1628,34 @@ pub(crate) fn convert_enum_payload(
 // MirFieldAddrOp Conversion
 // ============================================================================
 
+/// Resolve one field's physical pointee inside a target-stable carrier.
+///
+/// Carrier structs preserve the semantic aggregate's slot topology while
+/// recursively replacing AS3 pointer leaves with generic pointers. `slot` is
+/// therefore the same slot selected from the semantic `StructSlotMap`.
+fn carrier_struct_field_type(
+    ctx: &Context,
+    storage_parent: TypeHandle,
+    slot: u32,
+) -> Result<TypeHandle> {
+    let storage_ref = storage_parent.deref(ctx);
+    let storage_struct = storage_ref
+        .downcast_ref::<llvm_types::StructType>()
+        .ok_or_else(|| {
+            pliron::input_error_noloc!(
+                "target-stable field projection expected struct storage, got {}",
+                storage_parent.deref(ctx).disp(ctx)
+            )
+        })?;
+    storage_struct.fields().nth(slot as usize).ok_or_else(|| {
+        pliron::input_error_noloc!(
+            "target-stable field projection slot {} out of bounds for storage type {}",
+            slot,
+            storage_parent.deref(ctx).disp(ctx)
+        )
+    })
+}
+
 /// Convert `mir.field_addr` to `llvm.getelementptr`.
 ///
 /// Computes the address of a struct field using GEP. This is needed when
@@ -1798,22 +1829,7 @@ pub(crate) fn convert_field_addr(
 
     let map = build_struct_slot_map(ctx, &layout).map_err(anyhow_to_pliron)?;
 
-    // A compiler-owned packed-AS3 local may have a target-stable carrier
-    // allocation even though the MIR pointer still names the semantic struct.
-    // Use the carrier as the typed GEP source so the pointer field addresses
-    // generic-pointer storage. Arbitrary pointers keep the semantic layout and
-    // remain subject to the existing fail-closed whole-value memory rules.
-    let local_storage_ty = if let Some(info) =
-        packed_shared_local_storage_info(ctx, mir_ptr_pointee).map_err(anyhow_to_pliron)?
-    {
-        ptr_operand
-            .defining_op()
-            .and_then(|def| Operation::get_op::<llvm::AllocaOp>(def, ctx))
-            .filter(|alloca| alloca.result_pointee_type(ctx) == info.storage_ty)
-            .map(|_| info.storage_ty)
-    } else {
-        None
-    };
+    let carrier_storage_parent = target_stable_storage_pointee(ctx, ptr_operand);
 
     let slot = match map.decl_to_llvm.get(field_index) {
         Some(Some(slot)) => *slot,
@@ -1846,6 +1862,11 @@ pub(crate) fn convert_field_addr(
         }
     };
 
+    let carrier_storage_field = match carrier_storage_parent {
+        Some(storage_parent) => Some(carrier_struct_field_type(ctx, storage_parent, slot)?),
+        None => None,
+    };
+
     let rustc_offset = layout.field_offsets.get(field_index).copied();
 
     // Preserve the #859 byte-address path for ordinary semantic aggregates:
@@ -1858,7 +1879,7 @@ pub(crate) fn convert_field_addr(
     // that the resulting address is still rooted in the compiler-owned local.
     // The #859 byte-GEP fallback remains necessary for ordinary semantic
     // aggregates whose natural LLVM slot offsets diverge from rustc's layout.
-    if local_storage_ty.is_none()
+    if carrier_storage_parent.is_none()
         && let Some(expected_offset) = rustc_offset
     {
         let actual_offset = map
@@ -1886,9 +1907,12 @@ pub(crate) fn convert_field_addr(
     use llvm_export::ops::GepIndex;
     let gep_indices = vec![GepIndex::Constant(0), GepIndex::Constant(slot)];
 
-    let gep_source_ty = local_storage_ty.unwrap_or(map.llvm_struct_ty);
+    let gep_source_ty = carrier_storage_parent.unwrap_or(map.llvm_struct_ty);
     let gep_op = llvm::GetElementPtrOp::new(ctx, ptr_operand, gep_indices, gep_source_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
+    if let Some(storage_field) = carrier_storage_field {
+        set_target_stable_storage_pointee(ctx, gep_op.get_operation(), storage_field);
+    }
     stamp_field_address_alignment(
         ctx,
         gep_op.get_operation(),
@@ -1988,7 +2012,24 @@ pub(crate) fn convert_array_element_addr(
         mir_ptr_pointee
     };
 
-    let llvm_array_ty = convert_type(ctx, pointee_ty).map_err(anyhow_to_pliron)?;
+    let carrier_storage_array = target_stable_storage_pointee(ctx, arr_ptr);
+    let semantic_array_ty = convert_type(ctx, pointee_ty).map_err(anyhow_to_pliron)?;
+    let llvm_array_ty = carrier_storage_array.unwrap_or(semantic_array_ty);
+    let carrier_storage_element = match carrier_storage_array {
+        Some(storage_array) => {
+            let storage_ref = storage_array.deref(ctx);
+            let storage_array = storage_ref
+                .downcast_ref::<llvm_types::ArrayType>()
+                .ok_or_else(|| {
+                    pliron::input_error_noloc!(
+                        "target-stable array projection expected array storage, got {}",
+                        storage_array.deref(ctx).disp(ctx)
+                    )
+                })?;
+            Some(storage_array.elem_type())
+        }
+        None => None,
+    };
 
     // The typed GEP below strides by the allocation size of the converted
     // element type. For packed Rust elements this is now the LLVM packed-struct
@@ -2004,7 +2045,8 @@ pub(crate) fn convert_array_element_addr(
                 .element_type()
         };
         let rustc_stride = mir_element_stride(ctx, element_ty);
-        let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
+        let semantic_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
+        let llvm_element_ty = carrier_storage_element.unwrap_or(semantic_element_ty);
         let llvm_size = llvm_type_size_align(ctx, llvm_element_ty).map(|(size, _)| size);
         if let (Some(stride), Some(llvm_size)) = (rustc_stride, llvm_size)
             && stride != llvm_size
@@ -2026,6 +2068,9 @@ pub(crate) fn convert_array_element_addr(
 
     let gep_op = llvm::GetElementPtrOp::new(ctx, arr_ptr, gep_indices, llvm_array_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
+    if let Some(storage_element) = carrier_storage_element {
+        set_target_stable_storage_pointee(ctx, gep_op.get_operation(), storage_element);
+    }
     if let Some(align) = element_align {
         llvm_export::ops::set_address_alignment(ctx, gep_op.get_operation(), align);
     }

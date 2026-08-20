@@ -49,9 +49,7 @@
 //! ```
 
 use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
-use crate::convert::target_stable_storage::{
-    StorageRewriteOptions, coerce_target_stable_value, target_stable_storage_type,
-};
+use crate::convert::target_stable_storage::coerce_target_stable_value;
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_type, get_type_size,
     llvm_packed_struct_contains_pointer_in_address_space, mir_type_abi_align,
@@ -61,12 +59,12 @@ use crate::convert::types::{
 use crate::helpers;
 use dialect_mir::types::{MirPtrType, MirStructType};
 use llvm_export::attributes::IntegerOverflowFlagsAttr;
-use llvm_export::op_interfaces::{IntBinArithOpWithOverflowFlag, PointerTypeResult};
+use llvm_export::op_interfaces::IntBinArithOpWithOverflowFlag;
 use llvm_export::ops as llvm;
 use llvm_export::ops::GlobalOpExt;
 use llvm_export::types::{ArrayType, FuncType, StructLayout, StructType, VoidType};
 use pliron::attribute::AttrObj;
-use pliron::builtin::attributes::IntegerAttr;
+use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
 use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -92,6 +90,35 @@ fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
     )
 }
 
+const TARGET_STABLE_STORAGE_POINTEE_KEY: &str = "cuda_oxide_target_stable_storage_pointee";
+
+/// Record the physical pointee type carried by a target-stable local address.
+///
+/// LLVM pointers are opaque, while recursive MIR projections still need to
+/// distinguish the semantic pointee from the physical carrier pointee. Only
+/// compiler-owned local addresses admitted by `packed_shared_local_storage_info`
+/// receive this marker, and projections propagate it to their results.
+pub(crate) fn set_target_stable_storage_pointee(
+    ctx: &mut Context,
+    op: Ptr<Operation>,
+    pointee: TypeHandle,
+) {
+    op.deref_mut(ctx).attributes.set(
+        TARGET_STABLE_STORAGE_POINTEE_KEY.try_into().unwrap(),
+        TypeAttr::new(pointee),
+    );
+}
+
+/// Physical pointee type for an address inside a target-stable carrier local.
+pub(crate) fn target_stable_storage_pointee(ctx: &Context, ptr: Value) -> Option<TypeHandle> {
+    let defining_op = ptr.defining_op()?;
+    defining_op
+        .deref(ctx)
+        .attributes
+        .get::<TypeAttr>(&TARGET_STABLE_STORAGE_POINTEE_KEY.try_into().unwrap())
+        .map(|attr| attr.get_type(ctx))
+}
+
 /// Convert `mir.store` to `llvm.store`.
 ///
 /// Operand order: `[ptr, value]` - stores `value` to address `ptr`.
@@ -111,21 +138,23 @@ pub(crate) fn convert_store(
         }
     };
 
-    let local_carrier = packed_shared_local_storage_for_address(ctx, operands_info, ptr)?;
-    let stored_val = if local_carrier {
-        let storage_ty =
-            target_stable_local_value_type(ctx, val.get_type(ctx), "packed shared local store")?;
-        coerce_target_stable_value(ctx, rewriter, val, storage_ty, "packed shared local store")?
-    } else {
-        // Packed whole-value stores are byte-faithful now that divergent rustc
-        // layouts lower to LLVM packed structs. Keep the target-dependent AS3
-        // case fail-closed for arbitrary memory; only compiler-owned local
-        // carrier slots are exempt.
+    let storage_pointee = target_stable_storage_pointee(ctx, ptr);
+
+    // Arbitrary packed-AS3 memory remains fail-closed. A compiler-owned local
+    // admitted by `packed_shared_local_storage_info` is different: its address
+    // path carries the exact target-stable physical pointee, so the semantic
+    // value can be converted explicitly at this boundary.
+    if storage_pointee.is_none() {
         fail_on_target_dependent_packed_aggregate(
             ctx,
             value_mir_type(ctx, operands_info, val),
             "storing",
         )?;
+    }
+
+    let stored_val = if let Some(storage_ty) = storage_pointee {
+        coerce_target_stable_value(ctx, rewriter, val, storage_ty, "packed shared local store")?
+    } else {
         val
     };
 
@@ -191,103 +220,6 @@ fn value_mir_type(ctx: &Context, operands_info: &OperandsInfo, value: Value) -> 
         .copied()
         .find(|ty| ty.deref(ctx).is::<MirStructType>())
         .unwrap_or(current)
-}
-
-/// Return whether `ptr` addresses target-stable carrier storage for an
-/// eligible packed-AS3 local.
-///
-/// `OperandsInfo` records type history only for the current operation's direct
-/// operands. Do not walk from a projected pointer back to its alloca and then
-/// query that nested value's history: it is not present in a load/store's
-/// `OperandsInfo`.
-///
-/// Whole-local accesses are recognized from an `llvm.alloca` plus the MIR
-/// pointee recorded directly on that operand. Direct field projections are
-/// recognized from the converted `llvm.gep`: its direct operand history keeps
-/// the semantic field pointee (for #1036, p3), while the GEP's physical result
-/// pointee is the carrier field type (p0). Only packed, constant-index struct
-/// projections whose physical pointee is exactly the target-stable rewrite are
-/// admitted. Dynamic pointer arithmetic remains out of scope.
-fn packed_shared_local_storage_for_address(
-    ctx: &mut Context,
-    operands_info: &OperandsInfo,
-    ptr: Value,
-) -> Result<bool> {
-    let mir_pointee = {
-        let Some(mir_ptr) = operands_info.lookup_most_recent_of_type::<MirPtrType>(ctx, ptr) else {
-            return Ok(false);
-        };
-        let pointee = mir_ptr.pointee;
-        drop(mir_ptr);
-        pointee
-    };
-
-    let Some(defining_op) = ptr.defining_op() else {
-        return Ok(false);
-    };
-
-    if let Some(alloca) = Operation::get_op::<llvm::AllocaOp>(defining_op, ctx) {
-        let Some(info) =
-            packed_shared_local_storage_info(ctx, mir_pointee).map_err(anyhow_to_pliron)?
-        else {
-            return Ok(false);
-        };
-        return Ok(alloca.result_pointee_type(ctx) == info.storage_ty);
-    }
-
-    let Some(gep) = Operation::get_op::<llvm::GetElementPtrOp>(defining_op, ctx) else {
-        return Ok(false);
-    };
-
-    let indices = gep.indices(ctx);
-    let is_direct_field_projection = indices.len() == 2
-        && matches!(
-            indices.first(),
-            Some(&llvm_export::ops::GepIndex::Constant(0))
-        )
-        && indices
-            .iter()
-            .all(|index| matches!(index, &llvm_export::ops::GepIndex::Constant(_)));
-    if !is_direct_field_projection {
-        return Ok(false);
-    }
-
-    let source_is_packed_struct = {
-        let source_ty = gep.src_elem_type(ctx);
-        let source_ref = source_ty.deref(ctx);
-        source_ref
-            .downcast_ref::<StructType>()
-            .is_some_and(|ty| ty.layout() == StructLayout::Packed)
-    };
-    if !source_is_packed_struct {
-        return Ok(false);
-    }
-
-    let semantic_ty = convert_type(ctx, mir_pointee).map_err(anyhow_to_pliron)?;
-    let storage_ty =
-        target_stable_local_value_type(ctx, semantic_ty, "packed shared local field projection")?;
-
-    // A scalar sibling has no representation rewrite and needs no special
-    // handling. The AS3 field is admitted only when the GEP physically points
-    // at the exact p0 carrier type computed from its semantic p3 type.
-    Ok(storage_ty != semantic_ty && gep.result_pointee_type(ctx) == storage_ty)
-}
-
-fn target_stable_local_value_type(
-    ctx: &mut Context,
-    semantic_ty: TypeHandle,
-    role: &str,
-) -> Result<TypeHandle> {
-    target_stable_storage_type(
-        ctx,
-        semantic_ty,
-        StorageRewriteOptions {
-            canonicalize_bool: false,
-        },
-        role,
-    )
-    .map(|rewrite| rewrite.ty)
-    .map_err(anyhow_to_pliron)
 }
 
 /// Refuse only packed by-value images whose physical bytes depend on the
@@ -585,17 +517,17 @@ pub(crate) fn convert_load(
     let ptr = op.deref(ctx).get_operand(0);
     let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
 
-    let semantic_llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
-    let local_carrier = packed_shared_local_storage_for_address(ctx, _operands_info, ptr)?;
-    let load_ty = if local_carrier {
-        target_stable_local_value_type(ctx, semantic_llvm_ty, "packed shared local load")?
-    } else {
-        // Arbitrary packed-AS3 memory remains target-dependent. Only a
-        // compiler-owned carrier local may load its physical p0 representation
-        // and reconstruct the semantic p3 value afterwards.
+    let storage_pointee = target_stable_storage_pointee(ctx, ptr);
+
+    // Arbitrary packed-AS3 memory remains target-dependent. Only a
+    // compiler-owned carrier address may load its physical representation and
+    // reconstruct the semantic value afterwards.
+    if storage_pointee.is_none() {
         fail_on_target_dependent_packed_aggregate(ctx, result_ty, "loading")?;
-        semantic_llvm_ty
-    };
+    }
+
+    let semantic_llvm_ty = convert_type(ctx, result_ty).map_err(anyhow_to_pliron)?;
+    let load_ty = storage_pointee.unwrap_or(semantic_llvm_ty);
 
     let llvm_load = llvm::LoadOp::new(ctx, ptr, load_ty);
     if dialect_mir::ops::MirLoadOp::new(op).is_volatile(ctx) {
@@ -621,7 +553,7 @@ pub(crate) fn convert_load(
     }
     rewriter.insert_operation(ctx, llvm_load.get_operation());
     let loaded = llvm_load.get_operation().deref(ctx).get_result(0);
-    let semantic_value = if local_carrier {
+    let semantic_value = if storage_pointee.is_some() {
         coerce_target_stable_value(
             ctx,
             rewriter,
@@ -659,9 +591,11 @@ pub(crate) fn convert_dbg_value(
 
 /// Convert `mir.alloca` to `llvm.alloca`.
 ///
-/// `mir.alloca` carries its element type on the result pointer's pointee, and
-/// emits a single-element stack slot of that type. We therefore convert the
-/// pointee to an LLVM type and emit `llvm.alloca <pointee_ty>, i32 1`.
+/// `mir.alloca` carries its element type on the result pointer's pointee.
+/// Ordinary locals use the converted semantic LLVM pointee. Eligible
+/// packed-AS3 locals instead allocate the target-stable carrier and record its
+/// physical pointee so loads, stores, and recursive projections stay on that
+/// representation.
 ///
 /// No value is stored into the slot; that is the caller's job via subsequent
 /// `mir.store` / `llvm.store` ops. This matches the mem2reg-ready translator
@@ -683,11 +617,12 @@ pub(crate) fn convert_alloca(
         })?;
         mir_ptr.pointee
     };
-    let llvm_pointee =
-        match packed_shared_local_storage_info(ctx, mir_pointee).map_err(anyhow_to_pliron)? {
-            Some(info) => info.storage_ty,
-            None => convert_type(ctx, mir_pointee).map_err(anyhow_to_pliron)?,
-        };
+    let local_storage =
+        packed_shared_local_storage_info(ctx, mir_pointee).map_err(anyhow_to_pliron)?;
+    let llvm_pointee = match local_storage {
+        Some(info) => info.storage_ty,
+        None => convert_type(ctx, mir_pointee).map_err(anyhow_to_pliron)?,
+    };
 
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
     let one_apint =
@@ -705,6 +640,9 @@ pub(crate) fn convert_alloca(
     }
     copy_debug_local_variable(ctx, op, alloca.get_operation());
     copy_local_memory_provenance(ctx, op, alloca.get_operation());
+    if local_storage.is_some() {
+        set_target_stable_storage_pointee(ctx, alloca.get_operation(), llvm_pointee);
+    }
     rewriter.insert_operation(ctx, alloca.get_operation());
     rewriter.replace_operation(ctx, op, alloca.get_operation());
 
@@ -1730,6 +1668,237 @@ mod tests {
             .downcast_ref::<PointerType>()
             .expect("projected carrier store value must be an LLVM pointer");
         assert_eq!(stored_ptr.address_space(), llvm_addr::GENERIC);
+    }
+
+    #[test]
+    fn packed_shared_nested_tuple_projection_preserves_carrier_pointee() {
+        use dialect_mir::attributes::FieldIndexAttr;
+
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let pair: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![shared, shared],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedNestedTupleLocal".into(),
+            vec!["tag".into(), "pair".into()],
+            vec![tag, pair],
+            vec![0, 1],
+            vec![0, 1],
+            17,
+            1,
+        )
+        .into();
+
+        let local_ptr_ty = MirPtrType::get_generic(&mut ctx, packed, true);
+        let pair_ptr_ty = MirPtrType::get_generic(&mut ctx, pair, false);
+        let shared_ptr_ty = MirPtrType::get_generic(&mut ctx, shared, false);
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let alloca_op = Operation::new(
+            &mut ctx,
+            mir::MirAllocaOp::get_concrete_op_info(),
+            vec![local_ptr_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        alloca_op.insert_at_back(block, &ctx);
+        let slot = alloca_op.deref(&ctx).get_result(0);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, packed);
+        undef.get_operation().insert_at_back(block, &ctx);
+        let semantic_value = undef.get_operation().deref(&ctx).get_result(0);
+
+        let store = Operation::new(
+            &mut ctx,
+            mir::MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![slot, semantic_value],
+            vec![],
+            0,
+        );
+        store.insert_at_back(block, &ctx);
+
+        let outer_field = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![pair_ptr_ty.into()],
+            vec![slot],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(outer_field).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        outer_field.insert_at_back(block, &ctx);
+        let pair_addr = outer_field.deref(&ctx).get_result(0);
+
+        let inner_field = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![shared_ptr_ty.into()],
+            vec![pair_addr],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(inner_field).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        inner_field.insert_at_back(block, &ctx);
+        let projected_ptr = inner_field.deref(&ctx).get_result(0);
+
+        let load = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![shared],
+            vec![projected_ptr],
+            vec![],
+            0,
+        );
+        load.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect("nested packed-AS3 local projection must preserve carrier storage");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        let alloca = find_first::<llvm::AllocaOp>(&ctx, &body).expect("expected llvm.alloca");
+        assert!(
+            !llvm_packed_struct_contains_pointer_in_address_space(
+                &ctx,
+                alloca.result_pointee_type(&ctx),
+                llvm_addr::SHARED,
+            ),
+            "recursive local carrier must not contain AS3 leaves"
+        );
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            3,
+            "two store leaves and one projected load must cross p3 <-> p0 boundaries"
+        );
+    }
+
+    #[test]
+    fn packed_shared_array_element_projection_preserves_carrier_pointee() {
+        use dialect_mir::attributes::FieldIndexAttr;
+        use pliron::builtin::attributes::IntegerAttr;
+        use std::num::NonZeroUsize;
+
+        let mut ctx = make_ctx();
+        let tag: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let array: TypeHandle = MirArrayType::get(&mut ctx, shared, 2).into();
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedArrayLocal".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![tag, array],
+            vec![0, 1],
+            vec![0, 1],
+            17,
+            1,
+        )
+        .into();
+
+        let local_ptr_ty = MirPtrType::get_generic(&mut ctx, packed, true);
+        let array_ptr_ty = MirPtrType::get_generic(&mut ctx, array, false);
+        let shared_ptr_ty = MirPtrType::get_generic(&mut ctx, shared, false);
+        let index_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signed).into();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+
+        let alloca_op = Operation::new(
+            &mut ctx,
+            mir::MirAllocaOp::get_concrete_op_info(),
+            vec![local_ptr_ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        alloca_op.insert_at_back(block, &ctx);
+        let slot = alloca_op.deref(&ctx).get_result(0);
+
+        let undef = mir::MirUndefOp::new(&mut ctx, packed);
+        undef.get_operation().insert_at_back(block, &ctx);
+        let semantic_value = undef.get_operation().deref(&ctx).get_result(0);
+
+        let store = Operation::new(
+            &mut ctx,
+            mir::MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![slot, semantic_value],
+            vec![],
+            0,
+        );
+        store.insert_at_back(block, &ctx);
+
+        let array_field = Operation::new(
+            &mut ctx,
+            mir::MirFieldAddrOp::get_concrete_op_info(),
+            vec![array_ptr_ty.into()],
+            vec![slot],
+            vec![],
+            0,
+        );
+        mir::MirFieldAddrOp::new(array_field).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        array_field.insert_at_back(block, &ctx);
+        let array_addr = array_field.deref(&ctx).get_result(0);
+
+        let index = Operation::new(
+            &mut ctx,
+            mir::MirConstantOp::get_concrete_op_info(),
+            vec![index_ty],
+            vec![],
+            vec![],
+            0,
+        );
+        mir::MirConstantOp::new(index).set_attr_value(
+            &ctx,
+            IntegerAttr::new(
+                IntegerType::get(&ctx, 64, Signedness::Signed),
+                APInt::from_u64(1, NonZeroUsize::new(64).unwrap()),
+            ),
+        );
+        index.insert_at_back(block, &ctx);
+        let index_value = index.deref(&ctx).get_result(0);
+
+        let element_addr = Operation::new(
+            &mut ctx,
+            mir::MirArrayElementAddrOp::get_concrete_op_info(),
+            vec![shared_ptr_ty.into()],
+            vec![array_addr, index_value],
+            vec![],
+            0,
+        );
+        element_addr.insert_at_back(block, &ctx);
+        let projected_ptr = element_addr.deref(&ctx).get_result(0);
+
+        let load = Operation::new(
+            &mut ctx,
+            mir::MirLoadOp::get_concrete_op_info(),
+            vec![shared],
+            vec![projected_ptr],
+            vec![],
+            0,
+        );
+        load.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect("packed-AS3 local array projection must preserve carrier storage");
+
+        let body = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(
+            count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body),
+            3,
+            "two store leaves and one array-element load must cross p3 <-> p0 boundaries"
+        );
     }
 
     #[test]

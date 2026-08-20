@@ -486,14 +486,62 @@ pub(crate) fn packed_shared_internal_abi_info(
     }))
 }
 
-/// Recognize the deliberately narrow packed-AS3 shape that may use a
-/// target-stable local stack slot.
+/// Maximum number of shared-pointer leaves introduced by fixed-array expansion
+/// in one packed-AS3 local carrier.
 ///
-/// This gate is intentionally independent of future widening of the internal
-/// device ABI classifier. Local storage currently admits only one direct AS3
-/// pointer leaf with scalar non-ZST siblings, matching issue #1036. Recursive
-/// aggregates, arrays, vectors, and multiple shared-pointer leaves remain a
-/// separate follow-up even when the internal call ABI supports them.
+/// This is intentionally a local-storage policy constant rather than an alias
+/// of the internal-ABI limit. The two lanes happen to use the same bound today,
+/// but widening one must not implicitly widen the other.
+pub(crate) const MAX_PACKED_SHARED_LOCAL_ARRAY_REWRITE_LEAVES: u64 = 16;
+
+/// Whether a MIR value shape belongs to the recursive packed-AS3 local-storage
+/// lane.
+///
+/// Keep this policy independent of the internal device ABI classifier. Local
+/// storage may recurse through structs, tuples, and fixed arrays, but vectors
+/// and unrelated aggregate kinds remain fail-closed.
+fn packed_shared_local_storage_mir_shape_is_supported(ctx: &Context, mir_ty: TypeHandle) -> bool {
+    let children = {
+        let ty_ref = mir_ty.deref(ctx);
+        if ty_ref.is::<IntegerType>()
+            || ty_ref.is::<MirFP16Type>()
+            || ty_ref.is::<llvm_types::HalfType>()
+            || ty_ref.is::<FP32Type>()
+            || ty_ref.is::<FP64Type>()
+            || ty_ref.is::<MirPtrType>()
+            || ty_ref.is::<llvm_types::PointerType>()
+        {
+            return true;
+        }
+        if let Some(struct_ty) = ty_ref.downcast_ref::<MirStructType>() {
+            Some(struct_ty.field_types.clone())
+        } else if let Some(tuple_ty) = ty_ref.downcast_ref::<MirTupleType>() {
+            Some(tuple_ty.get_types().to_vec())
+        } else {
+            ty_ref
+                .downcast_ref::<MirArrayType>()
+                .map(|array_ty| vec![array_ty.element_type()])
+        }
+    };
+
+    children.is_some_and(|children| {
+        children
+            .into_iter()
+            .all(|child| packed_shared_local_storage_mir_shape_is_supported(ctx, child))
+    })
+}
+
+/// Recognize a packed-AS3 shape that may use a target-stable local stack slot.
+///
+/// The root must be a byte-faithful packed struct. Multiple direct AS3 leaves,
+/// recursively nested struct/tuple leaves, and bounded fixed arrays are
+/// admitted. The target-stable storage utility performs the recursive AS3 ->
+/// generic rewrite; this gate decides only which compiler-owned locals may use
+/// that representation.
+///
+/// This classifier intentionally does not delegate to
+/// [`packed_shared_internal_abi_info`]. Future widening of either policy must
+/// remain explicit in the other.
 pub(crate) fn packed_shared_local_storage_info(
     ctx: &mut Context,
     mir_ty: TypeHandle,
@@ -506,33 +554,47 @@ pub(crate) fn packed_shared_local_storage_info(
         StructLayoutInfo::of_struct(struct_ty)
     };
 
-    let map = build_struct_slot_map(ctx, &layout)?;
-    let mut direct_shared_pointers = 0_u64;
-    for field_ty in &map.field_llvm_types {
-        if is_zero_sized_type(ctx, *field_ty) {
-            continue;
-        }
-        let field_ref = field_ty.deref(ctx);
-        if let Some(pointer) = field_ref.downcast_ref::<llvm_types::PointerType>() {
-            if pointer.address_space() == llvm_types::address_space::SHARED {
-                direct_shared_pointers += 1;
-            }
-            continue;
-        }
-        if field_ref.is::<IntegerType>()
-            || field_ref.is::<llvm_types::HalfType>()
-            || field_ref.is::<FP32Type>()
-            || field_ref.is::<FP64Type>()
-        {
-            continue;
-        }
-        return Ok(None);
-    }
-    if direct_shared_pointers != 1 {
+    if !packed_shared_local_storage_mir_shape_is_supported(ctx, mir_ty) {
         return Ok(None);
     }
 
-    packed_shared_internal_abi_info(ctx, mir_ty)
+    let map = build_struct_slot_map(ctx, &layout)?;
+    if !map.by_value_layout_faithful {
+        return Ok(None);
+    }
+    let is_packed = map
+        .llvm_struct_ty
+        .deref(ctx)
+        .downcast_ref::<llvm_types::StructType>()
+        .is_some_and(|struct_ty| struct_ty.layout() == llvm_types::StructLayout::Packed);
+    if !is_packed {
+        return Ok(None);
+    }
+
+    let rewrite = target_stable_storage_type(
+        ctx,
+        map.llvm_struct_ty,
+        StorageRewriteOptions {
+            canonicalize_bool: false,
+        },
+        "packed shared local storage",
+    )?;
+    if rewrite.shared_pointer_leaves == 0
+        || rewrite.array_shared_pointer_leaves > MAX_PACKED_SHARED_LOCAL_ARRAY_REWRITE_LEAVES
+    {
+        return Ok(None);
+    }
+    let Some((storage_size, _)) = llvm_type_size_align(ctx, rewrite.ty) else {
+        return Ok(None);
+    };
+    if layout.total_size > 0 && storage_size != layout.total_size {
+        return Ok(None);
+    }
+
+    Ok(Some(PackedSharedInternalAbiInfo {
+        semantic_ty: map.llvm_struct_ty,
+        storage_ty: rewrite.ty,
+    }))
 }
 
 /// Convert a type that crosses a function boundary as one LLVM value.
@@ -5489,6 +5551,202 @@ mod tests {
                 .expect("classification must not error")
                 .is_none(),
             "shared-pointer vectors must remain outside the packed-AS3 internal ABI lane"
+        );
+    }
+
+    #[test]
+    fn packed_shared_local_storage_accepts_multiple_direct_shared_pointers() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedLocalPair".into(),
+            vec!["tag".into(), "left".into(), "right".into()],
+            vec![tag, shared, shared],
+            vec![0, 1, 2],
+            vec![0, 1, 9],
+            17,
+            1,
+        )
+        .into();
+
+        let info = packed_shared_local_storage_info(&mut ctx, packed)
+            .expect("local-storage classification must succeed")
+            .expect("multiple direct AS3 leaves must use a local carrier");
+        assert!(!llvm_type_contains_pointer_in_address_space(
+            &ctx,
+            info.storage_ty,
+            llvm_types::address_space::SHARED,
+        ));
+    }
+
+    #[test]
+    fn packed_shared_local_storage_accepts_nested_struct_and_tuple() {
+        let mut ctx = make_ctx();
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let nested_struct: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "LocalSharedPair".into(),
+            vec!["left".into(), "right".into()],
+            vec![shared, shared],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let nested_tuple: TypeHandle = MirTupleType::get_with_layout(
+            &mut ctx,
+            vec![shared, shared],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let tag = mir_uint(&mut ctx, 8);
+
+        for (name, nested) in [
+            ("PackedLocalNestedStruct", nested_struct),
+            ("PackedLocalNestedTuple", nested_tuple),
+        ] {
+            let outer: TypeHandle = MirStructType::get_with_full_layout(
+                &mut ctx,
+                name.into(),
+                vec!["tag".into(), "nested".into()],
+                vec![tag, nested],
+                vec![0, 1],
+                vec![0, 1],
+                17,
+                1,
+            )
+            .into();
+
+            let info = packed_shared_local_storage_info(&mut ctx, outer)
+                .expect("local-storage classification must succeed")
+                .expect("nested AS3 leaves must use a local carrier");
+            assert!(!llvm_type_contains_pointer_in_address_space(
+                &ctx,
+                info.storage_ty,
+                llvm_types::address_space::SHARED,
+            ));
+        }
+    }
+
+    #[test]
+    fn packed_shared_local_storage_accepts_bounded_shared_pointer_array() {
+        let mut ctx = make_ctx();
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let array: TypeHandle = MirArrayType::get(&mut ctx, shared, 2).into();
+        let tag = mir_uint(&mut ctx, 8);
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedLocalArray".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![tag, array],
+            vec![0, 1],
+            vec![0, 1],
+            17,
+            1,
+        )
+        .into();
+
+        let info = packed_shared_local_storage_info(&mut ctx, packed)
+            .expect("local-storage classification must succeed")
+            .expect("bounded AS3 arrays must use a local carrier");
+        assert!(!llvm_type_contains_pointer_in_address_space(
+            &ctx,
+            info.storage_ty,
+            llvm_types::address_space::SHARED,
+        ));
+    }
+
+    #[test]
+    fn packed_shared_local_storage_accepts_array_rewrite_at_exact_bound() {
+        let mut ctx = make_ctx();
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let count = MAX_PACKED_SHARED_LOCAL_ARRAY_REWRITE_LEAVES;
+        let array: TypeHandle = MirArrayType::get(&mut ctx, shared, count).into();
+        let tag = mir_uint(&mut ctx, 8);
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedLocalArrayAtBound".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![tag, array],
+            vec![0, 1],
+            vec![0, 1],
+            1 + 8 * count,
+            1,
+        )
+        .into();
+
+        assert!(
+            packed_shared_local_storage_info(&mut ctx, packed)
+                .expect("local-storage classification must succeed")
+                .is_some(),
+            "the exact local array rewrite bound must remain supported"
+        );
+    }
+
+    #[test]
+    fn packed_shared_local_storage_rejects_array_rewrite_above_bound() {
+        let mut ctx = make_ctx();
+        let pointee = mir_uint(&mut ctx, 32);
+        let shared: TypeHandle = MirPtrType::get_shared(&mut ctx, pointee, false).into();
+        let count = MAX_PACKED_SHARED_LOCAL_ARRAY_REWRITE_LEAVES + 1;
+        let array: TypeHandle = MirArrayType::get(&mut ctx, shared, count).into();
+        let tag = mir_uint(&mut ctx, 8);
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedLocalArrayAboveBound".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![tag, array],
+            vec![0, 1],
+            vec![0, 1],
+            1 + 8 * count,
+            1,
+        )
+        .into();
+
+        assert!(
+            packed_shared_local_storage_info(&mut ctx, packed)
+                .expect("local-storage classification must succeed")
+                .is_none(),
+            "array-expanded AS3 leaves above the local budget must fail closed"
+        );
+    }
+
+    #[test]
+    fn packed_shared_local_storage_rejects_shared_pointer_vector() {
+        let mut ctx = make_ctx();
+        let tag = mir_uint(&mut ctx, 8);
+        let shared_pointer: TypeHandle =
+            llvm_types::PointerType::get(&ctx, llvm_types::address_space::SHARED).into();
+        let vector: TypeHandle =
+            llvm_types::VectorType::get(&ctx, shared_pointer, 2, llvm_types::VectorTypeKind::Fixed)
+                .into();
+        let packed: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "PackedSharedLocalVector".into(),
+            vec!["tag".into(), "ptrs".into()],
+            vec![tag, vector],
+            vec![0, 1],
+            vec![0, 1],
+            17,
+            1,
+        )
+        .into();
+
+        assert!(
+            packed_shared_local_storage_info(&mut ctx, packed)
+                .expect("local-storage classification must succeed")
+                .is_none(),
+            "shared-pointer vectors must remain outside the local carrier lane"
         );
     }
 
