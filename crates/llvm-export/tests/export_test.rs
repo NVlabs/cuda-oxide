@@ -14,11 +14,12 @@ use llvm_export::{
     op_interfaces::CastOpInterface,
     ops::{
         AddrSpaceCastOp, AddressOfOp, AllocaOp, BitcastOp, BrOp, CallOp, CondBrOp, ConstantOp,
-        DebugEnumDiscriminant, DebugEnumVariant, DebugLocalTypeKind, DebugLocalVariableInfo,
-        DebugProjectedVariableInfo, DebugSourcePosition, DebugSourceScope,
-        DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueOp, FuncOp, GepIndex,
-        GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp,
-        ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
+        DebugEnumDiscriminant, DebugEnumVariant, DebugFragment, DebugFragmentVariableInfo,
+        DebugLocalTypeKind, DebugLocalVariableInfo, DebugProjectedVariableInfo,
+        DebugSourcePosition, DebugSourceScope, DebugSourceScopeLocation, DebugSourceScopeMap,
+        DebugValueExpression, DebugValueExpressionOp, DebugValueListOp, DebugValueOp, FuncOp,
+        GepIndex, GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp,
+        LoadOp, ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
     },
     types::{ArrayType, FuncType, HalfType, PointerType, StructLayout, StructType, VoidType},
 };
@@ -3068,6 +3069,36 @@ fn full_debug_metadata_emits_dbg_value_for_promoted_locals() {
         12,
         5,
     );
+    llvm_export::ops::set_debug_fragment_variables(
+        &mut ctx,
+        dbg_value.get_operation(),
+        &[DebugFragmentVariableInfo {
+            variable: DebugLocalVariableInfo {
+                name: "pair".to_string(),
+                argument_index: None,
+                ty: DebugLocalTypeKind::Array {
+                    name: "[u32; 2]".to_string(),
+                    size_bits: 64,
+                    element: Box::new(DebugLocalTypeKind::Basic {
+                        name: "u32".to_string(),
+                        size_bits: 32,
+                        encoding: "DW_ATE_unsigned",
+                    }),
+                    count: 2,
+                },
+            },
+            fragment: DebugFragment {
+                offset_bits: 32,
+                size_bits: 32,
+            },
+            source_scope: None,
+            declaration: Some(DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/declarations.rs"),
+                line: 13,
+                column: 5,
+            }),
+        }],
+    );
     dbg_value.get_operation().insert_at_back(entry, &ctx);
 
     ReturnOp::new(&mut ctx, None)
@@ -3105,8 +3136,132 @@ fn full_debug_metadata_emits_dbg_value_for_promoted_locals() {
         "dbg.value should still be located at the value's current source point:\n{ir}"
     );
     assert!(
+        ir.contains("DW_OP_LLVM_fragment, 32, 32"),
+        "dbg.value should preserve scalarized source-variable fragments:\n{ir}"
+    );
+    assert!(
+        ir.contains("!DILocalVariable(name: \"pair\", scope: !") && ir.contains("line: 13"),
+        "fragment dbg.value should describe the complete source variable:\n{ir}"
+    );
+    assert!(
         !ir.contains("llvm.dbg.declare"),
         "a value-only debug record should not force dbg.declare:\n{ir}"
+    );
+}
+
+#[test]
+fn full_debug_metadata_emits_diarglist_for_multi_value_locations() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_region = module.get_operation().deref(&ctx).get_region(0);
+    let module_block = {
+        let region = module_region.deref(&ctx);
+        region.iter(&ctx).next().unwrap()
+    };
+
+    let ptr_ty = PointerType::get(&ctx, 0);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(
+        &ctx,
+        void_ty.to_handle(),
+        vec![ptr_ty.into(), i64_ty.into()],
+        false,
+    );
+    let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
+    let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 40, 1);
+    func.get_operation().deref_mut(&ctx).set_loc(func_loc);
+
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    let base = entry.deref(&ctx).get_argument(0);
+    let index = entry.deref(&ctx).get_argument(1);
+    let dbg_value = DebugValueListOp::new(&mut ctx, vec![base, index]);
+    let dbg_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 41, 17);
+    dbg_value.get_operation().deref_mut(&ctx).set_loc(dbg_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        dbg_value.get_operation(),
+        DebugLocalVariableInfo {
+            name: "item".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::Basic {
+                name: "u32".to_string(),
+                size_bits: 32,
+                encoding: "DW_ATE_unsigned",
+            },
+        },
+    );
+    llvm_export::ops::set_debug_value_expression(
+        &mut ctx,
+        dbg_value.get_operation(),
+        &DebugValueExpression::new(vec![
+            DebugValueExpressionOp::Arg(0),
+            DebugValueExpressionOp::Arg(1),
+            DebugValueExpressionOp::ConstU(4),
+            DebugValueExpressionOp::Mul,
+            DebugValueExpressionOp::Plus,
+            DebugValueExpressionOp::Deref,
+        ]),
+    );
+    dbg_value.get_operation().insert_at_back(entry, &ctx);
+
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = DebugConfig {
+        inner: PtxExportConfig,
+        debug_kind: DebugKind::Full,
+    };
+    let ir =
+        export_module_to_string_with_config(&ctx, &module, &config).expect("debug export succeeds");
+
+    assert!(
+        ir.contains("call void @llvm.dbg.value(metadata !DIArgList(ptr %v0, i64 %v1), metadata !"),
+        "multi-value debug records should emit an inline DIArgList:\n{ir}"
+    );
+    assert!(
+        ir.contains(
+            "!DIExpression(DW_OP_LLVM_arg, 0, DW_OP_LLVM_arg, 1, DW_OP_constu, 4, DW_OP_mul, DW_OP_plus, DW_OP_deref)"
+        ),
+        "multi-value debug records should emit the typed location recipe:\n{ir}"
+    );
+    assert!(
+        ir.contains("declare void @llvm.dbg.value(metadata, metadata, metadata)"),
+        "multi-value records should reuse the ordinary dbg.value intrinsic declaration:\n{ir}"
+    );
+
+    let Some(llvm_as) = ["llvm-as-22", "llvm-as-21", "llvm-as"]
+        .into_iter()
+        .find(|tool| {
+            std::process::Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+    else {
+        eprintln!("skipping llvm-as parse gate: no llvm-as-22/llvm-as-21/llvm-as on PATH");
+        return;
+    };
+
+    let ll_path = std::env::temp_dir().join(format!(
+        "cuda_oxide_diarglist_parse_gate_{}.ll",
+        std::process::id()
+    ));
+    std::fs::write(&ll_path, &ir).expect("write temp .ll");
+    let output = std::process::Command::new(llvm_as)
+        .arg("-o")
+        .arg("/dev/null")
+        .arg(&ll_path)
+        .output()
+        .expect("run llvm-as");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = std::fs::remove_file(&ll_path);
+    assert!(
+        output.status.success(),
+        "{llvm_as} rejected the emitted multi-value debug module:\n{stderr}\n--- module ---\n{ir}"
     );
 }
 
@@ -3947,6 +4102,134 @@ fn kernel_keeps_host_addressable_pointer_parameters_and_device_functions_keep_sh
     assert!(
         ir.contains("define void @device_shared(ptr addrspace(3) %v0)"),
         "{ir}"
+    );
+}
+
+#[test]
+fn full_debug_metadata_emits_scalarized_fragment_dbg_declares() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "fragment_debug".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.into(), vec![], false);
+    let func = FuncOp::new(
+        &mut ctx,
+        "fragment_debug_kernel".try_into().unwrap(),
+        func_ty,
+    );
+    let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/fragments.rs", 10, 1);
+    func.get_operation().deref_mut(&ctx).set_loc(func_loc);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
+    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one_value = one.get_operation().deref(&ctx).get_result(0);
+    one.get_operation().insert_at_back(entry, &ctx);
+
+    let whole_ty = DebugLocalTypeKind::Array {
+        name: "[u32; 2]".to_string(),
+        size_bits: 64,
+        element: Box::new(DebugLocalTypeKind::Basic {
+            name: "u32".to_string(),
+            size_bits: 32,
+            encoding: "DW_ATE_unsigned",
+        }),
+        count: 2,
+    };
+    for (index, offset_bits) in [0u64, 32].into_iter().enumerate() {
+        let alloca = AllocaOp::new(&mut ctx, i32_ty.into(), one_value);
+        llvm_export::ops::set_debug_fragment_variables(
+            &mut ctx,
+            alloca.get_operation(),
+            &[DebugFragmentVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name: "pair".to_string(),
+                    argument_index: None,
+                    ty: whole_ty.clone(),
+                },
+                fragment: DebugFragment {
+                    offset_bits,
+                    size_bits: 32,
+                },
+                source_scope: None,
+                declaration: Some(DebugSourcePosition {
+                    file: PathBuf::from("/tmp/cuda-oxide/tests/fragments.rs"),
+                    line: 11,
+                    column: 9,
+                }),
+            }],
+        );
+        let loc = src_location(
+            &mut ctx,
+            "/tmp/cuda-oxide/tests/fragments.rs",
+            12 + index as i32,
+            9,
+        );
+        alloca.get_operation().deref_mut(&ctx).set_loc(loc);
+        alloca.get_operation().insert_at_back(entry, &ctx);
+    }
+
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = DebugConfig {
+        inner: PtxExportConfig,
+        debug_kind: DebugKind::Full,
+    };
+    let ir =
+        export_module_to_string_with_config(&ctx, &module, &config).expect("debug export succeeds");
+
+    assert!(
+        ir.contains("DW_OP_LLVM_fragment, 0, 32"),
+        "first scalarized piece should describe the low fragment:\n{ir}"
+    );
+    assert!(
+        ir.contains("DW_OP_LLVM_fragment, 32, 32"),
+        "second scalarized piece should describe the high fragment:\n{ir}"
+    );
+    assert_eq!(
+        ir.matches("!DILocalVariable(name: \"pair\"").count(),
+        1,
+        "all pieces must share one DILocalVariable identity:\n{ir}"
+    );
+    assert_eq!(
+        ir.matches("call void @llvm.dbg.declare").count(),
+        2,
+        "each scalarized storage piece should emit one dbg.declare:\n{ir}"
+    );
+
+    let Some(llvm_as) = ["llvm-as-22", "llvm-as-21", "llvm-as"]
+        .into_iter()
+        .find(|tool| {
+            std::process::Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+    else {
+        eprintln!("skipping fragment llvm-as parse gate: no llvm-as on PATH");
+        return;
+    };
+    let ll_path = std::env::temp_dir().join(format!(
+        "cuda_oxide_fragment_parse_gate_{}.ll",
+        std::process::id()
+    ));
+    std::fs::write(&ll_path, &ir).expect("write fragment temp .ll");
+    let output = std::process::Command::new(llvm_as)
+        .arg("-o")
+        .arg("/dev/null")
+        .arg(&ll_path)
+        .output()
+        .expect("run llvm-as for fragments");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = std::fs::remove_file(&ll_path);
+    assert!(
+        output.status.success(),
+        "{llvm_as} rejected scalarized fragment debug metadata:\n{stderr}\n--- module ---\n{ir}"
     );
 }
 

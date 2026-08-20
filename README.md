@@ -326,6 +326,7 @@ cargo oxide run gemm_sol_final
 | `oxide-artifacts`         | Architecture-neutral embedded device artifact metadata         |
 | `reserved-oxide-symbols`  | Workspace-private `cuda_oxide_*` symbol-name contract          |
 | `fuzzer`                  | Differential codegen fuzzer support (rustlantis adapter)       |
+| `ptx-schedule`            | PTX schedule-perturbation fuzzing (nanosleep injection campaigns) |
 
 ### Documentation
 

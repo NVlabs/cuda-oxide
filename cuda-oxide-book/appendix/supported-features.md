@@ -88,10 +88,15 @@ array-to-slice view. Their literal `usize` length metadata is decoded
 independently, including non-zero static byte addends and nested aggregate field
 offsets. Thin-pointer-only union constants preserve the same relocation
 provenance, including non-zero addends, by reconstructing one typed pointer
-carrier instead of transmuting placeholder bytes. Pointer/integer overlapping
-unions, fat or nested pointer storage in unions, over-aligned/padded pointer
-unions, unsupported fat-pointer metadata, pointer-to-array union constants
-(`&[U; N]`), and pointer relocations in device-global union initializers remain
+carrier instead of transmuting placeholder bytes. Relocation-free
+pointer/integer unions whose storage is exactly one naturally aligned pointer
+word and whose integer alternatives are full-width may instead use rustc's
+evaluated byte image when no relocation overlaps the union storage.
+Relocation-bearing pointer/integer unions, fat or nested pointer storage in
+unions, over-aligned/padded pointer unions, unsupported fat-pointer metadata,
+and pointer-to-array union constants (`&[U; N]`) remain rejected. Top-level
+thin-pointer-only device-global union initializers may preserve one full-width
+relocation at byte zero; mixed pointer/integer device-global initializers remain
 rejected.
 
 Enum constants preserve payload relocations to device statics, including
@@ -163,7 +168,7 @@ Anonymous promoted allocations remain unsupported.
 | Local Clean | **Full** | `cargo oxide clean` removes project-local `target/` directories and generated device artifacts (`.ptx`, `.ll`, `.opt.ll`, `.ltoir`, `.cubin`, `.target`, `.options`, `.cubin.target`), never the shared `~/.cargo/cuda-oxide/` cache. |
 | Compute Sanitizer Wrapper | **Full** | `cargo oxide sanitize <example>` builds the example and runs the host binary under NVIDIA Compute Sanitizer (`memcheck`, `racecheck`, `initcheck`, or `synccheck`). |
 | cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug information on the PTX path and launches `cuda-gdb`. Legacy NVVM IR does not yet support debug metadata. |
-| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, structs/tuples/arrays, closure environments, and Rust enums with direct-tag or niche layouts, including active variants and payload fields. Static source projections through struct/tuple fields, fixed-array constant indices, and enum downcast payload fields are described with address-offset DWARF expressions. A single dereference through a thin pointer/reference, optionally followed by static field projections, is also described with DWARF dereference/address-offset expressions. ABI-split bare slices, dereference-plus-index and dereference-downcast chains, repeated dereferences, runtime indices, subslices, and composite fragments are not yet described. |
+| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, structs/tuples/arrays, closure environments, and Rust enums with direct-tag or niche layouts, including active variants and payload fields. Static source projections through struct/tuple fields, fixed-array constant indices, and enum downcast payload fields are described with address-offset DWARF expressions. A single dereference through a thin pointer/reference, optionally followed by static field projections, is also described with DWARF dereference/address-offset expressions. rustc scalar-replacement fragments backed by whole MIR locals are carried as `DW_OP_LLVM_fragment` through both `dbg.declare` and salvaged `dbg.value` records. Full-debug currently still disables rustc MIR optimization, so ordinary `full` builds rarely produce those fragments until that compatibility guard is removed. ABI-split bare slices, dereference-plus-index and dereference-downcast chains, repeated dereferences, runtime indices, subslices, and non-field composite-fragment projections are not yet described. |
 
 ## Compiler: Inline PTX
 

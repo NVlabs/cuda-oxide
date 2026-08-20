@@ -36,6 +36,19 @@ const DEBUG_LOCAL_DECL_FILE_KEY: &str = "cuda_oxide_debug_local_decl_file";
 const DEBUG_LOCAL_DECL_LINE_KEY: &str = "cuda_oxide_debug_local_decl_line";
 const DEBUG_LOCAL_DECL_COLUMN_KEY: &str = "cuda_oxide_debug_local_decl_column";
 const DEBUG_LOCAL_SCOPE_KEY: &str = "cuda_oxide_debug_local_scope";
+const DEBUG_FRAGMENT_COUNT_KEY: &str = "cuda_oxide_debug_fragment_count";
+const DEBUG_FRAGMENT_FIELDS: &[&str] = &[
+    "name",
+    "arg",
+    "type",
+    "offset_bits",
+    "size_bits",
+    "scope",
+    "file",
+    "line",
+    "column",
+];
+const DEBUG_VALUE_EXPRESSION_KEY: &str = "cuda_oxide_debug_value_expression";
 
 const DEBUG_LOCAL_ATTR_KEYS: &[&str] = &[
     DEBUG_LOCAL_NAME_KEY,
@@ -45,6 +58,7 @@ const DEBUG_LOCAL_ATTR_KEYS: &[&str] = &[
     DEBUG_LOCAL_DECL_LINE_KEY,
     DEBUG_LOCAL_DECL_COLUMN_KEY,
     DEBUG_LOCAL_SCOPE_KEY,
+    DEBUG_VALUE_EXPRESSION_KEY,
 ];
 
 /// Value-based source-local debug record.
@@ -85,6 +99,39 @@ impl MirDbgValueOp {
 }
 
 impl Verify for MirDbgValueOp {
+    fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+/// Multi-value source-local debug record.
+///
+/// LLVM models a source value computed from multiple SSA values with a
+/// `DIArgList` plus a `DIExpression` containing `DW_OP_LLVM_arg` selectors.
+/// This MIR marker carries the ordered SSA operands; the expression itself is
+/// stored as generic debug metadata so `dialect-mir` stays independent of the
+/// LLVM exporter data structures.
+#[pliron_op(
+    name = "mir.dbg_value_list",
+    format,
+    interfaces = [NResultsInterface<0>]
+)]
+pub struct MirDbgValueListOp;
+
+impl MirDbgValueListOp {
+    /// Create a multi-value debug record from an ordered list of SSA values.
+    pub fn new(ctx: &mut Context, values: Vec<Value>) -> Self {
+        let op = Operation::new(ctx, Self::get_concrete_op_info(), vec![], values, vec![], 0);
+        MirDbgValueListOp { op }
+    }
+
+    /// The ordered SSA values referenced by `DW_OP_LLVM_arg` operations.
+    pub fn values(&self, ctx: &Context) -> Vec<Value> {
+        self.get_operation().deref(ctx).operands().collect()
+    }
+}
+
+impl Verify for MirDbgValueListOp {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
         Ok(())
     }
@@ -132,8 +179,12 @@ pub(crate) fn debug_value_for_promoted_slot(
 }
 
 fn has_debug_local_attrs(ctx: &Context, op: Ptr<Operation>) -> bool {
-    get_string_attr(ctx, op, DEBUG_LOCAL_NAME_KEY).is_some()
-        && get_string_attr(ctx, op, DEBUG_LOCAL_TYPE_KEY).is_some()
+    let has_whole_local = get_string_attr(ctx, op, DEBUG_LOCAL_NAME_KEY).is_some()
+        && get_string_attr(ctx, op, DEBUG_LOCAL_TYPE_KEY).is_some();
+    let has_fragments = get_string_attr(ctx, op, DEBUG_FRAGMENT_COUNT_KEY)
+        .and_then(|count| count.parse::<usize>().ok())
+        .is_some_and(|count| (1..=1024).contains(&count));
+    has_whole_local || has_fragments
 }
 
 pub(crate) fn copy_debug_local_attrs(ctx: &mut Context, from: Ptr<Operation>, to: Ptr<Operation>) {
@@ -142,6 +193,33 @@ pub(crate) fn copy_debug_local_attrs(ctx: &mut Context, from: Ptr<Operation>, to
             set_string_attr(ctx, to, key, value);
         }
     }
+    copy_debug_fragment_attrs(ctx, from, to);
+}
+
+fn copy_debug_fragment_attrs(ctx: &mut Context, from: Ptr<Operation>, to: Ptr<Operation>) {
+    let Some(count_text) = get_string_attr(ctx, from, DEBUG_FRAGMENT_COUNT_KEY) else {
+        return;
+    };
+    let Ok(count) = count_text.parse::<usize>() else {
+        return;
+    };
+    if count == 0 || count > 1024 {
+        return;
+    }
+
+    set_string_attr(ctx, to, DEBUG_FRAGMENT_COUNT_KEY, count_text);
+    for index in 0..count {
+        for field in DEBUG_FRAGMENT_FIELDS {
+            let key = debug_fragment_key(index, field);
+            if let Some(value) = get_string_attr(ctx, from, &key) {
+                set_string_attr(ctx, to, &key, value);
+            }
+        }
+    }
+}
+
+fn debug_fragment_key(index: usize, field: &str) -> String {
+    format!("cuda_oxide_debug_fragment_{index}_{field}")
 }
 
 fn set_string_attr(ctx: &mut Context, op: Ptr<Operation>, key: &str, value: String) {
@@ -194,4 +272,5 @@ fn source_position_from_location(ctx: &Context, loc: &Location) -> Option<(Strin
 /// Register debug operations into the given context.
 pub fn register(ctx: &mut Context) {
     MirDbgValueOp::register(ctx);
+    MirDbgValueListOp::register(ctx);
 }

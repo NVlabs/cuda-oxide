@@ -28,9 +28,9 @@ use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::address_space;
 use llvm_export::export::DebugKind;
 use llvm_export::ops::{
-    DebugEnumDiscriminant, DebugEnumVariant, DebugLocalTypeKind, DebugLocalVariableInfo,
-    DebugProjectedVariableInfo, DebugSourcePosition, DebugSourceScopeMap, DebugTypeMember,
-    LocalMemoryProvenanceAttr,
+    DebugEnumDiscriminant, DebugEnumVariant, DebugFragment, DebugFragmentVariableInfo,
+    DebugLocalTypeKind, DebugLocalVariableInfo, DebugProjectedVariableInfo, DebugSourcePosition,
+    DebugSourceScopeMap, DebugTypeMember, LocalMemoryProvenanceAttr,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
@@ -569,25 +569,28 @@ struct LocalDebugInfo {
 struct CollectedDebugLocals {
     whole: FxHashMap<mir::Local, LocalDebugInfo>,
     projected: FxHashMap<mir::Local, Vec<DebugProjectedVariableInfo>>,
+    fragments: FxHashMap<mir::Local, Vec<DebugFragmentVariableInfo>>,
 }
 
-/// Build full-debug bindings for whole locals and supported place projections.
+/// Build full-debug bindings for whole locals, supported place projections,
+/// and rustc scalar-replacement fragments.
 ///
-/// Whole-local records keep the existing path. A `VarDebugInfoContents::Place`
-/// can describe a projection that stays inside the base local (`Field`, forward
-/// `ConstantIndex`, and enum `Downcast -> Field` elements, attached to the base
-/// local with its rustc-layout byte offset) or one leading thin-pointer/reference
-/// `Deref` followed only by static `Field` projections. Dynamic indices,
-/// dereference-index and dereference-downcast chains, repeated dereferences, fat
-/// pointers, slices, opaque casts, and composite fragments stay unsupported and
-/// are skipped rather than approximated.
+/// A composite record describes one storage piece of a larger source variable.
+/// The stable MIR `composite.ty` is the complete source type and
+/// `composite.projection` identifies the piece inside it. For now fragments are
+/// accepted only when rustc stores the piece in a whole MIR local and the
+/// composite projection is a static `Field` chain. This is the scalar-replaced
+/// aggregate shape emitted by rustc and keeps the location semantics exact.
+///
+/// Ordinary projected bindings retain the existing support for static fields,
+/// forward constant indices, enum payload fields, and one leading thin-pointer
+/// dereference. Dynamic indices, dereference-index chains, repeated dereferences,
+/// fat pointers, slices, opaque casts, and non-field composite projections are
+/// skipped rather than approximated.
 fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLocals {
     let mut collected = CollectedDebugLocals::default();
 
     for info in &body.var_debug_info {
-        if info.composite.is_some() {
-            continue;
-        }
         let name = info.name.to_string();
         if name.is_empty() {
             continue;
@@ -599,6 +602,54 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
         let local = place.local;
         let local_idx: usize = local;
         if local_idx == 0 {
+            continue;
+        }
+
+        if let Some(composite) = &info.composite {
+            // A promoted `dbg.value` for the backing local denotes the fragment
+            // value itself. Supporting a projected storage place would require
+            // extracting that subvalue after promotion, so fail closed here.
+            if !place.projection.is_empty() {
+                continue;
+            }
+            let Some(fragment) = debug_fragment(composite) else {
+                continue;
+            };
+            let Some(ty) = debug_type_for_ty(&composite.ty) else {
+                continue;
+            };
+            if fragment.offset_bits == 0
+                && layout_size_bits(&composite.ty) == Some(fragment.size_bits)
+            {
+                collected
+                    .whole
+                    .entry(local)
+                    .or_insert_with(|| LocalDebugInfo {
+                        variable: DebugLocalVariableInfo {
+                            name,
+                            argument_index: info.argument_index,
+                            ty,
+                        },
+                        loc: span_to_location(ctx, info.source_info.span),
+                        source_scope: info.source_info.scope,
+                    });
+                continue;
+            }
+
+            collected
+                .fragments
+                .entry(local)
+                .or_default()
+                .push(DebugFragmentVariableInfo {
+                    variable: DebugLocalVariableInfo {
+                        name,
+                        argument_index: info.argument_index,
+                        ty,
+                    },
+                    fragment,
+                    source_scope: Some(info.source_info.scope),
+                    declaration: debug_source_position(info.source_info.span),
+                });
             continue;
         }
 
@@ -653,6 +704,39 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
     }
 
     collected
+}
+
+fn debug_fragment(fragment: &mir::VarDebugInfoFragment) -> Option<DebugFragment> {
+    let whole_size_bits = layout_size_bits(&fragment.ty)?;
+    if whole_size_bits == 0 {
+        return None;
+    }
+
+    let mut current_ty = fragment.ty;
+    let mut offset_bytes = 0u64;
+    for elem in &fragment.projection {
+        let mir::ProjectionElem::Field(field_idx, field_ty) = elem else {
+            return None;
+        };
+        let layout = current_ty.layout().ok()?;
+        let shape = layout.shape();
+        let rustc_public::abi::FieldsShape::Arbitrary { offsets } = &shape.fields else {
+            return None;
+        };
+        offset_bytes = offset_bytes.checked_add(offsets.get(*field_idx)?.bytes() as u64)?;
+        current_ty = *field_ty;
+    }
+
+    let offset_bits = offset_bytes.checked_mul(8)?;
+    let size_bits = layout_size_bits(&current_ty)?;
+    if size_bits == 0 || offset_bits.checked_add(size_bits)? > whole_size_bits {
+        return None;
+    }
+
+    Some(DebugFragment {
+        offset_bits,
+        size_bits,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -788,11 +872,9 @@ fn debug_source_position(span: rustc_public::ty::Span) -> Option<DebugSourcePosi
 fn collect_local_source_names(body: &mir::Body) -> FxHashMap<mir::Local, String> {
     let mut names = FxHashMap::default();
     for info in &body.var_debug_info {
-        if info.composite.is_some() {
-            continue;
-        }
-        let Some(local) = info.local() else {
-            continue;
+        let local = match &info.value {
+            mir::VarDebugInfoContents::Place(place) if place.projection.is_empty() => place.local,
+            mir::VarDebugInfoContents::Place(_) | mir::VarDebugInfoContents::Const(_) => continue,
         };
         let name = info.name.to_string();
         if !name.is_empty() {
@@ -1479,6 +1561,9 @@ fn emit_entry_allocas(
         if let Some(projected) = debug_locals.projected.get(&local) {
             llvm_export::ops::set_debug_projected_variables(ctx, op, projected);
         }
+        if let Some(fragments) = debug_locals.fragments.get(&local) {
+            llvm_export::ops::set_debug_fragment_variables(ctx, op, fragments);
+        }
         prev_op = Some(op);
         value_map.set_slot(local, slot);
     }
@@ -2105,6 +2190,134 @@ mod tests {
                 .0
                 .contains_key(&key),
             "`is_inline_always` must become an LLVM dialect alwaysinline attribute before export",
+        );
+    }
+
+    /// Exercise `debug_fragment` against composite `VarDebugInfo` produced by
+    /// rustc's scalar-replacement pass instead of constructing synthetic types.
+    ///
+    /// The fixture deliberately creates an aggregate local and enables MIR
+    /// optimization so SROA rewrites its debug binding into field fragments.
+    /// The test then checks that every supported fragment matches rustc's real
+    /// layout and that a non-field projection fails closed.
+    #[test]
+    fn scalar_replacement_debug_fragments_follow_rustc_layout_and_fail_closed() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_fragment_debug_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("fragment_debug_fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+pub fn scalarized_pair(a: u32, b: u64) -> u64 {
+    let pair = (a, b);
+    pair.1.wrapping_add(pair.0 as u64)
+}
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=fragment_debug_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Cdebuginfo=2".to_string(),
+            "-Zmir-opt-level=3".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let result = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    let mut checked = 0usize;
+                    let mut rejected_non_field = false;
+
+                    for body in rustc_public::all_local_items()
+                        .into_iter()
+                        .filter_map(|item| item.body())
+                    {
+                        for info in &body.var_debug_info {
+                            if info.name != "pair" {
+                                continue;
+                            }
+                            let Some(composite) = &info.composite else {
+                                continue;
+                            };
+                            let [mir::ProjectionElem::Field(field_idx, field_ty)] =
+                                composite.projection.as_slice()
+                            else {
+                                continue;
+                            };
+
+                            let fragment = debug_fragment(composite)
+                                .expect("SROA field fragment should be supported");
+                            let whole_layout = composite.ty.layout().expect("whole layout").shape();
+                            let rustc_public::abi::FieldsShape::Arbitrary { offsets } =
+                                &whole_layout.fields
+                            else {
+                                panic!("tuple fragment must use arbitrary field offsets");
+                            };
+                            let expected_offset_bits = offsets[*field_idx].bytes() as u64 * 8;
+                            let expected_size_bits = field_ty
+                                .layout()
+                                .expect("field layout")
+                                .shape()
+                                .size
+                                .bytes()
+                                as u64
+                                * 8;
+
+                            assert_eq!(fragment.offset_bits, expected_offset_bits);
+                            assert_eq!(fragment.size_bits, expected_size_bits);
+                            checked += 1;
+
+                            let mut invalid = composite.clone();
+                            invalid.projection[0] = mir::ProjectionElem::Deref;
+                            rejected_non_field |= debug_fragment(&invalid).is_none();
+                        }
+                    }
+
+                    std::ops::ControlFlow::<(), _>::Continue((checked, rejected_non_field))
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        std::fs::remove_dir_all(&root).ok();
+
+        assert!(
+            result.0 >= 2,
+            "fixture should produce at least two SROA debug fragments, got {}",
+            result.0
+        );
+        assert!(
+            result.1,
+            "debug_fragment must reject non-field composite projections"
         );
     }
 

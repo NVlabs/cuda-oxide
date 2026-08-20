@@ -31,6 +31,17 @@ const COUNTED_PIPELINE_MAX_PENDING_GROUPS: u8 = 2;
 enum WgmmaInputKind {
     Bf16,
     F16,
+    Tf32,
+}
+
+impl WgmmaInputKind {
+    fn ptx_suffix(self) -> &'static str {
+        match self {
+            Self::Bf16 => "bf16.bf16",
+            Self::F16 => "f16.f16",
+            Self::Tf32 => unreachable!("TF32 has no counted K-loop lowering"),
+        }
+    }
 }
 
 /// Convert WGMMA make_smem_desc to inline PTX.
@@ -117,6 +128,7 @@ fn value_group_template_for_mnemonic(
     mma_count: usize,
     accumulator_count: usize,
     mnemonic: &str,
+    controls: &str,
 ) -> String {
     let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
     let accumulators = value_accumulator_operand_list(accumulator_count);
@@ -127,7 +139,7 @@ fn value_group_template_for_mnemonic(
         let desc_b = desc_a + 1;
         template.push_str(&format!(
             "    {mnemonic} \
-             {{{accumulators}}}, ${desc_a}, ${desc_b}, 1, 1, 1, 0, 0;\n"
+             {{{accumulators}}}, ${desc_a}, ${desc_b}, {controls};\n"
         ));
     }
 
@@ -138,12 +150,21 @@ fn value_group_template_for_mnemonic(
 }
 
 fn value_group_template(mma_count: usize, input_kind: WgmmaInputKind) -> String {
-    let input_types = match input_kind {
-        WgmmaInputKind::Bf16 => "bf16.bf16",
-        WgmmaInputKind::F16 => "f16.f16",
+    let (mnemonic, controls) = match input_kind {
+        WgmmaInputKind::Bf16 => (
+            "wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16",
+            "1, 1, 1, 0, 0",
+        ),
+        WgmmaInputKind::F16 => (
+            "wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16",
+            "1, 1, 1, 0, 0",
+        ),
+        WgmmaInputKind::Tf32 => (
+            "wgmma.mma_async.sync.aligned.m64n64k8.f32.tf32.tf32",
+            "1, 1, 1",
+        ),
     };
-    let mnemonic = format!("wgmma.mma_async.sync.aligned.m64n64k16.f32.{input_types}");
-    value_group_template_for_mnemonic(mma_count, VALUE_ACCUMULATOR_COUNT, &mnemonic)
+    value_group_template_for_mnemonic(mma_count, VALUE_ACCUMULATOR_COUNT, mnemonic, controls)
 }
 
 fn value_group_template_m64n128_bf16(mma_count: usize) -> String {
@@ -151,6 +172,7 @@ fn value_group_template_m64n128_bf16(mma_count: usize) -> String {
         mma_count,
         M64N128_VALUE_ACCUMULATOR_COUNT,
         "wgmma.mma_async.sync.aligned.m64n128k16.f32.bf16.bf16",
+        "1, 1, 1, 0, 0",
     )
 }
 
@@ -167,7 +189,7 @@ fn value_group_constraints(descriptor_count: usize) -> String {
     value_group_constraints_for_count(VALUE_ACCUMULATOR_COUNT, descriptor_count)
 }
 
-fn counted_loop_template() -> String {
+fn counted_loop_template(input_kind: WgmmaInputKind) -> String {
     let accumulators = value_accumulator_operand_list(VALUE_ACCUMULATOR_COUNT);
     let descriptor_base = VALUE_ACCUMULATOR_COUNT * 2;
     let desc_a_base = descriptor_base;
@@ -186,8 +208,9 @@ fn counted_loop_template() -> String {
     template.push_str("    setp.eq.u64 %loop_more, %remaining, 0;\n");
     template.push_str("    @%loop_more bra.uni L__wgmma_done_${:uid};\n");
     template.push_str("L__wgmma_loop_${:uid}:\n");
+    let input_types = input_kind.ptx_suffix();
     template.push_str(&format!(
-        "    wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
+        "    wgmma.mma_async.sync.aligned.m64n64k16.f32.{input_types} \
          {{{accumulators}}}, %desc_a, %desc_b, 1, 1, 1, 0, 0;\n"
     ));
     template.push_str(&format!("    add.u64 %desc_a, %desc_a, ${desc_a_step};\n"));
@@ -397,6 +420,16 @@ pub(crate) fn convert_mma_group_values_m64n128_bf16(
     )
 }
 
+/// Lower a value-form TF32 K=8 WGMMA full-drain group to one inline-PTX scope.
+pub(crate) fn convert_mma_group_values_tf32(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mma_group_values_for_kind(ctx, rewriter, op, WgmmaInputKind::Tf32)
+}
+
 fn convert_mma_group_values_for_kind(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -476,17 +509,37 @@ where
 }
 
 /// Lower a counted BF16 WGMMA K-loop to one multi-result inline-PTX scope.
+pub(crate) fn convert_mma_loop_values(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mma_loop_values_for_kind(ctx, rewriter, op, WgmmaInputKind::Bf16)
+}
+
+/// Lower a counted F16 WGMMA K-loop to one multi-result inline-PTX scope.
+pub(crate) fn convert_mma_loop_values_f16(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mma_loop_values_for_kind(ctx, rewriter, op, WgmmaInputKind::F16)
+}
+
+/// Lower one counted WGMMA K-loop to a tied-register inline-PTX scope.
 ///
 /// The first 32 operands/results are tied accumulator registers. The remaining
 /// operands are the descriptor bases, descriptor deltas, and trip count. Loop
 /// control and descriptor updates stay inside the same convergent asm statement
 /// as the asynchronous WGMMA instructions, so LLVM never observes an in-flight
 /// accumulator lifetime.
-pub(crate) fn convert_mma_loop_values(
+fn convert_mma_loop_values_for_kind(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    _operands_info: &OperandsInfo,
+    input_kind: WgmmaInputKind,
 ) -> Result<()> {
     let loc = op.deref(ctx).loc();
     let result_count = op.deref(ctx).get_num_results();
@@ -503,7 +556,7 @@ pub(crate) fn convert_mma_loop_values(
         );
     }
 
-    let template = counted_loop_template();
+    let template = counted_loop_template(input_kind);
     let constraints = counted_loop_constraints();
 
     let f32_ty = FP32Type::get(ctx);
@@ -783,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn f16_value_template_changes_only_the_input_element_types() {
+    fn f16_value_template_uses_k16_with_transpose_controls() {
         let template = value_group_template(2, WgmmaInputKind::F16);
         assert_eq!(template.matches("wgmma.mma_async").count(), 2);
         assert!(template.contains("m64n64k16.f32.f16.f16"));
@@ -817,8 +870,33 @@ mod tests {
     }
 
     #[test]
+    fn tf32_value_template_uses_k8_without_transpose_controls() {
+        let template = value_group_template(2, WgmmaInputKind::Tf32);
+        assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+        assert!(template.contains("m64n64k8.f32.tf32.tf32"));
+        assert!(!template.contains("m64n64k16"));
+        assert!(!template.contains(".bf16.bf16"));
+        assert!(!template.contains(".f16.f16"));
+        assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+        assert_eq!(
+            template.matches("wgmma.commit_group.sync.aligned").count(),
+            1
+        );
+        assert_eq!(
+            template.matches("wgmma.wait_group.sync.aligned 0").count(),
+            1
+        );
+        assert!(!template.contains("ld.f32"));
+        assert!(!template.contains("st.f32"));
+        assert!(template.contains("$64, $65, 1, 1, 1;"));
+        assert!(template.contains("$66, $67, 1, 1, 1;"));
+        assert!(!template.contains("$64, $65, 1, 1, 1, 0, 0;"));
+    }
+
+    #[test]
     fn counted_loop_template_keeps_descriptor_recurrence_inside_one_scope() {
-        let template = counted_loop_template();
+        let template = counted_loop_template(WgmmaInputKind::Bf16);
+        assert!(template.contains("m64n64k16.f32.bf16.bf16"));
         assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
         assert_eq!(template.matches("wgmma.mma_async").count(), 1);
         assert_eq!(
@@ -863,6 +941,33 @@ mod tests {
             5
         );
         assert!(constraints.ends_with("~{memory}"));
+    }
+
+    #[test]
+    fn f16_counted_loop_template_changes_only_the_input_element_types() {
+        let template = counted_loop_template(WgmmaInputKind::F16);
+        assert_eq!(template.matches("wgmma.mma_async").count(), 1);
+        assert!(template.contains("m64n64k16.f32.f16.f16"));
+        assert!(!template.contains(".bf16.bf16"));
+        assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+        assert_eq!(
+            template.matches("wgmma.commit_group.sync.aligned").count(),
+            1
+        );
+        assert_eq!(
+            template.matches("wgmma.wait_group.sync.aligned 0").count(),
+            1
+        );
+        assert!(template.contains("L__wgmma_loop_${:uid}:"));
+        assert!(template.contains("L__wgmma_done_${:uid}:"));
+        assert!(template.contains("mov.u64 %desc_a, $64;"));
+        assert!(template.contains("mov.u64 %desc_b, $65;"));
+        assert!(template.contains("add.u64 %desc_a, %desc_a, $66;"));
+        assert!(template.contains("add.u64 %desc_b, %desc_b, $67;"));
+        assert!(template.contains("mov.u64 %remaining, $68;"));
+        assert!(!template.contains("ld.f32"));
+        assert!(!template.contains("st.f32"));
+        assert!(!template.contains(".reg .f32"));
     }
 
     #[test]

@@ -6,8 +6,9 @@
 //! Proves that the codegen pipeline can carry tied WGMMA `f32` accumulator
 //! values through one inline-PTX operation and produce spill-free `sm_90a` code.
 //!
-//! The probe covers the 32-value m64n64 BF16/F16 carriers and the 64-value
-//! m64n128 BF16 carrier.
+//! The probe covers the 32-value m64n64 BF16/F16/TF32 carriers and the
+//! 64-value m64n128 BF16 carrier, for a single `wgmma.mma_async` and a chain
+//! of several under one fence/commit/wait sequence in the same asm region.
 
 #![cfg(unix)]
 
@@ -40,13 +41,14 @@ const M64N128_ACCUMULATOR_LEN: usize = 64;
 enum WgmmaCarrierKind {
     Bf16M64N64,
     F16M64N64,
+    Tf32M64N64,
     Bf16M64N128,
 }
 
 impl WgmmaCarrierKind {
     fn accumulator_len(self) -> usize {
         match self {
-            Self::Bf16M64N64 | Self::F16M64N64 => M64N64_ACCUMULATOR_LEN,
+            Self::Bf16M64N64 | Self::F16M64N64 | Self::Tf32M64N64 => M64N64_ACCUMULATOR_LEN,
             Self::Bf16M64N128 => M64N128_ACCUMULATOR_LEN,
         }
     }
@@ -55,7 +57,15 @@ impl WgmmaCarrierKind {
         match self {
             Self::Bf16M64N64 => "wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16",
             Self::F16M64N64 => "wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16",
+            Self::Tf32M64N64 => "wgmma.mma_async.sync.aligned.m64n64k8.f32.tf32.tf32",
             Self::Bf16M64N128 => "wgmma.mma_async.sync.aligned.m64n128k16.f32.bf16.bf16",
+        }
+    }
+
+    fn control_operands(self) -> &'static str {
+        match self {
+            Self::Bf16M64N64 | Self::F16M64N64 | Self::Bf16M64N128 => "1, 1, 1, 0, 0",
+            Self::Tf32M64N64 => "1, 1, 1",
         }
     }
 }
@@ -144,13 +154,14 @@ fn build_wgmma_value_carrier_kernel(
 
         let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
         let ptx_mnemonic = kind.ptx_mnemonic();
+        let control_operands = kind.control_operands();
 
         for mma_index in 0..mma_count {
             let desc_a = desc_operand_base + mma_index * 2;
             let desc_b = desc_a + 1;
             template.push_str(&format!(
                 "    {ptx_mnemonic} \
-                 {{{accumulator_registers}}}, ${desc_a}, ${desc_b}, 1, 1, 1, 0, 0;\n"
+                 {{{accumulator_registers}}}, ${desc_a}, ${desc_b}, {control_operands};\n"
             ));
         }
 
@@ -316,6 +327,27 @@ fn assert_spill_free_value_carrier(kind: WgmmaCarrierKind, mma_count: usize) {
         "the WGMMA carrier must chain exactly {mma_count} {kind:?} MMAs:\n{text}",
     );
 
+    match kind {
+        WgmmaCarrierKind::Bf16M64N64
+        | WgmmaCarrierKind::F16M64N64
+        | WgmmaCarrierKind::Bf16M64N128 => {
+            assert!(
+                text.contains("1, 1, 1, 0, 0;"),
+                "K=16 WGMMA must carry transpose controls:\n{text}"
+            );
+        }
+        WgmmaCarrierKind::Tf32M64N64 => {
+            assert!(
+                text.contains("1, 1, 1;"),
+                "TF32 WGMMA must carry only scale controls:\n{text}"
+            );
+            assert!(
+                !text.contains("1, 1, 1, 0, 0;"),
+                "TF32 WGMMA must not carry transpose controls:\n{text}"
+            );
+        }
+    }
+
     assert_eq!(
         text.matches("wgmma.commit_group.sync.aligned").count(),
         1,
@@ -426,4 +458,14 @@ fn bf16_m64n128_wgmma_uses_sixty_four_tied_f32_values_without_spills() {
 #[test]
 fn bf16_m64n128_wgmma_chains_two_mma_async_under_one_commit_without_spills() {
     assert_spill_free_value_carrier(WgmmaCarrierKind::Bf16M64N128, 2);
+}
+
+#[test]
+fn tf32_wgmma_uses_thirty_two_tied_f32_values_without_spills() {
+    assert_spill_free_value_carrier(WgmmaCarrierKind::Tf32M64N64, 1);
+}
+
+#[test]
+fn tf32_wgmma_chains_two_mma_async_under_one_commit_without_spills() {
+    assert_spill_free_value_carrier(WgmmaCarrierKind::Tf32M64N64, 2);
 }

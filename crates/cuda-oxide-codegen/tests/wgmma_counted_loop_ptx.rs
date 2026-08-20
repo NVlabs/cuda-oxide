@@ -11,8 +11,8 @@
 //! branches. This probe builds the canonical pointer-form K-loop (trip count
 //! 4, one MMA in the latch, affine descriptor recurrences), lets the deferred
 //! accumulator fusion rewrite it into the counted-loop asm scope, and then
-//! requires `llc` and `ptxas -arch=sm_90a` to accept the result with zero
-//! spill bytes while all 32 accumulator values stay live.
+//! requires `llc` and `ptxas -arch=sm_90a` to accept both BF16 and F16 forms
+//! with zero spill bytes while all 32 accumulator values stay live.
 
 #![cfg(unix)]
 
@@ -26,7 +26,7 @@ use dialect_mir::{
 };
 use dialect_nvvm::ops::{
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMmaM64N64K16F32Bf16Op,
-    WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaM64N64K16F32F16Op, WgmmaWaitGroupSyncAlignedOp,
 };
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -50,6 +50,21 @@ const ACCUMULATOR_LEN: u32 = 32;
 const TRIP_COUNT: u64 = 4;
 const DESC_A_STEP: u64 = 16;
 const DESC_B_STEP: u64 = 32;
+
+#[derive(Clone, Copy, Debug)]
+enum WgmmaInputKind {
+    Bf16,
+    F16,
+}
+
+impl WgmmaInputKind {
+    fn ptx_suffix(self) -> &'static str {
+        match self {
+            Self::Bf16 => "bf16.bf16",
+            Self::F16 => "f16.f16",
+        }
+    }
+}
 
 fn append_unsigned_constant(
     ctx: &mut Context,
@@ -89,7 +104,7 @@ fn append_unsigned_constant(
 /// latch: mma(acc, desc_a, desc_b); goto header(i + 1, desc_a + 16, desc_b + 32)
 /// exit: commit_group; wait_group<0>; return
 /// ```
-fn build_wgmma_counted_loop_kernel(module: &mut CodegenModule) {
+fn build_wgmma_counted_loop_kernel(module: &mut CodegenModule, input_kind: WgmmaInputKind) {
     module.edit(|ctx, module| {
         let module_region = module.get_operation().deref(ctx).get_region(0);
         let module_block = module_region
@@ -196,9 +211,13 @@ fn build_wgmma_counted_loop_kernel(module: &mut CodegenModule) {
         branch.insert_at_back(header, ctx);
 
         // latch: one MMA per K iteration and affine descriptor recurrences.
+        let mma_op_info = match input_kind {
+            WgmmaInputKind::Bf16 => WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+            WgmmaInputKind::F16 => WgmmaMmaM64N64K16F32F16Op::get_concrete_op_info(),
+        };
         Operation::new(
             ctx,
-            WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+            mma_op_info,
             vec![],
             vec![accumulator, desc_a, desc_b],
             vec![],
@@ -296,10 +315,9 @@ fn used_register_count(ptxas_stderr: &str) -> Option<u32> {
     })
 }
 
-#[test]
-fn counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a() {
+fn assert_counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a(input_kind: WgmmaInputKind) {
     let mut module = CodegenModule::new("wgmma_counted_loop").unwrap();
-    build_wgmma_counted_loop_kernel(&mut module);
+    build_wgmma_counted_loop_kernel(&mut module, input_kind);
 
     let compiler = Compiler::discover().expect("LLVM 21+ llc/opt must be installed");
     let options = CompileOptions::new(Target::parse("sm_90a").unwrap());
@@ -346,11 +364,14 @@ fn counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a() {
         1,
         "the counted loop must contain exactly one fence:\n{text}",
     );
+    let expected_mma = format!(
+        "wgmma.mma_async.sync.aligned.m64n64k16.f32.{}",
+        input_kind.ptx_suffix()
+    );
     assert_eq!(
-        text.matches("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
-            .count(),
+        text.matches(&expected_mma).count(),
         1,
-        "the loop body must contain exactly one BF16 MMA:\n{text}",
+        "the loop body must contain exactly one {input_kind:?} MMA:\n{text}",
     );
     assert_eq!(
         text.matches("wgmma.commit_group.sync.aligned").count(),
@@ -373,7 +394,7 @@ fn counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a() {
         .unwrap_or(0);
 
     let directory = std::env::temp_dir().join(format!(
-        "wgmma_counted_loop_ptx_{}_{}",
+        "wgmma_counted_loop_ptx_{input_kind:?}_{}_{}",
         std::process::id(),
         unique,
     ));
@@ -429,4 +450,14 @@ fn counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a() {
     );
 
     eprintln!("{stderr}");
+}
+
+#[test]
+fn bf16_counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a() {
+    assert_counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a(WgmmaInputKind::Bf16);
+}
+
+#[test]
+fn f16_counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a() {
+    assert_counted_k_loop_wgmma_template_compiles_spill_free_for_sm_90a(WgmmaInputKind::F16);
 }

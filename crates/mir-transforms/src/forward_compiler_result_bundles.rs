@@ -20,7 +20,9 @@
 //! * the construct tree contains every result of exactly one producer, in order;
 //! * the outer bundle has one non-volatile store to one local alloca;
 //! * the alloca has no other stores, copies, escapes, or unknown pointer users;
-//! * every read is a non-volatile load through constant field/array projections;
+//! * every read is a non-volatile load through constant projections, or through
+//!   one terminal array projection whose unsigned runtime index is proven to be
+//!   `value % C` with a small constant candidate set;
 //! * the producer/store dominate every rewritten load.
 //!
 //! Any failed proof leaves the IR untouched.  Ordinary Rust aggregates are
@@ -29,12 +31,15 @@
 use dialect_mir::{
     attributes::{COMPILER_RESULT_BUNDLE_ATTR_KEY, CompilerResultBundleAttr},
     ops::{
-        MirAllocaOp, MirArrayElementAddrOp, MirConstantOp, MirConstructArrayOp,
-        MirConstructStructOp, MirConstructTupleOp, MirFieldAddrOp, MirLoadOp, MirStoreOp,
+        MAX_SCALARIZED_CANDIDATES, MirAllocaOp, MirArrayElementAddrOp, MirConstantOp,
+        MirConstructArrayOp, MirConstructStructOp, MirConstructTupleOp, MirExtractArrayElementOp,
+        MirFieldAddrOp, MirLoadOp, MirRemOp, MirStoreOp,
     },
+    types::MirArrayType,
 };
 use pliron::{
     basic_block::BasicBlock,
+    builtin::types::{IntegerType, Signedness},
     context::{Context, Ptr},
     graph::dominance::DomInfo,
     irbuild::{
@@ -42,18 +47,30 @@ use pliron::{
         rewriter::{IRRewriter, Rewriter},
     },
     linked_list::ContainsLinkedList,
+    location::Located,
+    op::Op,
     operation::Operation,
     pass::AnalysisManager,
     result::Result,
-    r#type::Typed,
+    r#type::{TypeHandle, Typed},
     value::Value,
 };
 use rustc_hash::FxHashSet;
 
 #[derive(Clone, Copy)]
+enum LoadReplacement {
+    Direct(Value),
+    BoundedArrayElement {
+        array: Value,
+        index: Value,
+        result_type: TypeHandle,
+    },
+}
+
+#[derive(Clone, Copy)]
 struct LoadForwarding {
     load: Ptr<Operation>,
-    replacement: Value,
+    replacement: LoadReplacement,
 }
 struct ForwardingPlan {
     store: Ptr<Operation>,
@@ -248,16 +265,38 @@ fn analyze_projection(
         return None;
     }
 
-    if let Some(field) = Operation::get_op::<MirFieldAddrOp>(projection, ctx) {
+    // Static projections continue to extend `path`. A non-constant array
+    // projection is accepted only as the terminal projection into one of this
+    // compiler-owned bundle's constructed arrays, and only when its candidate
+    // set is already explicit as an unsigned `value % C`.
+    let bounded_array = if let Some(field) = Operation::get_op::<MirFieldAddrOp>(projection, ctx) {
         path.push(field.get_attr_field_index(ctx)?.0 as usize);
+        None
     } else if Operation::get_op::<MirArrayElementAddrOp>(projection, ctx).is_some() {
-        path.push(integer_constant_usize(
-            ctx,
-            projection.deref(ctx).get_operand(1),
-        )?);
+        let index = projection.deref(ctx).get_operand(1);
+        if let Some(constant_index) = integer_constant_usize(ctx, index) {
+            path.push(constant_index);
+            None
+        } else {
+            let array = resolve_construct_path(ctx, bundle, &path)?;
+            let array_definer = array.defining_op()?;
+            if !bundle_nodes.contains(&array_definer)
+                || Operation::get_op::<MirConstructArrayOp>(array_definer, ctx).is_none()
+            {
+                return None;
+            }
+
+            let array_type = array.get_type(ctx);
+            let array_type_ref = array_type.deref(ctx);
+            let array_info = array_type_ref.downcast_ref::<MirArrayType>()?;
+            let element_type = array_info.element_type();
+            validate_bounded_dynamic_index(ctx, index, array_info.size())?;
+
+            Some((array, index, element_type))
+        }
     } else {
         return None;
-    }
+    };
 
     projection_nodes.push(projection);
     let pointer = projection.deref(ctx).get_result(0);
@@ -273,26 +312,50 @@ fn analyze_projection(
             if load.is_volatile(ctx) {
                 return None;
             }
-            let replacement = resolve_construct_path(ctx, bundle, &path)?;
-            // A whole-subaggregate read (e.g. loading the array field of a
-            // struct-wrapped bundle in one piece) resolves to one of the
-            // bundle's own construct results.  Forwarding it would leave live
-            // uses of an operation this pass erases, so fail closed and keep
-            // the memory path.
-            if replacement
-                .defining_op()
-                .is_some_and(|definer| bundle_nodes.contains(&definer))
-            {
-                return None;
-            }
-            if replacement.get_type(ctx) != user.deref(ctx).get_result(0).get_type(ctx) {
-                return None;
-            }
+
+            let result_type = user.deref(ctx).get_result(0).get_type(ctx);
+            let replacement = if let Some((array, index, element_type)) = bounded_array {
+                if result_type != element_type {
+                    return None;
+                }
+                LoadReplacement::BoundedArrayElement {
+                    array,
+                    index,
+                    result_type,
+                }
+            } else {
+                let replacement = resolve_construct_path(ctx, bundle, &path)?;
+                // A whole-subaggregate read (e.g. loading the array field of a
+                // struct-wrapped bundle in one piece) resolves to one of the
+                // bundle's own construct results. Forwarding it would leave live
+                // uses of an operation this pass erases, so fail closed and keep
+                // the memory path.
+                if replacement
+                    .defining_op()
+                    .is_some_and(|definer| bundle_nodes.contains(&definer))
+                {
+                    return None;
+                }
+                if replacement.get_type(ctx) != result_type {
+                    return None;
+                }
+                LoadReplacement::Direct(replacement)
+            };
+
             loads.push(LoadForwarding {
                 load: user,
                 replacement,
             });
             continue;
+        }
+
+        // Once a runtime array element has been selected, no further pointer
+        // projection is supported. Compiler result bundles are flat register
+        // packs (possibly behind static struct/tuple wrappers); allowing a
+        // dynamic projection into another aggregate would require a separate
+        // proof about the selected subaggregate.
+        if bounded_array.is_some() {
+            return None;
         }
         if Operation::get_op::<MirFieldAddrOp>(user, ctx).is_none()
             && Operation::get_op::<MirArrayElementAddrOp>(user, ctx).is_none()
@@ -322,6 +385,36 @@ fn integer_constant_usize(ctx: &Context, value: Value) -> Option<usize> {
         return None;
     }
     usize::try_from(integer.to_u64()).ok()
+}
+
+fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
+    let operation = value.defining_op()?;
+    let constant = Operation::get_op::<MirConstantOp>(operation, ctx)?;
+    let attribute = constant.get_attr_value(ctx)?;
+    let integer = attribute.value();
+    (integer.bw() <= 64).then(|| integer.to_u64())
+}
+
+fn validate_bounded_dynamic_index(ctx: &Context, index: Value, array_size: u64) -> Option<()> {
+    let index_type = index.get_type(ctx);
+    let index_type_ref = index_type.deref(ctx);
+    let integer_type = index_type_ref.downcast_ref::<IntegerType>()?;
+    if integer_type.signedness() != Signedness::Unsigned {
+        return None;
+    }
+
+    let remainder = index.defining_op()?;
+    Operation::get_op::<MirRemOp>(remainder, ctx)?;
+    let divisor = remainder.deref(ctx).get_operand(1);
+    if divisor.get_type(ctx) != index_type {
+        return None;
+    }
+
+    let candidate_count = integer_constant_u64(ctx, divisor)?;
+    (candidate_count > 0
+        && candidate_count <= array_size
+        && candidate_count <= MAX_SCALARIZED_CANDIDATES)
+        .then_some(())
 }
 
 fn resolve_construct_path(ctx: &Context, mut value: Value, path: &[usize]) -> Option<Value> {
@@ -394,16 +487,47 @@ fn rewrite_plan(ctx: &mut Context, plan: ForwardingPlan) -> usize {
     let mut rewriter = IRRewriter::<Recorder>::default();
 
     for forwarding in plan.loads {
+        let replacement = match forwarding.replacement {
+            LoadReplacement::Direct(replacement) => replacement,
+            LoadReplacement::BoundedArrayElement {
+                array,
+                index,
+                result_type,
+            } => {
+                let location = forwarding.load.deref(ctx).loc().clone();
+                let extract = Operation::new(
+                    ctx,
+                    MirExtractArrayElementOp::get_concrete_op_info(),
+                    vec![result_type],
+                    vec![array, index],
+                    vec![],
+                    0,
+                );
+                extract.deref_mut(ctx).set_loc(location);
+                extract.insert_before(ctx, forwarding.load);
+                extract.deref(ctx).get_result(0)
+            }
+        };
+
         let old_result = forwarding.load.deref(ctx).get_result(0);
-        old_result.replace_all_uses_with(ctx, &forwarding.replacement);
+        old_result.replace_all_uses_with(ctx, &replacement);
         rewriter.erase_operation(ctx, forwarding.load);
     }
     for projection in plan.projection_nodes.into_iter().rev() {
         rewriter.erase_operation(ctx, projection);
     }
     rewriter.erase_operation(ctx, plan.store);
+
+    // Static forwarding makes the complete construct tree dead. Bounded
+    // dynamic extraction deliberately keeps the selected array constructor in
+    // SSA, so erase only constructors whose result is actually unused after
+    // the store/projection boundary has been removed. `bundle_nodes` is
+    // preorder (outer before inner), which also releases inner constructors
+    // when an otherwise-dead wrapper is erased.
     for constructor in plan.bundle_nodes {
-        rewriter.erase_operation(ctx, constructor);
+        if constructor.deref(ctx).get_result(0).num_uses(ctx) == 0 {
+            rewriter.erase_operation(ctx, constructor);
+        }
     }
     count
 }
@@ -437,7 +561,25 @@ mod tests {
         return_op: Ptr<Operation>,
     }
 
+    #[derive(Clone, Copy)]
+    enum IndexShape {
+        ConstantLast,
+        Dynamic,
+        BoundedRem { divisor: u64 },
+        SignedRem { divisor: u64 },
+    }
+
     fn build_fixture(ctx: &mut Context, marked: bool, extra_store: bool, width: usize) -> Fixture {
+        build_fixture_with_index(ctx, marked, extra_store, width, IndexShape::ConstantLast)
+    }
+
+    fn build_fixture_with_index(
+        ctx: &mut Context,
+        marked: bool,
+        extra_store: bool,
+        width: usize,
+        index_shape: IndexShape,
+    ) -> Fixture {
         dialect_mir::register(ctx);
 
         let element_type: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
@@ -475,8 +617,9 @@ mod tests {
         alloca.insert_at_back(entry, ctx);
         let slot = alloca.deref(ctx).get_result(0);
 
-        // A call is sufficient as a typed, independent two-result producer for
-        // this pass test.  The forwarding proof does not depend on its opcode.
+        // A call is sufficient as a typed, independent multi-result producer
+        // for this pass test. The forwarding proof does not depend on its
+        // opcode.
         let producer = Operation::new(
             ctx,
             MirCallOp::get_concrete_op_info(),
@@ -539,26 +682,105 @@ mod tests {
         );
         goto.insert_at_back(entry, ctx);
 
-        let index_type = IntegerType::get(ctx, 64, Signedness::Unsigned);
-        let index = Operation::new(
-            ctx,
-            MirConstantOp::get_concrete_op_info(),
-            vec![index_type.into()],
-            vec![],
-            vec![],
-            0,
-        );
-        MirConstantOp::new(index).set_attr_value(
-            ctx,
-            IntegerAttr::new(
-                index_type,
-                APInt::from_u64((width - 1) as u64, NonZeroUsize::new(64).unwrap()),
-            ),
-        );
-        index.insert_at_back(body, ctx);
+        let signedness = match index_shape {
+            IndexShape::SignedRem { .. } => Signedness::Signed,
+            _ => Signedness::Unsigned,
+        };
+        let index_type = IntegerType::get(ctx, 64, signedness);
+        let index_handle: TypeHandle = index_type.into();
 
+        let index_value = match index_shape {
+            IndexShape::ConstantLast => {
+                let index = Operation::new(
+                    ctx,
+                    MirConstantOp::get_concrete_op_info(),
+                    vec![index_handle],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                MirConstantOp::new(index).set_attr_value(
+                    ctx,
+                    IntegerAttr::new(
+                        index_type,
+                        APInt::from_u64((width - 1) as u64, NonZeroUsize::new(64).unwrap()),
+                    ),
+                );
+                index.insert_at_back(body, ctx);
+                index.deref(ctx).get_result(0)
+            }
+            IndexShape::Dynamic | IndexShape::BoundedRem { .. } | IndexShape::SignedRem { .. } => {
+                let raw_index = Operation::new(
+                    ctx,
+                    MirCallOp::get_concrete_op_info(),
+                    vec![index_handle],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                MirCallOp::new(raw_index)
+                    .set_attr_callee(ctx, StringAttr::new("runtime_index".to_string()));
+                raw_index.insert_at_back(body, ctx);
+                let raw_index_value = raw_index.deref(ctx).get_result(0);
+
+                match index_shape {
+                    IndexShape::Dynamic => raw_index_value,
+                    IndexShape::BoundedRem { divisor } | IndexShape::SignedRem { divisor } => {
+                        let constant = Operation::new(
+                            ctx,
+                            MirConstantOp::get_concrete_op_info(),
+                            vec![index_handle],
+                            vec![],
+                            vec![],
+                            0,
+                        );
+                        MirConstantOp::new(constant).set_attr_value(
+                            ctx,
+                            IntegerAttr::new(
+                                index_type,
+                                APInt::from_u64(divisor, NonZeroUsize::new(64).unwrap()),
+                            ),
+                        );
+                        constant.insert_at_back(body, ctx);
+                        let divisor_value = constant.deref(ctx).get_result(0);
+
+                        let remainder = Operation::new(
+                            ctx,
+                            MirRemOp::get_concrete_op_info(),
+                            vec![index_handle],
+                            vec![raw_index_value, divisor_value],
+                            vec![],
+                            0,
+                        );
+                        remainder.insert_at_back(body, ctx);
+                        remainder.deref(ctx).get_result(0)
+                    }
+                    IndexShape::ConstantLast => unreachable!(),
+                }
+            }
+        };
+
+        finish_fixture(
+            ctx,
+            module.get_operation(),
+            producer,
+            body,
+            slot,
+            element_type,
+            index_value,
+        )
+    }
+
+    fn finish_fixture(
+        ctx: &mut Context,
+        module: Ptr<Operation>,
+        producer: Ptr<Operation>,
+        body: Ptr<BasicBlock>,
+        slot: Value,
+        element_type: TypeHandle,
+        index_value: Value,
+    ) -> Fixture {
         let element_pointer: TypeHandle = MirPtrType::get_generic(ctx, element_type, false).into();
-        let index_value = index.deref(ctx).get_result(0);
         let address = Operation::new(
             ctx,
             MirArrayElementAddrOp::get_concrete_op_info(),
@@ -569,6 +791,7 @@ mod tests {
         );
         address.insert_at_back(body, ctx);
         let address_value = address.deref(ctx).get_result(0);
+
         let load = Operation::new(
             ctx,
             MirLoadOp::get_concrete_op_info(),
@@ -591,7 +814,7 @@ mod tests {
         return_op.insert_at_back(body, ctx);
 
         Fixture {
-            module: module.get_operation(),
+            module,
             producer,
             return_op,
         }
@@ -798,6 +1021,146 @@ mod tests {
             fixture.return_op.deref(&ctx).get_operand(0),
             fixture.producer.deref(&ctx).get_result(63)
         );
+    }
+
+    #[test]
+    fn bounded_dynamic_index_forwards_to_ssa_extraction() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            32,
+            IndexShape::BoundedRem { divisor: 4 },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 1);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirStoreOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 1);
+        assert_eq!(
+            count::<MirConstructArrayOp>(&ctx, fixture.module),
+            1,
+            "the SSA array constructor must remain live for dynamic extraction"
+        );
+
+        let result = fixture.return_op.deref(&ctx).get_operand(0);
+        let result_definer = result
+            .defining_op()
+            .expect("bounded result must be produced by an extraction op");
+        assert!(Operation::get_op::<MirExtractArrayElementOp>(result_definer, &ctx).is_some());
+    }
+
+    #[test]
+    fn maximum_bounded_candidate_count_is_forwarded() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            64,
+            IndexShape::BoundedRem {
+                divisor: MAX_SCALARIZED_CANDIDATES,
+            },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 1);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 0);
+    }
+
+    #[test]
+    fn oversized_bounded_candidate_count_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            64,
+            IndexShape::BoundedRem {
+                divisor: MAX_SCALARIZED_CANDIDATES + 1,
+            },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirStoreOp>(&ctx, fixture.module), 1);
+    }
+
+    #[test]
+    fn bounded_candidate_count_larger_than_array_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            4,
+            IndexShape::BoundedRem { divisor: 5 },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+    }
+
+    #[test]
+    fn unbounded_dynamic_index_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(&mut ctx, true, false, 8, IndexShape::Dynamic);
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirStoreOp>(&ctx, fixture.module), 1);
+    }
+
+    #[test]
+    fn signed_remainder_index_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            8,
+            IndexShape::SignedRem { divisor: 4 },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
     }
 
     /// Regression test: a whole-array field load out of a struct-wrapped

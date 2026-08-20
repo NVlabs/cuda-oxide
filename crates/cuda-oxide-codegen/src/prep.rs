@@ -101,6 +101,28 @@ pub fn prepare_mir_module(
     })?;
     verify_operation(ctx, module, "module post-mem2reg")?;
 
+    // Source-level dynamic indices commonly pass through temporary MIR slots.
+    // After mem2reg, bounded forms such as `index % C` are direct SSA values,
+    // while result-bundle allocas blocked by dynamic array projections remain.
+    // Re-run the same fail-closed forwarding proof here so those bundles can
+    // be recovered without teaching the pass to trace arbitrary stack slots.
+    mir_transforms::forward_compiler_result_bundles::forward_compiler_result_bundles(
+        module,
+        ctx,
+        &mut analyses,
+        preparation.verbose,
+    )
+    .map_err(|error| PipelineError::Verification {
+        name: "post-mem2reg compiler-result forwarding".to_string(),
+        message: error.disp(ctx).to_string(),
+        operation: None,
+    })?;
+    verify_operation(
+        ctx,
+        module,
+        "module post-mem2reg-compiler-result-forwarding",
+    )?;
+
     // Formation passes that need promoted SSA values but must still see the
     // original loop CFG run here. In particular, a reduction formation pass
     // cannot safely infer a source loop once generic unrolling has cloned it.

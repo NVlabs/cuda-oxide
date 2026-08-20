@@ -47,6 +47,9 @@ jobs:
           # test is the only cheap way to keep.
           - package: ptx-parse
           - package: dialect-ptx
+          # Schedule-perturbation campaigns over that PTX stack: seeded
+          # nanosleep injection plus run classification. Pure Rust, no CUDA.
+          - package: ptx-schedule
           - package: cuda-intrinsics-gen
           - package: cuda-intrinsics
           - package: llvm-export

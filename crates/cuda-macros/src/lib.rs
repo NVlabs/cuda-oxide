@@ -6928,6 +6928,22 @@ fn generate_device_extern_block(mut input: ItemForeignMod) -> TokenStream {
                 return err;
             }
 
+            // `...` is purely syntactic, so it can be refused here rather than
+            // in device codegen. That gives the user a span on the offending
+            // tokens instead of a signature-less error at final-binary codegen,
+            // and it also catches a variadic extern that is declared but never
+            // called -- the collector only registers externs reached from
+            // kernel MIR, so that one used to compile clean.
+            //
+            // The codegen rejection stays: the collector recognises device
+            // externs by their reserved name prefix, so a hand-written extern
+            // block never passes through this macro at all.
+            if let Some(variadic) = &foreign_fn.sig.variadic {
+                return syn::Error::new_spanned(variadic, "#[device] externs cannot be variadic")
+                    .to_compile_error()
+                    .into();
+            }
+
             // Save original info for wrapper generation
             let original_name = foreign_fn.sig.ident.clone();
             let original_attrs = foreign_fn.attrs.clone();

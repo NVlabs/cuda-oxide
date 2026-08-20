@@ -5,6 +5,7 @@ members = [
     "crates/cuda-intrinsics",
     "crates/cuda-intrinsics-gen",
     "crates/ptx-parse",
+    "crates/ptx-schedule",
     "crates/dialect-ptx",
     "crates/cuda-device",
     "crates/cuda-artifact-finalizer",
@@ -86,6 +87,7 @@ reserved-oxide-symbols = { path = "crates/reserved-oxide-symbols" }
 fuzzer = { path = "crates/fuzzer" }
 oxide-artifacts = { path = "crates/oxide-artifacts" }
 ptx-parse = { path = "crates/ptx-parse" }
+ptx-schedule = { path = "crates/ptx-schedule" }
 
 # Common dependencies
 futures = "0.3"
