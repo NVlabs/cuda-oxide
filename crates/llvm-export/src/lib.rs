@@ -813,6 +813,26 @@ pub mod ops {
         pub ty: DebugLocalTypeKind,
     }
 
+    /// One scalarized fragment of a source variable.
+    ///
+    /// `offset_bits` and `size_bits` use LLVM's `DW_OP_LLVM_fragment` units and
+    /// describe where this storage/value belongs inside the complete source
+    /// variable. Fragments with zero size are rejected when decoded.
+    #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+    pub struct DebugFragment {
+        pub offset_bits: u64,
+        pub size_bits: u64,
+    }
+
+    /// A source variable reconstructed from one scalarized MIR storage/value.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    pub struct DebugFragmentVariableInfo {
+        pub variable: DebugLocalVariableInfo,
+        pub fragment: DebugFragment,
+        pub source_scope: Option<u32>,
+        pub declaration: Option<DebugSourcePosition>,
+    }
+
     /// A source variable whose storage is a supported projection of a MIR local.
     ///
     /// `offset_bytes` is measured from the current address after an optional
@@ -881,6 +901,7 @@ pub mod ops {
     const DEBUG_LOCAL_DECL_COLUMN_KEY: &str = "cuda_oxide_debug_local_decl_column";
     const DEBUG_LOCAL_SCOPE_KEY: &str = "cuda_oxide_debug_local_scope";
     const DEBUG_PROJECTED_COUNT_KEY: &str = "cuda_oxide_debug_projected_count";
+    const DEBUG_FRAGMENT_COUNT_KEY: &str = "cuda_oxide_debug_fragment_count";
     const DEBUG_SOURCE_SCOPE_COUNT_KEY: &str = "cuda_oxide_debug_scope_count";
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
@@ -1113,6 +1134,148 @@ pub mod ops {
             });
         }
         projected
+    }
+
+    /// Attach every scalarized source-variable fragment backed by this slot/value.
+    pub fn set_debug_fragment_variables(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        fragments: &[DebugFragmentVariableInfo],
+    ) {
+        set_string_attr(
+            ctx,
+            op,
+            DEBUG_FRAGMENT_COUNT_KEY,
+            fragments.len().to_string(),
+        );
+
+        for (index, info) in fragments.iter().enumerate() {
+            set_string_attr(
+                ctx,
+                op,
+                &debug_fragment_key(index, "name"),
+                info.variable.name.clone(),
+            );
+            if let Some(argument_index) = info.variable.argument_index {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_fragment_key(index, "arg"),
+                    argument_index.to_string(),
+                );
+            }
+
+            let mut encoded = String::new();
+            serialize_debug_type(&info.variable.ty, &mut encoded);
+            set_string_attr(ctx, op, &debug_fragment_key(index, "type"), encoded);
+            set_string_attr(
+                ctx,
+                op,
+                &debug_fragment_key(index, "offset_bits"),
+                info.fragment.offset_bits.to_string(),
+            );
+            set_string_attr(
+                ctx,
+                op,
+                &debug_fragment_key(index, "size_bits"),
+                info.fragment.size_bits.to_string(),
+            );
+            if let Some(source_scope) = info.source_scope {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_fragment_key(index, "scope"),
+                    source_scope.to_string(),
+                );
+            }
+            if let Some(declaration) = &info.declaration {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_fragment_key(index, "file"),
+                    declaration.file.to_string_lossy().into_owned(),
+                );
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_fragment_key(index, "line"),
+                    declaration.line.to_string(),
+                );
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_fragment_key(index, "column"),
+                    declaration.column.to_string(),
+                );
+            }
+        }
+    }
+
+    /// Read scalarized source-variable fragments attached to a slot/value.
+    pub fn debug_fragment_variables(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Vec<DebugFragmentVariableInfo> {
+        let count = get_string_attr(ctx, op, DEBUG_FRAGMENT_COUNT_KEY)
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0);
+        if count > 1024 {
+            return Vec::new();
+        }
+
+        let mut fragments = Vec::with_capacity(count);
+        for index in 0..count {
+            let Some(name) = get_string_attr(ctx, op, &debug_fragment_key(index, "name")) else {
+                continue;
+            };
+            let argument_index = get_string_attr(ctx, op, &debug_fragment_key(index, "arg"))
+                .and_then(|arg| arg.parse::<u16>().ok());
+            let Some(encoded) = get_string_attr(ctx, op, &debug_fragment_key(index, "type")) else {
+                continue;
+            };
+            let mut pos = 0;
+            let Some(ty) = deserialize_debug_type(encoded.as_bytes(), &mut pos) else {
+                continue;
+            };
+            if pos != encoded.len() {
+                continue;
+            }
+            let Some(offset_bits) =
+                get_string_attr(ctx, op, &debug_fragment_key(index, "offset_bits"))
+                    .and_then(|value| value.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            let Some(size_bits) = get_string_attr(ctx, op, &debug_fragment_key(index, "size_bits"))
+                .and_then(|value| value.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            let Some(end_bits) = offset_bits.checked_add(size_bits) else {
+                continue;
+            };
+            if size_bits == 0 || end_bits > ty.size_bits() {
+                continue;
+            }
+            let source_scope = get_string_attr(ctx, op, &debug_fragment_key(index, "scope"))
+                .and_then(|scope| scope.parse::<u32>().ok());
+            let declaration = debug_fragment_declaration(ctx, op, index);
+
+            fragments.push(DebugFragmentVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name,
+                    argument_index,
+                    ty,
+                },
+                fragment: DebugFragment {
+                    offset_bits,
+                    size_bits,
+                },
+                source_scope,
+                declaration,
+            });
+        }
+        fragments
     }
 
     /// Rust-local provenance for the post-optimization local-memory diagnostic.
@@ -1443,6 +1606,10 @@ pub mod ops {
         format!("cuda_oxide_debug_projected_{index}_{field}")
     }
 
+    fn debug_fragment_key(index: usize, field: &str) -> String {
+        format!("cuda_oxide_debug_fragment_{index}_{field}")
+    }
+
     fn debug_projected_declaration(
         ctx: &Context,
         op: Ptr<Operation>,
@@ -1457,6 +1624,28 @@ pub mod ops {
             .parse()
             .ok()?;
         let column = get_string_attr(ctx, op, &debug_projected_key(index, "column"))?
+            .parse()
+            .ok()?;
+        if line <= 0 || column <= 0 {
+            return None;
+        }
+        Some(DebugSourcePosition { file, line, column })
+    }
+
+    fn debug_fragment_declaration(
+        ctx: &Context,
+        op: Ptr<Operation>,
+        index: usize,
+    ) -> Option<DebugSourcePosition> {
+        let file = PathBuf::from(get_string_attr(
+            ctx,
+            op,
+            &debug_fragment_key(index, "file"),
+        )?);
+        let line = get_string_attr(ctx, op, &debug_fragment_key(index, "line"))?
+            .parse()
+            .ok()?;
+        let column = get_string_attr(ctx, op, &debug_fragment_key(index, "column"))?
             .parse()
             .ok()?;
         if line <= 0 || column <= 0 {
