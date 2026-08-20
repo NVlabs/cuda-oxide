@@ -111,6 +111,24 @@ pub fn convert(
     let llvm_ty = convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error!(loc, "{e}"))?;
     let val_ty = val.get_type(ctx);
 
+    // Rust pointer/reference kind is a MIR semantic distinction, not an LLVM
+    // representation distinction. With opaque LLVM pointers (and the canonical
+    // `{ptr, i64}` slice layout), changing only pointer kind can therefore
+    // produce identical lowered source/destination types. Forward the value
+    // directly instead of manufacturing a bitcast or a struct memory
+    // round-trip. Address-space-changing casts still take the normal path.
+    if val_ty == llvm_ty
+        && matches!(
+            &cast_kind,
+            MirCastKindAttr::PtrToPtr
+                | MirCastKindAttr::PointerCoercionMutToConst
+                | MirCastKindAttr::Subtype
+        )
+    {
+        rewriter.replace_operation_with_values(ctx, op, vec![val]);
+        return Ok(());
+    }
+
     let llvm_op = match &cast_kind {
         MirCastKindAttr::Transmute => emit_transmute(ctx, rewriter, val, val_ty, llvm_ty)?,
 
@@ -980,8 +998,8 @@ mod tests {
     use dialect_mir::attributes::MirCastKindAttr;
     use dialect_mir::ops as mir;
     use dialect_mir::types::{
-        EnumCarrierKind, EnumEncoding, EnumLayoutKind, EnumVariant, MirEnumType, MirPtrType,
-        MirStructType,
+        EnumCarrierKind, EnumEncoding, EnumLayoutKind, EnumVariant, MirEnumType, MirPointerKind,
+        MirPtrType, MirStructType,
     };
     use llvm_export::ops as llvm;
     use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface};
@@ -1181,6 +1199,33 @@ mod tests {
                 lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::Transmute);
             assert_physical_transmute_round_trip(&ctx, module);
         }
+    }
+
+    #[test]
+    fn pointer_kind_only_coercion_has_no_llvm_instruction() {
+        let mut ctx = make_ctx();
+        let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+        let unique: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::UniqueRef)
+                .into();
+        let shared: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, false, MirPointerKind::SharedRef)
+                .into();
+
+        let module = lower_single_cast(
+            &mut ctx,
+            unique,
+            shared,
+            MirCastKindAttr::PointerCoercionMutToConst,
+        );
+        let body = kernel_blocks(&ctx, module);
+
+        assert_eq!(count_ops::<mir::MirCastOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::BitcastOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::AddrSpaceCastOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 0);
+        assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 0);
     }
 
     #[test]

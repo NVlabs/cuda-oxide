@@ -10,17 +10,17 @@ rustc MIR ──► mir-importer ──► dialect-mir ──► mir-lower ─�
 
 The dialect defines nine types that preserve Rust-level semantics:
 
-| Type                  | Description                                        | Example                               |
-|-----------------------|----------------------------------------------------|---------------------------------------|
-| `MirTupleType`        | Heterogeneous tuples                               | `mir.tuple<i32, f32, i64>`            |
-| `MirPtrType`          | Pointers with address space and mutability         | `mir.ptr<f32, mutable, addrspace: 3>` |
-| `MirSliceType`        | Fat pointers (`&[T]` = ptr + len)                  | `mir.slice<f32, addrspace: 1>`        |
-| `MirDisjointSliceType`| `DisjointSlice<T>` -- per-thread unique access     | `mir.disjoint_slice<f32, ...>`        |
-| `MirStructType`       | Named structs with layout metadata                 | `mir.struct<"Point", [f32, f32]>`     |
-| `MirUnionType`        | Rust unions -- each field a view of the same bytes | `mir.union<"Repr", [a, b], [i32, f32], 4, 4>` |
-| `MirEnumType`         | Rust enums with their exact rustc layout           | `mir.enum<"Ordering", i8, ...>`       |
-| `MirArrayType`        | Fixed-size arrays                                  | `mir.array<f32, 256>`                 |
-| `MirFP16Type`         | IEEE 754 binary16 -- Rust's `f16`                  | `mir.fp16`                            |
+| Type                  | Description                                                  | Example                                                               |
+|-----------------------|--------------------------------------------------------------|-----------------------------------------------------------------------|
+| `MirTupleType`        | Heterogeneous tuples                                         | `mir.tuple<i32, f32, i64>`                                            |
+| `MirPtrType`          | Thin pointers with address space, mutability, and source kind | `mir.ptr<f32, mutable: true, addrspace: 3, kind: UniqueRef>`           |
+| `MirSliceType`        | Fat pointers with retained source kind (ptr + len)           | `mir.slice<f32, kind: SharedRef>`                                     |
+| `MirDisjointSliceType`| `DisjointSlice<T>` -- per-thread unique access               | `mir.disjoint_slice<f32, ...>`                                        |
+| `MirStructType`       | Named structs with layout metadata                           | `mir.struct<"Point", [f32, f32]>`                                   |
+| `MirUnionType`        | Rust unions -- each field a view of the same bytes           | `mir.union<"Repr", [a, b], [i32, f32], 4, 4>`                       |
+| `MirEnumType`         | Rust enums with their exact rustc layout                     | `mir.enum<"Ordering", i8, ...>`                                     |
+| `MirArrayType`        | Fixed-size arrays                                            | `mir.array<f32, 256>`                                                 |
+| `MirFP16Type`         | IEEE 754 binary16 -- Rust's `f16`                            | `mir.fp16`                                                            |
 
 `MirEnumType` records the enum's layout the way rustc computed it: Direct,
 Niche, Single, or Empty; the physical integer/pointer carrier and absolute
@@ -47,9 +47,60 @@ For a niche layout such as `Option<&T>`, the carrier is the pointer itself:
 null encodes `None`, and a non-null pointer is the untagged `Some` variant.
 The device never adds a synthetic discriminant.
 
+### Pointer and reference kinds
+
+`MirPtrType` and `MirSliceType` retain the source-level category that produced a
+pointer-like Rust value:
+
+| Rust type | `MirPointerKind` | Meaning |
+|-----------|------------------|---------|
+| `&T` | `SharedRef` | Shared Rust reference |
+| `&mut T` | `UniqueRef` | Mutable/unique Rust reference |
+| `*const T` | `RawConst` | Immutable raw pointer |
+| `*mut T` | `RawMut` | Mutable raw pointer |
+| compiler-generated address | `Erased` | Storage/projection pointer with no Rust alias guarantee |
+
+The existing `is_mutable` bit remains part of `MirPtrType` because operations
+need writeability information, but it is not proof of uniqueness. In
+particular, `RawMut` and `UniqueRef` are both mutable while only the latter
+originates from `&mut T`.
+
+Pointer kind is propagated through Rust type import, references, raw-address
+formation, slices, and compatible casts. Internal alloca/projection addresses
+are created as `Erased`; a new concrete Rust kind may be established only at
+a Rust-typed semantic boundary such as `Rvalue::Ref`, `Rvalue::AddressOf`, an
+explicit rustc cast/coercion, or a compiler-recognized operation whose Rust
+return type is authoritative. For example, the `SharedArray::as_ptr`,
+`as_mut_ptr`, and `as_raw_mut_ptr` intrinsic expansions use their rustc-declared
+`*const T` / `*mut T` result type directly.
+
+Generic representation normalization and local storage may preserve a concrete
+kind or deliberately forget it by converting to `Erased`, but they never
+recover a concrete kind from `Erased` or switch directly between two distinct
+concrete Rust kinds. This prevents `SharedRef -> Erased -> UniqueRef` laundering
+while still allowing legitimate reborrows such as `RawMut -> UniqueRef` at
+`Rvalue::Ref`. A projection of an existing slice preserves the source kind,
+while an explicit reborrow or raw address takes the new Rust result type
+declared by rustc.
+
+`Retag` remains a codegen no-op. The dialect records the static pointer category
+but does not attempt to model dynamic Stacked Borrows / Tree Borrows tags or
+retag epochs.
+
+MIR-to-LLVM lowering deliberately erases `MirPointerKind`. All four Rust source
+categories keep the same LLVM pointer/fat-pointer representation, and this
+change does not emit `noalias`, `readonly`, `dereferenceable`, or related
+metadata. Any future alias metadata requires a separate audited policy; it must
+not be inferred from `is_mutable` alone.
+
+For GPU-specific abstractions such as `SharedArray`, the Rust reference kind is
+still retained when the source type is a reference, while the CUDA address
+space remains an independent property. The compiler does not currently turn a
+`UniqueRef` to shared memory into cross-thread LLVM alias guarantees.
+
 ### Address Spaces
 
-Pointers and slices carry an NVPTX address space:
+Pointers carry an NVPTX address space independently of their source kind:
 
 | Space      | ID | PTX Qualifier | Use                           |
 |------------|----|---------------|-------------------------------|
