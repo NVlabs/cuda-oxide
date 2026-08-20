@@ -19900,6 +19900,18 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
     output
 }
 
+/// Escape a value for a GFM table cell.
+///
+/// A `|` splits the row before inline parsing runs, so it splits the cell even
+/// inside a code span; GFM's own rule is that a literal pipe must be written
+/// `\|` wherever it appears. Three catalog entries carry one today -- the
+/// `elect.sync` and `match.all.sync` PTX patterns write their two destinations
+/// as `<register|predicate>` -- and their rows rendered with a seventh cell,
+/// which drops the backend-evidence column.
+fn escape_table_cell(value: impl std::fmt::Display) -> String {
+    value.to_string().replace('|', "\\|")
+}
+
 fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = markdown_header(catalog, hash);
     output.push_str(
@@ -19923,21 +19935,21 @@ fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
         writeln!(
             output,
             "| `{}` | `{}` | {} | {safety}; scope {}; {}; memory {}; convergent {} | {availability} ([PTX ISA {}, {}]({})) | {} on `{}`; expects `{}` (`{}`, SHA-256 `{}`) |",
-            record.rust.public_path,
-            record.dialect.op_name,
-            source_label(record),
-            record.semantics.execution_scope,
+            escape_table_cell(&record.rust.public_path),
+            escape_table_cell(&record.dialect.op_name),
+            escape_table_cell(source_label(record)),
+            escape_table_cell(&record.semantics.execution_scope),
             if record.semantics.pure { "pure" } else { "impure" },
-            record.semantics.memory,
+            escape_table_cell(&record.semantics.memory),
             record.semantics.convergent,
-            record.target.ptx_isa_version,
-            record.target.ptx_isa_section,
-            record.target.ptx_isa_url,
-            record.backend.status,
-            record.backend.profile,
-            record.expected_ptx,
-            record.backend.version,
-            record.backend.sha256,
+            escape_table_cell(&record.target.ptx_isa_version),
+            escape_table_cell(&record.target.ptx_isa_section),
+            escape_table_cell(&record.target.ptx_isa_url),
+            escape_table_cell(&record.backend.status),
+            escape_table_cell(&record.backend.profile),
+            escape_table_cell(&record.expected_ptx),
+            escape_table_cell(&record.backend.version),
+            escape_table_cell(&record.backend.sha256),
         )
         .unwrap();
     }
@@ -24999,5 +25011,48 @@ mod tests {
         );
         assert!(float.contains("pub fn min_xorsign_abs_f32(a: f32, b: f32) -> f32"));
         assert!(!float.contains("pub fn add_rn_f32"));
+    }
+
+    /// Every reference row must carry exactly the six cells of its header.
+    ///
+    /// A `|` in cell data splits the row before inline parsing, so it splits
+    /// the cell even inside a code span. Three catalog entries write a PTX
+    /// destination pair as `<register|predicate>`, and their rows rendered with
+    /// a seventh cell, which drops the backend-evidence column. Counting
+    /// unescaped pipes per row is the direct check.
+    #[test]
+    fn reference_rows_have_one_cell_per_header_column() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        let reference = render_reference(&catalog, "test-hash");
+
+        let mut rows = 0usize;
+        let mut carried_a_pipe = 0usize;
+        for line in reference
+            .lines()
+            .filter(|line| line.starts_with("| `cuda_intrinsics::"))
+        {
+            rows += 1;
+            if line.contains("\\|") {
+                carried_a_pipe += 1;
+            }
+            // Delimiters only: drop every escaped pipe first, then a six-column
+            // row leaves seven.
+            let delimiters = line.replace("\\|", "").matches('|').count();
+            assert_eq!(
+                delimiters, 7,
+                "row has {delimiters} cell delimiters, expected 7: {line}"
+            );
+        }
+
+        assert!(
+            rows > 900,
+            "expected the full reference, rendered {rows} rows"
+        );
+        assert!(
+            carried_a_pipe >= 3,
+            "expected the elect.sync and match.all.sync patterns to need escaping, \
+             found {carried_a_pipe} rows with an escaped pipe"
+        );
     }
 }
