@@ -2040,6 +2040,9 @@ mod kernels {
             static mut ACCUM_EMPTY1: Barrier = Barrier::UNINIT;
 
             static mut TILE_READY: Barrier = Barrier::UNINIT;
+            // The producer must not overwrite TILE_INFO until every reader warp
+            // has copied the current tile coordinates/has_work flag.
+            static mut TILE_INFO_FREE: Barrier = Barrier::UNINIT;
 
             // CLC: 16-byte response buffer + mbarrier
             static mut CLC_RESPONSE: SharedArray<u64, 2, 16> = SharedArray::UNINIT;
@@ -2074,6 +2077,9 @@ mod kernels {
                 mbarrier_init(&raw mut ACCUM_EMPTY0, 128);
                 mbarrier_init(&raw mut ACCUM_EMPTY1, 128);
                 mbarrier_init(&raw mut TILE_READY, 1);
+                // One synchronized leader per reader warp acknowledges that all
+                // lanes have copied the mailbox before the producer reuses it.
+                mbarrier_init(&raw mut TILE_INFO_FREE, 5);
                 mbarrier_init(&raw mut CLC_BAR, 1);
                 fence_proxy_async_shared_cta();
             }
@@ -2111,6 +2117,7 @@ mod kernels {
                 let is_lane0 = lane_id == 0;
                 let mut global_k: u32 = 0;
                 let mut clc_iter: u32 = 0;
+                let mut tile_info_free_parity: u32 = 0;
 
                 // ── First tile: use our own blockIdx (hardware-assigned) ──
                 let first_ctaid = thread::blockIdx_x();
@@ -2222,6 +2229,10 @@ mod kernels {
 
                     if is_canceled == 0 {
                         if is_lane0 {
+                            while !mbarrier_try_wait_parity(
+                                &raw const TILE_INFO_FREE,
+                                tile_info_free_parity,
+                            ) {}
                             *(&raw mut TILE_INFO as *mut u32).add(2) = 0;
                             mbarrier_arrive(&raw const TILE_READY);
                         }
@@ -2235,6 +2246,11 @@ mod kernels {
                         let tile_n = stolen_ctaid / tiles_m;
 
                         if is_lane0 {
+                            while !mbarrier_try_wait_parity(
+                                &raw const TILE_INFO_FREE,
+                                tile_info_free_parity,
+                            ) {}
+                            tile_info_free_parity ^= 1;
                             *(&raw mut TILE_INFO as *mut u32).add(0) = tile_m;
                             *(&raw mut TILE_INFO as *mut u32).add(1) = tile_n;
                             *(&raw mut TILE_INFO as *mut u32).add(2) = 1;
@@ -2325,6 +2341,10 @@ mod kernels {
                     tile_parity ^= 1;
 
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
+                    warp::sync_mask(u32::MAX);
+                    if is_lane0 {
+                        mbarrier_arrive(&raw const TILE_INFO_FREE);
+                    }
                     if has_work == 0 {
                         break;
                     }
@@ -2420,6 +2440,7 @@ mod kernels {
             // Epilogue warps (0-3): identical to Phase 4A
             // ════════════════════════════════════════════════════════════════════
             if warp_id < 4 {
+                let is_lane0 = lane_id == 0;
                 let mut epi_tile_iter: u32 = 0;
                 let mut tile_parity: u32 = 0;
 
@@ -2435,12 +2456,15 @@ mod kernels {
                     tile_parity ^= 1;
 
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
+                    let tile_m = *(&raw const TILE_INFO as *const u32).add(0);
+                    let tile_n = *(&raw const TILE_INFO as *const u32).add(1);
+                    warp::sync_mask(u32::MAX);
+                    if is_lane0 {
+                        mbarrier_arrive(&raw const TILE_INFO_FREE);
+                    }
                     if has_work == 0 {
                         break;
                     }
-
-                    let tile_m = *(&raw const TILE_INFO as *const u32).add(0);
-                    let tile_n = *(&raw const TILE_INFO as *const u32).add(1);
 
                     let accum_stage = epi_tile_iter % NUM_ACCUM_STAGES;
                     let tmem_stage_offset = accum_stage * ACCUM_STAGE_COLS;
@@ -2548,6 +2572,7 @@ mod kernels {
                 mbarrier_inval(&raw mut ACCUM_EMPTY0);
                 mbarrier_inval(&raw mut ACCUM_EMPTY1);
                 mbarrier_inval(&raw mut TILE_READY);
+                mbarrier_inval(&raw mut TILE_INFO_FREE);
                 mbarrier_inval(&raw mut CLC_BAR);
             }
         }
