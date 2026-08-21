@@ -10,11 +10,11 @@
 //!   2. cuda-oxide SIMT kernel thresholds and scales the softmax result.
 //!   3. Both kernels run on the same CUDA stream and share device tensors.
 
-use cuda_async::simt::device_context::{load_module_from_ptx, with_default_device_policy};
-use cuda_async::simt::device_future::DeviceFuture;
-use cuda_async::simt::device_operation::{DeviceOp, ExecutionContext};
-use cuda_async::simt::error::DeviceError;
-use cuda_async::simt::launch::AsyncKernelLaunch;
+use cuda_async::device_context::{load_module_from_ptx, with_default_device_policy};
+use cuda_async::device_future::DeviceFuture;
+use cuda_async::device_operation::{DeviceOp, ExecutionContext};
+use cuda_async::error::DeviceError;
+use cuda_async::launch::AsyncKernelLaunch;
 use cutile::api::{copy_host_vec_to_device, zeros};
 use cutile::error::Error;
 use cutile::tensor::{IntoPartition, Reshape, Tensor, ToHostVec};
