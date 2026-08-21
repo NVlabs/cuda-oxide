@@ -493,8 +493,25 @@ pub mod ops {
             size_bits: u64,
             encoding: &'static str,
         },
-        /// A pointer/reference `DIDerivedType`.
+        /// An opaque compatibility pointer/reference `DIDerivedType`.
+        ///
+        /// This is the pre-existing representation for pointer shapes whose
+        /// pointee cannot yet be described safely. Its null `baseType` keeps
+        /// the source variable visible, although debuggers may render it as
+        /// `*mut ()`.
         Pointer { name: String, size_bits: u64 },
+        /// A thin pointer/reference with a safely bounded pointee type.
+        ///
+        /// The finite pointee tree is required so the exporter never emits a
+        /// pointer with a null `baseType`, which debuggers present
+        /// misleadingly as `*mut ()`. Recursive composite graphs are not
+        /// represented by this tree-shaped model and must be rejected by the
+        /// importer.
+        TypedPointer {
+            name: String,
+            size_bits: u64,
+            pointee: Box<DebugLocalTypeKind>,
+        },
         /// A struct or tuple `DICompositeType` (`DW_TAG_structure_type`).
         ///
         /// Member offsets come from rustc's real layout, not declaration order,
@@ -565,9 +582,31 @@ pub mod ops {
             match self {
                 DebugLocalTypeKind::Basic { size_bits, .. }
                 | DebugLocalTypeKind::Pointer { size_bits, .. }
+                | DebugLocalTypeKind::TypedPointer { size_bits, .. }
                 | DebugLocalTypeKind::Struct { size_bits, .. }
                 | DebugLocalTypeKind::Enum { size_bits, .. }
                 | DebugLocalTypeKind::Array { size_bits, .. } => *size_bits,
+            }
+        }
+
+        /// Whether this type belongs to the acyclic subset accepted beneath a
+        /// [`DebugLocalTypeKind::TypedPointer`].
+        ///
+        /// Opaque pointers and source composites are excluded recursively so a
+        /// typed pointer can never hide a null-base descendant or smuggle a
+        /// recursive type graph into this tree-shaped representation.
+        pub(crate) fn is_valid_typed_pointer_pointee(&self) -> bool {
+            match self {
+                DebugLocalTypeKind::Basic { .. } => true,
+                DebugLocalTypeKind::TypedPointer { pointee, .. } => {
+                    pointee.is_valid_typed_pointer_pointee()
+                }
+                DebugLocalTypeKind::Array { element, .. } => {
+                    element.is_valid_typed_pointer_pointee()
+                }
+                DebugLocalTypeKind::Pointer { .. }
+                | DebugLocalTypeKind::Struct { .. }
+                | DebugLocalTypeKind::Enum { .. } => false,
             }
         }
     }
@@ -613,6 +652,20 @@ pub mod ops {
                 out.push('p');
                 put_u64(out, *size_bits);
                 put_str(out, name);
+            }
+            DebugLocalTypeKind::TypedPointer {
+                name,
+                size_bits,
+                pointee,
+            } => {
+                assert!(
+                    pointee.is_valid_typed_pointer_pointee(),
+                    "typed pointer pointee must contain only basic, typed-pointer, or array nodes"
+                );
+                out.push('t');
+                put_u64(out, *size_bits);
+                put_str(out, name);
+                serialize_debug_type(pointee, out);
             }
             DebugLocalTypeKind::Struct {
                 name,
@@ -721,6 +774,19 @@ pub mod ops {
                 let size_bits = take_u64(bytes, pos)?;
                 let name = take_str(bytes, pos)?;
                 Some(DebugLocalTypeKind::Pointer { name, size_bits })
+            }
+            b't' => {
+                let size_bits = take_u64(bytes, pos)?;
+                let name = take_str(bytes, pos)?;
+                let pointee = Box::new(deserialize_debug_type(bytes, pos)?);
+                if !pointee.is_valid_typed_pointer_pointee() {
+                    return None;
+                }
+                Some(DebugLocalTypeKind::TypedPointer {
+                    name,
+                    size_bits,
+                    pointee,
+                })
             }
             b's' => {
                 let size_bits = take_u64(bytes, pos)?;
@@ -2093,9 +2159,14 @@ pub mod ops {
                     DebugTypeMember {
                         name: "data".to_string(),
                         offset_bits: 64,
-                        ty: DebugLocalTypeKind::Pointer {
+                        ty: DebugLocalTypeKind::TypedPointer {
                             name: "*mut u64".to_string(),
                             size_bits: 64,
+                            pointee: Box::new(DebugLocalTypeKind::Basic {
+                                name: "u64".to_string(),
+                                size_bits: 64,
+                                encoding: "DW_ATE_unsigned",
+                            }),
                         },
                     },
                     DebugTypeMember {
@@ -2142,9 +2213,14 @@ pub mod ops {
                         members: vec![DebugTypeMember {
                             name: "0".to_string(),
                             offset_bits: 0,
-                            ty: DebugLocalTypeKind::Pointer {
+                            ty: DebugLocalTypeKind::TypedPointer {
                                 name: "&u32".to_string(),
                                 size_bits: 64,
+                                pointee: Box::new(DebugLocalTypeKind::Basic {
+                                    name: "u32".to_string(),
+                                    size_bits: 32,
+                                    encoding: "DW_ATE_unsigned",
+                                }),
                             },
                         }],
                     },
@@ -2157,11 +2233,102 @@ pub mod ops {
         #[test]
         fn round_trips_names_with_delimiters() {
             // Length-prefixing must survive names containing spaces/digits/braces.
-            let ty = DebugLocalTypeKind::Pointer {
+            let ty = DebugLocalTypeKind::TypedPointer {
                 name: "&[(u32, u32); 4] {x: 1}".to_string(),
                 size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::Basic {
+                    name: "u8".to_string(),
+                    size_bits: 8,
+                    encoding: "DW_ATE_unsigned",
+                }),
             };
             assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn round_trips_nested_pointer_pointees() {
+            let ty = DebugLocalTypeKind::TypedPointer {
+                name: "*const *mut i32".to_string(),
+                size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::TypedPointer {
+                    name: "*mut i32".to_string(),
+                    size_bits: 64,
+                    pointee: Box::new(DebugLocalTypeKind::Basic {
+                        name: "i32".to_string(),
+                        size_bits: 32,
+                        encoding: "DW_ATE_signed",
+                    }),
+                }),
+            };
+            assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn opaque_pointer_preserves_the_legacy_encoding() {
+            let ty = DebugLocalTypeKind::Pointer {
+                name: "*mut i32".to_string(),
+                size_bits: 64,
+            };
+            let mut encoded = String::new();
+            serialize_debug_type(&ty, &mut encoded);
+            assert_eq!(encoded, "p64 8 *mut i32");
+            assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn rejects_typed_pointer_without_a_serialized_pointee() {
+            // Unlike the legacy `p` record, the new `t` record requires a
+            // recursive pointee type and must reject a truncated payload.
+            let encoded = b"t64 8 *mut i32";
+            let mut pos = 0;
+            assert!(deserialize_debug_type(encoded, &mut pos).is_none());
+        }
+
+        #[test]
+        fn decoder_rejects_typed_pointer_with_forbidden_descendants() {
+            let invalid = [
+                // Direct legacy opaque pointer descendant.
+                "t64 8 *const _p64 8 *mut i32",
+                // The opaque pointer is hidden beneath a fixed array.
+                "t64 8 *const _a64 8 [ptr; 1]1 p64 8 *mut i32",
+                // Source composites are outside the acyclic typed subset.
+                "t64 8 *const _s64 3 Foo0 ",
+                "t64 8 *const _e64 3 Foo0 0 ",
+                // Composite descendants cannot be hidden below an otherwise
+                // accepted array or typed-pointer node either.
+                "t64 8 *const _a64 8 [Foo; 1]1 s64 3 Foo0 ",
+                "t64 15 *const *const _t64 8 *const _e64 3 Foo0 0 ",
+            ];
+
+            for encoded in invalid {
+                let mut pos = 0;
+                assert!(
+                    deserialize_debug_type(encoded.as_bytes(), &mut pos).is_none(),
+                    "accepted invalid typed pointer payload {encoded:?}"
+                );
+            }
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "typed pointer pointee must contain only basic, typed-pointer, or array nodes"
+        )]
+        fn serializer_rejects_hand_built_typed_pointer_with_opaque_descendant() {
+            let invalid = DebugLocalTypeKind::TypedPointer {
+                name: "*const [*mut _; 1]".to_string(),
+                size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::Array {
+                    name: "[*mut _; 1]".to_string(),
+                    size_bits: 64,
+                    element: Box::new(DebugLocalTypeKind::Pointer {
+                        name: "*mut _".to_string(),
+                        size_bits: 64,
+                    }),
+                    count: 1,
+                }),
+            };
+            let mut encoded = String::new();
+            serialize_debug_type(&invalid, &mut encoded);
         }
 
         #[test]

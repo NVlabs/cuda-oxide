@@ -101,6 +101,13 @@ fn module_top_block(ctx: &mut Context, module: &ModuleOp) -> Ptr<BasicBlock> {
     block
 }
 
+fn metadata_id<'a>(ir: &'a str, needle: &str) -> &'a str {
+    ir.lines()
+        .find(|line| line.contains(needle))
+        .and_then(|line| line.split_once(" = ").map(|(id, _)| id))
+        .unwrap_or_else(|| panic!("missing metadata node containing {needle:?}:\n{ir}"))
+}
+
 #[test]
 fn export_volatile_load_prints_keyword() {
     let mut ctx = Context::new();
@@ -2707,16 +2714,100 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
         DebugLocalVariableInfo {
             name: "ptr".to_string(),
             argument_index: None,
-            ty: DebugLocalTypeKind::Pointer {
+            ty: DebugLocalTypeKind::TypedPointer {
                 name: "*mut f32".to_string(),
                 size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::Basic {
+                    name: "f32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_float",
+                }),
             },
         },
     );
     ptr.get_operation().insert_at_back(entry, &ctx);
 
+    let nested_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let nested_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 33, 9);
+    nested_ptr
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(nested_ptr_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        nested_ptr.get_operation(),
+        DebugLocalVariableInfo {
+            name: "nested_ptr".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::TypedPointer {
+                name: "*const *mut i32".to_string(),
+                size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::TypedPointer {
+                    name: "*mut i32".to_string(),
+                    size_bits: 64,
+                    pointee: Box::new(DebugLocalTypeKind::Basic {
+                        name: "i32".to_string(),
+                        size_bits: 32,
+                        encoding: "DW_ATE_signed",
+                    }),
+                }),
+            },
+        },
+    );
+    nested_ptr.get_operation().insert_at_back(entry, &ctx);
+
+    let array_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let array_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 34, 9);
+    array_ptr
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(array_ptr_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        array_ptr.get_operation(),
+        DebugLocalVariableInfo {
+            name: "array_ptr".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::TypedPointer {
+                name: "*const [u16; 4]".to_string(),
+                size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::Array {
+                    name: "[u16; 4]".to_string(),
+                    size_bits: 64,
+                    element: Box::new(DebugLocalTypeKind::Basic {
+                        name: "u16".to_string(),
+                        size_bits: 16,
+                        encoding: "DW_ATE_unsigned",
+                    }),
+                    count: 4,
+                }),
+            },
+        },
+    );
+    array_ptr.get_operation().insert_at_back(entry, &ctx);
+
+    let opaque_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let opaque_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 35, 9);
+    opaque_ptr
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(opaque_ptr_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        opaque_ptr.get_operation(),
+        DebugLocalVariableInfo {
+            name: "opaque_ptr".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::Pointer {
+                name: "*const _".to_string(),
+                size_bits: 64,
+            },
+        },
+    );
+    opaque_ptr.get_operation().insert_at_back(entry, &ctx);
+
     let ret = ReturnOp::new(&mut ctx, None);
-    let ret_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 33, 1);
+    let ret_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 36, 1);
     ret.get_operation().deref_mut(&ctx).set_loc(ret_loc);
     ret.get_operation().insert_at_back(entry, &ctx);
 
@@ -2757,11 +2848,95 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
         ir.contains("!DIBasicType(name: \"u32\", size: 32, encoding: DW_ATE_unsigned)"),
         "basic integer variables should get DIBasicType metadata:\n{ir}"
     );
+    let f32_id = metadata_id(
+        &ir,
+        "!DIBasicType(name: \"f32\", size: 32, encoding: DW_ATE_float)",
+    );
+    assert!(
+        ir.contains(&format!(
+            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*mut f32\", baseType: {f32_id}, size: 64)"
+        )),
+        "pointer variables should reference their pointee DIType:\n{ir}"
+    );
+    let i32_id = metadata_id(
+        &ir,
+        "!DIBasicType(name: \"i32\", size: 32, encoding: DW_ATE_signed)",
+    );
+    let inner_pointer = format!(
+        "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*mut i32\", baseType: {i32_id}, size: 64)"
+    );
+    let inner_pointer_id = metadata_id(&ir, &inner_pointer);
+    assert!(
+        ir.contains(&format!(
+            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*const *mut i32\", baseType: {inner_pointer_id}, size: 64)"
+        )),
+        "nested pointer metadata must preserve the complete base-type chain:\n{ir}"
+    );
+
+    let u16_id = metadata_id(
+        &ir,
+        "!DIBasicType(name: \"u16\", size: 16, encoding: DW_ATE_unsigned)",
+    );
+    let subrange_id = metadata_id(&ir, "!DISubrange(count: 4)");
+    let subrange_tuple_id = metadata_id(&ir, &format!("!{{{subrange_id}}}"));
+    let array_type = format!(
+        "!DICompositeType(tag: DW_TAG_array_type, baseType: {u16_id}, size: 64, elements: {subrange_tuple_id})"
+    );
+    let array_type_id = metadata_id(&ir, &array_type);
+    assert!(
+        ir.contains(&format!(
+            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*const [u16; 4]\", baseType: {array_type_id}, size: 64)"
+        )),
+        "array pointer metadata must reference the exact element/subrange graph:\n{ir}"
+    );
+
+    assert!(
+        ir.contains("!DILocalVariable(name: \"opaque_ptr\", scope: !"),
+        "unsupported pointers must remain visible as source variables:\n{ir}"
+    );
     assert!(
         ir.contains(
-            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*mut f32\", baseType: null, size: 64)"
+            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*const _\", baseType: null, size: 64)"
         ),
-        "pointer variables should get a pointer DIType:\n{ir}"
+        "the compatibility pointer must retain its legacy null-base metadata:\n{ir}"
+    );
+    let null_base_pointer_count = ir
+        .lines()
+        .filter(|line| line.contains("DW_TAG_pointer_type") && line.contains("baseType: null"))
+        .count();
+    assert!(
+        null_base_pointer_count == 1,
+        "only the explicit opaque compatibility pointer may have a null baseType:\n{ir}"
+    );
+
+    let Some(llvm_as) = ["llvm-as-22", "llvm-as-21", "llvm-as"]
+        .into_iter()
+        .find(|tool| {
+            std::process::Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+    else {
+        eprintln!("skipping pointer-debug llvm-as parse gate: no supported llvm-as on PATH");
+        return;
+    };
+    let ll_path = std::env::temp_dir().join(format!(
+        "cuda_oxide_pointer_debug_parse_gate_{}.ll",
+        std::process::id()
+    ));
+    std::fs::write(&ll_path, &ir).expect("write pointer-debug temp .ll");
+    let output = std::process::Command::new(llvm_as)
+        .arg("-o")
+        .arg("/dev/null")
+        .arg(&ll_path)
+        .output()
+        .expect("run llvm-as for pointer debug metadata");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = std::fs::remove_file(&ll_path);
+    assert!(
+        output.status.success(),
+        "{llvm_as} rejected pointer debug metadata:\n{stderr}\n--- module ---\n{ir}"
     );
 }
 
@@ -2863,9 +3038,14 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
                         members: vec![llvm_export::ops::DebugTypeMember {
                             name: "0".to_string(),
                             offset_bits: 0,
-                            ty: DebugLocalTypeKind::Pointer {
+                            ty: DebugLocalTypeKind::TypedPointer {
                                 name: "&u32".to_string(),
                                 size_bits: 64,
+                                pointee: Box::new(DebugLocalTypeKind::Basic {
+                                    name: "u32".to_string(),
+                                    size_bits: 32,
+                                    encoding: "DW_ATE_unsigned",
+                                }),
                             },
                         }],
                     },

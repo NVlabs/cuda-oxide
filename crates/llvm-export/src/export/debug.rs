@@ -462,6 +462,22 @@ impl<'a> ModuleExportState<'a> {
                      baseType: null, size: {size_bits})"
                 )
             }
+            DebugLocalTypeKind::TypedPointer {
+                name,
+                size_bits,
+                pointee,
+            } => {
+                assert!(
+                    pointee.is_valid_typed_pointer_pointee(),
+                    "typed pointer cannot export an opaque or composite pointee descendant"
+                );
+                let base = self.ensure_debug_type(pointee);
+                let name = escape_debug_string(name);
+                format!(
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"{name}\", \
+                     baseType: !{base}, size: {size_bits})"
+                )
+            }
             DebugLocalTypeKind::Struct {
                 name,
                 size_bits,

@@ -999,16 +999,22 @@ fn debug_type_for_ty_at(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
             encoding: "DW_ATE_float",
         }),
         TyKind::RigidTy(RigidTy::RawPtr(pointee, mutability)) => {
-            Some(DebugLocalTypeKind::Pointer {
-                name: raw_pointer_name(pointee, mutability),
-                size_bits: 64,
-            })
+            debug_typed_pointer_type(ty, &pointee, DebugPointerKind::Raw(mutability), depth)
+                .or_else(|| {
+                    Some(DebugLocalTypeKind::Pointer {
+                        name: raw_pointer_name(pointee, mutability),
+                        size_bits: 64,
+                    })
+                })
         }
         TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) => {
-            Some(DebugLocalTypeKind::Pointer {
-                name: reference_name(pointee, mutability),
-                size_bits: 64,
-            })
+            debug_typed_pointer_type(ty, &pointee, DebugPointerKind::Reference(mutability), depth)
+                .or_else(|| {
+                    Some(DebugLocalTypeKind::Pointer {
+                        name: reference_name(pointee, mutability),
+                        size_bits: 64,
+                    })
+                })
         }
         TyKind::RigidTy(RigidTy::Closure(closure_def, substs)) if depth < MAX_DEBUG_TYPE_DEPTH => {
             let upvar_tys = types::closure_upvar_tys(&substs)?;
@@ -1059,6 +1065,125 @@ fn debug_type_for_ty_at(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
                 name: format!("[{}; {count}]", short_ty_name(&elem_ty)),
                 size_bits,
                 element: Box::new(element),
+                count,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Describe a one-word pointer/reference and its safely bounded pointee.
+///
+/// Rust references and raw pointers to dynamically-sized types are fat
+/// pointers. Encoding those as a typed `DW_TAG_pointer_type` would discard
+/// their metadata word, so this helper declines them and lets the caller retain
+/// the legacy opaque pointer metadata. The same fallback applies when a pointee
+/// is unsupported or exceeds the recursion bound. Composite pointees are
+/// deliberately excluded here: `DebugLocalTypeKind` is currently a tree, so
+/// following an ADT such as `Node { next: *const Node }` would recursively
+/// unroll the same type instead of representing the cyclic DWARF graph.
+#[derive(Clone, Copy)]
+enum DebugPointerKind {
+    Raw(mir::Mutability),
+    Reference(mir::Mutability),
+}
+
+fn debug_typed_pointer_type(
+    pointer: &Ty,
+    pointee: &Ty,
+    kind: DebugPointerKind,
+    depth: usize,
+) -> Option<DebugLocalTypeKind> {
+    if depth >= MAX_DEBUG_TYPE_DEPTH {
+        return None;
+    }
+
+    let size_bits = layout_size_bits(pointer)?;
+    let pointer_word_bits =
+        rustc_public::target::MachineInfo::target_pointer_width().bytes() as u64 * 8;
+    if size_bits != pointer_word_bits {
+        return None;
+    }
+
+    // Build and validate the bounded pointee first. The source-facing pointer
+    // name is then derived from that accepted tree, so rejected pathological
+    // source types cannot recurse or grow a name before the depth gate fires.
+    let pointee = debug_pointer_pointee_type(pointee, depth + 1)?;
+    let name = debug_pointer_name(kind, &pointee);
+    Some(DebugLocalTypeKind::TypedPointer {
+        name,
+        size_bits,
+        pointee: Box::new(pointee),
+    })
+}
+
+fn debug_pointer_name(kind: DebugPointerKind, pointee: &DebugLocalTypeKind) -> String {
+    let pointee = typed_pointer_pointee_display_name(pointee);
+    match kind {
+        DebugPointerKind::Raw(mir::Mutability::Mut) => format!("*mut {pointee}"),
+        DebugPointerKind::Raw(mir::Mutability::Not) => format!("*const {pointee}"),
+        DebugPointerKind::Reference(mir::Mutability::Mut) => format!("&mut {pointee}"),
+        DebugPointerKind::Reference(mir::Mutability::Not) => format!("&{pointee}"),
+    }
+}
+
+fn typed_pointer_pointee_display_name(ty: &DebugLocalTypeKind) -> &str {
+    match ty {
+        DebugLocalTypeKind::Basic { name, .. }
+        | DebugLocalTypeKind::TypedPointer { name, .. }
+        | DebugLocalTypeKind::Array { name, .. } => name,
+        DebugLocalTypeKind::Pointer { .. }
+        | DebugLocalTypeKind::Struct { .. }
+        | DebugLocalTypeKind::Enum { .. } => {
+            unreachable!("typed pointer pointees use only the bounded typed subset")
+        }
+    }
+}
+
+/// Build the finite subset that is safe to embed beneath a pointer node.
+///
+/// Primitive leaves, fixed arrays whose elements stay inside this subset, and
+/// nested thin pointers/references form an acyclic tree. Tuples, ADTs, enums,
+/// closures, and every other composite are rejected even when the general
+/// local-variable debug path can describe part of them. `char` and unit are
+/// also rejected until `DebugLocalTypeKind` has an accurate encoding for them;
+/// treating either as an integer or null-base pointer would be misleading.
+fn debug_pointer_pointee_type(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
+    match ty.kind() {
+        TyKind::RigidTy(RigidTy::Bool) => Some(DebugLocalTypeKind::Basic {
+            name: "bool".to_string(),
+            size_bits: 8,
+            encoding: "DW_ATE_boolean",
+        }),
+        TyKind::RigidTy(RigidTy::Int(int_ty)) => Some(DebugLocalTypeKind::Basic {
+            name: int_name(int_ty).to_string(),
+            size_bits: (int_ty.num_bytes() * 8) as u64,
+            encoding: "DW_ATE_signed",
+        }),
+        TyKind::RigidTy(RigidTy::Uint(uint_ty)) => Some(DebugLocalTypeKind::Basic {
+            name: uint_name(uint_ty).to_string(),
+            size_bits: (uint_ty.num_bytes() * 8) as u64,
+            encoding: "DW_ATE_unsigned",
+        }),
+        TyKind::RigidTy(RigidTy::Float(float_ty)) => Some(DebugLocalTypeKind::Basic {
+            name: float_name(float_ty).to_string(),
+            size_bits: float_size_bits(float_ty),
+            encoding: "DW_ATE_float",
+        }),
+        TyKind::RigidTy(RigidTy::RawPtr(pointee, mutability)) => {
+            debug_typed_pointer_type(ty, &pointee, DebugPointerKind::Raw(mutability), depth)
+        }
+        TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) => {
+            debug_typed_pointer_type(ty, &pointee, DebugPointerKind::Reference(mutability), depth)
+        }
+        TyKind::RigidTy(RigidTy::Array(element, len)) if depth < MAX_DEBUG_TYPE_DEPTH => {
+            let count = array_len_const(&len)?;
+            let element_debug = debug_pointer_pointee_type(&element, depth + 1)?;
+            let element_name = typed_pointer_pointee_display_name(&element_debug);
+            Some(DebugLocalTypeKind::Array {
+                name: format!("[{element_name}; {count}]"),
+                size_bits: layout_size_bits(ty)?,
+                element: Box::new(element_debug),
                 count,
             })
         }
@@ -2319,6 +2444,219 @@ pub fn scalarized_pair(a: u32, b: u64) -> u64 {
             result.1,
             "debug_fragment must reject non-field composite projections"
         );
+    }
+
+    /// Thin pointers preserve a finite pointee debug tree, while composites,
+    /// fat pointers, and unsupported pointees retain the opaque fallback.
+    #[test]
+    fn pointer_debug_types_type_safe_pointees_and_preserve_opaque_fallbacks() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_pointer_debug_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("pointer_debug_fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+pub struct Pair {
+    pub first: u32,
+    pub second: u64,
+}
+
+pub struct Node {
+    pub next: *const Node,
+    pub value: u32,
+}
+
+pub fn pointer_debug_types(
+    _thin: *mut u32,
+    _reference: &u64,
+    _nested: *const *mut i32,
+    _array: *const [u16; 4],
+    _composite: *const Pair,
+    _tuple: *const (u32, u64),
+    _fat: *const [u8],
+    _fat_reference: &str,
+    _unsupported: *const fn(),
+    _unit: *const (),
+    _char: *const char,
+    _self_referential: *const Node,
+) {}
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=pointer_debug_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Zmir-opt-level=0".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let debug_types = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    let body = rustc_public::all_local_items()
+                        .into_iter()
+                        .find_map(|item| item.body())
+                        .expect("fixture function has a body");
+                    let debug_types = body
+                        .locals()
+                        .iter()
+                        .skip(1) // return place
+                        .take(12)
+                        .map(|decl| debug_type_for_ty(&decl.ty))
+                        .collect::<Vec<_>>();
+                    std::ops::ControlFlow::<(), _>::Continue(debug_types)
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        std::fs::remove_dir_all(&root).ok();
+        assert_eq!(debug_types.len(), 12, "one debug type result per argument");
+
+        let Some(DebugLocalTypeKind::TypedPointer {
+            name,
+            size_bits,
+            pointee,
+        }) = &debug_types[0]
+        else {
+            panic!(
+                "thin raw pointer must be described, got {:?}",
+                debug_types[0]
+            );
+        };
+        assert_eq!(name, "*mut u32");
+        assert_eq!(*size_bits, 64);
+        assert!(matches!(
+            pointee.as_ref(),
+            DebugLocalTypeKind::Basic {
+                name,
+                size_bits: 32,
+                encoding: "DW_ATE_unsigned",
+            } if name == "u32"
+        ));
+
+        let Some(DebugLocalTypeKind::TypedPointer {
+            name,
+            size_bits,
+            pointee,
+        }) = &debug_types[1]
+        else {
+            panic!("thin reference must be described, got {:?}", debug_types[1]);
+        };
+        assert_eq!(name, "&u64");
+        assert_eq!(*size_bits, 64);
+        assert!(matches!(
+            pointee.as_ref(),
+            DebugLocalTypeKind::Basic {
+                name,
+                size_bits: 64,
+                encoding: "DW_ATE_unsigned",
+            } if name == "u64"
+        ));
+
+        let Some(DebugLocalTypeKind::TypedPointer {
+            name,
+            size_bits,
+            pointee,
+        }) = &debug_types[2]
+        else {
+            panic!(
+                "nested thin pointer must be described, got {:?}",
+                debug_types[2]
+            );
+        };
+        assert_eq!(name, "*const *mut i32");
+        assert_eq!(*size_bits, 64);
+        assert!(matches!(
+            pointee.as_ref(),
+            DebugLocalTypeKind::TypedPointer {
+                name,
+                size_bits: 64,
+                pointee,
+            } if name == "*mut i32" && matches!(
+                pointee.as_ref(),
+                DebugLocalTypeKind::Basic {
+                    name,
+                    size_bits: 32,
+                    encoding: "DW_ATE_signed",
+                } if name == "i32"
+            )
+        ));
+
+        let Some(DebugLocalTypeKind::TypedPointer {
+            name,
+            size_bits,
+            pointee,
+        }) = &debug_types[3]
+        else {
+            panic!(
+                "pointer to fixed array must be described, got {:?}",
+                debug_types[3]
+            );
+        };
+        assert_eq!(name, "*const [u16; 4]");
+        assert_eq!(*size_bits, 64);
+        assert!(matches!(
+            pointee.as_ref(),
+            DebugLocalTypeKind::Array {
+                name,
+                size_bits: 64,
+                count: 4,
+                element,
+            } if name == "[u16; 4]" && matches!(
+                element.as_ref(),
+                DebugLocalTypeKind::Basic {
+                    name,
+                    size_bits: 16,
+                    encoding: "DW_ATE_unsigned",
+                } if name == "u16"
+            )
+        ));
+
+        fn assert_opaque_pointer(ty: &Option<DebugLocalTypeKind>, expected_name: &str) {
+            let Some(DebugLocalTypeKind::Pointer { name, size_bits }) = ty else {
+                panic!("unsupported pointer must retain opaque metadata, got {ty:?}");
+            };
+            assert_eq!(name, expected_name);
+            assert_eq!(*size_bits, 64, "compatibility fallback preserves old width");
+        }
+
+        assert_opaque_pointer(&debug_types[4], "*const _");
+        assert_opaque_pointer(&debug_types[5], "*const _");
+        assert_opaque_pointer(&debug_types[6], "*const _");
+        assert_opaque_pointer(&debug_types[7], "&_");
+        assert_opaque_pointer(&debug_types[8], "*const _");
+        assert_opaque_pointer(&debug_types[9], "*const _");
+        assert_opaque_pointer(&debug_types[10], "*const _");
+        assert_opaque_pointer(&debug_types[11], "*const _");
     }
 
     /// Closure environments must be described as composite debug types with
