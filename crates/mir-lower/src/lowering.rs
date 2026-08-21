@@ -266,6 +266,7 @@ pub fn convert_func(
         function_return_abi_alignment(ctx, func_type, llvm_func_type).map_err(anyhow_to_pliron)?;
 
     let llvm_func = llvm::FuncOp::new(ctx, name, llvm_func_type);
+    llvm::copy_debug_function_name(ctx, op, llvm_func.get_operation());
     llvm::copy_debug_source_scope_map(ctx, op, llvm_func.get_operation());
 
     if is_kernel {

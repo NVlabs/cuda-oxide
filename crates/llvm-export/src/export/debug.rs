@@ -35,6 +35,7 @@ impl<'a> ModuleExportState<'a> {
     pub(super) fn debug_subprogram_for_function(
         &mut self,
         name: &str,
+        linkage_name: &str,
         loc: &Location,
     ) -> Option<usize> {
         if !self.debug_kind.line_tables_enabled() {
@@ -46,13 +47,15 @@ impl<'a> ModuleExportState<'a> {
         let file_id = self.ensure_debug_file(&path);
         let subroutine_type_id = self.ensure_debug_subroutine_type();
         let name = escape_debug_string(name);
+        let linkage_name = escape_debug_string(linkage_name);
         let line = pos.line;
         let id = self.alloc_metadata_id();
 
         self.debug_nodes.push((
             id,
             format!(
-                "distinct !DISubprogram(name: \"{name}\", scope: !{file_id}, file: !{file_id}, \
+                "distinct !DISubprogram(name: \"{name}\", linkageName: \"{linkage_name}\", \
+                 scope: !{file_id}, file: !{file_id}, \
                  line: {line}, type: !{subroutine_type_id}, scopeLine: {line}, \
                  spFlags: DISPFlagDefinition, unit: !{cu_id}, retainedNodes: !{{}})"
             ),

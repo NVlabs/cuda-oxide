@@ -931,6 +931,13 @@ pub mod ops {
     const DEBUG_PROJECTED_COUNT_KEY: &str = "cuda_oxide_debug_projected_count";
     const DEBUG_FRAGMENT_COUNT_KEY: &str = "cuda_oxide_debug_fragment_count";
     const DEBUG_VALUE_EXPRESSION_KEY: &str = "cuda_oxide_debug_value_expression";
+    /// Source-facing name of a function, kept separate from its emitted symbol.
+    ///
+    /// Non-generic device functions use legalized Rust paths as their physical
+    /// symbols and generic functions use Rust's mangled symbol.  Neither is the
+    /// name users write in source or pass to a debugger, so the importer carries
+    /// that spelling explicitly for `DISubprogram::name`.
+    const DEBUG_FUNCTION_NAME_KEY: &str = "cuda_oxide_debug_function_name";
     const DEBUG_SOURCE_SCOPE_COUNT_KEY: &str = "cuda_oxide_debug_scope_count";
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
@@ -974,6 +981,24 @@ pub mod ops {
             .attributes
             .get::<AlignmentAttr>(&key)
             .map(|a| a.0)
+    }
+
+    /// Attach the source-facing name of a function to a MIR/LLVM function op.
+    pub fn set_debug_function_name(ctx: &mut Context, op: Ptr<Operation>, name: &str) {
+        set_string_attr(ctx, op, DEBUG_FUNCTION_NAME_KEY, name.to_string());
+    }
+
+    /// Read the source-facing name attached to a MIR/LLVM function op.
+    pub fn debug_function_name(ctx: &Context, op: Ptr<Operation>) -> Option<String> {
+        get_string_attr(ctx, op, DEBUG_FUNCTION_NAME_KEY)
+    }
+
+    /// Copy a function's source-facing debug name during MIR-to-LLVM lowering.
+    pub fn copy_debug_function_name(ctx: &mut Context, from: Ptr<Operation>, to: Ptr<Operation>) {
+        let Some(name) = debug_function_name(ctx, from) else {
+            return;
+        };
+        set_debug_function_name(ctx, to, &name);
     }
 
     /// Stamp whether an inline asm op has side effects beyond its operands.

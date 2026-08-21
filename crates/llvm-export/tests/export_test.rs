@@ -2243,6 +2243,11 @@ fn line_table_debug_metadata_emits_function_scope_and_instruction_locations() {
     let void_ty = VoidType::get(&ctx);
     let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
+    llvm_export::ops::set_debug_function_name(
+        &mut ctx,
+        func.get_operation(),
+        "source_crate::debug_kernel",
+    );
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 7, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
 
@@ -2296,12 +2301,57 @@ fn line_table_debug_metadata_emits_function_scope_and_instruction_locations() {
         "debug export should describe the Rust compile unit:\n{ir}"
     );
     assert!(
-        ir.contains("distinct !DISubprogram(name: \"debug_kernel\""),
-        "function definition should get a DISubprogram:\n{ir}"
+        ir.contains(
+            "distinct !DISubprogram(name: \"source_crate::debug_kernel\", linkageName: \"debug_kernel\""
+        ),
+        "function definition should separate its source name from its physical linkage name:\n{ir}"
     );
     assert!(
         ir.contains("!DILocation(line: 8, column: 5, scope: !"),
         "instruction location should preserve the source line and column:\n{ir}"
+    );
+}
+
+#[test]
+fn full_debug_metadata_keeps_generic_source_name_separate_from_mangled_symbol() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let linkage_name = "_RNvMCexampleINtCsource7WrapperjE7get_mut";
+    let func = FuncOp::new(&mut ctx, linkage_name.try_into().unwrap(), func_ty);
+    llvm_export::ops::set_debug_function_name(
+        &mut ctx,
+        func.get_operation(),
+        "source_crate::Wrapper::<u16>::get_mut",
+    );
+    let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/generic.rs", 19, 1);
+    func.get_operation().deref_mut(&ctx).set_loc(func_loc);
+
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = DebugConfig {
+        inner: PtxExportConfig,
+        debug_kind: DebugKind::Full,
+    };
+    let ir =
+        export_module_to_string_with_config(&ctx, &module, &config).expect("debug export succeeds");
+
+    assert!(
+        ir.contains(&format!("define void @{linkage_name}()")),
+        "debug naming must not change the physical function symbol:\n{ir}"
+    );
+    assert!(
+        ir.contains(&format!(
+            "distinct !DISubprogram(name: \"source_crate::Wrapper::<u16>::get_mut\", linkageName: \"{linkage_name}\""
+        )),
+        "generic debug metadata must carry both source and linkage spellings:\n{ir}"
     );
 }
 

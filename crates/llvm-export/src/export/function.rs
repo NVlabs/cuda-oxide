@@ -779,7 +779,10 @@ impl<'a> ModuleExportState<'a> {
 
         if let Some(entry_block) = entry_block_opt {
             let func_loc = func.get_operation().deref(self.ctx).loc();
-            let debug_scope = self.debug_subprogram_for_function(&fixed_func_name, &func_loc);
+            let debug_name = ops::debug_function_name(self.ctx, func.get_operation())
+                .unwrap_or_else(|| fixed_func_name.clone());
+            let debug_scope =
+                self.debug_subprogram_for_function(&debug_name, &fixed_func_name, &func_loc);
             if let Some(scope_id) = debug_scope {
                 self.register_debug_source_scopes_for_function(scope_id, func.get_operation());
             }

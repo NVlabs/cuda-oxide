@@ -1772,6 +1772,15 @@ pub fn translate_body(
     };
     mir_func_op.set_symbol_name(ctx, legaliser.legalise(&name_str));
 
+    // Keep the Rust/source-facing name independent of the physical symbol.
+    // Kernels deliberately retain their user-visible export name: their MIR
+    // instance is the macro-generated device implementation, whose diagnostic
+    // name is not the name callers launch or set breakpoints on.  Device
+    // helpers use stable MIR's fully specialized diagnostic name, while their
+    // physical symbol may be legalized (non-generic) or mangled (generic).
+    let debug_name = function_debug_name(instance, is_kernel, &name_str);
+    llvm_export::ops::set_debug_function_name(ctx, op_ptr, &debug_name);
+
     // Check if the function has the #[cuda_oxide::kernel] attribute (passed via is_kernel flag)
     if is_kernel {
         // Add "gpu_kernel" attribute to the mir.func operation.
@@ -2053,6 +2062,20 @@ pub fn translate_body(
     Ok(op_ptr)
 }
 
+/// Choose the debugger-visible spelling independently of a function's symbol.
+///
+/// Device-helper names intentionally keep concrete generic arguments. Erasing
+/// them would make distinct monomorphizations indistinguishable. Supporting a
+/// shorthand such as `Type::method` for every specialization requires proper
+/// namespace/type DIEs (or a separately agreed alias policy), not lossy names.
+fn function_debug_name(instance: &mono::Instance, is_kernel: bool, export_name: &str) -> String {
+    if is_kernel {
+        export_name.to_string()
+    } else {
+        instance.name().to_string()
+    }
+}
+
 /// Propagate `#[inline(always)]` as an LLVM `alwaysinline` function
 /// attribute. Kernel entry points are excluded because they're `.entry` in PTX
 /// and never callees, so marking them `alwaysinline` would be a no-op at best
@@ -2129,6 +2152,163 @@ mod tests {
     }
 
     #[test]
+    fn stable_mir_function_names_are_source_facing_and_specialized() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_function_debug_name_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("function_debug_name_fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+#[inline(never)]
+pub fn plain(value: u32) -> u32 { value + 1 }
+
+#[inline(never)]
+pub fn generic<T>(value: T) -> T { value }
+
+pub struct Wrapper<T>(pub T);
+
+impl<T> Wrapper<T> {
+    #[inline(never)]
+    pub fn get_mut(&mut self) -> &mut T { &mut self.0 }
+}
+
+#[inline(never)]
+pub fn cuda_oxide_device_generated_kernel(mut wrapped: Wrapper<u16>) -> u32 {
+    let _ = generic::<u64>(3);
+    let _ = wrapped.get_mut();
+    plain(7)
+}
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=function_debug_name_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Zmir-opt-level=0".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let names = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    let item = rustc_public::all_local_items()
+                        .into_iter()
+                        .find(|item| {
+                            item.name()
+                                .ends_with("::cuda_oxide_device_generated_kernel")
+                        })
+                        .expect("fixture entry item");
+                    let instance = mono::Instance::try_from(item).expect("entry instance");
+                    let body = instance.body().expect("entry body");
+                    let mut callees = Vec::new();
+
+                    for block in &body.blocks {
+                        let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
+                            continue;
+                        };
+                        let mir::Operand::Constant(constant) = func else {
+                            continue;
+                        };
+                        let ConstantKind::ZeroSized = constant.const_.kind() else {
+                            continue;
+                        };
+                        let TyKind::RigidTy(RigidTy::FnDef(definition, args)) =
+                            constant.const_.ty().kind()
+                        else {
+                            continue;
+                        };
+                        let Some(callee) = mono::Instance::resolve(definition, &args).ok() else {
+                            continue;
+                        };
+                        callees.push((
+                            callee.name().to_string(),
+                            callee.def.name().to_string(),
+                            callee.mangled_name().to_string(),
+                        ));
+                    }
+
+                    std::ops::ControlFlow::<(), _>::Continue((
+                        instance.name().to_string(),
+                        function_debug_name(&instance, true, "visible_kernel"),
+                        callees,
+                    ))
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(
+            names.0,
+            "function_debug_name_fixture::cuda_oxide_device_generated_kernel"
+        );
+        assert_eq!(names.1, "visible_kernel");
+        let source_names: std::collections::BTreeSet<_> = names
+            .2
+            .iter()
+            .map(|(source, _, _)| source.as_str())
+            .collect();
+        assert_eq!(
+            source_names,
+            std::collections::BTreeSet::from([
+                "function_debug_name_fixture::Wrapper::<u16>::get_mut",
+                "function_debug_name_fixture::generic::<u64>",
+                "function_debug_name_fixture::plain",
+            ])
+        );
+        let definition_names: std::collections::BTreeSet<_> = names
+            .2
+            .iter()
+            .map(|(_, definition, _)| definition.as_str())
+            .collect();
+        assert_eq!(
+            definition_names,
+            std::collections::BTreeSet::from([
+                "function_debug_name_fixture::Wrapper::<T>::get_mut",
+                "function_debug_name_fixture::generic",
+                "function_debug_name_fixture::plain",
+            ]),
+            "definition names are not specialized enough for debugger overloads"
+        );
+        for (source_name, _, mangled_name) in names.2 {
+            assert_ne!(source_name, mangled_name);
+            assert!(
+                mangled_name.starts_with("_R"),
+                "expected a Rust linkage symbol, got {mangled_name}"
+            );
+        }
+    }
+
+    #[test]
     fn inline_always_flag_reaches_llvm_func_attr_before_export() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
@@ -2167,6 +2347,11 @@ mod tests {
         };
 
         set_alwaysinline_attr_from_flag(&mut ctx, &mir_func, false, true);
+        llvm_export::ops::set_debug_function_name(
+            &mut ctx,
+            mir_func.get_operation(),
+            "source_crate::inline_helper",
+        );
         mir_func.get_operation().insert_at_back(module_block, &ctx);
 
         mir_lower::register(&mut ctx);
@@ -2190,6 +2375,11 @@ mod tests {
                 .0
                 .contains_key(&key),
             "`is_inline_always` must become an LLVM dialect alwaysinline attribute before export",
+        );
+        assert_eq!(
+            llvm_export::ops::debug_function_name(&ctx, llvm_func.get_operation()).as_deref(),
+            Some("source_crate::inline_helper"),
+            "MIR-to-LLVM lowering must preserve the source-facing function name",
         );
     }
 
