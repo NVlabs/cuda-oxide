@@ -559,6 +559,32 @@ pub fn is_fully_monomorphized<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>)
 /// are not part of `core_float_math`; `sin`/`cos` are listed defensively in
 /// case a build ever takes the `std` route too. Only `std::`-prefixed names
 /// belong here; `core`-based shims are already allowed.
+/// Fit a function path into the forbidden-crate diagnostic box.
+///
+/// The box pads this field with `{:<48}`, which counts characters, so the
+/// budget is a character budget. Two things follow, and the previous
+/// `if fn_path.len() > 48 { &fn_path[..45] }` got both wrong for a path that
+/// is not pure ASCII:
+///
+/// * `len()` is bytes. A 30-character path spelled with multi-byte characters
+///   can exceed 48 bytes and be truncated even though it would have fit.
+/// * `&fn_path[..45]` is a byte index. When byte 45 lands inside a multi-byte
+///   character it panics with "byte index 45 is not a char boundary" -- so
+///   emitting the diagnostic for a forbidden call would abort the compiler
+///   instead of printing the error the box exists to print. Rust identifiers
+///   may be non-ASCII, so a path can reach here in that shape.
+///
+/// Truncation keeps `width - 3` characters and appends an ellipsis, so the
+/// result never exceeds `width` characters.
+fn truncate_path_for_box(fn_path: &str, width: usize) -> String {
+    debug_assert!(width > 3, "the ellipsis needs room");
+    if fn_path.chars().count() <= width {
+        return fn_path.to_owned();
+    }
+    let kept: String = fn_path.chars().take(width - 3).collect();
+    format!("{kept}...")
+}
+
 fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
     matches!(
         fn_path,
@@ -1400,12 +1426,7 @@ impl<'tcx> DeviceCollector<'tcx> {
                 let border = "═".repeat(68);
                 let empty_line = format!("║{:68}║", "");
 
-                // Truncate fn_path if too long (max 48 chars to fit in box)
-                let fn_display = if fn_path.len() > 48 {
-                    format!("{}...", &fn_path[..45])
-                } else {
-                    fn_path.clone()
-                };
+                let fn_display = truncate_path_for_box(&fn_path, 48);
 
                 // Build the "From crate" line with proper padding
                 let crate_line = format!("║ From crate: '{}'", crate_name);
@@ -2433,7 +2454,8 @@ pub fn dump_device_mir_info<'tcx>(tcx: TyCtxt<'tcx>, functions: &[CollectedFunct
 #[cfg(test)]
 mod tests {
     use super::{
-        device_runtime_checks_target, is_kernel_entry_def_path, unsupported_codegen_protocol_root,
+        device_runtime_checks_target, is_kernel_entry_def_path, truncate_path_for_box,
+        unsupported_codegen_protocol_root,
     };
     use reserved_oxide_symbols::{
         DEVICE_PREFIX, KERNEL_PREFIX, LEGACY_DEVICE_PREFIX, LEGACY_KERNEL_PREFIX,
@@ -2553,5 +2575,52 @@ mod tests {
             "my_crate::helpers::prefix{KERNEL_PREFIX}vecadd"
         )));
         assert!(!is_kernel_entry_def_path(""));
+    }
+
+    /// The box pads this field with `{:<48}`, so the budget is characters.
+    ///
+    /// The previous code tested `fn_path.len() > 48` (bytes) and then sliced
+    /// `&fn_path[..45]` (a byte index). A path whose byte 45 falls inside a
+    /// multi-byte character panicked with "byte index 45 is not a char
+    /// boundary", which aborted the compiler while it was trying to print the
+    /// forbidden-crate error.
+    #[test]
+    fn truncating_a_path_for_the_box_respects_char_boundaries() {
+        // 'é' is two bytes, so every char boundary sits at an even index and
+        // byte 45 lands mid-character.
+        let path = "é".repeat(60);
+        assert!(path.chars().count() > 48, "fixture must exceed the budget");
+        assert!(!path.is_char_boundary(45), "fixture must straddle byte 45");
+
+        let shown = truncate_path_for_box(&path, 48);
+
+        assert!(shown.ends_with("..."));
+        assert_eq!(shown.chars().count(), 48);
+        assert!(path.starts_with(shown.trim_end_matches('.')));
+    }
+
+    #[test]
+    fn a_path_that_fits_is_left_alone() {
+        let path = "core::fmt::Debug::fmt";
+        assert_eq!(truncate_path_for_box(path, 48), path);
+    }
+
+    /// Bytes are not characters: a path of 30 characters spelled with
+    /// multi-byte characters exceeds 48 bytes, and the old byte test truncated
+    /// it even though it fits the box.
+    #[test]
+    fn a_multibyte_path_within_the_char_budget_is_not_truncated() {
+        let path = "é".repeat(30);
+        assert!(path.len() > 48, "fixture must exceed the byte budget");
+        assert_eq!(path.chars().count(), 30);
+        assert_eq!(truncate_path_for_box(&path, 48), path);
+    }
+
+    #[test]
+    fn truncation_never_exceeds_the_width() {
+        for count in [49, 60, 200] {
+            let ascii = "a".repeat(count);
+            assert_eq!(truncate_path_for_box(&ascii, 48).chars().count(), 48);
+        }
     }
 }
