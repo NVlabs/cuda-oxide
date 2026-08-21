@@ -539,26 +539,6 @@ pub fn is_fully_monomorphized<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>)
     true
 }
 
-/// `std::sys::cmath::*` names we allow in device code and rewrite to GPU math.
-///
-/// When you call `x.tan()` (also `atan`, `acos`, `cbrt`, the hyperbolics,
-/// `exp_m1`, `ln_1p`, `hypot`, ...), the compiler turns it into a call to a
-/// tiny `std` wrapper like `std::sys::cmath::tan`, which on a CPU forwards to
-/// the system C math library. The GPU has no such library, and device code
-/// may not call into `std`, so our "no std on the GPU" guard would normally
-/// reject the call.
-///
-/// We never actually run `std` here: mir-importer rewrites each of these
-/// names to the matching NVIDIA libdevice function (`__nv_tan`, `__nv_sinh`,
-/// ...). This list just tells the guard "these are fine, we handle them."
-/// Keep it in sync with the `std::sys::cmath` matches in float_math.rs.
-///
-/// A few functions (`sin`, `cos`, `exp`, ...) take a different, allowed route
-/// on this toolchain: the compiler lowers them to a builtin in `core`, so
-/// they never reach here. The ones below still go through `std` because they
-/// are not part of `core_float_math`; `sin`/`cos` are listed defensively in
-/// case a build ever takes the `std` route too. Only `std::`-prefixed names
-/// belong here; `core`-based shims are already allowed.
 /// Fit a function path into the forbidden-crate diagnostic box.
 ///
 /// The box pads this field with `{:<48}`, which counts characters, so the
@@ -585,6 +565,26 @@ fn truncate_path_for_box(fn_path: &str, width: usize) -> String {
     format!("{kept}...")
 }
 
+/// `std::sys::cmath::*` names we allow in device code and rewrite to GPU math.
+///
+/// When you call `x.tan()` (also `atan`, `acos`, `cbrt`, the hyperbolics,
+/// `exp_m1`, `ln_1p`, `hypot`, ...), the compiler turns it into a call to a
+/// tiny `std` wrapper like `std::sys::cmath::tan`, which on a CPU forwards to
+/// the system C math library. The GPU has no such library, and device code
+/// may not call into `std`, so our "no std on the GPU" guard would normally
+/// reject the call.
+///
+/// We never actually run `std` here: mir-importer rewrites each of these
+/// names to the matching NVIDIA libdevice function (`__nv_tan`, `__nv_sinh`,
+/// ...). This list just tells the guard "these are fine, we handle them."
+/// Keep it in sync with the `std::sys::cmath` matches in float_math.rs.
+///
+/// A few functions (`sin`, `cos`, `exp`, ...) take a different, allowed route
+/// on this toolchain: the compiler lowers them to a builtin in `core`, so
+/// they never reach here. The ones below still go through `std` because they
+/// are not part of `core_float_math`; `sin`/`cos` are listed defensively in
+/// case a build ever takes the `std` route too. Only `std::`-prefixed names
+/// belong here; `core`-based shims are already allowed.
 fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
     matches!(
         fn_path,
