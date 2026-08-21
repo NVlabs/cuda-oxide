@@ -1069,13 +1069,13 @@ impl GpuSwissMap {
         let ctrl = DeviceBuffer::<u32>::zeroed(stream, capacity / GROUP)?;
         let slots = DeviceBuffer::<u64>::zeroed(stream, capacity)?;
         unsafe {
-            cuda_core::memory::memset_d8_async(
+            cuda_core::simt::memory::memset_d8_async(
                 ctrl.cu_deviceptr(),
                 0xFF,
                 ctrl.num_bytes(),
                 stream.cu_stream(),
             )?;
-            cuda_core::memory::memset_d8_async(
+            cuda_core::simt::memory::memset_d8_async(
                 slots.cu_deviceptr(),
                 0xFF,
                 slots.num_bytes(),
@@ -1379,13 +1379,13 @@ impl GpuSwissMap {
         let new_ctrl = DeviceBuffer::<u32>::zeroed(stream, new_capacity / GROUP)?;
         let new_slots = DeviceBuffer::<u64>::zeroed(stream, new_capacity)?;
         unsafe {
-            cuda_core::memory::memset_d8_async(
+            cuda_core::simt::memory::memset_d8_async(
                 new_ctrl.cu_deviceptr(),
                 0xFF,
                 new_ctrl.num_bytes(),
                 stream.cu_stream(),
             )?;
-            cuda_core::memory::memset_d8_async(
+            cuda_core::simt::memory::memset_d8_async(
                 new_slots.cu_deviceptr(),
                 0xFF,
                 new_slots.num_bytes(),

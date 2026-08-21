@@ -178,7 +178,7 @@ fn reset<T>(
     stream: &CudaStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
-        cuda_core::memory::memset_d8_async(
+        cuda_core::simt::memory::memset_d8_async(
             buffer.cu_deviceptr(),
             0,
             buffer.num_bytes(),

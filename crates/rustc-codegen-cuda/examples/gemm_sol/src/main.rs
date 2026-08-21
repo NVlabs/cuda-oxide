@@ -5821,7 +5821,7 @@ fn run_benchmark_persistent(
     for _ in 0..WARMUP {
         let z = 0u32;
         unsafe {
-            cuda_core::memory::memcpy_htod_async(
+            cuda_core::simt::memory::memcpy_htod_async(
                 dev_tile_counter.cu_deviceptr(),
                 &z as *const u32,
                 std::mem::size_of::<u32>(),
@@ -5851,7 +5851,7 @@ fn run_benchmark_persistent(
     for _ in 0..ITERS {
         let z = 0u32;
         unsafe {
-            cuda_core::memory::memcpy_htod_async(
+            cuda_core::simt::memory::memcpy_htod_async(
                 dev_tile_counter.cu_deviceptr(),
                 &z as *const u32,
                 std::mem::size_of::<u32>(),

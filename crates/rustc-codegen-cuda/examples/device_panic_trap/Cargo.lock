@@ -129,7 +129,7 @@ dependencies = [
 [[package]]
 name = "cuda-bindings"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#7ba886c100be52194a271eef3af0f451071dc0fa"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "bindgen",
  "libloading",
@@ -142,7 +142,7 @@ dependencies = [
 [[package]]
 name = "cuda-core"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#7ba886c100be52194a271eef3af0f451071dc0fa"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "anyhow",
  "cuda-bindings",

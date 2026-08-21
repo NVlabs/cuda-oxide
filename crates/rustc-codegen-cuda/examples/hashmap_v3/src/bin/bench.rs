@@ -101,13 +101,13 @@ unsafe fn reset_table_async(
     stream: &Arc<CudaStream>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
-        cuda_core::memory::memset_d8_async(
+        cuda_core::simt::memory::memset_d8_async(
             map.ctrl.cu_deviceptr(),
             0xFF,
             map.ctrl.num_bytes(),
             stream.cu_stream(),
         )?;
-        cuda_core::memory::memset_d8_async(
+        cuda_core::simt::memory::memset_d8_async(
             map.slots.cu_deviceptr(),
             0xFF,
             map.slots.num_bytes(),

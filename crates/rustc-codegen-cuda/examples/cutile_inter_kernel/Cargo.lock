@@ -170,7 +170,7 @@ dependencies = [
 [[package]]
 name = "cuda-async"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#d9df4ddfa77a1f1f0d3acc7483230bafbbfbb1de"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -186,7 +186,7 @@ dependencies = [
 [[package]]
 name = "cuda-bindings"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#d9df4ddfa77a1f1f0d3acc7483230bafbbfbb1de"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "bindgen",
  "libloading",
@@ -199,7 +199,7 @@ dependencies = [
 [[package]]
 name = "cuda-core"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#d9df4ddfa77a1f1f0d3acc7483230bafbbfbb1de"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -210,7 +210,7 @@ dependencies = [
 [[package]]
 name = "cutile"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#d9df4ddfa77a1f1f0d3acc7483230bafbbfbb1de"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "anyhow",
  "cuda-async",
@@ -231,7 +231,7 @@ dependencies = [
 [[package]]
 name = "cutile-compiler"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#d9df4ddfa77a1f1f0d3acc7483230bafbbfbb1de"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "anyhow",
  "cuda-async",
@@ -252,7 +252,7 @@ dependencies = [
 [[package]]
 name = "cutile-ir"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#d9df4ddfa77a1f1f0d3acc7483230bafbbfbb1de"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "half",
  "indexmap",
@@ -262,7 +262,7 @@ dependencies = [
 [[package]]
 name = "cutile-macro"
 version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#d9df4ddfa77a1f1f0d3acc7483230bafbbfbb1de"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
 dependencies = [
  "convert_case",
  "cutile-compiler",
