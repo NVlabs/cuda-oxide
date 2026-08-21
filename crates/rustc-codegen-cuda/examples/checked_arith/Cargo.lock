@@ -26,7 +26,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools",
  "lazy_static",
  "lazycell",
  "log",
@@ -34,30 +34,10 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rustc-hash 1.1.0",
+ "rustc-hash",
  "shlex",
  "syn",
  "which",
-]
-
-[[package]]
-name = "bindgen"
-version = "0.71.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
-dependencies = [
- "bitflags",
- "cexpr",
- "clang-sys",
- "itertools 0.13.0",
- "log",
- "prettyplease",
- "proc-macro2",
- "quote",
- "regex",
- "rustc-hash 2.1.2",
- "shlex",
- "syn",
 ]
 
 [[package]]
@@ -94,7 +74,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 name = "checked_arith"
 version = "0.1.0"
 dependencies = [
- "cuda-core 0.2.1",
+ "cuda-core",
  "cuda-device",
  "cuda-host",
 ]
@@ -160,7 +140,7 @@ name = "cuda-bindings"
 version = "0.2.0"
 source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#7ba886c100be52194a271eef3af0f451071dc0fa"
 dependencies = [
- "bindgen 0.69.5",
+ "bindgen",
  "libloading",
  "prettyplease",
  "proc-macro2",
@@ -169,32 +149,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "cuda-bindings"
-version = "0.2.1"
-dependencies = [
- "bindgen 0.71.1",
-]
-
-[[package]]
 name = "cuda-core"
 version = "0.2.0"
 source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#7ba886c100be52194a271eef3af0f451071dc0fa"
 dependencies = [
  "anyhow",
- "cuda-bindings 0.2.0",
+ "cuda-bindings",
  "half",
  "object",
-]
-
-[[package]]
-name = "cuda-core"
-version = "0.2.1"
-dependencies = [
- "anyhow",
- "cuda-bindings 0.2.1",
- "cuda-macros",
- "half",
- "oxide-artifacts",
 ]
 
 [[package]]
@@ -209,7 +171,7 @@ name = "cuda-host"
 version = "0.2.1"
 dependencies = [
  "cuda-artifact-finalizer",
- "cuda-core 0.2.0",
+ "cuda-core",
  "cuda-macros",
  "half",
  "ptx-parse",
@@ -336,15 +298,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -441,13 +394,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "oxide-artifacts"
-version = "0.2.1"
-dependencies = [
- "object",
-]
-
-[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -517,12 +463,6 @@ name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
-
-[[package]]
-name = "rustc-hash"
-version = "2.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
 
 [[package]]
 name = "rustix"
