@@ -2094,15 +2094,28 @@ pub fn translate_operand(
                 );
                 shared_alloc.set_attr_size(ctx, size_attr);
 
-                // Store the alloc key so lowering can deduplicate
-                let alloc_key = format!("{:?}", constant.const_);
+                // Full debug resolves an injective static key.  Off and line
+                // tables deliberately retain the historical allocation key and
+                // avoid the extra stable-MIR identity work entirely.
+                let source_identity = value_map
+                    .debug_variables()
+                    .then(|| shared_static_source_identity(constant))
+                    .flatten();
+                let alloc_key = if let Some(identity) = &source_identity {
+                    identity.key.clone()
+                } else {
+                    format!("{:?}", constant.const_)
+                };
                 shared_alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key));
 
                 // Record which Rust `static` this is. The alloc key above is
                 // opaque and lowering mints an anonymous `__shared_mem_N`
                 // symbol, so without this the generated shared-memory blocks
                 // cannot be attributed back to source.
-                if let Some(source_name) = shared_static_source_name(constant) {
+                if let Some(identity) = source_identity {
+                    shared_alloc.set_attr_source_name(ctx, StringAttr::new(identity.name));
+                    shared_alloc.set_attr_source_key(ctx, StringAttr::new(identity.key));
+                } else if let Some(source_name) = shared_static_source_name(constant) {
                     shared_alloc.set_attr_source_name(ctx, StringAttr::new(source_name));
                 }
 
@@ -2181,13 +2194,23 @@ pub fn translate_operand(
                 );
                 shared_alloc.set_attr_size(ctx, size_attr);
 
-                // Store the alloc key so lowering can deduplicate
-                let alloc_key = format!("{:?}", constant.const_);
+                let source_identity = value_map
+                    .debug_variables()
+                    .then(|| shared_static_source_identity(constant))
+                    .flatten();
+                let alloc_key = if let Some(identity) = &source_identity {
+                    identity.key.clone()
+                } else {
+                    format!("{:?}", constant.const_)
+                };
                 shared_alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key));
 
                 // A `Barrier` static occupies shared memory too, so name it
                 // for the same attribution reason as `SharedArray` above.
-                if let Some(source_name) = shared_static_source_name(constant) {
+                if let Some(identity) = source_identity {
+                    shared_alloc.set_attr_source_name(ctx, StringAttr::new(identity.name));
+                    shared_alloc.set_attr_source_key(ctx, StringAttr::new(identity.key));
+                } else if let Some(source_name) = shared_static_source_name(constant) {
                     shared_alloc.set_attr_source_name(ctx, StringAttr::new(source_name));
                 }
 
@@ -11079,16 +11102,44 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
     }
 }
 
-/// Best-effort Rust path of the `static` a shared-memory constant refers to.
+struct SharedStaticSourceIdentity {
+    name: String,
+    key: String,
+}
+
+/// Resolve a whole-static shared allocation to both its display path and its
+/// injective compiler identity.
 ///
-/// Used only to label the generated `__shared_mem_N` global, so this is
-/// deliberately infallible: an unexpected constant shape yields `None` and the
-/// allocation stays unlabelled rather than failing a translation that would
-/// otherwise have succeeded. That is why it does not reuse
-/// [`static_target_from_constant`], which rejects multi-relocation constants —
-/// a diagnostic label must never be able to turn into a hard error. It also
-/// has no use for the byte addend: a `SharedArray` or `Barrier` constant always
-/// points at the whole static.
+/// `StaticDef::name()` deliberately omits DefPath disambiguators, so distinct
+/// same-leaf nested statics can have the same display path. The mangled static
+/// instance remains unique and is used for both deduplication and the full-debug
+/// side-table join. Interior pointers are rejected: a `SharedArray` or
+/// `Barrier` allocation always represents the entire static.
+fn shared_static_source_identity(
+    constant: &mir::ConstOperand,
+) -> Option<SharedStaticSourceIdentity> {
+    let ConstantKind::Allocated(allocation) = constant.const_.kind() else {
+        return None;
+    };
+    if allocation.provenance.ptrs.len() != 1 {
+        return None;
+    }
+    let &(relocation_offset, _) = allocation.provenance.ptrs.first()?;
+    let target = static_target_from_allocation_at(allocation, relocation_offset)
+        .ok()
+        .flatten()?;
+    if target.byte_offset != 0 {
+        return None;
+    }
+    let name = target.static_def.name();
+    let key = crate::device_static_global_key(&target.static_def);
+    Some(SharedStaticSourceIdentity { name, key })
+}
+
+/// Historical best-effort source label used by non-Full builds.
+///
+/// This intentionally performs no strict validation: the comment label must
+/// never turn an otherwise valid translation into an error.
 fn shared_static_source_name(constant: &mir::ConstOperand) -> Option<String> {
     use rustc_public::mir::alloc::GlobalAlloc;
 

@@ -959,6 +959,10 @@ pub mod ops {
         pub declaration: DebugSourcePosition,
         /// Mirrors rustc's `!tcx.is_reachable_non_generic(def_id)` decision.
         pub is_local_to_unit: bool,
+        /// A named static declared inside a function. AS3 uses the owning
+        /// subprogram as the DIE scope so cuda-gdb resolves the bare leaf while
+        /// the subprogram itself remains under the structured namespace chain.
+        pub is_function_local: bool,
     }
 
     const MAX_DEBUG_NAMESPACE_SEGMENTS: usize = 128;
@@ -1049,6 +1053,7 @@ pub mod ops {
             || file.len() > MAX_DEBUG_STRING_BYTES
             || info.declaration.line <= 0
             || info.declaration.column <= 0
+            || (info.is_function_local && info.namespace.len() < 2)
             || !type_is_bounded(&info.ty, 0, &mut type_entries)
         {
             return None;
@@ -1060,13 +1065,14 @@ pub mod ops {
             return None;
         }
 
-        let mut out = String::from("v1 ");
+        let mut out = String::from("v2 ");
         put_str(&mut out, &info.name);
         put_u64(&mut out, info.namespace.len() as u64);
         for segment in &info.namespace {
             put_str(&mut out, segment);
         }
         put_u64(&mut out, u64::from(info.is_local_to_unit));
+        put_u64(&mut out, u64::from(info.is_function_local));
         put_str(&mut out, file);
         put_u64(&mut out, info.declaration.line as u64);
         put_u64(&mut out, info.declaration.column as u64);
@@ -1112,7 +1118,7 @@ pub mod ops {
             return None;
         }
         let bytes = encoded.as_bytes();
-        if !bytes.starts_with(b"v1 ") {
+        if !bytes.starts_with(b"v2 ") {
             return None;
         }
         let mut pos = 3;
@@ -1139,6 +1145,14 @@ pub mod ops {
             1 => true,
             _ => return None,
         };
+        let is_function_local = match take_u64(bytes, &mut pos)? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        if is_function_local && namespace.len() < 2 {
+            return None;
+        }
         let file = PathBuf::from(take_str(bytes, &mut pos)?);
         let line = i32::try_from(take_u64(bytes, &mut pos)?).ok()?;
         let column = i32::try_from(take_u64(bytes, &mut pos)?).ok()?;
@@ -1159,6 +1173,7 @@ pub mod ops {
             ty,
             declaration: DebugSourcePosition { file, line, column },
             is_local_to_unit,
+            is_function_local,
         })
     }
 
@@ -1290,6 +1305,10 @@ pub mod ops {
     const DEBUG_FUNCTION_NAME_KEY: &str = "cuda_oxide_debug_function_name";
     const DEBUG_SOURCE_SCOPE_COUNT_KEY: &str = "cuda_oxide_debug_scope_count";
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
+    /// Raw LLVM-dialect symbol of the function that owns a function-local AS3
+    /// static. The exporter resolves this to the one real `DISubprogram` used
+    /// by that definition; it never creates a scope-only duplicate.
+    const DEBUG_GLOBAL_OWNER_FUNCTION_KEY: &str = "cuda_oxide_debug_global_owner_function";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
     const OP_VOLATILE_KEY: &str = "cuda_oxide_op_volatile";
     /// Op-attribute key for the alignment an address computation guarantees.
@@ -1429,6 +1448,30 @@ pub mod ops {
     ) -> Option<DebugGlobalVariableInfo> {
         let encoded = get_string_attr(ctx, op, DEBUG_GLOBAL_INFO_KEY)?;
         decode_debug_global_info(&encoded)
+    }
+
+    /// Associate a function-local debug global with its owning function.
+    pub fn set_debug_global_owner_function(ctx: &mut Context, op: Ptr<Operation>, owner: &str) {
+        if !owner.is_empty() && owner.len() <= MAX_DEBUG_STRING_BYTES {
+            set_string_attr(ctx, op, DEBUG_GLOBAL_OWNER_FUNCTION_KEY, owner.to_string());
+        }
+    }
+
+    /// Read a bounded, non-empty owner function symbol. Malformed attributes
+    /// fail closed so they cannot create a CU-scoped or namespace-scoped alias.
+    pub fn debug_global_owner_function(ctx: &Context, op: Ptr<Operation>) -> Option<String> {
+        get_string_attr(ctx, op, DEBUG_GLOBAL_OWNER_FUNCTION_KEY)
+            .filter(|owner| !owner.is_empty() && owner.len() <= MAX_DEBUG_STRING_BYTES)
+    }
+
+    /// Detach a global's debug identity (variable info and owner function).
+    ///
+    /// Fail-open path for one physical allocation reached under divergent
+    /// debug identities: the storage stays, only the optional DWARF
+    /// attachment is dropped so it cannot misattribute the allocation.
+    pub fn clear_debug_global_identity(ctx: &mut Context, op: Ptr<Operation>) {
+        remove_string_attr(ctx, op, DEBUG_GLOBAL_INFO_KEY);
+        remove_string_attr(ctx, op, DEBUG_GLOBAL_OWNER_FUNCTION_KEY);
     }
 
     /// Attach every source variable described by a static projection of this slot.
@@ -2186,6 +2229,11 @@ pub mod ops {
             .map(|a| String::from((*a).clone()))
     }
 
+    fn remove_string_attr(ctx: &mut Context, op: Ptr<Operation>, key: &str) {
+        let key = Identifier::try_new(key.to_string()).expect("valid identifier");
+        op.deref_mut(ctx).attributes.0.remove(&key);
+    }
+
     /// LLVM debug-value marker used by the textual exporter.
     ///
     /// This is not a runtime instruction. It lowers to an `llvm.dbg.value`
@@ -2743,6 +2791,7 @@ pub mod ops {
                     column: 9,
                 },
                 is_local_to_unit: false,
+                is_function_local: true,
             };
             let encoded = encode_debug_global_info(&info).expect("valid identity encodes");
             assert_eq!(decode_debug_global_info(&encoded), Some(info));
@@ -2751,16 +2800,20 @@ pub mod ops {
         #[test]
         fn global_debug_identity_rejects_malformed_namespace_and_visibility() {
             assert!(
-                decode_debug_global_info("v1 1 X0 ").is_none(),
+                decode_debug_global_info("v2 1 X0 ").is_none(),
                 "an empty namespace must not degrade to scope:null"
             );
             assert!(
-                decode_debug_global_info("v1 1 X129 ").is_none(),
+                decode_debug_global_info("v2 1 X129 ").is_none(),
                 "namespace allocation must be bounded"
             );
             assert!(
-                decode_debug_global_info("v1 1 X1 1 n2 ").is_none(),
+                decode_debug_global_info("v2 1 X1 1 n2 ").is_none(),
                 "visibility accepts only the exact 0/1 encoding"
+            );
+            assert!(
+                decode_debug_global_info("v2 1 X2 1 c1 f0 2 ").is_none(),
+                "function-local accepts only the exact 0/1 encoding"
             );
 
             let info = DebugGlobalVariableInfo {
@@ -2777,6 +2830,7 @@ pub mod ops {
                     column: 1,
                 },
                 is_local_to_unit: true,
+                is_function_local: false,
             };
             let mut trailing = encode_debug_global_info(&info).expect("valid identity encodes");
             trailing.push('x');
@@ -2794,6 +2848,13 @@ pub mod ops {
             let mut oversized_name = info.clone();
             oversized_name.name = "x".repeat(MAX_DEBUG_STRING_BYTES + 1);
             assert!(encode_debug_global_info(&oversized_name).is_none());
+
+            let mut missing_function_scope = info.clone();
+            missing_function_scope.is_function_local = true;
+            assert!(
+                encode_debug_global_info(&missing_function_scope).is_none(),
+                "a function-local global needs crate plus function scope"
+            );
 
             let mut too_deep = DebugLocalTypeKind::Basic {
                 name: "u8".to_string(),

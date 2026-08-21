@@ -979,6 +979,67 @@ pub(crate) fn debug_type_for_ty(ty: &Ty) -> Option<DebugLocalTypeKind> {
     debug_type_for_ty_at(ty, 0)
 }
 
+/// Describe the compiler-materialized backing array for a shared-memory marker.
+///
+/// `SharedArray<T, N>` is a zero-sized Rust marker, but its device storage is
+/// the physical `[T; N]` allocation created by `mir.shared_alloc`. Building the
+/// debug type from `T` and `N` keeps that physical/logical object independent
+/// of the marker's own zero-sized layout.
+pub(crate) fn debug_shared_array_type(element_ty: &Ty, count: u64) -> Option<DebugLocalTypeKind> {
+    if count == 0 {
+        return None;
+    }
+    let element = debug_type_for_ty_at(element_ty, 1)?;
+    if !debug_type_graph_supported_for_shared(&element) {
+        return None;
+    }
+    let element_size_bits = layout_size_bits(element_ty)?;
+    if element.size_bits() != element_size_bits {
+        return None;
+    }
+    let size_bits = element_size_bits.checked_mul(count)?;
+    Some(DebugLocalTypeKind::Array {
+        name: format!("[{}; {count}]", short_ty_name(element_ty)),
+        size_bits,
+        element: Box::new(element),
+        count,
+    })
+}
+
+/// Opaque `Pointer` debug types carry no pointee type. Emitting them as an
+/// AS3 array element (including through a composite) would advertise an
+/// array-of-void-pointer shape, so those globals are omitted. `TypedPointer`
+/// carries a complete finite pointee tree and is admitted when that tree is
+/// itself supported.
+fn debug_type_graph_supported_for_shared(ty: &DebugLocalTypeKind) -> bool {
+    match ty {
+        DebugLocalTypeKind::Basic { .. } => true,
+        DebugLocalTypeKind::Pointer { .. } => false,
+        DebugLocalTypeKind::TypedPointer { pointee, .. } => {
+            debug_type_graph_supported_for_shared(pointee)
+        }
+        DebugLocalTypeKind::Array { element, .. } => debug_type_graph_supported_for_shared(element),
+        DebugLocalTypeKind::Struct { members, .. } => members
+            .iter()
+            .all(|member| debug_type_graph_supported_for_shared(&member.ty)),
+        DebugLocalTypeKind::Enum {
+            discriminant,
+            variants,
+            ..
+        } => {
+            discriminant
+                .as_ref()
+                .is_none_or(|discriminant| debug_type_graph_supported_for_shared(&discriminant.ty))
+                && variants.iter().all(|variant| {
+                    variant
+                        .members
+                        .iter()
+                        .all(|member| debug_type_graph_supported_for_shared(&member.ty))
+                })
+        }
+    }
+}
+
 fn debug_type_for_ty_at(ty: &Ty, depth: usize) -> Option<DebugLocalTypeKind> {
     match ty.kind() {
         TyKind::RigidTy(RigidTy::Bool) => Some(DebugLocalTypeKind::Basic {
@@ -1759,6 +1820,7 @@ pub fn translate_body(
     // Create a value map to track MIR locals -> pliron IR values
     let num_locals = body.locals().len();
     let mut value_map = ValueMap::new(num_locals);
+    value_map.set_debug_variables(debug_kind.variables_enabled());
 
     // Resolve the per-body unchecked-indexing policy. Like the dynamic-shared
     // marker, the `#[kernel(unchecked_indexing)]` marker is scanned on any

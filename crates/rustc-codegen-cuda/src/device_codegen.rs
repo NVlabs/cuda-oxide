@@ -109,7 +109,7 @@ use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_session::config::DebugInfo;
 use rustc_span::def_id::DefId;
 use rustc_span::{DUMMY_SP, Span, hygiene};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -455,6 +455,64 @@ fn debug_position_from_span(tcx: TyCtxt<'_>, span: Span) -> Option<DebugSourcePo
 struct OwnedStaticDebugIdentity {
     def_id: DefId,
     identity: mir_importer::DebugGlobalVariableIdentity,
+    storage: StaticDebugStorage,
+    is_function_local: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticDebugStorage {
+    OrdinaryAs1,
+    SharedArrayAs3,
+    BarrierAs3,
+}
+
+/// Identify the two cuda-device marker types whose static storage is
+/// materialized in NVPTX shared memory rather than at the marker's Rust layout.
+fn shared_static_debug_storage(tcx: TyCtxt<'_>, def_id: DefId) -> Option<StaticDebugStorage> {
+    let ty = tcx.type_of(def_id).instantiate_identity();
+    let TyKind::Adt(adt, _) = ty.kind() else {
+        return None;
+    };
+    if tcx.crate_name(adt.did().krate).as_str() != "cuda_device" {
+        return None;
+    }
+    // `def_path_str` follows rustc's visible-parent map and can spell a
+    // re-exported type as `cuda_device::SharedArray`. The canonical DefPath is
+    // independent of re-export visibility and distinguishes the two marker
+    // definitions exactly inside the already-validated crate.
+    match tcx
+        .def_path(adt.did())
+        .to_string_no_crate_verbose()
+        .as_str()
+    {
+        "::shared::SharedArray" => Some(StaticDebugStorage::SharedArrayAs3),
+        "::barrier::Barrier" => Some(StaticDebugStorage::BarrierAs3),
+        _ => None,
+    }
+}
+
+/// Whether this static's definition is owned by a function-like item.
+///
+/// `DefKind::Static::nested` is unrelated: it identifies anonymous allocations
+/// synthesized inside another static, while ordinary named block-local statics
+/// (including `TILE`) have `nested: false`.
+fn static_is_function_local(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let mut current = tcx.parent(def_id);
+    loop {
+        if matches!(
+            tcx.def_kind(current),
+            DefKind::Fn | DefKind::AssocFn | DefKind::Closure
+        ) {
+            return true;
+        }
+        let Some(parent) = tcx.def_key(current).parent else {
+            return false;
+        };
+        current = DefId {
+            krate: current.krate,
+            index: parent,
+        };
+    }
 }
 
 /// Full-debug-only provenance walk for statics reachable by device code.
@@ -555,14 +613,28 @@ impl<'tcx> Visitor<'tcx> for StaticDebugProvenance<'tcx> {
     }
 }
 
-fn static_debug_namespace(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Vec<String>> {
+fn static_debug_namespace(
+    tcx: TyCtxt<'_>,
+    def_id: DefId,
+    source_function_names: &HashMap<DefId, String>,
+) -> Option<Vec<String>> {
     let mut reversed = Vec::new();
     let mut current = tcx.parent(def_id);
 
     loop {
         let key = tcx.def_key(current);
-        let mut segment = String::new();
-        rustc_codegen_ssa::debuginfo::type_names::push_item_name(tcx, current, false, &mut segment);
+        let mut segment = source_function_names
+            .get(&current)
+            .cloned()
+            .unwrap_or_default();
+        if segment.is_empty() {
+            rustc_codegen_ssa::debuginfo::type_names::push_item_name(
+                tcx,
+                current,
+                false,
+                &mut segment,
+            );
+        }
         if segment.is_empty() {
             return None;
         }
@@ -586,6 +658,11 @@ fn collect_static_debug_identities<'tcx>(
     functions: &[CollectedFunction<'tcx>],
 ) -> Result<Vec<OwnedStaticDebugIdentity>, DeviceCodegenError> {
     let mut provenance = StaticDebugProvenance::new(tcx);
+    let source_function_names: HashMap<_, _> = functions
+        .iter()
+        .filter(|function| function.is_kernel)
+        .map(|function| (function.instance.def_id(), function.export_name.clone()))
+        .collect();
 
     for function in functions {
         provenance.current_instance = Some(function.instance);
@@ -598,15 +675,27 @@ fn collect_static_debug_identities<'tcx>(
     statics.sort_by_key(|def_id| tcx.def_path_str(*def_id));
     statics
         .into_iter()
-        .filter(|def_id| matches!(tcx.def_kind(*def_id), DefKind::Static { nested: false, .. }))
-        .map(|def_id| {
+        .filter_map(|def_id| {
+            // Anonymous `nested: true` allocations do not necessarily have an
+            // item type. Exclude them before `shared_static_debug_storage`
+            // queries `type_of`; named function-local statics are `nested:
+            // false` and remain eligible.
+            if !matches!(tcx.def_kind(def_id), DefKind::Static { nested: false, .. }) {
+                return None;
+            }
+            let storage =
+                shared_static_debug_storage(tcx, def_id).unwrap_or(StaticDebugStorage::OrdinaryAs1);
+            Some((def_id, storage))
+        })
+        .map(|(def_id, storage)| {
             let name = tcx.item_name(def_id).to_string();
-            let namespace = static_debug_namespace(tcx, def_id).ok_or_else(|| {
-                DeviceCodegenError::Translation(format!(
-                    "cannot represent the source namespace for device static `{}`",
-                    tcx.def_path_str(def_id)
-                ))
-            })?;
+            let namespace = static_debug_namespace(tcx, def_id, &source_function_names)
+                .ok_or_else(|| {
+                    DeviceCodegenError::Translation(format!(
+                        "cannot represent the source namespace for device static `{}`",
+                        tcx.def_path_str(def_id)
+                    ))
+                })?;
             let declaration_span = hygiene::walk_chain_collapsed(tcx.def_span(def_id), DUMMY_SP);
             let declaration = debug_position_from_span(tcx, declaration_span).ok_or_else(|| {
                 DeviceCodegenError::Translation(format!(
@@ -616,6 +705,9 @@ fn collect_static_debug_identities<'tcx>(
             })?;
             Ok(OwnedStaticDebugIdentity {
                 def_id,
+                storage,
+                is_function_local: storage != StaticDebugStorage::OrdinaryAs1
+                    && static_is_function_local(tcx, def_id),
                 identity: mir_importer::DebugGlobalVariableIdentity {
                     name,
                     namespace,
@@ -909,10 +1001,22 @@ pub fn generate_device_code<'tcx>(
             let rustc_public::mir::mono::MonoItem::Static(static_def) = stable_item else {
                 unreachable!("internal static MonoItem must remain a stable static MonoItem")
             };
-            let Some(info) = mir_importer::build_debug_global_variable_info(
-                owned.identity.clone(),
-                &static_def.ty(),
-            ) else {
+            let static_ty = static_def.ty();
+            let info = match owned.storage {
+                StaticDebugStorage::SharedArrayAs3 => {
+                    mir_importer::build_debug_shared_array_variable_info(
+                        owned.identity.clone(),
+                        &static_ty,
+                    )
+                }
+                StaticDebugStorage::OrdinaryAs1 | StaticDebugStorage::BarrierAs3 => {
+                    mir_importer::build_debug_global_variable_info(
+                        owned.identity.clone(),
+                        &static_ty,
+                    )
+                }
+            };
+            let Some(mut info) = info else {
                 // The local-variable debug path is deliberately best-effort
                 // for semantic types it cannot yet describe (notably unions).
                 // Globals must fail closed in the same way: omitting this one
@@ -921,6 +1025,7 @@ pub fn generate_device_code<'tcx>(
                 // for every other AS1 global in the module.
                 continue;
             };
+            info.is_function_local = owned.is_function_local;
             let key = mir_importer::device_static_global_key(&static_def);
             if let Some(previous) = debug_global_variables.insert(key.clone(), info.clone())
                 && previous != info

@@ -45,6 +45,7 @@ pub use cuda_oxide_codegen::__private::{DeviceExternAttrs, DeviceExternDecl, Pip
 use llvm_export::export::DebugKind;
 pub use llvm_export::export::DeviceExternType;
 use llvm_export::ops::{DebugGlobalVariableInfo, DebugSourcePosition};
+use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::context::Context;
 use pliron::identifier::Legaliser;
 use pliron::linked_list::ContainsLinkedList;
@@ -186,8 +187,11 @@ pub struct PipelineConfig {
     pub device_arch_hint: Option<String>,
     /// Device debug metadata tier.
     pub debug_kind: DebugKind,
-    /// Source identities and semantic types for ordinary device statics,
-    /// keyed by [`device_static_global_key`].
+    /// Source identities and semantic types for device statics,
+    /// keyed by [`device_static_global_key`]. The shared carrier reuses the
+    /// reviewed tagged identity rather than defining a second key domain;
+    /// source paths remain display-only because same-leaf block statics can
+    /// have identical paths.
     ///
     /// The rustc frontend populates this only for full debug builds. Keeping
     /// the map module-scoped lets every per-function reference receive the
@@ -269,6 +273,41 @@ pub fn build_debug_global_variable_info(
         ty: debug_ty,
         declaration: identity.declaration,
         is_local_to_unit: identity.is_local_to_unit,
+        is_function_local: false,
+    })
+}
+
+/// Combine rustc-owned identity with the physical `[T; N]` backing type of a
+/// `SharedArray<T, N>` static.
+///
+/// The declared Rust marker is a ZST and therefore cannot be used as the
+/// variable's type. The importer already materializes one shared allocation
+/// containing `N` elements of `T`; this builder describes that same object.
+pub fn build_debug_shared_array_variable_info(
+    identity: DebugGlobalVariableIdentity,
+    ty: &Ty,
+) -> Option<DebugGlobalVariableInfo> {
+    use rustc_public::ty::{GenericArgKind, RigidTy, TyKind};
+
+    let TyKind::RigidTy(RigidTy::Adt(_, generic_args)) = ty.kind() else {
+        return None;
+    };
+    let element_ty = generic_args.0.iter().find_map(|arg| match arg {
+        GenericArgKind::Type(ty) => Some(*ty),
+        _ => None,
+    })?;
+    let count = generic_args.0.iter().find_map(|arg| match arg {
+        GenericArgKind::Const(value) => value.eval_target_usize().ok(),
+        _ => None,
+    })?;
+    let ty = crate::translator::body::debug_shared_array_type(&element_ty, count)?;
+    Some(DebugGlobalVariableInfo {
+        name: identity.name,
+        namespace: identity.namespace,
+        ty,
+        declaration: identity.declaration,
+        is_local_to_unit: identity.is_local_to_unit,
+        is_function_local: false,
     })
 }
 
@@ -283,6 +322,8 @@ fn attach_debug_global_variables(
         return;
     }
 
+    let owner_function = Operation::get_op::<dialect_mir::ops::MirFuncOp>(func_op, ctx)
+        .map(|function| function.get_symbol_name(ctx).to_string());
     let region = func_op.deref(ctx).get_region(0);
     let blocks: Vec<_> = region.deref(ctx).iter(ctx).collect();
     let operations: Vec<_> = blocks
@@ -291,31 +332,41 @@ fn attach_debug_global_variables(
         .collect();
 
     for op in operations {
-        let Some(global) = Operation::get_op::<dialect_mir::ops::MirGlobalAllocOp>(op, ctx) else {
-            continue;
-        };
-        let result_ty = global
-            .get_operation()
-            .deref(ctx)
-            .get_result(0)
-            .get_type(ctx);
-        let is_as1 = result_ty
-            .deref(ctx)
-            .downcast_ref::<dialect_mir::types::MirPtrType>()
-            .is_some_and(|pointer| {
-                pointer.address_space == dialect_mir::types::address_space::GLOBAL
-            });
-        if !is_as1 {
+        if let Some(global) = Operation::get_op::<dialect_mir::ops::MirGlobalAllocOp>(op, ctx) {
+            let result_ty = global
+                .get_operation()
+                .deref(ctx)
+                .get_result(0)
+                .get_type(ctx);
+            let is_as1 = result_ty
+                .deref(ctx)
+                .downcast_ref::<dialect_mir::types::MirPtrType>()
+                .is_some_and(|pointer| {
+                    pointer.address_space == dialect_mir::types::address_space::GLOBAL
+                });
+            if is_as1
+                && let Some(key) = global
+                    .get_attr_global_key(ctx)
+                    .map(|key| String::from(key.clone()))
+                && let Some(info) = globals.get(&key)
+            {
+                llvm_export::ops::set_debug_global_variable(ctx, op, info);
+            }
             continue;
         }
-        let Some(key) = global
-            .get_attr_global_key(ctx)
-            .map(|key| String::from(key.clone()))
-        else {
-            continue;
-        };
-        if let Some(info) = globals.get(&key) {
+
+        if let Some(shared) = Operation::get_op::<dialect_mir::ops::MirSharedAllocOp>(op, ctx)
+            && let Some(key) = shared
+                .get_attr_source_key(ctx)
+                .map(|key| String::from(key.clone()))
+            && let Some(info) = globals.get(&key)
+        {
             llvm_export::ops::set_debug_global_variable(ctx, op, info);
+            if info.is_function_local
+                && let Some(owner) = &owner_function
+            {
+                llvm_export::ops::set_debug_global_owner_function(ctx, op, owner);
+            }
         }
     }
 }
@@ -646,6 +697,7 @@ fn stale_compilation_artifact_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use llvm_export::ops::DebugLocalTypeKind;
     use std::fs;
 
     #[test]
@@ -663,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn global_debug_types_fail_closed_for_unions_and_fat_references() {
+    fn global_and_shared_debug_types_fail_closed_for_unsupported_graphs() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time before unix epoch")
@@ -685,9 +737,28 @@ union Word {
     bytes: [u8; 4],
 }
 
+struct SharedMarker<T, const N: usize>(core::marker::PhantomData<T>);
+unsafe impl<T, const N: usize> Sync for SharedMarker<T, N> {}
+struct ContainsPointer { pointer: *mut u32 }
+
 static SCALAR: u64 = 7;
 static UNION_VALUE: Word = Word { value: 11 };
 static SLICE_VIEW: &[u8] = &[1, 2, 3];
+static SHARED_I32: SharedMarker<i32, 32> = SharedMarker(core::marker::PhantomData);
+static SHARED_UNION: SharedMarker<Word, 4> = SharedMarker(core::marker::PhantomData);
+static SHARED_POINTER: SharedMarker<*mut u32, 4> = SharedMarker(core::marker::PhantomData);
+static SHARED_POINTER_STRUCT: SharedMarker<ContainsPointer, 2> = SharedMarker(core::marker::PhantomData);
+static SHARED_OPAQUE_POINTER: SharedMarker<*mut ContainsPointer, 4> = SharedMarker(core::marker::PhantomData);
+
+fn same_leaf(flag: bool) {
+    if flag {
+        static SAME: SharedMarker<i16, 8> = SharedMarker(core::marker::PhantomData);
+        let _ = &SAME;
+    } else {
+        static SAME: SharedMarker<i16, 8> = SharedMarker(core::marker::PhantomData);
+        let _ = &SAME;
+    }
+}
 "#,
         )
         .unwrap();
@@ -736,8 +807,24 @@ static SLICE_VIEW: &[u8] = &[1, 2, 3];
                             };
                             (
                                 qualified_name,
+                                rustc_public::mir::mono::Instance::from(static_def)
+                                    .mangled_name()
+                                    .to_string(),
                                 build_debug_global_variable_info(identity, &static_def.ty())
                                     .is_some(),
+                                build_debug_shared_array_variable_info(
+                                    DebugGlobalVariableIdentity {
+                                        name: "SHARED".to_string(),
+                                        namespace: vec!["global_debug_types".to_string()],
+                                        declaration: DebugSourcePosition {
+                                            file: std::path::PathBuf::from("global_debug_types.rs"),
+                                            line: 1,
+                                            column: 1,
+                                        },
+                                        is_local_to_unit: true,
+                                    },
+                                    &static_def.ty(),
+                                ),
                             )
                         })
                         .collect::<Vec<_>>();
@@ -753,9 +840,9 @@ static SLICE_VIEW: &[u8] = &[1, 2, 3];
         let status = |leaf: &str| {
             supported
                 .iter()
-                .find(|(name, _)| name.ends_with(&format!("::{leaf}")))
+                .find(|(name, _, _, _)| name.ends_with(&format!("::{leaf}")))
                 .unwrap_or_else(|| panic!("fixture static `{leaf}` was not found"))
-                .1
+                .2
         };
         assert!(status("SCALAR"), "a scalar semantic type is exact");
         assert!(
@@ -766,6 +853,64 @@ static SLICE_VIEW: &[u8] = &[1, 2, 3];
             !status("SLICE_VIEW"),
             "a fat reference must be omitted while the shared type builder describes only one pointer word"
         );
+        let shared = |leaf: &str| {
+            supported
+                .iter()
+                .find(|(name, _, _, _)| name.ends_with(&format!("::{leaf}")))
+                .unwrap_or_else(|| panic!("fixture static `{leaf}` was not found"))
+                .3
+                .as_ref()
+        };
+        let info = shared("SHARED_I32").expect("a supported shared array gets metadata");
+        assert!(matches!(
+            &info.ty,
+            DebugLocalTypeKind::Array {
+                size_bits: 1024,
+                count: 32,
+                element,
+                ..
+            } if matches!(element.as_ref(), DebugLocalTypeKind::Basic { size_bits: 32, .. })
+        ));
+        assert!(shared("SHARED_UNION").is_none());
+        // Thin pointers with a supported pointee carry a complete
+        // `TypedPointer` graph (#1126) and are admitted, directly and as a
+        // composite member.
+        let pointer_info =
+            shared("SHARED_POINTER").expect("a typed thin-pointer element gets metadata");
+        assert!(matches!(
+            &pointer_info.ty,
+            DebugLocalTypeKind::Array {
+                size_bits: 256,
+                count: 4,
+                element,
+                ..
+            } if matches!(
+                element.as_ref(),
+                DebugLocalTypeKind::TypedPointer { size_bits: 64, pointee, .. }
+                    if matches!(pointee.as_ref(), DebugLocalTypeKind::Basic { size_bits: 32, .. })
+            )
+        ));
+        assert!(shared("SHARED_POINTER_STRUCT").is_some());
+        // A composite pointee has no bounded tree, so the pointer falls back
+        // to the opaque legacy form and the whole graph is rejected.
+        assert!(
+            shared("SHARED_OPAQUE_POINTER").is_none(),
+            "legacy untyped pointers must be rejected"
+        );
+        let same_leaf: Vec<_> = supported
+            .iter()
+            .filter(|(name, _, _, _)| name.ends_with("::same_leaf::SAME"))
+            .collect();
+        assert_eq!(same_leaf.len(), 2, "both block-local statics are collected");
+        assert_eq!(
+            same_leaf[0].0, same_leaf[1].0,
+            "Stable MIR source paths expose the adversarial collision"
+        );
+        assert_ne!(
+            same_leaf[0].1, same_leaf[1].1,
+            "mangled static instances are the injective AS3 join keys"
+        );
+        assert!(same_leaf.iter().all(|entry| entry.3.is_some()));
     }
 
     #[test]

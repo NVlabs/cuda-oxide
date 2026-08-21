@@ -149,6 +149,12 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) debug_subroutine_type: Option<usize>,
     /// `DISubprogram` file paths, used to create file-correct nested scopes.
     pub(super) debug_subprogram_files: FxHashMap<usize, PathBuf>,
+    /// The one real `DISubprogram` allocated for each exported function name.
+    /// AS3 globals are emitted before functions, so their owners are reserved
+    /// in a module prepass and reused when the definition is written.
+    pub(super) debug_function_subprograms: FxHashMap<String, usize>,
+    /// Source scope for functions that own function-local shared statics.
+    pub(super) debug_shared_function_scopes: FxHashMap<String, DebugSharedFunctionScope>,
     /// Fallback line/column for calls that LLVM requires to have a location.
     pub(super) debug_subprogram_fallbacks: FxHashMap<usize, (i32, i32)>,
     /// `DILexicalBlockFile` nodes keyed by `(parent scope, file path)`.
@@ -169,7 +175,8 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) debug_namespaces: FxHashMap<(Option<usize>, String), usize>,
     /// Global expressions already created for a physical linkage name.
     /// A repeated linkage must carry the exact same source identity.
-    pub(super) debug_global_variables: FxHashMap<String, (DebugGlobalVariableInfo, usize)>,
+    pub(super) debug_global_variables:
+        FxHashMap<String, (DebugGlobalVariableInfo, u32, Option<String>, usize)>,
     /// Module globals retained by the compile unit.
     pub(super) debug_global_expressions: Vec<usize>,
     /// Whether the compile unit's immutable globals tuple has been finalized.
@@ -189,6 +196,12 @@ pub(super) struct ModuleExportState<'a> {
 pub(super) struct ResolvedDebugScope {
     pub(super) scope: usize,
     pub(super) inlined_at: Option<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DebugSharedFunctionScope {
+    pub(super) namespace: Vec<String>,
+    pub(super) name: String,
 }
 
 impl<'a> ModuleExportState<'a> {
@@ -222,6 +235,8 @@ impl<'a> ModuleExportState<'a> {
             debug_files: FxHashMap::default(),
             debug_subroutine_type: None,
             debug_subprogram_files: FxHashMap::default(),
+            debug_function_subprograms: FxHashMap::default(),
+            debug_shared_function_scopes: FxHashMap::default(),
             debug_subprogram_fallbacks: FxHashMap::default(),
             debug_file_scopes: FxHashMap::default(),
             debug_lexical_blocks: FxHashMap::default(),

@@ -3024,6 +3024,7 @@ fn full_debug_metadata_describes_as1_global_with_semantic_rust_type() {
                 column: 1,
             },
             is_local_to_unit: true,
+            is_function_local: false,
         },
     );
     global.get_operation().insert_at_back(module_block, &ctx);
@@ -3105,6 +3106,276 @@ fn full_debug_metadata_describes_as1_global_with_semantic_rust_type() {
 }
 
 #[test]
+fn full_debug_metadata_describes_function_local_as3_array_with_shared_address_class() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "shared_debug".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let raw_owner = reserved_oxide_symbols::device_symbol("shared_kernel");
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let storage_ty = ArrayType::get(&ctx, i32_ty.into(), 32);
+    let global = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__shared_mem_0".try_into().unwrap(),
+        storage_ty.into(),
+        4,
+    );
+    global.set_address_space(&mut ctx, llvm_export::types::address_space::SHARED);
+    let info = DebugGlobalVariableInfo {
+        name: "TILE".to_string(),
+        namespace: vec![
+            "debuginfo".to_string(),
+            "kernels".to_string(),
+            "shared_kernel".to_string(),
+        ],
+        ty: DebugLocalTypeKind::Array {
+            name: "[i32; 32]".to_string(),
+            size_bits: 1024,
+            element: Box::new(DebugLocalTypeKind::Basic {
+                name: "i32".to_string(),
+                size_bits: 32,
+                encoding: "DW_ATE_signed",
+            }),
+            count: 32,
+        },
+        declaration: DebugSourcePosition {
+            file: PathBuf::from("/tmp/cuda-oxide/tests/shared.rs"),
+            line: 40,
+            column: 9,
+        },
+        is_local_to_unit: true,
+        is_function_local: true,
+    };
+    llvm_export::ops::set_debug_global_variable(&mut ctx, global.get_operation(), &info);
+    llvm_export::ops::set_debug_global_owner_function(&mut ctx, global.get_operation(), &raw_owner);
+    global.get_operation().insert_at_back(module_block, &ctx);
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let function = FuncOp::new(&mut ctx, raw_owner.as_str().try_into().unwrap(), func_ty);
+    let function_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/shared.rs", 35, 1);
+    function
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(function_loc);
+    let entry = function.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    function.get_operation().insert_at_back(module_block, &ctx);
+
+    let full = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &DebugConfig {
+            inner: PtxExportConfig,
+            debug_kind: DebugKind::Full,
+        },
+    )
+    .expect("full shared debug export succeeds");
+
+    let definition = full
+        .lines()
+        .find(|line| line.starts_with("@__shared_mem_0 = "))
+        .expect("shared definition");
+    assert!(
+        definition.contains("addrspace(3) global [32 x i32]")
+            && definition.contains(", align 4, !dbg !"),
+        "physical AS3 array must retain the debug attachment:\n{full}"
+    );
+    assert!(
+        full.contains("!DIExpression(DW_OP_constu, 8, DW_OP_swap, DW_OP_xderef)"),
+        "AS3 must carry CUDA DWARF shared address class 8:\n{full}"
+    );
+    assert!(
+        full.contains("!DINamespace(name: \"debuginfo\", scope: null)")
+            && full.contains("!DINamespace(name: \"kernels\", scope: !")
+            && full.contains(
+                "distinct !DISubprogram(name: \"shared_kernel\", \
+                 linkageName: \"shared_kernel\", scope: !"
+            ),
+        "the owning subprogram must be nested under the structured namespace:\n{full}"
+    );
+    assert_eq!(
+        full.matches("distinct !DISubprogram(name: \"shared_kernel\"")
+            .count(),
+        1,
+        "pre-reservation and function export must reuse one DISubprogram:\n{full}"
+    );
+    assert!(
+        full.contains("distinct !DIGlobalVariable(name: \"TILE\", linkageName: \"__shared_mem_0\"")
+            && full.contains("!DISubrange(count: 32)")
+            && full.contains("!DICompositeType(tag: DW_TAG_array_type, baseType: !")
+            && full.contains("size: 1024, elements: !"),
+        "the DIE must keep leaf/linkage and the logical array type:\n{full}"
+    );
+    assert!(
+        full.contains("emissionKind: FullDebug, globals: !"),
+        "the CU must retain the one shared expression:\n{full}"
+    );
+}
+
+fn export_mixed_shared_owner_order(malformed_first: bool) -> String {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "shared_owner_validation".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let raw_owner = reserved_oxide_symbols::device_symbol("shared_kernel");
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let storage_ty = ArrayType::get(&ctx, i32_ty.into(), 4);
+
+    let valid = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__shared_mem_valid".try_into().unwrap(),
+        storage_ty.into(),
+        4,
+    );
+    valid.set_address_space(&mut ctx, llvm_export::types::address_space::SHARED);
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        valid.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "VALID".to_string(),
+            namespace: vec!["owner_fixture".to_string(), "shared_kernel".to_string()],
+            ty: DebugLocalTypeKind::Array {
+                name: "[i32; 4]".to_string(),
+                size_bits: 128,
+                element: Box::new(DebugLocalTypeKind::Basic {
+                    name: "i32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_signed",
+                }),
+                count: 4,
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/shared-owner.rs"),
+                line: 20,
+                column: 5,
+            },
+            is_local_to_unit: true,
+            is_function_local: true,
+        },
+    );
+    llvm_export::ops::set_debug_global_owner_function(&mut ctx, valid.get_operation(), &raw_owner);
+
+    let malformed = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__shared_mem_malformed".try_into().unwrap(),
+        storage_ty.into(),
+        4,
+    );
+    malformed.set_address_space(&mut ctx, llvm_export::types::address_space::SHARED);
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        malformed.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "MALFORMED".to_string(),
+            namespace: vec!["owner_fixture".to_string(), "shared_kernel".to_string()],
+            ty: DebugLocalTypeKind::Array {
+                name: "[i32; 4]".to_string(),
+                size_bits: 128,
+                element: Box::new(DebugLocalTypeKind::Basic {
+                    name: "i32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_signed",
+                }),
+                count: 4,
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/shared-owner.rs"),
+                line: 24,
+                column: 5,
+            },
+            is_local_to_unit: true,
+            is_function_local: true,
+        },
+    );
+    // This raw spelling normalizes to `shared_kernel`, but it is not the raw
+    // symbol indexed for that function definition. It must not borrow the
+    // valid sibling's pre-reserved DISubprogram.
+    llvm_export::ops::set_debug_global_owner_function(
+        &mut ctx,
+        malformed.get_operation(),
+        "shared_kernel",
+    );
+
+    if malformed_first {
+        malformed.get_operation().insert_at_back(module_block, &ctx);
+        valid.get_operation().insert_at_back(module_block, &ctx);
+    } else {
+        valid.get_operation().insert_at_back(module_block, &ctx);
+        malformed.get_operation().insert_at_back(module_block, &ctx);
+    }
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let function = FuncOp::new(&mut ctx, raw_owner.as_str().try_into().unwrap(), func_ty);
+    let function_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/shared-owner.rs", 16, 1);
+    function
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(function_loc);
+    let entry = function.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    function.get_operation().insert_at_back(module_block, &ctx);
+
+    export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &DebugConfig {
+            inner: PtxExportConfig,
+            debug_kind: DebugKind::Full,
+        },
+    )
+    .expect("a malformed shared owner must not break its valid sibling")
+}
+
+fn assert_malformed_shared_owner_fails_closed(full: &str) {
+    let valid_definition = full
+        .lines()
+        .find(|line| line.starts_with("@__shared_mem_valid = "))
+        .expect("valid shared definition");
+    let malformed_definition = full
+        .lines()
+        .find(|line| line.starts_with("@__shared_mem_malformed = "))
+        .expect("malformed-owner shared definition");
+    assert!(
+        valid_definition.contains(", !dbg !"),
+        "the valid sibling must retain its debug attachment:\n{full}"
+    );
+    assert!(
+        !malformed_definition.contains(", !dbg !"),
+        "the malformed owner must not borrow the valid sibling's scope:\n{full}"
+    );
+    assert!(
+        full.contains("distinct !DIGlobalVariable(name: \"VALID\"")
+            && !full.contains("distinct !DIGlobalVariable(name: \"MALFORMED\""),
+        "only the valid shared source identity may become a DIE:\n{full}"
+    );
+    assert_eq!(
+        full.matches("!DIGlobalVariableExpression(var:").count(),
+        1,
+        "only the valid sibling may be retained by the compile unit:\n{full}"
+    );
+    assert_eq!(
+        full.matches("distinct !DISubprogram(name: \"shared_kernel\"")
+            .count(),
+        1,
+        "the valid owner must still reuse exactly one DISubprogram:\n{full}"
+    );
+}
+
+#[test]
+fn malformed_shared_owner_before_valid_sibling_cannot_borrow_its_scope() {
+    assert_malformed_shared_owner_fails_closed(&export_mixed_shared_owner_order(true));
+}
+
+#[test]
+fn malformed_shared_owner_after_valid_sibling_cannot_borrow_its_scope() {
+    assert_malformed_shared_owner_fails_closed(&export_mixed_shared_owner_order(false));
+}
+
+#[test]
 fn full_debug_globals_preserve_qualified_identity_visibility_and_relocations() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "global_debug_adversarial".try_into().unwrap());
@@ -3138,6 +3409,7 @@ fn full_debug_globals_preserve_qualified_identity_visibility_and_relocations() {
                 column: 5,
             },
             is_local_to_unit: true,
+            is_function_local: false,
         },
     );
     left.get_operation().insert_at_back(module_block, &ctx);
@@ -3168,6 +3440,7 @@ fn full_debug_globals_preserve_qualified_identity_visibility_and_relocations() {
                 column: 5,
             },
             is_local_to_unit: false,
+            is_function_local: false,
         },
     );
     right.get_operation().insert_at_back(module_block, &ctx);
@@ -3199,6 +3472,7 @@ fn full_debug_globals_preserve_qualified_identity_visibility_and_relocations() {
                 column: 1,
             },
             is_local_to_unit: true,
+            is_function_local: false,
         },
     );
     target.get_operation().insert_at_back(module_block, &ctx);
@@ -3256,6 +3530,7 @@ fn full_debug_globals_preserve_qualified_identity_visibility_and_relocations() {
                 column: 1,
             },
             is_local_to_unit: true,
+            is_function_local: false,
         },
     );
     references

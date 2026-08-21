@@ -61,6 +61,11 @@ use rustc_public::ty::{ConstantKind, RigidTy, TyKind};
 /// - ZST locals (and the unit return slot) remain `None` in `slots`.
 pub struct ValueMap {
     slots: Vec<Option<Value>>,
+    /// Whether this body is collecting full variable debug metadata.  Keeping
+    /// this on the existing per-body translation state lets shared-static
+    /// identity resolution stay entirely out of Off/LineTables builds without
+    /// threading another flag through every operand helper.
+    debug_variables: bool,
     /// Per-body unchecked-indexing policy, resolved once by
     /// [`super::body::translate_body`] from the `__unchecked_indexing_config`
     /// marker and the `CUDA_OXIDE_UNCHECKED_INDEXING` environment switch.
@@ -74,8 +79,19 @@ impl ValueMap {
     pub fn new(num_locals: usize) -> Self {
         Self {
             slots: vec![None; num_locals],
+            debug_variables: false,
             unchecked_indexing: false,
         }
+    }
+
+    /// Enable source-identity work used only by full variable debug info.
+    pub fn set_debug_variables(&mut self, enabled: bool) {
+        self.debug_variables = enabled;
+    }
+
+    /// Whether full variable debug metadata is enabled for this body.
+    pub fn debug_variables(&self) -> bool {
+        self.debug_variables
     }
 
     /// Record the resolved unchecked-indexing policy for this body.

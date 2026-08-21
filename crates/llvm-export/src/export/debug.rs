@@ -42,25 +42,44 @@ impl<'a> ModuleExportState<'a> {
         if !self.debug_kind.line_tables_enabled() {
             return None;
         }
+        if let Some(existing) = self.debug_function_subprograms.get(linkage_name) {
+            return Some(*existing);
+        }
 
         let (path, pos) = self.source_position_from_location(loc)?;
         let cu_id = self.ensure_debug_compile_unit(&path);
         let file_id = self.ensure_debug_file(&path);
         let subroutine_type_id = self.ensure_debug_subroutine_type();
-        let name = escape_debug_string(name);
-        let linkage_name = escape_debug_string(linkage_name);
+        // Shared-static owners are scoped to their source namespace so the
+        // owning DISubprogram and the AS3 DIGlobalVariable agree on identity.
+        // The scope map and the subprogram cache are both keyed by the final
+        // exported (linkage) name, which module indexing guarantees is unique.
+        let owner_scope = self.debug_shared_function_scopes.get(linkage_name).cloned();
+        let (debug_name, scope_id) = if let Some(owner_scope) = owner_scope {
+            let scope_id = self
+                .ensure_debug_namespace(&owner_scope.namespace)
+                .expect("validated shared owner namespace must yield a scope");
+            (owner_scope.name, scope_id)
+        } else {
+            (name.to_string(), file_id)
+        };
+        let debug_name = escape_debug_string(&debug_name);
+        let escaped_linkage_name = escape_debug_string(linkage_name);
         let line = pos.line;
         let id = self.alloc_metadata_id();
 
         self.debug_nodes.push((
             id,
             format!(
-                "distinct !DISubprogram(name: \"{name}\", linkageName: \"{linkage_name}\", \
-                 scope: !{file_id}, file: !{file_id}, \
+                "distinct !DISubprogram(name: \"{debug_name}\", \
+                 linkageName: \"{escaped_linkage_name}\", \
+                 scope: !{scope_id}, file: !{file_id}, \
                  line: {line}, type: !{subroutine_type_id}, scopeLine: {line}, \
                  spFlags: DISPFlagDefinition, unit: !{cu_id}, retainedNodes: !{{}})"
             ),
         ));
+        self.debug_function_subprograms
+            .insert(linkage_name.to_string(), id);
         self.debug_subprogram_files.insert(id, path);
         self.debug_subprogram_fallbacks
             .insert(id, (pos.line, pos.column));
@@ -177,6 +196,8 @@ impl<'a> ModuleExportState<'a> {
         &mut self,
         linkage_name: &str,
         alignment_bytes: Option<u64>,
+        address_space: u32,
+        owner_function: Option<&str>,
         info: &DebugGlobalVariableInfo,
     ) -> Result<Option<usize>, String> {
         if !self.debug_kind.variables_enabled() {
@@ -196,22 +217,42 @@ impl<'a> ModuleExportState<'a> {
                 "cannot add debug global `{linkage_name}` after compile-unit finalization"
             ));
         }
-        if let Some((previous, expression_id)) = self.debug_global_variables.get(linkage_name) {
-            if previous == info {
+        let owner_function = owner_function.map(ToOwned::to_owned);
+        if let Some((previous, previous_address_space, previous_owner, expression_id)) =
+            self.debug_global_variables.get(linkage_name)
+        {
+            if previous == info
+                && *previous_address_space == address_space
+                && *previous_owner == owner_function
+            {
                 return Ok(Some(*expression_id));
             }
             return Err(format!(
-                "conflicting debug identities for LLVM global `@{linkage_name}`: {:?} versus {:?}",
-                previous, info
+                "conflicting debug identities for LLVM global `@{linkage_name}`: {:?} in address space {} owned by {:?} versus {:?} in address space {} owned by {:?}",
+                previous,
+                previous_address_space,
+                previous_owner,
+                info,
+                address_space,
+                owner_function
             ));
         }
 
         self.ensure_debug_compile_unit(&info.declaration.file);
         let file_id = self.ensure_debug_file(&info.declaration.file);
         let type_id = self.ensure_debug_type(&info.ty);
-        let scope_id = self
-            .ensure_debug_namespace(&info.namespace)
-            .expect("validated non-empty namespace must yield a scope");
+        let scope_id = if info.is_function_local {
+            let Some(owner) = owner_function.as_deref() else {
+                return Ok(None);
+            };
+            let Some(scope) = self.debug_function_subprograms.get(owner) else {
+                return Ok(None);
+            };
+            *scope
+        } else {
+            self.ensure_debug_namespace(&info.namespace)
+                .expect("validated non-empty namespace must yield a scope")
+        };
         let name = escape_debug_string(&info.name);
         let escaped_linkage_name = escape_debug_string(linkage_name);
         let alignment = alignment_bytes
@@ -232,13 +273,24 @@ impl<'a> ModuleExportState<'a> {
         ));
 
         let expression_id = self.alloc_metadata_id();
+        // Clang's NVPTX frontend represents a shared variable's CUDA DWARF
+        // address class with this target expression. NVPTXDwarfDebug consumes
+        // the sequence and emits DW_AT_address_class = 8 (shared space) for
+        // cuda-gdb. The empty expression remains the established AS1 shape.
+        let expression = if address_space == crate::types::address_space::SHARED {
+            "!DIExpression(DW_OP_constu, 8, DW_OP_swap, DW_OP_xderef)"
+        } else {
+            "!DIExpression()"
+        };
         self.debug_nodes.push((
             expression_id,
-            format!("!DIGlobalVariableExpression(var: !{variable_id}, expr: !DIExpression())"),
+            format!("!DIGlobalVariableExpression(var: !{variable_id}, expr: {expression})"),
         ));
         self.debug_global_expressions.push(expression_id);
-        self.debug_global_variables
-            .insert(linkage_name.to_string(), (info.clone(), expression_id));
+        self.debug_global_variables.insert(
+            linkage_name.to_string(),
+            (info.clone(), address_space, owner_function, expression_id),
+        );
         Ok(Some(expression_id))
     }
 
@@ -1139,6 +1191,7 @@ mod tests {
                 column: 5,
             },
             is_local_to_unit: true,
+            is_function_local: false,
         }
     }
 
@@ -1196,11 +1249,11 @@ mod tests {
         let info = global_info();
 
         let first = state
-            .debug_global_variable("__device_global_0", Some(8), &info)
+            .debug_global_variable("__device_global_0", Some(8), 1, None, &info)
             .expect("first identity is valid")
             .expect("full debug emits an expression");
         let repeated = state
-            .debug_global_variable("__device_global_0", Some(8), &info)
+            .debug_global_variable("__device_global_0", Some(8), 1, None, &info)
             .expect("identical repeated identity is valid")
             .expect("full debug emits an expression");
         assert_eq!(first, repeated);
@@ -1210,7 +1263,7 @@ mod tests {
         let mut conflict = info;
         conflict.is_local_to_unit = false;
         let error = state
-            .debug_global_variable("__device_global_0", Some(8), &conflict)
+            .debug_global_variable("__device_global_0", Some(8), 1, None, &conflict)
             .expect_err("one linkage name cannot describe two source identities");
         assert!(error.contains("conflicting debug identities"), "{error}");
 

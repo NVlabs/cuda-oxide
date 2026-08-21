@@ -763,7 +763,7 @@ pub fn convert_shared_alloc_dc(
 ) -> Result<()> {
     use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
 
-    let (alloc_key, source_name, mir_elem_type, size, alignment) = {
+    let (alloc_key, source_name, mir_elem_type, size, alignment, debug_info, debug_owner_function) = {
         let shared_alloc_op = dialect_mir::ops::MirSharedAllocOp::new(op);
         let op_ref = op.deref(ctx);
 
@@ -798,15 +798,35 @@ pub fn convert_shared_alloc_dc(
         let size = size_attr.value().to_u64();
 
         let alignment = shared_alloc_op.get_alignment_value(ctx).unwrap_or(0);
+        let debug_info = llvm::debug_global_variable(ctx, op);
+        let debug_owner_function = llvm::debug_global_owner_function(ctx, op);
 
-        (alloc_key, source_name, mir_elem_type, size, alignment)
+        (
+            alloc_key,
+            source_name,
+            mir_elem_type,
+            size,
+            alignment,
+            debug_info,
+            debug_owner_function,
+        )
     };
+
+    // A shared variable DIE must describe the physical allocation. Gate the
+    // optional debug identity against the lowered element layout before it
+    // can reach the declaration record or the emitted global.
+    let llvm_elem_type = convert_type(ctx, mir_elem_type).map_err(anyhow_to_pliron)?;
+    let debug_info = debug_info
+        .filter(|info| shared_debug_type_matches_physical(ctx, info, llvm_elem_type, size));
+    let debug_owner_function = debug_info.as_ref().and(debug_owner_function);
 
     let declaration = SharedGlobalDeclaration {
         kind: SharedGlobalKind::Static,
         mir_elem_type,
         size,
         alignment,
+        debug_info,
+        debug_owner_function,
     };
 
     // A key names one physical allocation, not merely a preferred symbol.
@@ -816,13 +836,30 @@ pub fn convert_shared_alloc_dc(
     let global_name = if let Some(key) = alloc_key.as_ref()
         && let Some(existing) = shared_globals.get(key)
     {
-        if existing.declaration != declaration {
+        if !existing.declaration.same_storage(&declaration) {
             return Err(anyhow_to_pliron(anyhow::anyhow!(
                 "duplicate shared alloc_key {:?} has an incompatible declaration",
                 key
             )));
         }
-        existing.symbol.clone()
+        let symbol = existing.symbol.clone();
+        let debug_identity_matches = existing.declaration.debug_info == declaration.debug_info
+            && existing.declaration.debug_owner_function == declaration.debug_owner_function;
+        if !debug_identity_matches {
+            // One physical allocation reached under two debug identities, for
+            // example a function-local static whose owning function was
+            // materialized (or inlined) into two kernels. Debug metadata must
+            // never fail a build that a release build accepts, and DWARF
+            // cannot truthfully scope one AS3 object to two subprograms, so
+            // fail open: drop the attachment from the materialized global and
+            // demote the cached record to metadata-free.
+            strip_shared_debug_identity(ctx, op, &symbol)?;
+            if let Some(record) = shared_globals.get_mut(key) {
+                record.declaration.debug_info = None;
+                record.declaration.debug_owner_function = None;
+            }
+        }
+        symbol
     } else {
         create_shared_global(
             ctx,
@@ -835,6 +872,8 @@ pub fn convert_shared_alloc_dc(
                 alignment,
                 alloc_key,
                 source_name: source_name.as_deref(),
+                debug_info: declaration.debug_info.as_ref(),
+                debug_owner_function: declaration.debug_owner_function.as_deref(),
             },
         )?
     };
@@ -855,6 +894,8 @@ struct SharedAllocSpec<'a> {
     alignment: u64,
     alloc_key: Option<String>,
     source_name: Option<&'a str>,
+    debug_info: Option<&'a llvm::DebugGlobalVariableInfo>,
+    debug_owner_function: Option<&'a str>,
 }
 
 /// Create a shared memory global variable in the module.
@@ -907,6 +948,12 @@ fn create_shared_global(
         use llvm_export::ops::GlobalOpExt;
         global_op.set_shared_source_name(ctx, source_name);
     }
+    if let Some(info) = spec.debug_info {
+        llvm::set_debug_global_variable(ctx, global_op.get_operation(), info);
+    }
+    if let Some(owner) = spec.debug_owner_function {
+        llvm::set_debug_global_owner_function(ctx, global_op.get_operation(), owner);
+    }
 
     let parent_block = op
         .deref(ctx)
@@ -932,12 +979,86 @@ fn create_shared_global(
                     mir_elem_type: spec.mir_elem_type,
                     size: spec.size,
                     alignment: spec.alignment,
+                    debug_info: spec.debug_info.cloned(),
+                    debug_owner_function: spec.debug_owner_function.map(str::to_owned),
                 },
             },
         );
     }
 
     Ok(name)
+}
+
+/// A shared variable DIE must describe the compiler-materialized allocation,
+/// never the marker ZST or an element graph whose pointer base types are not
+/// representable yet. The frontend checks semantic element layout; this final
+/// boundary verifies total physical bits/count against the LLVM backing.
+fn shared_debug_type_matches_physical(
+    ctx: &Context,
+    info: &llvm::DebugGlobalVariableInfo,
+    llvm_elem_type: TypeHandle,
+    count: u64,
+) -> bool {
+    let Some((element_size, _)) = llvm_type_size_align(ctx, llvm_elem_type) else {
+        return false;
+    };
+    let Some(element_bytes) = element_size.checked_mul(count) else {
+        return false;
+    };
+    let Some(physical_bits) = element_bytes.checked_mul(8) else {
+        return false;
+    };
+    if info.ty.size_bits() != physical_bits {
+        return false;
+    }
+    match &info.ty {
+        llvm::DebugLocalTypeKind::Array {
+            element,
+            count: debug_count,
+            ..
+        } => *debug_count == count && element.size_bits() == element_size.saturating_mul(8),
+        // `Barrier` retains its semantic repr(C) struct while the backing is
+        // one i64. Other marker types are never admitted by the frontend.
+        llvm::DebugLocalTypeKind::Struct { .. } => count == 1,
+        _ => false,
+    }
+}
+
+/// Detach the debug identity from an already-materialized shared global.
+///
+/// The fail-open path for divergent debug identities on one `alloc_key`:
+/// the storage stays shared and valid, only the optional DWARF attachment is
+/// dropped so it cannot misattribute the allocation to the wrong static or
+/// owner function.
+fn strip_shared_debug_identity(
+    ctx: &mut Context,
+    op: Ptr<Operation>,
+    name: &pliron::identifier::Identifier,
+) -> Result<()> {
+    let parent_block = op
+        .deref(ctx)
+        .get_parent_block()
+        .ok_or_else(|| anyhow_to_pliron(anyhow::anyhow!("Op has no parent block")))?;
+    let module_op = helpers::get_module_from_block(ctx, parent_block).map_err(anyhow_to_pliron)?;
+    let module_block = module_op
+        .deref(ctx)
+        .get_region(0)
+        .deref(ctx)
+        .iter(ctx)
+        .next()
+        .ok_or_else(|| anyhow_to_pliron(anyhow::anyhow!("Module is empty")))?;
+    let existing = module_block
+        .deref(ctx)
+        .iter(ctx)
+        .filter_map(|candidate| Operation::get_op::<llvm::GlobalOp>(candidate, ctx))
+        .find(|global| global.get_symbol_name(ctx) == *name)
+        .ok_or_else(|| {
+            anyhow_to_pliron(anyhow::anyhow!(
+                "shared allocation cache refers to missing LLVM global `@{name}`"
+            ))
+        })?;
+    llvm::clear_debug_global_identity(ctx, existing.get_operation());
+    Ok(())
 }
 
 /// Convert `mir.global_alloc` to an LLVM global in CUDA global memory.
@@ -1450,6 +1571,10 @@ fn get_or_create_extern_shared_global(
         mir_elem_type: i8_ty.into(),
         size: 0,
         alignment: max_alignment,
+        // The dynamic pool is per-launch storage with no originating static;
+        // it never carries a source-level debug identity.
+        debug_info: None,
+        debug_owner_function: None,
     };
     let global_created_key = format!("__dynamic_smem_global_created_{}", func_name);
     if let Some(existing) = shared_globals.get(&global_created_key) {
@@ -3547,10 +3672,24 @@ mod tests {
         size: u64,
         source_name: Option<&str>,
     ) -> Ptr<Operation> {
+        let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        append_shared_alloc_typed(ctx, block, alloc_key, i32_ty, size, source_name, 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn append_shared_alloc_typed(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        alloc_key: &str,
+        element_type: TypeHandle,
+        size: u64,
+        source_name: Option<&str>,
+        alignment: u64,
+    ) -> Ptr<Operation> {
         use pliron::builtin::attributes::IntegerAttr;
         use pliron::utils::apint::APInt;
 
-        let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        let i32_ty = element_type;
         let result_ty = MirPtrType::get_shared(ctx, i32_ty, true);
         let op = Operation::new(
             ctx,
@@ -3571,8 +3710,39 @@ mod tests {
         if let Some(source_name) = source_name {
             alloc.set_attr_source_name(ctx, StringAttr::new(source_name.to_string()));
         }
+        if alignment != 0 {
+            alloc.set_alignment_value(ctx, alignment);
+        }
         op.insert_at_back(block, ctx);
         op
+    }
+
+    fn shared_array_debug_info(count: u64) -> llvm::DebugGlobalVariableInfo {
+        llvm::DebugGlobalVariableInfo {
+            name: "TILE".to_string(),
+            namespace: vec!["fixture".to_string(), "kernel".to_string()],
+            ty: llvm::DebugLocalTypeKind::Array {
+                name: format!("[i32; {count}]"),
+                size_bits: count * 32,
+                element: Box::new(llvm::DebugLocalTypeKind::Basic {
+                    name: "i32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_signed",
+                }),
+                count,
+            },
+            declaration: llvm::DebugSourcePosition {
+                file: PathBuf::from("/tmp/shared.rs"),
+                line: 7,
+                column: 5,
+            },
+            is_local_to_unit: true,
+            is_function_local: true,
+        }
+    }
+
+    fn shared_static_key(symbol: &str) -> String {
+        dialect_mir::ops::encode_rust_static_global_key(symbol)
     }
 
     #[test]
@@ -3670,6 +3840,81 @@ mod tests {
     }
 
     #[test]
+    fn shared_alloc_repeated_debug_identity_is_attached_once() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let key = shared_static_key("_Rfixture4TILE");
+        for _ in 0..2 {
+            let op =
+                append_shared_alloc_named(&mut ctx, block, &key, 32, Some("fixture::kernel::TILE"));
+            let info = shared_array_debug_info(32);
+            llvm::set_debug_global_variable(&mut ctx, op, &info);
+            llvm::set_debug_global_owner_function(&mut ctx, op, "fixture_kernel");
+        }
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+        let top = module_top_block(&ctx, module_ptr);
+        let globals: Vec<_> = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .filter(|global| global.address_space(&ctx) == llvm_addr::SHARED)
+            .collect();
+        assert_eq!(
+            globals.len(),
+            1,
+            "repeated references must share one global"
+        );
+        assert_eq!(
+            llvm::debug_global_variable(&ctx, globals[0].get_operation()),
+            Some(shared_array_debug_info(32))
+        );
+        assert_eq!(
+            llvm::debug_global_owner_function(&ctx, globals[0].get_operation()).as_deref(),
+            Some("fixture_kernel")
+        );
+    }
+
+    /// One function-local shared static materialized in two owning functions
+    /// (for example a `#[device]` helper inlined into two kernels) is a valid
+    /// release build, so debug metadata must not turn it into an error. DWARF
+    /// cannot truthfully scope one AS3 object to two subprograms either, so
+    /// the divergent identity fails open: the storage is still shared and the
+    /// debug attachment is dropped.
+    #[test]
+    fn shared_alloc_owner_conflict_drops_debug_metadata() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let key = shared_static_key("_Rfixture4TILE");
+        for owner in ["fixture_kernel", "other_kernel"] {
+            let op =
+                append_shared_alloc_named(&mut ctx, block, &key, 32, Some("fixture::kernel::TILE"));
+            let info = shared_array_debug_info(32);
+            llvm::set_debug_global_variable(&mut ctx, op, &info);
+            llvm::set_debug_global_owner_function(&mut ctx, op, owner);
+        }
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect("divergent debug identity must not fail a build release accepts");
+        let top = module_top_block(&ctx, module_ptr);
+        let globals: Vec<_> = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .filter(|global| global.address_space(&ctx) == llvm_addr::SHARED)
+            .collect();
+        assert_eq!(
+            globals.len(),
+            1,
+            "the physical storage must still be shared"
+        );
+        assert!(llvm::debug_global_variable(&ctx, globals[0].get_operation()).is_none());
+        assert!(llvm::debug_global_owner_function(&ctx, globals[0].get_operation()).is_none());
+    }
+
+    #[test]
     fn dynamic_extern_then_static_shared_rejects_reserved_key_collision() {
         use pliron::builtin::attributes::IntegerAttr;
         use pliron::utils::apint::APInt;
@@ -3726,6 +3971,86 @@ mod tests {
         assert!(
             message.contains("duplicate shared alloc_key"),
             "the dynamic declaration must be observed first, got: {message}"
+        );
+    }
+
+    #[test]
+    fn shared_alloc_mismatched_debug_type_fails_closed_without_failing_lowering() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let key = shared_static_key("_Rfixture4TILE");
+        let op =
+            append_shared_alloc_named(&mut ctx, block, &key, 32, Some("fixture::kernel::TILE"));
+        llvm::set_debug_global_variable(&mut ctx, op, &shared_array_debug_info(31));
+        llvm::set_debug_global_owner_function(&mut ctx, op, "fixture_kernel");
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect("bad optional metadata must not fail compilation");
+        let top = module_top_block(&ctx, module_ptr);
+        let global = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .find_map(|candidate| Operation::get_op::<llvm::GlobalOp>(candidate, &ctx))
+            .expect("shared global");
+        assert!(llvm::debug_global_variable(&ctx, global.get_operation()).is_none());
+        assert!(llvm::debug_global_owner_function(&ctx, global.get_operation()).is_none());
+    }
+
+    #[test]
+    fn barrier_semantic_struct_matches_single_i64_shared_backing() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let key = shared_static_key("_Rfixture7BARRIER");
+        let op = append_shared_alloc_typed(
+            &mut ctx,
+            block,
+            &key,
+            i64_ty,
+            1,
+            Some("fixture::kernel::BARRIER"),
+            8,
+        );
+        let info = llvm::DebugGlobalVariableInfo {
+            name: "BARRIER".to_string(),
+            namespace: vec!["fixture".to_string(), "kernel".to_string()],
+            ty: llvm::DebugLocalTypeKind::Struct {
+                name: "Barrier".to_string(),
+                size_bits: 64,
+                members: vec![llvm::DebugTypeMember {
+                    name: "_state".to_string(),
+                    offset_bits: 0,
+                    ty: llvm::DebugLocalTypeKind::Basic {
+                        name: "u64".to_string(),
+                        size_bits: 64,
+                        encoding: "DW_ATE_unsigned",
+                    },
+                }],
+            },
+            declaration: llvm::DebugSourcePosition {
+                file: PathBuf::from("/tmp/barrier.rs"),
+                line: 8,
+                column: 9,
+            },
+            is_local_to_unit: true,
+            is_function_local: true,
+        };
+        llvm::set_debug_global_variable(&mut ctx, op, &info);
+        llvm::set_debug_global_owner_function(&mut ctx, op, "fixture_kernel");
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("Barrier lowering succeeds");
+        let top = module_top_block(&ctx, module_ptr);
+        let global = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .find_map(|candidate| Operation::get_op::<llvm::GlobalOp>(candidate, &ctx))
+            .expect("Barrier shared global");
+        assert_eq!(global.get_alignment(&ctx), Some(8));
+        assert_eq!(
+            llvm::debug_global_variable(&ctx, global.get_operation()),
+            Some(info)
         );
     }
 
@@ -4024,6 +4349,7 @@ mod tests {
                 column: 1,
             },
             is_local_to_unit: true,
+            is_function_local: false,
         });
         assert!(base != changed);
         changed = base.clone();
@@ -4095,6 +4421,7 @@ mod tests {
                 column: 1,
             },
             is_local_to_unit: true,
+            is_function_local: false,
         };
         llvm::set_debug_global_variable(&mut ctx, ordinary, &info);
         // Deliberately tag AS4 too: the AS1-only implementation must not

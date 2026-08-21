@@ -73,6 +73,26 @@ pub struct SharedGlobalDeclaration {
     pub size: u64,
     /// Explicit alignment, or zero when natural alignment is requested.
     pub alignment: u64,
+    /// Source-level debug identity carried on the allocation, when present.
+    pub debug_info: Option<DebugGlobalVariableInfo>,
+    /// Exported symbol of the function owning a function-local static, when
+    /// present. The exporter scopes the variable's DIE to that function's
+    /// `DISubprogram`.
+    pub debug_owner_function: Option<String>,
+}
+
+impl SharedGlobalDeclaration {
+    /// Equality over the physical storage identity only.
+    ///
+    /// Divergent debug identity on one key is not a storage conflict: the
+    /// metadata is optional and fails open (dropped), while a physical
+    /// mismatch fails the lowering.
+    pub fn same_storage(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.mir_elem_type == other.mir_elem_type
+            && self.size == other.size
+            && self.alignment == other.alignment
+    }
 }
 
 /// Lowered symbol and declaration associated with one shared-memory key.

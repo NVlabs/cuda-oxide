@@ -1037,6 +1037,7 @@ impl Verify for MirPtrOffsetOp {
 /// | `size`          | IntegerAttr | Number of elements                 |
 /// | `alloc_key`     | StringAttr  | Unique key for deduplication       |
 /// | `source_name`   | StringAttr  | Optional Rust path of the originating `static` |
+/// | `source_key`    | StringAttr  | Optional unique mangled identity of that `static` |
 /// | `mir_alignment` | IntegerAttr | Optional alignment (natural if not set) |
 /// ```
 ///
@@ -1070,6 +1071,7 @@ impl Verify for MirPtrOffsetOp {
         size: IntegerAttr,
         alloc_key: pliron::builtin::attributes::StringAttr,
         source_name: pliron::builtin::attributes::StringAttr,
+        source_key: pliron::builtin::attributes::StringAttr,
         mir_alignment: IntegerAttr
     )
 )]
