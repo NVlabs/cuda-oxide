@@ -59,6 +59,12 @@ Device: NVIDIA GeForce RTX 5090
 --- Test 3: test_mixed_attrs ---
     ✓ PASSED (outputs are finite)
 
+--- Test 4: test_smem_alignment_cross_module ---
+    ✓ PASSED (same shared memory, values correct)
+
+--- Test 5: test_char_ffi ---
+    ✓ PASSED (char_identity('A') = 'A')
+
 ✓ All tests PASSED!
 ```
 
@@ -177,6 +183,7 @@ extern "C" __device__ float warp_reduce_sum(float val) {
 | `warp_ballot`        | Warp ballot             |
 | `simple_add`         | Simple a + b            |
 | `clamp_value`        | Clamp to range          |
+| `char_identity`      | Rust `char` <-> `unsigned int` round-trip |
 
 ### From `extern-libs/cccl_wrappers.cu` (CUB)
 
@@ -185,6 +192,31 @@ extern "C" __device__ float warp_reduce_sum(float val) {
 | `cub_warp_reduce_sum_f32`   | Warp-level sum reduction  |
 | `cub_warp_reduce_max_f32`   | Warp-level max reduction  |
 | `cub_block_reduce_sum_f32`  | Block-level sum (256 thr) |
+
+---
+
+## Rust `char` Across the FFI Boundary
+
+Rust `char` is a 4-byte Unicode scalar value, so it is ABI-compatible with C's
+`unsigned int`. The device-extern path maps it to a plain 32-bit integer in every
+position — parameter, result, and behind a pointer — with no `signext` or
+`zeroext` attribute, exactly like `u32`.
+
+```rust
+#[device]
+#[allow(improper_ctypes)] // rustc's lint still fires on `char` externs.
+unsafe extern "C" {
+    fn char_identity(c: char) -> char; // implemented as unsigned int in .cu
+}
+```
+
+Two caveats:
+
+- A value passed from C that is **not** a valid Unicode scalar value (above
+  `0x10FFFF`, or a surrogate in `0xD800..=0xDFFF`) is UB on the Rust side —
+  the same caveat family as `bool`'s 0/1 rule.
+- rustc's `improper_ctypes` lint still fires on `char` externs even though the
+  layout matches; callers may `#[allow(improper_ctypes)]` it.
 
 ---
 

@@ -60,6 +60,14 @@ extern "C" __device__ float clamp_value(float val, float min_val, float max_val)
     return fminf(fmaxf(val, min_val), max_val);
 }
 
+/**
+ * char round-trip: Rust `char` is a 4-byte Unicode scalar value,
+ * ABI-compatible with `unsigned int`.
+ */
+extern "C" __device__ unsigned int char_identity(unsigned int c) {
+    return c;
+}
+
 // ============================================================================
 // Example 2: Read-Only Functions
 //

@@ -41,6 +41,10 @@ unsafe extern "C" {
     fn warp_ballot(predicate: i32) -> u32;
     fn simple_add(a: f32, b: f32) -> f32;
     fn clamp_value(val: f32, min_val: f32, max_val: f32) -> f32;
+    // Rust `char` is ABI-compatible with `u32`; rustc's `improper_ctypes`
+    // lint still fires on the `char` spelling, so allow it on this item.
+    #[allow(improper_ctypes)]
+    fn char_identity(c: char) -> char;
     fn smem_write_aligned_128(offset: i32, value: f32);
     fn smem_read_aligned_128(offset: i32) -> f32;
     fn smem_get_base_addr() -> u64;
@@ -231,6 +235,18 @@ mod kernels {
                 rust_bits,
                 extern_bits
             );
+        }
+    }
+
+    /// Test `char` round-trip across the device FFI boundary.
+    #[kernel]
+    pub fn test_char_ffi(output: *mut i32) {
+        let tid = cuda_device::thread::threadIdx_x();
+        if tid == 0 {
+            let c = unsafe { char_identity('A') };
+            unsafe {
+                *output.add(0) = c as i32;
+            }
         }
     }
 }
@@ -529,6 +545,7 @@ fn main() {
     test_cub_warp_reduce_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
     test_mixed_attrs_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
     test_smem_alignment_cross_module_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
+    test_char_ffi_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
 
     println!("\n=== Summary ===");
     println!("Passed: {}", tests_passed);
@@ -833,6 +850,50 @@ fn test_smem_alignment_cross_module_runner(
         if !values_match {
             println!("      - Values don't match");
         }
+        *failed += 1;
+    }
+}
+
+/// Test 5: `char` round-trip across the device FFI boundary.
+/// Passing `'A'` through `char_identity` must come back as `'A'` (65).
+fn test_char_ffi_runner(
+    ctx: &Arc<CudaContext>,
+    module: &kernels::LoadedModule,
+    passed: &mut i32,
+    failed: &mut i32,
+) {
+    println!("--- Test 5: test_char_ffi ---");
+    println!("    Function: char_identity (Rust `char` <-> C `unsigned int`)");
+
+    let stream = ctx.default_stream();
+    let d_output = DeviceBuffer::<i32>::zeroed(&stream, 1).unwrap();
+
+    let config = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (32, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // SAFETY: launch shape/resources match the kernel; buffer covers its accesses.
+    unsafe {
+        module.test_char_ffi(
+            (stream).as_ref(),
+            config,
+            d_output.cu_deviceptr() as *mut i32,
+        )
+    }
+    .expect("Kernel launch failed");
+
+    let h_output = d_output.to_host_vec(&stream).unwrap();
+
+    if h_output[0] == b'A' as i32 {
+        println!("    ✓ PASSED (char_identity('A') = 'A')");
+        *passed += 1;
+    } else {
+        println!(
+            "    ✗ FAILED (expected {}, got {})",
+            b'A' as i32, h_output[0]
+        );
         *failed += 1;
     }
 }
