@@ -236,11 +236,11 @@ pub(crate) fn convert_assert(
         .map_err(|e| pliron::input_error_noloc!("{}", e))?;
     let trap_sym: pliron::identifier::Identifier = "llvm_trap".try_into().unwrap();
     let trap_call = llvm::CallOp::new(ctx, CallOpCallable::Direct(trap_sym), trap_func_ty, vec![]);
-    trap_call.get_operation().insert_at_back(abort_block, ctx);
-
-    llvm::UnreachableOp::new(ctx)
-        .get_operation()
+    crate::convert::preserve_location(ctx, op, trap_call.get_operation())
         .insert_at_back(abort_block, ctx);
+
+    let unreachable = llvm::UnreachableOp::new(ctx).get_operation();
+    crate::convert::preserve_location(ctx, op, unreachable).insert_at_back(abort_block, ctx);
 
     let llvm_br = llvm::CondBrOp::new(ctx, cond, success_block, args.to_vec(), abort_block, vec![]);
     crate::convert::preserve_location(ctx, op, llvm_br.get_operation());
@@ -333,10 +333,11 @@ mod tests {
     use pliron::builtin::types::{IntegerType, Signedness};
     use pliron::context::Context;
     use pliron::linked_list::ContainsLinkedList;
-    use pliron::location::{Located, Location};
+    use pliron::location::{Located, Location, Source};
     use pliron::op::Op;
     use pliron::operation::Operation;
     use pliron::r#type::{TypeHandle, Typed};
+    use std::path::PathBuf;
 
     fn transparent_u32(ctx: &mut Context, name: &str) -> TypeHandle {
         let u32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Unsigned).into();
@@ -628,6 +629,13 @@ mod tests {
         let cond = entry.deref(&ctx).get_argument(0);
         let success = append_block(&mut ctx, entry, vec![]);
         append_mir_return(&mut ctx, success, vec![]);
+        let assert_loc = Location::SrcPos {
+            src: Source::new_from_file(&mut ctx, PathBuf::from("kernel.rs")),
+            pos: combine::stream::position::SourcePosition {
+                line: 44,
+                column: 36,
+            },
+        };
 
         let (operands, segment_sizes) =
             mir::MirAssertOp::compute_segment_sizes(vec![vec![cond], vec![]]);
@@ -640,6 +648,7 @@ mod tests {
             0,
         );
         mir::MirAssertOp::new(assert_op).set_operand_segment_sizes(&ctx, segment_sizes);
+        assert_op.deref_mut(&ctx).set_loc(assert_loc.clone());
         assert_op.insert_at_back(entry, &ctx);
 
         crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
@@ -663,6 +672,11 @@ mod tests {
             .copied()
             .expect("abort block must exist");
         let llvm_br = find_first::<llvm::CondBrOp>(&ctx, &body).expect("expected llvm.cond_br");
+        assert_eq!(
+            llvm_br.get_operation().deref(&ctx).loc(),
+            assert_loc,
+            "assert branch must keep the MIR assertion source location"
+        );
         let false_succ = llvm_br.get_operation().deref(&ctx).get_successor(1);
         assert_eq!(
             false_succ, abort_block,
@@ -685,17 +699,32 @@ mod tests {
             "llvm_trap",
             "abort block must call @llvm.trap so opt cannot assume the condition"
         );
+        assert_eq!(
+            abort_ops[0].deref(&ctx).loc(),
+            assert_loc,
+            "trap call must keep the MIR assertion source location"
+        );
         assert!(
             Operation::get_op::<llvm::UnreachableOp>(abort_ops[1], &ctx).is_some(),
             "abort block must terminate with llvm.unreachable"
         );
+        assert_eq!(
+            abort_ops[1].deref(&ctx).loc(),
+            assert_loc,
+            "unreachable must keep the MIR assertion source location"
+        );
 
-        let has_trap_decl = module_top_block(&ctx, module_ptr)
+        let trap_decl = module_top_block(&ctx, module_ptr)
             .deref(&ctx)
             .iter(&ctx)
             .filter_map(|op| Operation::get_op::<llvm::FuncOp>(op, &ctx))
-            .any(|func| func.get_symbol_name(&ctx).to_string() == "llvm_trap");
-        assert!(has_trap_decl, "llvm.trap must be declared in the module");
+            .find(|func| func.get_symbol_name(&ctx).to_string() == "llvm_trap")
+            .expect("llvm.trap must be declared in the module");
+        assert_eq!(
+            trap_decl.get_operation().deref(&ctx).loc(),
+            Location::Unknown,
+            "the shared llvm.trap declaration must remain locationless"
+        );
     }
 
     #[test]
