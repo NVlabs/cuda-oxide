@@ -53,6 +53,11 @@ struct OverlayShardIndex {
 ///
 /// This is the input-side twin of [`stale_generated_outputs`], which
 /// reconciles the same way for managed outputs.
+///
+/// The walk recurses because the manifest grammar does:
+/// `validate_overlay_shard_path` accepts nested paths such as
+/// `overlay/sub/foo.toml`, so a flat listing would miss exactly the files
+/// this check exists to catch whenever one sits in a subdirectory.
 fn unindexed_overlay_shards(repo_root: &Path) -> Result<Vec<String>> {
     let manifest_path = repo_root.join("intrinsics/overlay.toml");
     let manifest = fs::read(&manifest_path)
@@ -69,36 +74,56 @@ fn unindexed_overlay_shards(repo_root: &Path) -> Result<Vec<String>> {
     );
     let listed: BTreeSet<&str> = index.shards.iter().map(String::as_str).collect();
 
-    let overlay_dir = repo_root.join("intrinsics/overlay");
-    let mut unindexed = Vec::new();
-    let mut seen = 0usize;
-    for entry in fs::read_dir(&overlay_dir)
-        .map_err(|error| anyhow::anyhow!("read {}: {error}", overlay_dir.display()))?
-    {
-        let path = entry?.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("toml") {
-            continue;
-        }
-        seen += 1;
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let relative = format!("overlay/{name}");
-        if !listed.contains(relative.as_str()) {
-            unindexed.push(relative);
-        }
-    }
+    let intrinsics_root = repo_root.join("intrinsics");
+    let overlay_dir = intrinsics_root.join("overlay");
+    let mut on_disk = Vec::new();
+    collect_overlay_toml_files(&intrinsics_root, &overlay_dir, &mut on_disk)?;
 
-    // Same reasoning in the other direction: a read_dir that stopped matching
+    // Same reasoning in the other direction: a walk that stopped matching
     // would report a clean reconciliation from an empty comparison.
     anyhow::ensure!(
-        seen > 0,
+        !on_disk.is_empty(),
         "found no .toml files under {}; refusing to report a clean result",
         overlay_dir.display()
     );
 
+    let mut unindexed: Vec<String> = on_disk
+        .into_iter()
+        .filter(|relative| !listed.contains(relative.as_str()))
+        .collect();
     unindexed.sort();
     Ok(unindexed)
+}
+
+/// Collects every `.toml` under `directory`, recursing into subdirectories,
+/// as paths relative to `intrinsics/` (the form `shards` entries use).
+fn collect_overlay_toml_files(
+    intrinsics_root: &Path,
+    directory: &Path,
+    found: &mut Vec<String>,
+) -> Result<()> {
+    for entry in fs::read_dir(directory)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", directory.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            collect_overlay_toml_files(intrinsics_root, &path, found)?;
+        } else if file_type.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("toml")
+        {
+            let Some(relative) = path
+                .strip_prefix(intrinsics_root)
+                .ok()
+                .and_then(|relative| relative.to_str())
+            else {
+                continue;
+            };
+            found.push(relative.to_string());
+        }
+    }
+    Ok(())
 }
 
 pub fn run(repo_root: &Path, check: bool) -> Result<()> {
@@ -246,7 +271,9 @@ mod tests {
         )
         .unwrap();
         for name in on_disk {
-            fs::write(overlay.join(name), "# fixture\n").unwrap();
+            let path = overlay.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "# fixture\n").unwrap();
         }
         root
     }
@@ -269,6 +296,31 @@ mod tests {
     #[test]
     fn fully_indexed_overlay_directory_reports_nothing() {
         let root = overlay_fixture("indexed", &["a.toml", "b.toml"], &["a.toml", "b.toml"]);
+        assert!(unindexed_overlay_shards(&root).unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The manifest grammar accepts nested shard paths, so the walk must
+    /// descend: a forgotten file is no less forgotten for sitting in a
+    /// subdirectory.
+    #[test]
+    fn overlay_file_in_a_subdirectory_is_still_reconciled() {
+        let root = overlay_fixture(
+            "nested",
+            &["listed.toml"],
+            &["listed.toml", "sub/forgotten.toml"],
+        );
+        let unindexed = unindexed_overlay_shards(&root).unwrap();
+        assert_eq!(unindexed, ["overlay/sub/forgotten.toml"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A fully nested but fully indexed layout is a valid tree: the nested
+    /// files must count as seen so the empty-directory refusal does not fire
+    /// on it.
+    #[test]
+    fn nested_indexed_layout_is_not_mistaken_for_an_empty_directory() {
+        let root = overlay_fixture("nested-indexed", &["sub/a.toml"], &["sub/a.toml"]);
         assert!(unindexed_overlay_shards(&root).unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
     }
