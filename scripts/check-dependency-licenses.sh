@@ -94,16 +94,32 @@ print("\n".join(sorted(names)))
 '
 }
 
-# Both first-party workspaces, not just the root one.  crates/rustc-codegen-cuda
-# carries its own `[workspace]` for the rustc-private dylibs, so `-p` from the
-# root cannot reach it and the root `cargo metadata` above stops at that
-# boundary -- which is how the backend crate itself, the largest first-party
-# crate in the tree, sat unrecorded while every other member had a row.  This is
-# the second pass asked for in the #662 review.
+# Every first-party workspace root, not just the root one.  `cargo metadata`
+# stops at a `[workspace]` boundary, so one pass per root is the only way to
+# reach them all, and the tree has three under version control outside
+# `examples/` (the second half below covers those):
+#
+#   1. Cargo.toml -- the root workspace.
+#   2. crates/rustc-codegen-cuda/Cargo.toml -- its own `[workspace]` for the
+#      rustc-private dylibs, so `-p` from the root cannot reach it and the root
+#      `cargo metadata` stops at that boundary.  That is how the backend crate
+#      itself, the largest first-party crate in the tree, sat unrecorded while
+#      every other member had a row.  This is the second pass asked for in the
+#      #662 review.
+#   3. crates/cuda-macros/tests/device-only/Cargo.toml -- the fixture for
+#      scripts/check-device-only-build.sh.  It declares `[workspace]` on
+#      purpose: the point is a graph that does *not* contain `cuda-host`
+#      (#701/#702), so it must resolve independently rather than share the root
+#      lock.  That same boundary put it outside both passes above, and its
+#      member `device-only-kernels` had no row.  #1043 closed the identical gap
+#      for `cargo deny check` -- which judges the license *policy* -- and this
+#      guard covers the other half, that the human-readable inventory does not
+#      fall behind what a workspace declares.  Both halves need all three roots.
 required="$(
     {
         declared_crates Cargo.toml
         declared_crates crates/rustc-codegen-cuda/Cargo.toml
+        declared_crates crates/cuda-macros/tests/device-only/Cargo.toml
     } | LC_ALL=C sort -u
 )"
 
