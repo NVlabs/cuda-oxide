@@ -852,10 +852,28 @@ fn rebuild_artifact_section(
     Ok(section)
 }
 
+/// Both spellings an example uses to decline a run.
+///
+/// The convention belongs to `scripts/smoketest.sh`, whose `verdict_standard`
+/// greps `^[[:space:]]*(skipping:|pass \(skipped\))` case-insensitively and
+/// whose own comment names the second form: "`PASS (skipped): ...` form below
+/// sm_75". `generated_ldmatrix` prints exactly that when the device is under
+/// sm_75.
+///
+/// Only the first form used to be accepted here. An example that declined with
+/// the second one therefore exited 0 with no mismatch marker, so `run_binary`
+/// called it [`RunKind::Pass`], the baseline gate let the campaign through, and
+/// every seed "passed" a kernel that never ran -- a clean report from a
+/// campaign that measured nothing.
+const SKIP_MARKERS: [&str; 2] = ["skipping:", "pass (skipped)"];
+
+/// `output` is already lowercased by `run_binary`, which is what makes the
+/// comparison case-insensitive the way the smoketest's `grep -i` is.
 fn has_skip_marker(output: &str) -> bool {
-    output
-        .lines()
-        .any(|line| line.trim_start().starts_with("skipping:"))
+    output.lines().any(|line| {
+        let line = line.trim_start();
+        SKIP_MARKERS.iter().any(|marker| line.starts_with(marker))
+    })
 }
 
 fn has_mismatch_marker(output: &str) -> bool {
@@ -882,6 +900,44 @@ fn has_mismatch_marker(output: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two spellings `scripts/smoketest.sh` accepts, and the near-misses
+    /// that must not be mistaken for either.
+    #[test]
+    fn both_smoketest_skip_spellings_are_recognised() {
+        // `run_binary` lowercases before classifying, so these arrive lowered.
+        for declined in [
+            "skipping: cluster launch requires sm_90",
+            "  skipping: needs two devices",
+            "pass (skipped): ldmatrix.m8n8.x4.b16 requires sm_75+; device is sm_70",
+            "    pass (skipped): no peer access",
+        ] {
+            assert!(has_skip_marker(declined), "{declined}");
+        }
+
+        for ran in [
+            "pass",
+            "pass: 1024 elements verified",
+            "success",
+            "no skipping: here",
+            "result was skipped by the host",
+        ] {
+            assert!(!has_skip_marker(ran), "{ran}");
+        }
+    }
+
+    /// A declined run must not be reported as a passing baseline: the campaign
+    /// gates on `RunKind::Pass` and would otherwise sweep every seed against a
+    /// kernel that never launched.
+    #[test]
+    fn a_declined_run_is_skipped_not_passed() {
+        for declined in [
+            "skipping: needs sm_90\n",
+            "pass (skipped): ldmatrix requires sm_75+\n",
+        ] {
+            assert!(has_skip_marker(declined), "{declined}");
+        }
+    }
 
     #[test]
     fn seed_ranges_are_half_open() {
