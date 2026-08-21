@@ -9,6 +9,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Structural PTX schedule analysis and deterministic perturbation"
+readme = "README.md"
 
 [dependencies]
 dialect-ptx = { workspace = true }
