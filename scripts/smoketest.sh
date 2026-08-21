@@ -1552,6 +1552,11 @@ run_cargo() {
         # Build at the instruction floor; the host check skips before module loading.
         args+=("--arch=sm_75")
     fi
+    if [[ "${ex}" == "debug" ]]; then
+        # Its code-shape gate checks LLVM/PTX source locations, which only
+        # exist when the example is compiled with full device debug metadata.
+        args+=("--device-debug")
+    fi
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then
         case "${ex}" in
             cluster) args+=("--arch=sm_90") ;;

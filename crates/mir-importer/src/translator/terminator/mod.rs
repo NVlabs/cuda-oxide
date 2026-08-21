@@ -976,6 +976,7 @@ fn translate_call(
 
     // Extract function info
     let (pattern_name, call_name, substs_args, type_substs) = extract_func_info(func, &loc)?;
+    let loc = call_debug_location(pattern_name.as_deref(), loc);
 
     // Is the trait-method Self type SharedArray? Shared with
     // `values::classify_call` so intrinsic dispatch and destination-slot
@@ -1436,6 +1437,44 @@ fn ensure_foreign_callee_is_not_variadic(
         );
     }
     Ok(())
+}
+
+// stable-MIR reports the function's canonical definition path rather than the
+// `cuda_device::thread::__internal` re-export spelling emitted by the macro.
+const KERNEL_SCOPE_CONSTRUCTOR: &str = "cuda_device::__internal::make_kernel_scope";
+
+// These start-of-kernel calls are compiler metadata, not source statements.
+// They are removed during import, but the replacement control-flow edge must
+// also stay off the attribute line which caused the macro to inject them.
+const KERNEL_METADATA_MARKERS: &[&str] = &[
+    "cuda_device::__launch_bounds_config",
+    "cuda_device::thread::__launch_bounds_config",
+    "cuda_device::__launch_contract_config",
+    "cuda_device::thread::__launch_contract_config",
+    "cuda_device::__launch_contract_block_config",
+    "cuda_device::thread::__launch_contract_block_config",
+    "cuda_device::__unchecked_indexing_config",
+    "cuda_device::thread::__unchecked_indexing_config",
+    "cuda_device::cluster::__cluster_config",
+    "cuda_device::shared::__dynamic_shared_alignment",
+];
+
+/// Keep the macro-injected launch-context constructor out of user line tables.
+///
+/// Its Rust span intentionally stays at the proc-macro invocation so any
+/// type-checker or borrow-checker diagnostic points into the user's item. The
+/// call itself is compiler-generated setup, though, and must not make a
+/// function breakpoint stop on `#[kernel]` (or whichever adjacent attribute
+/// happened to invoke the macro). Separating the debug location here lets the
+/// diagnostic span and runtime line table serve those different purposes.
+fn call_debug_location(pattern_name: Option<&str>, loc: Location) -> Location {
+    if pattern_name.is_some_and(|name| {
+        name == KERNEL_SCOPE_CONSTRUCTOR || KERNEL_METADATA_MARKERS.contains(&name)
+    }) {
+        llvm_export::artificial_debug_location()
+    } else {
+        loc
+    }
 }
 
 /// Handle `FnOnce::call_once`, `FnMut::call_mut`, or `Fn::call` when the
@@ -3278,6 +3317,35 @@ mod tests {
     fn foreign_signature_rejects_c_variadic_before_claiming_an_exact_abi() {
         assert!(ensure_foreign_callee_is_not_variadic("fixed", false).is_ok());
         assert!(ensure_foreign_callee_is_not_variadic("variadic", true).is_err());
+    }
+
+    #[test]
+    fn generated_kernel_setup_calls_have_no_user_debug_location() {
+        let user_location = Location::Named {
+            name: "kernel attribute".into(),
+            child_loc: Box::new(Location::Unknown),
+        };
+
+        assert_eq!(
+            call_debug_location(Some(KERNEL_SCOPE_CONSTRUCTOR), user_location.clone()),
+            llvm_export::artificial_debug_location()
+        );
+        assert_eq!(
+            call_debug_location(
+                Some("cuda_device::__launch_bounds_config"),
+                user_location.clone()
+            ),
+            llvm_export::artificial_debug_location(),
+            "zero-cost launch metadata must not leave an attribute line behind"
+        );
+        assert_eq!(
+            call_debug_location(
+                Some("cuda_device::thread::__internal::index_1d"),
+                user_location.clone()
+            ),
+            user_location,
+            "user-written indexing calls keep their source locations"
+        );
     }
 
     /// A `SwitchInt` arm keeps its whole value at 128 bits, and narrower

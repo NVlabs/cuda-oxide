@@ -93,17 +93,21 @@ impl<'a> ModuleExportState<'a> {
         let Some(scope) = scope else {
             return;
         };
-        let location_id = self.debug_location_for_scope(scope, loc).or_else(|| {
-            if allow_scope_fallback {
-                // LLVM rejects inlinable calls inside a debug-scoped function
-                // unless the call itself has a location. When rustc/pliron did
-                // not give the call one, point it at the function line instead
-                // of letting opt discard the whole debug graph.
-                self.debug_fallback_location_for_scope(scope)
-            } else {
-                None
-            }
-        });
+        let location_id = if crate::is_artificial_debug_location(loc) {
+            Some(self.ensure_artificial_debug_location(scope))
+        } else {
+            self.debug_location_for_scope(scope, loc).or_else(|| {
+                if allow_scope_fallback {
+                    // LLVM rejects inlinable calls inside a debug-scoped function
+                    // unless the call itself has a location. When rustc/pliron did
+                    // not give the call one, point it at the function line instead
+                    // of letting opt discard the whole debug graph.
+                    self.debug_fallback_location_for_scope(scope)
+                } else {
+                    None
+                }
+            })
+        };
         let Some(location_id) = location_id else {
             return;
         };
@@ -862,6 +866,21 @@ impl<'a> ModuleExportState<'a> {
     fn debug_fallback_location_for_scope(&mut self, scope: usize) -> Option<usize> {
         let (line, column) = self.debug_subprogram_fallbacks.get(&scope).copied()?;
         self.ensure_debug_location(scope, SourcePosition { line, column }, None)
+    }
+
+    fn ensure_artificial_debug_location(&mut self, scope: usize) -> usize {
+        let key = (scope, 0, 0, None);
+        if let Some(id) = self.debug_locations.get(&key).copied() {
+            return id;
+        }
+
+        let id = self.alloc_metadata_id();
+        self.debug_nodes.push((
+            id,
+            format!("!DILocation(line: 0, column: 0, scope: !{scope})"),
+        ));
+        self.debug_locations.insert(key, id);
+        id
     }
 
     fn local_variable_position_from_location(

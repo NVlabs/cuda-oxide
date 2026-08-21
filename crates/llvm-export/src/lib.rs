@@ -21,6 +21,33 @@
 
 pub mod export;
 
+/// Stable marker used when an operation must remain in a debug-scoped LLVM
+/// function but does not correspond to user-written source.
+pub const ARTIFICIAL_DEBUG_LOCATION_NAME: &str = "cuda_oxide.artificial";
+
+/// Build a location which the textual LLVM exporter emits as line zero.
+///
+/// LLVM requires calls in a debug-scoped, inlinable function to carry a
+/// `DILocation`. An ordinary [`pliron::location::Location::Unknown`] therefore
+/// falls back to the function's source line. This explicit marker distinguishes
+/// compiler-generated setup which must have a location for LLVM validity but
+/// must not create a user-visible line-table entry.
+pub fn artificial_debug_location() -> pliron::location::Location {
+    pliron::location::Location::Named {
+        name: ARTIFICIAL_DEBUG_LOCATION_NAME.into(),
+        child_loc: Box::new(pliron::location::Location::Unknown),
+    }
+}
+
+/// Whether `loc` carries the explicit artificial-debug marker.
+pub fn is_artificial_debug_location(loc: &pliron::location::Location) -> bool {
+    matches!(
+        loc,
+        pliron::location::Location::Named { name, .. }
+            if name == ARTIFICIAL_DEBUG_LOCATION_NAME
+    )
+}
+
 /// LLVM types: re-exported from pliron-llvm, plus GPU address-space helpers.
 pub mod types {
     pub use pliron_llvm::types::*;

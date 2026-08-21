@@ -3755,6 +3755,66 @@ fn line_table_debug_metadata_adds_fallback_locations_to_calls() {
     );
 }
 
+#[test]
+fn line_table_debug_metadata_emits_explicit_artificial_calls_at_line_zero() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_region = module.get_operation().deref(&ctx).get_region(0);
+    let module_block = {
+        let region = module_region.deref(&ctx);
+        region.iter(&ctx).next().unwrap()
+    };
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let void_ty = VoidType::get(&ctx);
+    let helper_ty = FuncType::get(&ctx, i32_ty.to_handle(), vec![], false);
+    let helper = FuncOp::new(&mut ctx, "helper".try_into().unwrap(), helper_ty);
+    helper.get_operation().insert_at_back(module_block, &ctx);
+
+    let caller_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let caller = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), caller_ty);
+    let caller_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 20, 3);
+    caller.get_operation().deref_mut(&ctx).set_loc(caller_loc);
+
+    let entry = caller.get_or_create_entry_block(&mut ctx);
+    let call = CallOp::new(
+        &mut ctx,
+        CallOpCallable::Direct("helper".try_into().unwrap()),
+        helper_ty,
+        vec![],
+    );
+    call.get_operation()
+        .deref_mut(&ctx)
+        .set_loc(llvm_export::artificial_debug_location());
+    call.get_operation().insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+
+    caller.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = DebugConfig {
+        inner: PtxExportConfig,
+        debug_kind: DebugKind::LineTables,
+    };
+    let ir =
+        export_module_to_string_with_config(&ctx, &module, &config).expect("debug export succeeds");
+
+    let call_line = ir
+        .lines()
+        .find(|line| line.contains("call i32 @helper()"))
+        .expect("call instruction");
+    assert!(
+        call_line.contains(", !dbg !"),
+        "LLVM still requires an artificial call location:\n{ir}"
+    );
+    assert!(
+        ir.contains("!DILocation(line: 0, column: 0, scope: !"),
+        "artificial setup must not reuse the caller's user line:\n{ir}"
+    );
+}
+
 /// Scans the textual LLVM IR and asserts that every `%vN` token appearing in
 /// an operand position has a corresponding `%vN = ...` definition somewhere
 /// in the module. Operates on `%v` temporaries only because that's the
