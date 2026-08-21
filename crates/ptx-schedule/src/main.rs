@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 fn usage() -> ! {
     eprintln!(
-        "usage: ptx-schedule INPUT.ptx [--list-sites] [--seed N] [--intensity F] [--max-sleep-ns N] [--focus TEXT] [-o OUTPUT] [--decisions-json FILE]"
+        "usage: ptx-schedule INPUT.ptx [--list-sites] [--seed N] [--intensity F] [--max-sleep-ns N] [--focus TEXT] [-o|--output OUTPUT] [--decisions-json FILE]"
     );
     std::process::exit(2);
 }
