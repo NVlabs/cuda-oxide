@@ -151,6 +151,14 @@ The block-level barrier: all threads in the thread block must reach this point
 before any thread proceeds past it. Equivalent to `__syncthreads()` in CUDA C++.
 Lowers to `llvm.nvvm.barrier0()`.
 
+## CTA barrier reduction
+
+A numbered block-level barrier that combines synchronization with a predicate
+reduction. `popc` counts participating threads whose predicate is true, `and`
+requires every participating predicate to be true, and `or` requires at least
+one. Every non-exited thread covered by the barrier protocol must reach a
+compatible call; count forms additionally name the expected thread count.
+
 ## Tensor Cores
 
 Specialized matrix multiply-accumulate hardware units. WGMMA (Hopper, sm_90)

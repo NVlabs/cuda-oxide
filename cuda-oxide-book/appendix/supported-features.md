@@ -211,6 +211,7 @@ Anonymous promoted allocations remain unsupported.
 |:--------|:-------|:------------|
 | Thread/Block/Grid Intrinsics | **Full** | `threadIdx`, `blockIdx`, `blockDim`, `gridDim`. Index witnesses are layout-typed; their uniqueness also depends on matching launch dimensionality. `index_2d_runtime(&slice)` resolves against the slice's own row width, bound once by the host. See [The Safety Model](../gpu-safety/the-safety-model.md). |
 | Block Synchronization | **Full** | `sync_threads()` — thread block barrier. |
+| Numbered CTA Barrier Reductions | **Full** | Unsafe `barrier_cta_red_{and,or,popc}_{all,count}` APIs (plus aligned forms) and `barrier_cta_sync_all`; typed NVPTX and evidenced CUDA 12.9 libNVVM routes. |
 | Async Barriers (mbarrier) | **Full** | Hardware async barriers for Hopper+: init, arrive, test_wait, try_wait, inval. |
 | Cluster Synchronization | **Full** | `cluster_sync()` for all blocks in a cluster. sm_90+. |
 | Fence Operations | **Full** | `fence_proxy_async_shared_cta()` for TMA visibility, `nanosleep(ns)`. |

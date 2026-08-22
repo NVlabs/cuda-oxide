@@ -324,6 +324,18 @@ Both are `!Sync` — concurrent access requires explicit barriers.
 thread::sync_threads();   // __syncthreads() equivalent
 ```
 
+Numbered CTA barriers are raw unsafe APIs under `cuda_device::barrier`:
+
+| API family | Result | PTX spelling | Minimum typed-NVPTX target |
+|:-----------|:-------|:-------------|:----------------------------|
+| `barrier_cta_red_{and,or,popc}_{all,count}` | `bool`, `bool`, or `u32` | `barrier.red` | PTX 6.0 / sm_30 |
+| `barrier_cta_red_{and,or,popc}_aligned_{all,count}` | `bool`, `bool`, or `u32` | `bar.red` | PTX 3.2 / sm_20 |
+| `barrier_cta_sync_all(id)` | `()` | `barrier.sync` | PTX 6.0 / sm_30 |
+
+The CUDA 12.9 libNVVM inline-PTX route is recorded and validated at sm_75.
+All participating non-exited CTA threads must use a compatible barrier ID and
+count.
+
 ### Managed Barriers (Hopper+)
 
 ```rust

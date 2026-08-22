@@ -272,6 +272,28 @@ that not all threads take. Every thread in the block must reach the same
 control flow, restructure so the barrier is outside the branch.
 :::
 
+### Numbered CTA barrier reductions
+
+The unsafe functions in `cuda_device::barrier` expose numbered CTA barriers
+that synchronize and reduce a predicate in one operation:
+
+- `barrier_cta_red_popc_{all,count}` returns the number of participating
+  threads whose predicate is true.
+- `barrier_cta_red_and_{all,count}` returns whether every participating
+  thread supplied true.
+- `barrier_cta_red_or_{all,count}` returns whether any participating thread
+  supplied true.
+- The corresponding `_aligned_` forms select PTX `bar.red`; the other forms
+  select PTX `barrier.red`. `barrier_cta_sync_all(id)` is the one-operand
+  numbered-barrier synchronization form.
+
+The first argument is the barrier ID. A `_count` form also takes the expected
+thread count. These are not zero-argument `__syncthreads_*` aliases: every
+non-exited thread covered by the barrier protocol must execute a compatible
+call, with the same barrier ID and (for `_count`) count. Violating that
+participation contract can deadlock the CTA, which is why the APIs are
+`unsafe`.
+
 ---
 
 ## Shared memory vs. other approaches
