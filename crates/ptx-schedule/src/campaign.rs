@@ -730,7 +730,9 @@ fn run_binary(executable: &Path, cwd: &Path, timeout: Duration) -> RunResult {
         Ok(status) => (status.code(), status.success(), stderr),
         Err(error) => (None, false, error.to_string()),
     };
-    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    // Both marker predicates below fold case themselves, so this is the raw
+    // combined stream rather than a lowercased copy.
+    let combined = format!("{stdout}\n{stderr}");
     let kind = if timed_out {
         RunKind::Hang
     } else if has_skip_marker(&combined) {
@@ -867,16 +869,31 @@ fn rebuild_artifact_section(
 /// campaign that measured nothing.
 const SKIP_MARKERS: [&str; 2] = ["skipping:", "pass (skipped)"];
 
-/// `output` is already lowercased by `run_binary`, which is what makes the
-/// comparison case-insensitive the way the smoketest's `grep -i` is.
+/// Case is folded here rather than by the caller.
+///
+/// The smoketest greps these markers with `-i`, so matching them case-blind is
+/// the contract, not a convenience. It used to be met by `run_binary`
+/// lowercasing the output before calling in -- which worked, and left a
+/// predicate that silently disagreed with its own name for anyone who called
+/// it with a raw stream. `Skipping:` and `PASS (skipped):` are both spellings
+/// examples actually print, and both missed. Folding case in the predicate
+/// removes the precondition instead of documenting it.
 fn has_skip_marker(output: &str) -> bool {
     output.lines().any(|line| {
-        let line = line.trim_start();
-        SKIP_MARKERS.iter().any(|marker| line.starts_with(marker))
+        let line = line.trim_start().as_bytes();
+        SKIP_MARKERS.iter().any(|marker| {
+            let marker = marker.as_bytes();
+            line.len() >= marker.len() && line[..marker.len()].eq_ignore_ascii_case(marker)
+        })
     })
 }
 
+/// Case is folded here rather than by the caller, for the reason
+/// [`has_skip_marker`] gives. `MISMATCH` in capitals is the conventional
+/// spelling -- it is how the fuzzer reports the same finding -- and it was the
+/// one this list could not see on a raw stream.
 fn has_mismatch_marker(output: &str) -> bool {
+    let output = output.to_ascii_lowercase();
     [
         "mismatch",
         "max error too large",
@@ -900,6 +917,43 @@ fn has_mismatch_marker(output: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The markers must match the way the smoketest's `grep -i` does, without
+    /// the caller having lowercased anything first. Every spelling here is one
+    /// an example or a harness actually prints.
+    #[test]
+    fn the_marker_predicates_fold_case_themselves() {
+        for declined in [
+            "Skipping: cluster launch requires sm_90",
+            "SKIPPING: needs two devices",
+            "PASS (skipped): ldmatrix.m8n8.x4.b16 requires sm_75+",
+            "  Pass (Skipped): no peer access",
+        ] {
+            assert!(has_skip_marker(declined), "{declined}");
+        }
+        for failed in [
+            "MISMATCH at index 3",
+            "Mismatch: host and device disagree",
+            "Max Error Too Large",
+            "DEADLOCK detected",
+            "Validation Failed",
+        ] {
+            assert!(has_mismatch_marker(failed), "{failed}");
+        }
+        // Folding case must not widen what counts as a marker.
+        for ran in [
+            "pass",
+            "PASS",
+            "pass: 1024 elements verified",
+            "SUCCESS",
+            "no skipping: here",
+        ] {
+            assert!(!has_skip_marker(ran), "{ran}");
+        }
+        for ran in ["all checks passed", "PASS", "1024 elements verified"] {
+            assert!(!has_mismatch_marker(ran), "{ran}");
+        }
+    }
 
     /// The two spellings `scripts/smoketest.sh` accepts, and the near-misses
     /// that must not be mistaken for either.
