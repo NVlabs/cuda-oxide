@@ -22,12 +22,21 @@
 //!
 //! Both kernels verify the data actually crossed the barrier (values,
 //! not just completion) and that the bystander warps were unaffected.
+//! `barrier_reduction_compile_coverage` additionally keeps every CTA barrier
+//! reduction spelling and `barrier.sync id` in the compile-only smoke lane. It
+//! is intentionally not launched because local runtime validation is unavailable.
 //!
 //! Build and run with:
 //!   cargo oxide run counted_barrier
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use cuda_device::barrier::{barrier_cta_arrive, barrier_cta_sync};
+use cuda_device::barrier::{
+    barrier_cta_arrive, barrier_cta_red_and_aligned_all, barrier_cta_red_and_aligned_count,
+    barrier_cta_red_and_all, barrier_cta_red_and_count, barrier_cta_red_or_aligned_all,
+    barrier_cta_red_or_aligned_count, barrier_cta_red_or_all, barrier_cta_red_or_count,
+    barrier_cta_red_popc_aligned_all, barrier_cta_red_popc_aligned_count, barrier_cta_red_popc_all,
+    barrier_cta_red_popc_count, barrier_cta_sync, barrier_cta_sync_all,
+};
 use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, thread};
 
 const SENTINEL: u32 = 0xFACE;
@@ -97,6 +106,39 @@ mod kernels {
             }
         } else if let Some(slot) = out.get_mut(gid) {
             *slot = SENTINEL;
+        }
+    }
+
+    /// Compile-only coverage for the twelve reduction forms and numbered
+    /// all-thread sync. The host deliberately never launches this kernel.
+    #[kernel]
+    pub fn barrier_reduction_compile_coverage(mut out: DisjointSlice<u32>) {
+        let tid = thread::threadIdx_x();
+        let gid = thread::index_1d();
+        let predicate = tid & 1 == 0;
+
+        // SAFETY: this kernel is compile-only evidence. If launched, every
+        // non-exited CTA thread must execute these calls in the same order and
+        // the count forms require a 128-thread block.
+        unsafe {
+            let _ = barrier_cta_red_and_all(1, predicate);
+            let _ = barrier_cta_red_and_count(2, 128, predicate);
+            let _ = barrier_cta_red_and_aligned_all(3, predicate);
+            let _ = barrier_cta_red_and_aligned_count(4, 128, predicate);
+            let _ = barrier_cta_red_or_all(5, predicate);
+            let _ = barrier_cta_red_or_count(6, 128, predicate);
+            let _ = barrier_cta_red_or_aligned_all(7, predicate);
+            let _ = barrier_cta_red_or_aligned_count(8, 128, predicate);
+            let _ = barrier_cta_red_popc_all(9, predicate);
+            let _ = barrier_cta_red_popc_count(10, 128, predicate);
+            let _ = barrier_cta_red_popc_aligned_all(11, predicate);
+            let _ = barrier_cta_red_popc_aligned_count(12, 128, predicate);
+        }
+        // SAFETY: same all-thread participation contract as the reductions.
+        unsafe { barrier_cta_sync_all(13) };
+
+        if let Some(slot) = out.get_mut(gid) {
+            *slot = 1;
         }
     }
 }
