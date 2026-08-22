@@ -1,0 +1,478 @@
+# Reviewed CTA barrier reduction instruction family.
+
+schema = 63
+family = "barrier_reduction"
+
+[[intrinsic]]
+id = "barrier_cta_red_and_all"
+abi_id = "i1016"
+operation_key = "synchronization.cta.barrier.reduction.and.all"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_and_all"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_and_all"
+rust_arguments = ["u32","bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_and_all"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_and_all"]
+dialect_op_type = "BarrierCtaRedAndAllOp"
+dialect_op_name = "nvvm.barrier_cta_red_and_all"
+dialect_operands = ["i32","i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.and.all"
+llvm_arguments = ["i32","i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_30" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "barrier", modifiers = ["red","and","pred"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Reduces predicates with AND while synchronizing all arriving CTA threads at a numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_and_count"
+abi_id = "i1017"
+operation_key = "synchronization.cta.barrier.reduction.and.count"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_and_count"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_and_count"
+rust_arguments = ["u32","u32","bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_and_count"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_and_count"]
+dialect_op_type = "BarrierCtaRedAndCountOp"
+dialect_op_name = "nvvm.barrier_cta_red_and_count"
+dialect_operands = ["i32","i32","i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.and.count"
+llvm_arguments = ["i32","i32","i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_30" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "barrier", modifiers = ["red","and","pred"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Reduces predicates with AND while synchronizing the requested number of CTA threads at a numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_and_aligned_all"
+abi_id = "i1018"
+operation_key = "synchronization.cta.bar.reduction.and.all"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_and_aligned_all"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_and_aligned_all"
+rust_arguments = ["u32","bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_and_aligned_all"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_and_aligned_all"]
+dialect_op_type = "BarrierCtaRedAndAlignedAllOp"
+dialect_op_name = "nvvm.barrier_cta_red_and_aligned_all"
+dialect_operands = ["i32","i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.and.aligned.all"
+llvm_arguments = ["i32","i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "1.0"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "3.2", minimum_sm = "sm_20" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "1.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "bar", modifiers = ["red","and","pred"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Reduces predicates with AND while synchronizing all arriving CTA threads at an aligned numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_and_aligned_count"
+abi_id = "i1019"
+operation_key = "synchronization.cta.bar.reduction.and.count"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_and_aligned_count"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_and_aligned_count"
+rust_arguments = ["u32","u32","bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_and_aligned_count"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_and_aligned_count"]
+dialect_op_type = "BarrierCtaRedAndAlignedCountOp"
+dialect_op_name = "nvvm.barrier_cta_red_and_aligned_count"
+dialect_operands = ["i32","i32","i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.and.aligned.count"
+llvm_arguments = ["i32","i32","i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "1.0"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "3.2", minimum_sm = "sm_20" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "1.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "bar", modifiers = ["red","and","pred"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Reduces predicates with AND while synchronizing the requested number of CTA threads at an aligned numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_or_all"
+abi_id = "i1020"
+operation_key = "synchronization.cta.barrier.reduction.or.all"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_or_all"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_or_all"
+rust_arguments = ["u32","bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_or_all"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_or_all"]
+dialect_op_type = "BarrierCtaRedOrAllOp"
+dialect_op_name = "nvvm.barrier_cta_red_or_all"
+dialect_operands = ["i32","i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.or.all"
+llvm_arguments = ["i32","i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_30" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "barrier", modifiers = ["red","or","pred"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Reduces predicates with OR while synchronizing all arriving CTA threads at a numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_or_count"
+abi_id = "i1021"
+operation_key = "synchronization.cta.barrier.reduction.or.count"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_or_count"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_or_count"
+rust_arguments = ["u32","u32","bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_or_count"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_or_count"]
+dialect_op_type = "BarrierCtaRedOrCountOp"
+dialect_op_name = "nvvm.barrier_cta_red_or_count"
+dialect_operands = ["i32","i32","i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.or.count"
+llvm_arguments = ["i32","i32","i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_30" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "barrier", modifiers = ["red","or","pred"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Reduces predicates with OR while synchronizing the requested number of CTA threads at a numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_or_aligned_all"
+abi_id = "i1022"
+operation_key = "synchronization.cta.bar.reduction.or.all"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_or_aligned_all"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_or_aligned_all"
+rust_arguments = ["u32","bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_or_aligned_all"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_or_aligned_all"]
+dialect_op_type = "BarrierCtaRedOrAlignedAllOp"
+dialect_op_name = "nvvm.barrier_cta_red_or_aligned_all"
+dialect_operands = ["i32","i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.or.aligned.all"
+llvm_arguments = ["i32","i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "1.0"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "3.2", minimum_sm = "sm_20" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "1.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "bar", modifiers = ["red","or","pred"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Reduces predicates with OR while synchronizing all arriving CTA threads at an aligned numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_or_aligned_count"
+abi_id = "i1023"
+operation_key = "synchronization.cta.bar.reduction.or.count"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_or_aligned_count"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_or_aligned_count"
+rust_arguments = ["u32","u32","bool"]
+rust_result = "bool"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_or_aligned_count"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_or_aligned_count"]
+dialect_op_type = "BarrierCtaRedOrAlignedCountOp"
+dialect_op_name = "nvvm.barrier_cta_red_or_aligned_count"
+dialect_operands = ["i32","i32","i1"]
+dialect_results = ["i1"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.or.aligned.count"
+llvm_arguments = ["i32","i32","i1"]
+llvm_results = ["i1"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "1.0"
+ptx_result = "bool"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "3.2", minimum_sm = "sm_20" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "1.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "bar", modifiers = ["red","or","pred"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Reduces predicates with OR while synchronizing the requested number of CTA threads at an aligned numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_popc_all"
+abi_id = "i1024"
+operation_key = "synchronization.cta.barrier.reduction.popc.all"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_popc_all"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_popc_all"
+rust_arguments = ["u32","bool"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_popc_all"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_popc_all"]
+dialect_op_type = "BarrierCtaRedPopcAllOp"
+dialect_op_name = "nvvm.barrier_cta_red_popc_all"
+dialect_operands = ["i32","i1"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.popc.all"
+llvm_arguments = ["i32","i1"]
+llvm_results = ["i32"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_30" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "barrier", modifiers = ["red","popc","u32"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Counts true predicates while synchronizing all arriving CTA threads at a numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_popc_count"
+abi_id = "i1025"
+operation_key = "synchronization.cta.barrier.reduction.popc.count"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_popc_count"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_popc_count"
+rust_arguments = ["u32","u32","bool"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_popc_count"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_popc_count"]
+dialect_op_type = "BarrierCtaRedPopcCountOp"
+dialect_op_name = "nvvm.barrier_cta_red_popc_count"
+dialect_operands = ["i32","i32","i1"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.popc.count"
+llvm_arguments = ["i32","i32","i1"]
+llvm_results = ["i32"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_30" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "6.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "barrier", modifiers = ["red","popc","u32"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Counts true predicates while synchronizing the requested number of CTA threads at a numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_popc_aligned_all"
+abi_id = "i1026"
+operation_key = "synchronization.cta.bar.reduction.popc.all"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_popc_aligned_all"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_popc_aligned_all"
+rust_arguments = ["u32","bool"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_popc_aligned_all"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_popc_aligned_all"]
+dialect_op_type = "BarrierCtaRedPopcAlignedAllOp"
+dialect_op_name = "nvvm.barrier_cta_red_popc_aligned_all"
+dialect_operands = ["i32","i1"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.popc.aligned.all"
+llvm_arguments = ["i32","i1"]
+llvm_results = ["i32"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "1.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "3.2", minimum_sm = "sm_20" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "1.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "bar", modifiers = ["red","popc","u32"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Counts true predicates while synchronizing all arriving CTA threads at an aligned numbered barrier."
+
+[[intrinsic]]
+id = "barrier_cta_red_popc_aligned_count"
+abi_id = "i1027"
+operation_key = "synchronization.cta.bar.reduction.popc.count"
+family = "barrier_reduction"
+source_record = "int_nvvm_barrier_cta_red_popc_aligned_count"
+rust_module = "barrier"
+rust_name = "barrier_cta_red_popc_aligned_count"
+rust_arguments = ["u32","u32","bool"]
+rust_result = "u32"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_red_popc_aligned_count"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_red_popc_aligned_count"]
+dialect_op_type = "BarrierCtaRedPopcAlignedCountOp"
+dialect_op_name = "nvvm.barrier_cta_red_popc_aligned_count"
+dialect_operands = ["i32","i32","i1"]
+dialect_results = ["i32"]
+llvm_symbol = "llvm.nvvm.barrier.cta.red.popc.aligned.count"
+llvm_arguments = ["i32","i32","i1"]
+llvm_results = ["i32"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "1.0"
+ptx_result = "u32"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_barrier_reduction"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-barrier-reduction", minimum_ptx = "3.2", minimum_sm = "sm_20" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-barrier-reduction", minimum_ptx = "1.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "bar", modifiers = ["red","popc","u32"], operands = [{ kind = "register" }, { kind = "register_or_immediate" }, { kind = "register_or_immediate" }, { kind = "register" }] }
+summary = "Counts true predicates while synchronizing the requested number of CTA threads at an aligned numbered barrier."

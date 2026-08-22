@@ -417,6 +417,36 @@
         "modifiers": ["dec", "sync", "aligned", "u32"],
         "operands": [{"kind": "immediate"}]
       }
+    },
+    {
+      "id": "barrier_cta_sync_all",
+      "source_record": "int_nvvm_barrier_cta_sync_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.sync.all",
+      "llvm_arguments": ["i32"],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "lowered",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": ["sync"],
+        "operands": [{"kind": "register_or_immediate"}]
+      },
+      "concrete_llvm_arguments": ["i32"],
+      "concrete_llvm_results": [],
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "stages": [
+        {
+          "targets": ["sm_30", "ptx60"],
+          "representation": "typed barrier.cta.sync.all declaration in combined floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM emitted barrier.sync for both reviewed register/immediate selection records."
+        }
+      ],
+      "declaration_attributes_canonicalized": true
     }
   ]
 }

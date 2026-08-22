@@ -65,6 +65,7 @@
 //! |--------------------------|---------------------------------------------------------------------------|
 //! | [`asm`]                  | User-authored inline PTX lowering                                         |
 //! | [`atomic`]               | Atomic operation conversion: NVVM atomic dialect → LLVM atomic instructions|
+//! | [`barrier_reduction`]    | Lower CTA barrier reductions through typed NVVM or inline PTX               |
 //! | [`basic`]                | Basic NVVM intrinsic conversion for special registers                     |
 //! | [`clc`]                  | Lower generated Cluster Launch Control operations through typed NVVM calls|
 //! | [`cluster`]              | Compatibility lowering for derived cluster-grid values                    |
@@ -97,6 +98,7 @@
 
 pub mod asm;
 pub mod atomic;
+pub mod barrier_reduction;
 pub mod basic;
 pub mod clc;
 pub mod cluster;

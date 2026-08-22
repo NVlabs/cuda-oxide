@@ -1826,6 +1826,7 @@ pub enum ExecutionControlOperation {
     BarrierCtaSyncAligned,
     BarrierCtaArrive,
     BarrierCtaArriveAligned,
+    BarrierCtaSyncAll,
     GridDependencyLaunchDependents,
     GridDependencyWait,
     SetMaxNRegInc,
@@ -1839,6 +1840,7 @@ impl ExecutionControlOperation {
             "barrier_cta_sync_aligned" => Self::BarrierCtaSyncAligned,
             "barrier_cta_arrive" => Self::BarrierCtaArrive,
             "barrier_cta_arrive_aligned" => Self::BarrierCtaArriveAligned,
+            "barrier_cta_sync_all" => Self::BarrierCtaSyncAll,
             "grid_dependency_launch_dependents" => Self::GridDependencyLaunchDependents,
             "grid_dependency_wait" => Self::GridDependencyWait,
             "setmaxnreg_inc" => Self::SetMaxNRegInc,
@@ -1853,6 +1855,7 @@ impl ExecutionControlOperation {
             | Self::BarrierCtaSyncAligned
             | Self::BarrierCtaArrive
             | Self::BarrierCtaArriveAligned => "counted_barrier",
+            Self::BarrierCtaSyncAll => "counted_barrier",
             Self::GridDependencyLaunchDependents | Self::GridDependencyWait => "grid_dependency",
             Self::SetMaxNRegInc | Self::SetMaxNRegDec => "register_control",
         }
@@ -1864,6 +1867,7 @@ impl ExecutionControlOperation {
             | Self::BarrierCtaSyncAligned
             | Self::BarrierCtaArrive
             | Self::BarrierCtaArriveAligned => 2,
+            Self::BarrierCtaSyncAll => 1,
             Self::GridDependencyLaunchDependents | Self::GridDependencyWait => 0,
             Self::SetMaxNRegInc | Self::SetMaxNRegDec => 1,
         }

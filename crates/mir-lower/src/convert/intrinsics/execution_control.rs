@@ -26,9 +26,9 @@ pub(crate) fn convert_counted_barrier(
     ptx: &str,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
-    if operands.len() != 2 || op.deref(ctx).get_num_results() != 0 {
+    if !matches!(operands.len(), 1 | 2) || op.deref(ctx).get_num_results() != 0 {
         return pliron::input_err_noloc!(
-            "counted CTA barrier requires two operands and no results"
+            "counted CTA barrier requires one or two operands and no results"
         );
     }
     let void_ty = llvm_types::VoidType::get(ctx);
@@ -47,7 +47,7 @@ pub(crate) fn convert_counted_barrier(
         let function_ty = llvm_types::FuncType::get(
             ctx,
             void_ty.into(),
-            vec![i32_ty.into(), i32_ty.into()],
+            vec![i32_ty.into(); operands.len()],
             false,
         );
         call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, operands)?;

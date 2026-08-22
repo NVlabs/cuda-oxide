@@ -1,0 +1,51 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-12.9-libnvvm-12.9.86-execution-control",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+  "backend_sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+  "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "barrier_cta_sync_all",
+      "source_record": "int_nvvm_barrier_cta_sync_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.sync.all",
+      "llvm_arguments": [
+        "i32"
+      ],
+      "llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "status": "lowered",
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "sync"
+        ],
+        "operands": [
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 inline-PTX barrier.sync fixture in combined barrier module",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed retaining barrier.sync; CUDA 12.9.86 ptxas accepted it."
+        }
+      ]
+    }
+  ]
+}

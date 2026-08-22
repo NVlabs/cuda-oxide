@@ -6276,6 +6276,301 @@ fn lowered_kernel_body(
     panic!("lowered kernel function not found")
 }
 
+#[derive(Clone, Copy)]
+enum BarrierReductionTestOp {
+    AndAll,
+    AndCount,
+    OrAll,
+    OrCount,
+    PopcAll,
+    PopcCount,
+}
+
+struct BarrierReductionTestCase {
+    operation: BarrierReductionTestOp,
+    intrinsic: &'static str,
+    instruction: &'static str,
+    predicate_result: bool,
+    operand_count: usize,
+}
+
+const BARRIER_REDUCTION_CASES: [BarrierReductionTestCase; 6] = [
+    BarrierReductionTestCase {
+        operation: BarrierReductionTestOp::AndAll,
+        intrinsic: "llvm_nvvm_barrier_cta_red_and_all",
+        instruction: "barrier.red.and.pred",
+        predicate_result: true,
+        operand_count: 2,
+    },
+    BarrierReductionTestCase {
+        operation: BarrierReductionTestOp::AndCount,
+        intrinsic: "llvm_nvvm_barrier_cta_red_and_count",
+        instruction: "barrier.red.and.pred",
+        predicate_result: true,
+        operand_count: 3,
+    },
+    BarrierReductionTestCase {
+        operation: BarrierReductionTestOp::OrAll,
+        intrinsic: "llvm_nvvm_barrier_cta_red_or_all",
+        instruction: "barrier.red.or.pred",
+        predicate_result: true,
+        operand_count: 2,
+    },
+    BarrierReductionTestCase {
+        operation: BarrierReductionTestOp::OrCount,
+        intrinsic: "llvm_nvvm_barrier_cta_red_or_count",
+        instruction: "barrier.red.or.pred",
+        predicate_result: true,
+        operand_count: 3,
+    },
+    BarrierReductionTestCase {
+        operation: BarrierReductionTestOp::PopcAll,
+        intrinsic: "llvm_nvvm_barrier_cta_red_popc_all",
+        instruction: "barrier.red.popc.u32",
+        predicate_result: false,
+        operand_count: 2,
+    },
+    BarrierReductionTestCase {
+        operation: BarrierReductionTestOp::PopcCount,
+        intrinsic: "llvm_nvvm_barrier_cta_red_popc_count",
+        instruction: "barrier.red.popc.u32",
+        predicate_result: false,
+        operand_count: 3,
+    },
+];
+
+fn lower_barrier_reduction_case(
+    case: &BarrierReductionTestCase,
+    backend: mir_lower::IntrinsicBackend,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
+    let mut argument_types = vec![u32_ty.into()];
+    if case.operand_count == 3 {
+        argument_types.push(u32_ty.into());
+    }
+    argument_types.push(i1_ty.into());
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+    let operands = entry.deref(&ctx).arguments().collect::<Vec<_>>();
+    let result_ty = if case.predicate_result {
+        i1_ty.into()
+    } else {
+        u32_ty.into()
+    };
+
+    macro_rules! build {
+        ($op:ty) => {
+            Operation::new(
+                &mut ctx,
+                <$op>::get_concrete_op_info(),
+                vec![result_ty],
+                operands,
+                vec![],
+                0,
+            )
+        };
+    }
+    let reduction = match case.operation {
+        BarrierReductionTestOp::AndAll => build!(nvvm::BarrierCtaRedAndAllOp),
+        BarrierReductionTestOp::AndCount => build!(nvvm::BarrierCtaRedAndCountOp),
+        BarrierReductionTestOp::OrAll => build!(nvvm::BarrierCtaRedOrAllOp),
+        BarrierReductionTestOp::OrCount => build!(nvvm::BarrierCtaRedOrCountOp),
+        BarrierReductionTestOp::PopcAll => build!(nvvm::BarrierCtaRedPopcAllOp),
+        BarrierReductionTestOp::PopcCount => build!(nvvm::BarrierCtaRedPopcCountOp),
+    };
+    reduction.insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm_with_options(
+        &mut ctx,
+        module_ptr,
+        mir_lower::LoweringOptions {
+            intrinsic_backend: backend,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok((ctx, module_ptr))
+}
+
+#[test]
+fn test_barrier_reductions_llvm_nvptx_use_exact_typed_calls() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    for case in &BARRIER_REDUCTION_CASES {
+        let (ctx, module_ptr) =
+            lower_barrier_reduction_case(case, mir_lower::IntrinsicBackend::LlvmNvptx)?;
+        let body = lowered_kernel_body(&ctx, module_ptr);
+        assert!(
+            body.iter()
+                .all(|op| Operation::get_op::<llvm::InlineAsmOp>(*op, &ctx).is_none()),
+            "{} must use its typed LLVM route",
+            case.intrinsic
+        );
+        let calls = body
+            .iter()
+            .filter_map(|op| Operation::get_op::<llvm::CallOp>(*op, &ctx))
+            .filter(|call| {
+                matches!(call.callee(&ctx), CallOpCallable::Direct(ref callee) if callee.to_string() == case.intrinsic)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 1, "exact typed call for {}", case.intrinsic);
+        let call = &calls[0];
+        let call_op = call.get_operation();
+        assert_eq!(call_op.deref(&ctx).get_num_operands(), case.operand_count);
+        assert_eq!(call_op.deref(&ctx).get_num_results(), 1);
+        let block = call_op.deref(&ctx).get_parent_block().unwrap();
+        let expected_operands = block.deref(&ctx).arguments().collect::<Vec<_>>();
+        assert_eq!(
+            call_op.deref(&ctx).operands().collect::<Vec<_>>(),
+            expected_operands,
+            "typed operand order for {}",
+            case.intrinsic
+        );
+        let expected_widths = if case.operand_count == 2 {
+            vec![32, 1]
+        } else {
+            vec![32, 32, 1]
+        };
+        let operand_widths = call_op
+            .deref(&ctx)
+            .operands()
+            .map(|value| {
+                value
+                    .get_type(&ctx)
+                    .deref(&ctx)
+                    .downcast_ref::<IntegerType>()
+                    .expect("typed barrier operand is integer")
+                    .width()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            operand_widths, expected_widths,
+            "{} signature",
+            case.intrinsic
+        );
+        let result_width = call_op
+            .deref(&ctx)
+            .get_result(0)
+            .get_type(&ctx)
+            .deref(&ctx)
+            .downcast_ref::<IntegerType>()
+            .expect("typed barrier result is integer")
+            .width();
+        assert_eq!(result_width, if case.predicate_result { 1 } else { 32 });
+    }
+    Ok(())
+}
+
+#[test]
+fn test_barrier_reductions_libnvvm_use_exact_convergent_inline_ptx() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::IntegerType;
+    use pliron::r#type::Typed;
+
+    for case in &BARRIER_REDUCTION_CASES {
+        let (ctx, module_ptr) =
+            lower_barrier_reduction_case(case, mir_lower::IntrinsicBackend::LibNvvm)?;
+        let body = lowered_kernel_body(&ctx, module_ptr);
+        assert!(
+            body.iter()
+                .all(|op| Operation::get_op::<llvm::CallOp>(*op, &ctx).is_none()),
+            "{} must not use a typed call on libNVVM",
+            case.intrinsic
+        );
+        let asms = body
+            .iter()
+            .filter_map(|op| Operation::get_op::<llvm::InlineAsmOp>(*op, &ctx))
+            .collect::<Vec<_>>();
+        assert_eq!(asms.len(), 1, "one inline asm for {}", case.intrinsic);
+        let asm = &asms[0];
+        let input_refs = (1..=case.operand_count)
+            .map(|index| format!("${index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let expected_template = if case.predicate_result {
+            format!(
+                "{{ .reg .pred p; {} p, {input_refs}; selp.b32 $0, 1, 0, p; }}",
+                case.instruction
+            )
+        } else {
+            format!("{} $0, {input_refs};", case.instruction)
+        };
+        assert_eq!(
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some(expected_template.as_str())
+        );
+        let expected_constraints = if case.operand_count == 2 {
+            "=r,r,b,~{memory}"
+        } else {
+            "=r,r,r,b,~{memory}"
+        };
+        assert_eq!(
+            asm.get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some(expected_constraints)
+        );
+        assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+        assert_eq!(
+            asm.get_operation().deref(&ctx).get_num_operands(),
+            case.operand_count,
+            "operand order/arity for {}",
+            case.intrinsic
+        );
+        let block = asm.get_operation().deref(&ctx).get_parent_block().unwrap();
+        let expected_operands = block.deref(&ctx).arguments().collect::<Vec<_>>();
+        assert_eq!(
+            asm.get_operation()
+                .deref(&ctx)
+                .operands()
+                .collect::<Vec<_>>(),
+            expected_operands,
+            "inline-asm operand order for {}",
+            case.intrinsic
+        );
+        let asm_result = asm.get_operation().deref(&ctx).get_result(0);
+        assert_eq!(
+            asm_result
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .expect("asm result is i32")
+                .width(),
+            32
+        );
+        let truncs = body
+            .iter()
+            .filter_map(|op| Operation::get_op::<llvm::TruncOp>(*op, &ctx))
+            .filter(|trunc| trunc.get_operation().deref(&ctx).get_operand(0) == asm_result)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            truncs.len(),
+            usize::from(case.predicate_result),
+            "predicate materialization for {}",
+            case.intrinsic
+        );
+        if let Some(trunc) = truncs.first() {
+            let width = trunc
+                .get_operation()
+                .deref(&ctx)
+                .get_result(0)
+                .get_type(&ctx)
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .expect("predicate trunc result is i1")
+                .width();
+            assert_eq!(width, 1);
+        }
+    }
+    Ok(())
+}
+
 fn assert_ldmatrix_producer_result_shape(
     ctx: &Context,
     op: pliron::context::Ptr<Operation>,

@@ -1,6 +1,6 @@
 # Reviewed counted CTA barrier instruction family.
 
-schema = 61
+schema = 63
 family = "counted_barrier"
 
 [[intrinsic]]
@@ -160,3 +160,43 @@ backend_lowerings = [
 ]
 expected_ptx = { mnemonic = "bar", modifiers = ["arrive"], operands = [{ kind = "register_or_immediate" }, { kind = "register_or_immediate" }] }
 summary = "Signals arrival of the requested number of CTA threads at an aligned numbered barrier without waiting."
+
+[[intrinsic]]
+id = "barrier_cta_sync_all"
+abi_id = "i1028"
+operation_key = "synchronization.cta.barrier.all"
+family = "counted_barrier"
+source_record = "int_nvvm_barrier_cta_sync_all"
+rust_module = "barrier"
+rust_name = "barrier_cta_sync_all"
+rust_arguments = ["u32"]
+rust_result = "()"
+safe = false
+must_use = false
+public_rust_path = "cuda_intrinsics::barrier::barrier_cta_sync_all"
+compatibility_rust_paths = ["cuda_device::barrier::barrier_cta_sync_all"]
+dialect_op_type = "BarrierCtaSyncAllOp"
+dialect_op_name = "nvvm.barrier_cta_sync_all"
+dialect_operands = ["i32"]
+dialect_results = []
+llvm_symbol = "llvm.nvvm.barrier.cta.sync.all"
+llvm_arguments = ["i32"]
+llvm_results = []
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "6.0"
+minimum_sm = "sm_30"
+ptx_result = "()"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+lowering = "generated_execution_control"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-22.1.2-1cb4e383-execution-control", minimum_ptx = "6.0", minimum_sm = "sm_30" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-12.9-libnvvm-12.9.86-execution-control", minimum_ptx = "6.0", minimum_sm = "sm_75" },
+]
+expected_ptx = { mnemonic = "barrier", modifiers = ["sync"], operands = [{ kind = "register_or_immediate" }] }
+summary = "Synchronizes all arriving CTA threads at a numbered barrier."

@@ -79,9 +79,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-const OVERLAY_SCHEMA: u32 = 44;
+const OVERLAY_SCHEMA: u32 = 45;
 const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-const OVERLAY_SHARD_SCHEMA: u32 = 62;
+const OVERLAY_SHARD_SCHEMA: u32 = 63;
 const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 const REGISTER_MMA_MXF8F6F4_SHARD_SCHEMA: u32 = 60;
@@ -179,6 +179,7 @@ fn primary_evidence_profile<'a>(
     default_profile: &'a str,
 ) -> Result<&'a str> {
     let needs_family_profile = policy.tma.is_some()
+        || policy.family == "barrier_reduction"
         || ExecutionControlOperation::from_catalog_id(&policy.id).is_some()
         || policy
             .tcgen05
@@ -2117,6 +2118,10 @@ fn validate_policy(
                 declaration.context("execution-control requires imported LLVM declaration")?,
             )?
         }
+        "barrier_reduction" => validate_barrier_reduction_policy(
+            policy,
+            declaration.context("barrier_reduction requires imported LLVM declaration")?,
+        )?,
         "tcgen05" => validate_tcgen05_policy(
             policy,
             declaration.context("tcgen05 requires imported LLVM declaration")?,
@@ -2378,7 +2383,20 @@ fn validate_policy(
             "vote" | "warp_barrier" | "elect" => 2,
             "warp_match" => 4,
             "warp_shuffle" => 8,
-            "counted_barrier" => 4,
+            "counted_barrier" => {
+                if policy.id == "barrier_cta_sync_all" {
+                    2
+                } else {
+                    4
+                }
+            }
+            "barrier_reduction" => {
+                if policy.id.ends_with("_count") {
+                    4
+                } else {
+                    2
+                }
+            }
             "packed_conversion" | "prmt" | "stmatrix" => 0,
             "tma"
                 if policy.tma.as_ref().is_some_and(|tma| {
@@ -3797,11 +3815,109 @@ fn validate_clc_policy(policy: &OverlayIntrinsic, declaration: &ImportedIntrinsi
     Ok(())
 }
 
-const EXECUTION_CONTROL_OPERATIONS: [ExecutionControlOperation; 8] = [
+fn validate_barrier_reduction_policy(
+    policy: &OverlayIntrinsic,
+    declaration: &ImportedIntrinsic,
+) -> Result<()> {
+    let aligned = policy.id.contains("_aligned_");
+    let count = policy.id.ends_with("_count");
+    let operation = ["and", "or", "popc"]
+        .into_iter()
+        .find(|operation| policy.id.contains(&format!("_red_{operation}_")))
+        .with_context(|| format!("{} has no closed barrier reduction operation", policy.id))?;
+    let predicate_result = operation != "popc";
+    let rust_arguments = if count {
+        vec!["u32", "u32", "bool"]
+    } else {
+        vec!["u32", "bool"]
+    };
+    let llvm_arguments = if count {
+        vec!["i32", "i32", "i1"]
+    } else {
+        vec!["i32", "i1"]
+    };
+    let llvm_result = if predicate_result { "i1" } else { "i32" };
+    let rust_result = if predicate_result { "bool" } else { "u32" };
+    let mnemonic = if aligned { "bar" } else { "barrier" };
+    let expected_id = format!(
+        "barrier_cta_red_{operation}_{}{}",
+        if aligned { "aligned_" } else { "" },
+        if count { "count" } else { "all" }
+    );
+    ensure!(
+        policy.id == expected_id
+            && policy.family == "barrier_reduction"
+            && policy.source_record.as_deref() == Some(declaration.source_record.as_str())
+            && policy.llvm_symbol.as_deref() == Some(declaration.llvm_name.as_str())
+            && policy.rust_module == "barrier"
+            && policy.rust_name == policy.id
+            && policy.rust_arguments == rust_arguments
+            && policy.rust_result == rust_result
+            && !policy.safe
+            && policy.must_use
+            && policy.compatibility_rust_paths == [format!("cuda_device::barrier::{}", policy.id)]
+            && policy.dialect_operands == llvm_arguments
+            && policy.dialect_results == [llvm_result]
+            && policy.llvm_arguments == llvm_arguments
+            && policy.llvm_results == [llvm_result]
+            && declaration.arguments == llvm_arguments
+            && declaration.results == [llvm_result]
+            && policy.lowering == "generated_barrier_reduction",
+        "{} barrier-reduction identity or carrier changed",
+        policy.id
+    );
+    ensure!(
+        !policy.pure
+            && policy.memory == "read_write"
+            && policy.convergent
+            && policy.execution_scope == "cta"
+            && policy.minimum_ptx == if aligned { "1.0" } else { "6.0" }
+            && policy.minimum_sm.as_deref() == if aligned { None } else { Some("sm_30") }
+            && policy.targets == "all"
+            && policy.expected_ptx.mnemonic == mnemonic
+            && policy.expected_ptx.modifiers
+                == [
+                    "red",
+                    operation,
+                    if predicate_result { "pred" } else { "u32" }
+                ],
+        "{} barrier-reduction semantic or PTX contract changed",
+        policy.id
+    );
+    ensure!(
+        declaration.classes == ["SDPatternOperator", "Intrinsic"]
+            && declaration.properties == ["IntrConvergent", "IntrNoCallback"]
+            && declaration.selections.len() == if count { 4 } else { 2 },
+        "{} imported barrier-reduction declaration changed",
+        policy.id
+    );
+    ensure!(
+        policy.backend_lowerings.len() == 2
+            && policy.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LlvmNvptx
+                    && route.mechanism == BackendLoweringMechanism::TypedNvvm
+                    && route.minimum_ptx.as_deref() == Some(if aligned { "3.2" } else { "6.0" })
+                    && route.minimum_sm.as_deref() == Some(if aligned { "sm_20" } else { "sm_30" })
+            })
+            && policy.backend_lowerings.iter().any(|route| {
+                route.backend == IntrinsicBackend::LibNvvm
+                    && route.mechanism == BackendLoweringMechanism::InlinePtx
+                    && route.minimum_ptx.as_deref() == Some(if aligned { "1.0" } else { "6.0" })
+                    && route.minimum_sm.as_deref() == Some("sm_75")
+            }),
+        "{} barrier-reduction backend route changed",
+        policy.id
+    );
+    ensure_no_other_family_contract(policy, "barrier reduction")?;
+    Ok(())
+}
+
+const EXECUTION_CONTROL_OPERATIONS: [ExecutionControlOperation; 9] = [
     ExecutionControlOperation::BarrierCtaSync,
     ExecutionControlOperation::BarrierCtaSyncAligned,
     ExecutionControlOperation::BarrierCtaArrive,
     ExecutionControlOperation::BarrierCtaArriveAligned,
+    ExecutionControlOperation::BarrierCtaSyncAll,
     ExecutionControlOperation::GridDependencyLaunchDependents,
     ExecutionControlOperation::GridDependencyWait,
     ExecutionControlOperation::SetMaxNRegInc,
@@ -3827,7 +3943,7 @@ fn validate_execution_control_family_completeness(intrinsics: &[OverlayIntrinsic
         .collect::<BTreeSet<_>>();
     ensure!(
         actual == expected,
-        "execution-control overlay must admit all four counted barriers, both grid-dependency controls, and both setmaxnreg operations"
+        "execution-control overlay must admit all five counted barriers, both grid-dependency controls, and both setmaxnreg operations"
     );
     for family in ["counted_barrier", "grid_dependency", "register_control"] {
         ensure!(
@@ -3900,6 +4016,7 @@ fn execution_control_recipe(operation: ExecutionControlOperation) -> ExecutionCo
         OperandPattern::RegisterOrImmediate,
         OperandPattern::RegisterOrImmediate,
     ];
+    const ONE_REGISTER_OR_IMMEDIATE: &[OperandPattern] = &[OperandPattern::RegisterOrImmediate];
     const ONE_IMMEDIATE: &[OperandPattern] = &[OperandPattern::Immediate];
     const NO_OPERANDS: &[OperandPattern] = &[];
     const BARRIER_SYNC_SELECTIONS: &[&str] = &[
@@ -3926,6 +4043,8 @@ fn execution_control_recipe(operation: ExecutionControlOperation) -> ExecutionCo
         "BARRIER_CTA_ARRIVE_ALIGNED_ri",
         "BARRIER_CTA_ARRIVE_ALIGNED_rr",
     ];
+    const BARRIER_SYNC_ALL_SELECTIONS: &[&str] =
+        &["BARRIER_CTA_SYNC_ALL_i", "BARRIER_CTA_SYNC_ALL_r"];
     const PTX_60: &[&str] = &["Subtarget->getPTXVersion() >= 60"];
     const GRID_PREDICATES: &[&str] = &[
         "Subtarget->getSmVersion() >= 90",
@@ -4106,6 +4225,37 @@ fn execution_control_recipe(operation: ExecutionControlOperation) -> ExecutionCo
             EMPTY,
             "Signals arrival of the requested number of CTA threads at an aligned numbered barrier without waiting.",
         ),
+        BarrierCtaSyncAll => (
+            "i1028",
+            "barrier_cta_sync_all",
+            "synchronization.cta.barrier.all",
+            "int_nvvm_barrier_cta_sync_all",
+            "llvm.nvvm.barrier.cta.sync.all",
+            "barrier",
+            U32,
+            "cuda_device::barrier::barrier_cta_sync_all",
+            "BarrierCtaSyncAllOp",
+            "nvvm.barrier_cta_sync_all",
+            I32,
+            I32,
+            BASE_CLASSES,
+            BARRIER_PROPERTIES,
+            "read_write",
+            true,
+            "cta",
+            "6.0",
+            Some("sm_30"),
+            "all",
+            BAR_SECTION,
+            BAR_URL,
+            "barrier",
+            SYNC_MODIFIERS,
+            ONE_REGISTER_OR_IMMEDIATE,
+            BARRIER_SYNC_ALL_SELECTIONS,
+            "barrier.sync \t$i;",
+            PTX_60,
+            "Synchronizes all arriving CTA threads at a numbered barrier.",
+        ),
         GridDependencyLaunchDependents => (
             "i0913",
             "grid_dependency_launch_dependents",
@@ -4272,8 +4422,12 @@ fn execution_control_backend_floor(
     use ExecutionControlOperation::*;
 
     match (operation, backend) {
-        (BarrierCtaSync | BarrierCtaArrive, IntrinsicBackend::LlvmNvptx) => ("6.0", Some("sm_30")),
-        (BarrierCtaSync | BarrierCtaArrive, IntrinsicBackend::LibNvvm) => ("6.0", Some("sm_75")),
+        (BarrierCtaSync | BarrierCtaArrive | BarrierCtaSyncAll, IntrinsicBackend::LlvmNvptx) => {
+            ("6.0", Some("sm_30"))
+        }
+        (BarrierCtaSync | BarrierCtaArrive | BarrierCtaSyncAll, IntrinsicBackend::LibNvvm) => {
+            ("6.0", Some("sm_75"))
+        }
         (BarrierCtaSyncAligned | BarrierCtaArriveAligned, IntrinsicBackend::LlvmNvptx) => {
             ("3.2", Some("sm_20"))
         }
@@ -31467,8 +31621,8 @@ mod tests {
         let (overlay, hash) =
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-        assert_eq!(overlay.shards.len(), 64);
-        assert_eq!(overlay.intrinsics.len(), 1015);
+        assert_eq!(overlay.shards.len(), 65);
+        assert_eq!(overlay.intrinsics.len(), 1028);
         assert_eq!(
             overlay
                 .intrinsics

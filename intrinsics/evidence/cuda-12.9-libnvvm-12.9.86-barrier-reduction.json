@@ -1,0 +1,649 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+  "backend_sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+  "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "records": [
+    {
+      "id": "barrier_cta_red_and_all",
+      "source_record": "int_nvvm_barrier_cta_red_and_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.and.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_and_count",
+      "source_record": "int_nvvm_barrier_cta_red_and_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.and.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_and_aligned_all",
+      "source_record": "int_nvvm_barrier_cta_red_and_aligned_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.and.aligned.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_and_aligned_count",
+      "source_record": "int_nvvm_barrier_cta_red_and_aligned_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.and.aligned.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_or_all",
+      "source_record": "int_nvvm_barrier_cta_red_or_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.or.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_or_count",
+      "source_record": "int_nvvm_barrier_cta_red_or_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.or.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_or_aligned_all",
+      "source_record": "int_nvvm_barrier_cta_red_or_aligned_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.or.aligned.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_or_aligned_count",
+      "source_record": "int_nvvm_barrier_cta_red_or_aligned_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.or.aligned.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_popc_all",
+      "source_record": "int_nvvm_barrier_cta_red_popc_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.popc.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_popc_count",
+      "source_record": "int_nvvm_barrier_cta_red_popc_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.popc.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_popc_aligned_all",
+      "source_record": "int_nvvm_barrier_cta_red_popc_aligned_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.popc.aligned.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_popc_aligned_count",
+      "source_record": "int_nvvm_barrier_cta_red_popc_aligned_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.popc.aligned.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [],
+      "concrete_llvm_results": [],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_75",
+      "ptx_feature": "PTX ISA 8.8 emitted by CUDA 12.9",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_75",
+            "ptx88"
+          ],
+          "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c."
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    }
+  ]
+}

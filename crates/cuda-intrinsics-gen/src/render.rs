@@ -353,6 +353,16 @@ pub fn all_outputs(
         "crates/dialect-nvvm/src/ops/generated/vote.rs".into(),
         render_dialect_vote(catalog, catalog_sha256),
     );
+    if barrier_reductions(catalog).next().is_some() {
+        outputs.insert(
+            "crates/cuda-device/src/generated/barrier_reduction.rs".into(),
+            render_compat_barrier_reduction(catalog, catalog_sha256),
+        );
+        outputs.insert(
+            "crates/dialect-nvvm/src/ops/generated/barrier_reduction.rs".into(),
+            render_dialect_barrier_reduction(catalog, catalog_sha256),
+        );
+    }
     outputs.insert(
         "crates/dialect-nvvm/src/ops/generated/active_mask.rs".into(),
         render_dialect_active_mask(catalog, catalog_sha256),
@@ -477,6 +487,7 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                         record.family.as_str(),
                         "counted_barrier" | "grid_dependency" | "register_control"
                     )
+                    || record.family == "barrier_reduction"
                     || record.family == "sync",
                 "{} is unsafe but has no dedicated family safety renderer",
                 record.id
@@ -1350,6 +1361,12 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                                         llvm.arguments == ["i32", "i32"]
                                     })
                             }
+                            ExecutionControlOperation::BarrierCtaSyncAll => {
+                                record.rust.module == "barrier"
+                                    && record.rust.arguments == ["u32"]
+                                    && record.dialect.operands == ["i32"]
+                                    && record.llvm.as_ref().is_some_and(|llvm| llvm.arguments == ["i32"])
+                            }
                             ExecutionControlOperation::GridDependencyLaunchDependents
                             | ExecutionControlOperation::GridDependencyWait => {
                                 record.rust.module == "grid"
@@ -1373,6 +1390,16 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                         }
                 }),
                 "{} is outside the closed generated execution-control recipe",
+                record.id
+            ),
+            "barrier_reduction" => ensure!(
+                record.rust.module == "barrier"
+                    && !record.rust.safe
+                    && record.rust.must_use
+                    && record.dialect.results.len() == 1
+                    && record.llvm.as_ref().is_some_and(|llvm| llvm.results.len() == 1)
+                    && record.lowering == "generated_barrier_reduction",
+                "{} is outside the closed barrier-reduction recipe",
                 record.id
             ),
             "tcgen05" => ensure!(
@@ -2380,6 +2407,13 @@ fn execution_controls(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogInt
             "counted_barrier" | "grid_dependency" | "register_control"
         )
     })
+}
+
+fn barrier_reductions(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
+    catalog
+        .intrinsics
+        .iter()
+        .filter(|record| record.family == "barrier_reduction")
 }
 
 fn execution_control_family<'a>(
@@ -5009,6 +5043,9 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                     | ExecutionControlOperation::BarrierCtaArriveAligned => output.push_str(
                         "/// `_arg0` must identify a CTA barrier and `_arg1` must be the compatible expected thread count used by every participant.\n",
                     ),
+                    ExecutionControlOperation::BarrierCtaSyncAll => output.push_str(
+                        "/// `_arg0` must identify the same CTA barrier used by every arriving thread.\n",
+                    ),
                     ExecutionControlOperation::GridDependencyLaunchDependents
                     | ExecutionControlOperation::GridDependencyWait => output.push_str(
                         "/// The kernel launch must participate in a valid programmatic dependent-launch protocol.\n",
@@ -5988,22 +6025,30 @@ fn render_compat_clc(catalog: &CatalogFile, hash: &str) -> String {
 fn render_compat_counted_barrier(catalog: &CatalogFile, hash: &str) -> String {
     assert_eq!(
         execution_control_family(catalog, "counted_barrier").count(),
-        4
+        5
     );
     let mut output = rust_header(catalog, hash);
     output.push_str("// Included inside `cuda_device::barrier` to keep its public API stable.\n\n");
     for record in execution_control_family(catalog, "counted_barrier") {
         writeln!(output, "/// {}", record.summary).unwrap();
-        output.push_str(
-            "///\n/// # Safety\n/// Every participating thread must use a compatible barrier ID and expected thread count.\n#[inline(never)]\n",
-        );
-        writeln!(
-            output,
-            "pub unsafe fn {}(barrier_id: u32, thread_count: u32) {{",
-            record.rust.name
-        )
-        .unwrap();
-        output.push_str("    let _ = (barrier_id, thread_count);\n");
+        output.push_str("///\n/// # Safety\n/// Every participating thread must use a compatible barrier protocol.\n#[inline(never)]\n");
+        if record.rust.arguments.len() == 1 {
+            writeln!(
+                output,
+                "pub unsafe fn {}(barrier_id: u32) {{",
+                record.rust.name
+            )
+            .unwrap();
+            output.push_str("    let _ = barrier_id;\n");
+        } else {
+            writeln!(
+                output,
+                "pub unsafe fn {}(barrier_id: u32, thread_count: u32) {{",
+                record.rust.name
+            )
+            .unwrap();
+            output.push_str("    let _ = (barrier_id, thread_count);\n");
+        }
         writeln!(
             output,
             "    unreachable!(\"{} called outside CUDA kernel context\")",
@@ -7600,6 +7645,21 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
             .replace(
                 "    dotprod::register(ctx);",
                 "    dotprod::register(ctx);\n    execution_control::register(ctx);",
+            );
+    }
+    if barrier_reductions(catalog).next().is_some() {
+        output = output
+            .replace(
+                "mod active_mask;",
+                "mod active_mask;\nmod barrier_reduction;",
+            )
+            .replace(
+                "pub use active_mask::*;",
+                "pub use active_mask::*;\npub use barrier_reduction::*;",
+            )
+            .replace(
+                "    active_mask::register(ctx);",
+                "    active_mask::register(ctx);\n    barrier_reduction::register(ctx);",
             );
     }
     if tma_intrinsics(catalog).next().is_some() {
@@ -11284,7 +11344,7 @@ fn render_dialect_clc(catalog: &CatalogFile, hash: &str) -> String {
 }
 
 fn render_dialect_execution_control(catalog: &CatalogFile, hash: &str) -> String {
-    assert_eq!(execution_controls(catalog).count(), 8);
+    assert_eq!(execution_controls(catalog).count(), 9);
     let mut output = rust_header(catalog, hash);
     output.push_str(
         "//! Generated counted-barrier, grid-dependency, and register-control operations.\n\nuse pliron::{\n    builtin::{attributes::IntegerAttr, op_interfaces::{NOpdsInterface, NResultsInterface}, types::{IntegerType, Signedness}},\n    common_traits::Verify,\n    context::{Context, Ptr},\n    identifier::Identifier,\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    verify_err,\n};\nuse pliron::utils::apint::APInt;\nuse pliron_derive::pliron_op;\nuse std::num::NonZeroUsize;\n\n",
@@ -11325,6 +11385,60 @@ fn render_dialect_execution_control(catalog: &CatalogFile, hash: &str) -> String
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
     output.push_str("}\n");
+    output
+}
+
+fn render_dialect_barrier_reduction(catalog: &CatalogFile, hash: &str) -> String {
+    assert_eq!(barrier_reductions(catalog).count(), 12);
+    let mut output = rust_header(catalog, hash);
+    output.push_str("//! Generated CTA barrier-reduction operations.\n\nuse pliron::{builtin::op_interfaces::{NOpdsInterface, NResultsInterface}, context::{Context, Ptr}, op::Op, operation::Operation};\nuse pliron_derive::pliron_op;\n\n");
+    for record in barrier_reductions(catalog) {
+        let operand_count = record.dialect.operands.len();
+        writeln!(output, "/// {}", record.summary).unwrap();
+        writeln!(output, "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<{operand_count}>, NResultsInterface<1>],\n)]", record.dialect.op_name).unwrap();
+        writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
+        writeln!(
+            output,
+            "\nimpl {} {{\n    pub fn new(op: Ptr<Operation>) -> Self {{ Self {{ op }} }}\n}}\n",
+            record.dialect.op_type
+        )
+        .unwrap();
+    }
+    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    for record in barrier_reductions(catalog) {
+        writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
+    }
+    output.push_str("}\n");
+    output
+}
+
+fn render_compat_barrier_reduction(catalog: &CatalogFile, hash: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str("// Included inside `cuda_device::barrier`.\n\n");
+    for record in barrier_reductions(catalog) {
+        writeln!(output, "/// {}\n///\n/// # Safety\n/// All participating threads must use a compatible barrier protocol.\n#[inline(never)]", record.summary).unwrap();
+        let args = if record.rust.arguments.len() == 3 {
+            "barrier_id: u32, thread_count: u32, predicate: bool"
+        } else {
+            "barrier_id: u32, predicate: bool"
+        };
+        writeln!(
+            output,
+            "pub unsafe fn {}({args}) -> {} {{",
+            record.rust.name, record.rust.result
+        )
+        .unwrap();
+        output.push_str("    let _ = (barrier_id, predicate);\n");
+        if record.rust.arguments.len() == 3 {
+            output.push_str("    let _ = thread_count;\n");
+        }
+        writeln!(
+            output,
+            "    unreachable!(\"{} called outside CUDA kernel context\")\n}}\n",
+            record.rust.name
+        )
+        .unwrap();
+    }
     output
 }
 
@@ -12252,6 +12366,10 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
+    for record in barrier_reductions(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
     if wgmma_controls(catalog).next().is_some() {
         output.push_str(
             ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
@@ -12943,6 +13061,37 @@ fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
+        output.push_str("        }\n");
+    }
+    for record in barrier_reductions(catalog) {
+        let mut path_refs = vec![record.rust.canonical_path.as_str()];
+        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+        output.push_str("        ");
+        render_inline_patterns(&mut output, &path_refs);
+        output.push_str(" => {\n");
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {}, &loc)?;",
+            record.rust.arguments.len()
+        )
+        .unwrap();
+        output.push_str("            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(ctx, body, arg, value_map, block_ptr, last_op, loc.clone())?;\n                last_op = translated;\n                operands.push(value);\n            }\n");
+        let (width, signedness) = if record.rust.result == "bool" {
+            (1, "Signless")
+        } else {
+            (32, "Unsigned")
+        };
+        writeln!(output, "            let result_ty = pliron::builtin::types::IntegerType::get(ctx, {width}, pliron::builtin::types::Signedness::{signedness});").unwrap();
+        writeln!(output, "            let reduction = Operation::new(ctx, {}::get_concrete_op_info(), vec![result_ty.into()], operands, vec![], 0);", record.dialect.op_type).unwrap();
+        output.push_str("            reduction.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, reduction, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str("            helpers::insert_op(ctx, reduction, block_ptr, last_op);\n            let result = reduction.deref(ctx).get_result(0);\n");
+        writeln!(output, "            Ok(Some(helpers::emit_store_result_and_goto(ctx, destination, result, target, block_ptr, reduction, value_map, block_map, loc, {:?})?))", format!("{} call without target block", record.rust.name)).unwrap();
         output.push_str("        }\n");
     }
     for record in warp_matches(catalog) {
@@ -14966,6 +15115,12 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
             "dotprod::convert_generated_dot_product, execution_control::{convert_counted_barrier, convert_grid_dependency, convert_setmaxnreg}, ",
         );
     }
+    if barrier_reductions(catalog).next().is_some() {
+        output = output.replace(
+            "atomic::convert_packed_atom_add, ",
+            "atomic::convert_packed_atom_add, barrier_reduction::convert_barrier_reduction, ",
+        );
+    }
     if scalar_conversions(catalog).next().is_some() {
         output = output.replace(
             "prmt::convert_generated_prmt, ",
@@ -15251,6 +15406,10 @@ fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
         output.push_str(&record.dialect.op_type);
     }
     for record in execution_controls(catalog) {
+        output.push_str(", ");
+        output.push_str(&record.dialect.op_type);
+    }
+    for record in barrier_reductions(catalog) {
         output.push_str(", ");
         output.push_str(&record.dialect.op_type);
     }
@@ -16526,6 +16685,22 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    for record in barrier_reductions(catalog) {
+        let template = format!(
+            "{}.{}",
+            record.expected_ptx.mnemonic,
+            record.expected_ptx.modifiers.join(".")
+        );
+        writeln!(
+            output,
+            "#[op_interface_impl]\nimpl MirToLlvmConversion for {} {{",
+            record.dialect.op_type
+        )
+        .unwrap();
+        output.push_str("    fn convert(&self, ctx: &mut Context, rewriter: &mut DialectConversionRewriter, operands_info: &OperandsInfo) -> Result<()> {\n");
+        writeln!(output, "        convert_barrier_reduction(ctx, rewriter, self.get_operation(), operands_info, {:?}, {template:?}, {})", record.llvm_identifier(), record.rust.result == "bool").unwrap();
+        output.push_str("    }\n}\n\n");
+    }
     for record in execution_controls(catalog) {
         let operation = ExecutionControlOperation::from_catalog_id(&record.id)
             .expect("closed execution-control record");
@@ -16554,6 +16729,14 @@ fn convert_generated_tcgen05_load(
                     record.llvm_identifier()
                 )
                 .unwrap();
+            }
+            ExecutionControlOperation::BarrierCtaSyncAll => {
+                let template = format!(
+                    "{}.{} $0;",
+                    record.expected_ptx.mnemonic,
+                    record.expected_ptx.modifiers.join(".")
+                );
+                writeln!(output, "        convert_counted_barrier(ctx, rewriter, self.get_operation(), operands_info, {:?}, {template:?})", record.llvm_identifier()).unwrap();
             }
             ExecutionControlOperation::GridDependencyLaunchDependents
             | ExecutionControlOperation::GridDependencyWait => {
@@ -18315,6 +18498,22 @@ fn render_execution_control_probe(
             }
             output.push_str("attributes #0 = { convergent }\n");
         }
+        ExecutionControlOperation::BarrierCtaSyncAll => {
+            writeln!(output, "declare void @{symbol}(i32)\n").unwrap();
+            for (suffix, parameters, barrier_id) in
+                [("r", "i32 %barrier_id", "%barrier_id"), ("i", "", "1")]
+            {
+                writeln!(
+                    output,
+                    "define void @probe_{}_{suffix}({parameters}) #0 {{",
+                    record.id
+                )
+                .unwrap();
+                writeln!(output, "  call void @{symbol}(i32 {barrier_id})").unwrap();
+                output.push_str("  ret void\n}\n\n");
+            }
+            output.push_str("attributes #0 = { convergent }\n");
+        }
         ExecutionControlOperation::GridDependencyLaunchDependents
         | ExecutionControlOperation::GridDependencyWait => {
             writeln!(output, "declare void @{symbol}()\n").unwrap();
@@ -18776,6 +18975,69 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
     }
     if ExecutionControlOperation::from_catalog_id(&record.id).is_some() {
         return render_execution_control_probe(catalog, record, hash);
+    }
+    if record.family == "barrier_reduction" {
+        let mut output = llvm_header(catalog, hash);
+        output.push_str("target triple = \"nvptx64-nvidia-cuda\"\n\n");
+        let result = &record.llvm.as_ref().unwrap().results[0];
+        let arguments = record.llvm.as_ref().unwrap().arguments.join(", ");
+        let symbol = &llvm(record).symbol;
+        writeln!(output, "declare {result} @{symbol}({arguments})\n").unwrap();
+        let forms: Vec<(&str, &str, Vec<&str>)> = if record.rust.arguments.len() == 2 {
+            vec![
+                (
+                    "r",
+                    "i32 %barrier_id, i1 %predicate",
+                    vec!["%barrier_id", "%predicate"],
+                ),
+                ("i", "i1 %predicate", vec!["1", "%predicate"]),
+            ]
+        } else {
+            vec![
+                (
+                    "rr",
+                    "i32 %barrier_id, i32 %thread_count, i1 %predicate",
+                    vec!["%barrier_id", "%thread_count", "%predicate"],
+                ),
+                (
+                    "ri",
+                    "i32 %barrier_id, i1 %predicate",
+                    vec!["%barrier_id", "32", "%predicate"],
+                ),
+                (
+                    "ir",
+                    "i32 %thread_count, i1 %predicate",
+                    vec!["1", "%thread_count", "%predicate"],
+                ),
+                ("ii", "i1 %predicate", vec!["1", "32", "%predicate"]),
+            ]
+        };
+        for (suffix, parameters, values) in forms {
+            let call_arguments = record
+                .llvm
+                .as_ref()
+                .unwrap()
+                .arguments
+                .iter()
+                .zip(values)
+                .map(|(ty, value)| format!("{ty} {value}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(
+                output,
+                "define {result} @probe_{}_{suffix}({parameters}) #0 {{",
+                record.id
+            )
+            .unwrap();
+            writeln!(
+                output,
+                "  %result = call {result} @{symbol}({call_arguments})"
+            )
+            .unwrap();
+            writeln!(output, "  ret {result} %result\n}}\n").unwrap();
+        }
+        output.push_str("attributes #0 = { convergent }\n");
+        return output;
     }
     if record.tcgen05.is_some() {
         return render_tcgen05_probe(catalog, record, hash);
@@ -22789,7 +23051,7 @@ mod tests {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
         validate_renderable(&catalog).unwrap();
-        assert_eq!(catalog.intrinsics.len(), 1015);
+        assert_eq!(catalog.intrinsics.len(), 1028);
         let records: Vec<_> = register_mmas(&catalog).collect();
         assert_eq!(records.len(), 154);
         let generated_records = records

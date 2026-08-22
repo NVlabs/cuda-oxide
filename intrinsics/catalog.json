@@ -11,9 +11,11 @@
   },
   "inputs": {
     "imported_sha256": "7fc84823d448f56192e265a6c057ea72155c84df2b6575b0235199d445db6a2f",
-    "overlay_sha256": "d3c17b80372635c8a8eb6b26abcdbacf59755c7a2d880abc2cc925cecf2fc538",
-    "abi_ledger_sha256": "47c1f9c8fce67ea775bd51f2fd3312288eb1c039ce65523c548e36052f284a6d",
+    "overlay_sha256": "410255e461915b84ad47b9ff5deea80d372e62060ff98dfa40889aa04c79c8ac",
+    "abi_ledger_sha256": "ed0f3364094ef94cae9cbfcdfae5faeaa9afe1c521442aa2d4fb405129be29bb",
     "evidence_sha256": [
+      "cuda-12.9-libnvvm-12.9.86-barrier-reduction.json:dd03e183fea6a89a1d1b0ea8d58d5d63d8367906952cbe54ffcd956bfa61a45b",
+      "cuda-12.9-libnvvm-12.9.86-execution-control.json:7c0105677a95503bf620455c62a70d009fa35e16d1bad9ab8dfa669f08207a6b",
       "cuda-12.9-libnvvm-12.9.86-f32x2.json:bc5bb505677989affa9ac1044da772b4eb349700dc65e16f09fffffa1f5c493e",
       "cuda-13.3-libnvvm-13.3.33-blackwell-ldmatrix.json:806155f5468d672b6bd969b72d9821155cc6a1c4422eb210ca0fc0a78eb295fb",
       "cuda-13.3-libnvvm-13.3.33-clc.json:0a3e049a8b606276302acf6d2f3dd1d41b632b04dd72799a7def8ebbec414752",
@@ -70,6 +72,7 @@
       "cuda-13.3-libnvvm-13.3.73-tma-descriptor-control.json:ac44f485122404f9a900cfb94bff658160a6c23d9e2f8ef74bb751f044b848fc",
       "cuda-13.3-libnvvm-13.3.73-tma-reduce.json:f5df5bb51068966594660cb01b1b28c3b72cb004c456fcd8dff377ff0bee4fc0",
       "cuda-13.3-libnvvm-13.3.73-tma.json:8607f93605f215858a98075a0ea1394f2718d090538bcaf0a795e11b4cb66d47",
+      "rust-llvm-22.1.2-1cb4e383-barrier-reduction.json:27f833bb1783ad007137d9d8e205c69b64ec93ecada81151e96d496ec6532016",
       "rust-llvm-22.1.2-1cb4e383-blackwell-ldmatrix.json:11c4c1ad6a23362bcdb6f1155d888498eb548f8fd07c03d52bf22d4780278c34",
       "rust-llvm-22.1.2-1cb4e383-clc.json:3cff4d4dbf0c505db87979c021de292395ef6383a72f610cb0d30196f644692f",
       "rust-llvm-22.1.2-1cb4e383-cluster-barrier.json:10b857690722e43670121d16b356ea0074105968388aa91f5012e7aaa63fd795",
@@ -79,7 +82,7 @@
       "rust-llvm-22.1.2-1cb4e383-cp-async.json:e6b2160e920c7f0bf00151a6bc3409e505bcac62df74395387a8f2f32c05bd5c",
       "rust-llvm-22.1.2-1cb4e383-debug-control.json:eaee9dadc7aa4d82eae6fe1d4a557cddc6cadc770de670dd9be3c16c6478bc48",
       "rust-llvm-22.1.2-1cb4e383-elect.json:42323b89102e76bc816ba694ae0a9a07dc3957289fb8debed6887097556c3c7f",
-      "rust-llvm-22.1.2-1cb4e383-execution-control.json:e39a53adecc39282a8f0d98e995dc15dce3097bfefa328fc7a8321a0c3052b8c",
+      "rust-llvm-22.1.2-1cb4e383-execution-control.json:d4fe31bbb058db5f14cf84f8175751cc46d98e80896b697d7478c30bcd5c6fea",
       "rust-llvm-22.1.2-1cb4e383-extended-minmax.json:4429a02bbf14abf8fe8d3b6be28dbbb6f2142e84aefea52f15cb514b1bb8df93",
       "rust-llvm-22.1.2-1cb4e383-f32x2.json:69567be54898fd4faf23aaf59ca01ab07ec529dae8b884cb1cbdf7f5ef82f712",
       "rust-llvm-22.1.2-1cb4e383-integer-minmax.json:e07bc847365cd71d0d20502f225508d48e2de47866c865f09b696caf984a97e3",
@@ -9358,6 +9361,2514 @@
       "summary": "Signals arrival of the requested number of CTA threads at an aligned numbered barrier without waiting."
     },
     {
+      "id": "barrier_cta_red_and_aligned_all",
+      "operation_key": "synchronization.cta.bar.reduction.and.all",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_and_aligned_all"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_AND_ALIGNED_ALL_ip",
+          "asm": "bar.red.and.pred \t$dest, $i, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_AND_ALIGNED_ALL_rp",
+          "asm": "bar.red.and.pred \t$dest, $i, $pred;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i1018",
+        "module": "barrier",
+        "name": "barrier_cta_red_and_aligned_all",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1018",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_and_aligned_all",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_and_aligned_all"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedAndAlignedAllOp",
+        "op_name": "nvvm.barrier_cta_red_and_aligned_all",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.and.aligned.all",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "1.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Reduces predicates with AND while synchronizing all arriving CTA threads at an aligned numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_and_aligned_count",
+      "operation_key": "synchronization.cta.bar.reduction.and.count",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_and_aligned_count"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_AND_ALIGNED_iip",
+          "asm": "bar.red.and.pred \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_AND_ALIGNED_irp",
+          "asm": "bar.red.and.pred \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_AND_ALIGNED_rip",
+          "asm": "bar.red.and.pred \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_AND_ALIGNED_rrp",
+          "asm": "bar.red.and.pred \t$dest, $i, $j, $pred;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i1019",
+        "module": "barrier",
+        "name": "barrier_cta_red_and_aligned_count",
+        "arguments": [
+          "u32",
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1019",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_and_aligned_count",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_and_aligned_count"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedAndAlignedCountOp",
+        "op_name": "nvvm.barrier_cta_red_and_aligned_count",
+        "operands": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.and.aligned.count",
+        "arguments": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "1.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Reduces predicates with AND while synchronizing the requested number of CTA threads at an aligned numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_and_all",
+      "operation_key": "synchronization.cta.barrier.reduction.and.all",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_and_all"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_AND_ALL_ip",
+          "asm": "barrier.red.and.pred \t$dest, $i, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_AND_ALL_rp",
+          "asm": "barrier.red.and.pred \t$dest, $i, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1016",
+        "module": "barrier",
+        "name": "barrier_cta_red_and_all",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1016",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_and_all",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_and_all"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedAndAllOp",
+        "op_name": "nvvm.barrier_cta_red_and_all",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.and.all",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Reduces predicates with AND while synchronizing all arriving CTA threads at a numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_and_count",
+      "operation_key": "synchronization.cta.barrier.reduction.and.count",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_and_count"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_AND_COUNT_iip",
+          "asm": "barrier.red.and.pred \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_AND_COUNT_irp",
+          "asm": "barrier.red.and.pred \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_AND_COUNT_rip",
+          "asm": "barrier.red.and.pred \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_AND_COUNT_rrp",
+          "asm": "barrier.red.and.pred \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1017",
+        "module": "barrier",
+        "name": "barrier_cta_red_and_count",
+        "arguments": [
+          "u32",
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1017",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_and_count",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_and_count"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedAndCountOp",
+        "op_name": "nvvm.barrier_cta_red_and_count",
+        "operands": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.and.count",
+        "arguments": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Reduces predicates with AND while synchronizing the requested number of CTA threads at a numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_or_aligned_all",
+      "operation_key": "synchronization.cta.bar.reduction.or.all",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_or_aligned_all"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_OR_ALIGNED_ALL_ip",
+          "asm": "bar.red.or.pred \t$dest, $i, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_OR_ALIGNED_ALL_rp",
+          "asm": "bar.red.or.pred \t$dest, $i, $pred;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i1022",
+        "module": "barrier",
+        "name": "barrier_cta_red_or_aligned_all",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1022",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_or_aligned_all",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_or_aligned_all"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedOrAlignedAllOp",
+        "op_name": "nvvm.barrier_cta_red_or_aligned_all",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.or.aligned.all",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "1.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Reduces predicates with OR while synchronizing all arriving CTA threads at an aligned numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_or_aligned_count",
+      "operation_key": "synchronization.cta.bar.reduction.or.count",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_or_aligned_count"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_OR_ALIGNED_iip",
+          "asm": "bar.red.or.pred \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_OR_ALIGNED_irp",
+          "asm": "bar.red.or.pred \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_OR_ALIGNED_rip",
+          "asm": "bar.red.or.pred \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_OR_ALIGNED_rrp",
+          "asm": "bar.red.or.pred \t$dest, $i, $j, $pred;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i1023",
+        "module": "barrier",
+        "name": "barrier_cta_red_or_aligned_count",
+        "arguments": [
+          "u32",
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1023",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_or_aligned_count",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_or_aligned_count"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedOrAlignedCountOp",
+        "op_name": "nvvm.barrier_cta_red_or_aligned_count",
+        "operands": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.or.aligned.count",
+        "arguments": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "1.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Reduces predicates with OR while synchronizing the requested number of CTA threads at an aligned numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_or_all",
+      "operation_key": "synchronization.cta.barrier.reduction.or.all",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_or_all"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_OR_ALL_ip",
+          "asm": "barrier.red.or.pred \t$dest, $i, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_OR_ALL_rp",
+          "asm": "barrier.red.or.pred \t$dest, $i, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1020",
+        "module": "barrier",
+        "name": "barrier_cta_red_or_all",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1020",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_or_all",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_or_all"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedOrAllOp",
+        "op_name": "nvvm.barrier_cta_red_or_all",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.or.all",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Reduces predicates with OR while synchronizing all arriving CTA threads at a numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_or_count",
+      "operation_key": "synchronization.cta.barrier.reduction.or.count",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_or_count"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_OR_COUNT_iip",
+          "asm": "barrier.red.or.pred \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_OR_COUNT_irp",
+          "asm": "barrier.red.or.pred \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_OR_COUNT_rip",
+          "asm": "barrier.red.or.pred \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_OR_COUNT_rrp",
+          "asm": "barrier.red.or.pred \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1021",
+        "module": "barrier",
+        "name": "barrier_cta_red_or_count",
+        "arguments": [
+          "u32",
+          "u32",
+          "bool"
+        ],
+        "result": "bool",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1021",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_or_count",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_or_count"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedOrCountOp",
+        "op_name": "nvvm.barrier_cta_red_or_count",
+        "operands": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.or.count",
+        "arguments": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i1"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "bool",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Reduces predicates with OR while synchronizing the requested number of CTA threads at a numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_popc_aligned_all",
+      "operation_key": "synchronization.cta.bar.reduction.popc.all",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_popc_aligned_all"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_ALIGNED_ALL_ip",
+          "asm": "bar.red.popc.u32 \t$dest, $i, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_ALIGNED_ALL_rp",
+          "asm": "bar.red.popc.u32 \t$dest, $i, $pred;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i1026",
+        "module": "barrier",
+        "name": "barrier_cta_red_popc_aligned_all",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1026",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_popc_aligned_all",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_popc_aligned_all"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedPopcAlignedAllOp",
+        "op_name": "nvvm.barrier_cta_red_popc_aligned_all",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.popc.aligned.all",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "1.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Counts true predicates while synchronizing all arriving CTA threads at an aligned numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_popc_aligned_count",
+      "operation_key": "synchronization.cta.bar.reduction.popc.count",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_popc_aligned_count"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_ALIGNED_iip",
+          "asm": "bar.red.popc.u32 \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_ALIGNED_irp",
+          "asm": "bar.red.popc.u32 \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_ALIGNED_rip",
+          "asm": "bar.red.popc.u32 \t$dest, $i, $j, $pred;",
+          "predicates": []
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_ALIGNED_rrp",
+          "asm": "bar.red.popc.u32 \t$dest, $i, $j, $pred;",
+          "predicates": []
+        }
+      ],
+      "rust": {
+        "abi_id": "i1027",
+        "module": "barrier",
+        "name": "barrier_cta_red_popc_aligned_count",
+        "arguments": [
+          "u32",
+          "u32",
+          "bool"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1027",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_popc_aligned_count",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_popc_aligned_count"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedPopcAlignedCountOp",
+        "op_name": "nvvm.barrier_cta_red_popc_aligned_count",
+        "operands": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.popc.aligned.count",
+        "arguments": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "1.0",
+        "hardware": {
+          "kind": "all"
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_20",
+        "ptx_feature": "+ptx32"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "3.2",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 20
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_20",
+                "ptx32"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "1.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Counts true predicates while synchronizing the requested number of CTA threads at an aligned numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_popc_all",
+      "operation_key": "synchronization.cta.barrier.reduction.popc.all",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_popc_all"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_ALL_ip",
+          "asm": "barrier.red.popc.u32 \t$dest, $i, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_ALL_rp",
+          "asm": "barrier.red.popc.u32 \t$dest, $i, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1024",
+        "module": "barrier",
+        "name": "barrier_cta_red_popc_all",
+        "arguments": [
+          "u32",
+          "bool"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1024",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_popc_all",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_popc_all"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedPopcAllOp",
+        "op_name": "nvvm.barrier_cta_red_popc_all",
+        "operands": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.popc.all",
+        "arguments": [
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Counts true predicates while synchronizing all arriving CTA threads at a numbered barrier."
+    },
+    {
+      "id": "barrier_cta_red_popc_count",
+      "operation_key": "synchronization.cta.barrier.reduction.popc.count",
+      "family": "barrier_reduction",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_red_popc_count"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_COUNT_iip",
+          "asm": "barrier.red.popc.u32 \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_COUNT_irp",
+          "asm": "barrier.red.popc.u32 \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_COUNT_rip",
+          "asm": "barrier.red.popc.u32 \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_RED_POPC_COUNT_rrp",
+          "asm": "barrier.red.popc.u32 \t$dest, $i, $j, $pred;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1025",
+        "module": "barrier",
+        "name": "barrier_cta_red_popc_count",
+        "arguments": [
+          "u32",
+          "u32",
+          "bool"
+        ],
+        "result": "u32",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1025",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_red_popc_count",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_red_popc_count"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaRedPopcCountOp",
+        "op_name": "nvvm.barrier_cta_red_popc_count",
+        "operands": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.red.popc.count",
+        "arguments": [
+          "i32",
+          "i32",
+          "i1"
+        ],
+        "results": [
+          "i32"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "u32",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-barrier-reduction",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 combined inline-PTX barrier-reduction fixture using predicate selp.b32 materialization",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 1,156-byte combined source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to 2,708-byte PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed; CUDA 12.9.86 ptxas accepted that PTX and produced cubin SHA-256 2c09dd490b9157429babbf5fb9119df702f2bd9a5a6255464d9431366c0b318c.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_barrier_reduction",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Counts true predicates while synchronizing the requested number of CTA threads at a numbered barrier."
+    },
+    {
       "id": "barrier_cta_sync",
       "operation_key": "synchronization.cta.barrier.count",
       "family": "counted_barrier",
@@ -9850,6 +12361,196 @@
         ]
       },
       "summary": "Synchronizes the requested number of CTA threads at an aligned numbered barrier."
+    },
+    {
+      "id": "barrier_cta_sync_all",
+      "operation_key": "synchronization.cta.barrier.all",
+      "family": "counted_barrier",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_barrier_cta_sync_all"
+      },
+      "selections": [
+        {
+          "source_record": "BARRIER_CTA_SYNC_ALL_i",
+          "asm": "barrier.sync \t$i;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        },
+        {
+          "source_record": "BARRIER_CTA_SYNC_ALL_r",
+          "asm": "barrier.sync \t$i;",
+          "predicates": [
+            "Subtarget->getPTXVersion() >= 60"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1028",
+        "module": "barrier",
+        "name": "barrier_cta_sync_all",
+        "arguments": [
+          "u32"
+        ],
+        "result": "()",
+        "safe": false,
+        "must_use": false,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1028",
+        "public_path": "cuda_intrinsics::barrier::barrier_cta_sync_all",
+        "compatibility_paths": [
+          "cuda_device::barrier::barrier_cta_sync_all"
+        ]
+      },
+      "dialect": {
+        "op_type": "BarrierCtaSyncAllOp",
+        "op_name": "nvvm.barrier_cta_sync_all",
+        "operands": [
+          "i32"
+        ],
+        "results": []
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.barrier.cta.sync.all",
+        "arguments": [
+          "i32"
+        ],
+        "results": [],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "6.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 30
+            }
+          ]
+        },
+        "ptx_result": "()",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383-execution-control",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "lowered",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_30",
+        "ptx_feature": "+ptx60"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383-execution-control",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 30
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_30",
+                "ptx60"
+              ],
+              "representation": "typed barrier.cta.sync.all declaration in combined floor probe",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM emitted barrier.sync for both reviewed register/immediate selection records.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-execution-control",
+          "target": {
+            "minimum_ptx": "6.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA 12.9 libNVVM package V12.9.86; NVVM IR 2.0",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": null,
+          "status": "lowered",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx88"
+              ],
+              "representation": "NVVM IR 2.0 inline-PTX barrier.sync fixture in combined barrier module",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled source SHA-256 11bd0ada26128692365b334162e9bfc26bfb713c0a89404b342e522894410c31 to PTX SHA-256 6bf4e457e1f8d9624deb76df2cdab36c07e062676b2a45c69f081aa42fc5d4ed retaining barrier.sync; CUDA 12.9.86 ptxas accepted it.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "lowering": "generated_execution_control",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "sync"
+        ],
+        "operands": [
+          {
+            "kind": "register_or_immediate"
+          }
+        ]
+      },
+      "summary": "Synchronizes all arriving CTA threads at a numbered barrier."
     },
     {
       "id": "block_dim_x",

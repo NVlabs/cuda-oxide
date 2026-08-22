@@ -1,0 +1,724 @@
+{
+  "schema": 6,
+  "backend_profile": "rust-llvm-22.1.2-1cb4e383-barrier-reduction",
+  "backend_kind": "llvm_nvptx",
+  "llvm_revision": "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e",
+  "backend_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+  "backend_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+  "records": [
+    {
+      "id": "barrier_cta_red_and_all",
+      "source_record": "int_nvvm_barrier_cta_red_and_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.and.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_and_count",
+      "source_record": "int_nvvm_barrier_cta_red_and_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.and.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_and_aligned_all",
+      "source_record": "int_nvvm_barrier_cta_red_and_aligned_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.and.aligned.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_and_aligned_count",
+      "source_record": "int_nvvm_barrier_cta_red_and_aligned_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.and.aligned.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "and",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_or_all",
+      "source_record": "int_nvvm_barrier_cta_red_or_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.or.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_or_count",
+      "source_record": "int_nvvm_barrier_cta_red_or_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.or.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_or_aligned_all",
+      "source_record": "int_nvvm_barrier_cta_red_or_aligned_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.or.aligned.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_or_aligned_count",
+      "source_record": "int_nvvm_barrier_cta_red_or_aligned_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.or.aligned.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i1"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i1"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "or",
+          "pred"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_popc_all",
+      "source_record": "int_nvvm_barrier_cta_red_popc_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.popc.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_popc_count",
+      "source_record": "int_nvvm_barrier_cta_red_popc_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.popc.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_30",
+      "ptx_feature": "+ptx60",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_30",
+            "ptx60"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "barrier",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_popc_aligned_all",
+      "source_record": "int_nvvm_barrier_cta_red_popc_aligned_all",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.popc.aligned.all",
+      "llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    },
+    {
+      "id": "barrier_cta_red_popc_aligned_count",
+      "source_record": "int_nvvm_barrier_cta_red_popc_aligned_count",
+      "llvm_symbol": "llvm.nvvm.barrier.cta.red.popc.aligned.count",
+      "llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "llvm_results": [
+        "i32"
+      ],
+      "concrete_llvm_arguments": [
+        "i32",
+        "i32",
+        "i1"
+      ],
+      "concrete_llvm_results": [
+        "i32"
+      ],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_20",
+      "ptx_feature": "+ptx32",
+      "status": "lowered",
+      "stages": [
+        {
+          "targets": [
+            "sm_20",
+            "ptx32"
+          ],
+          "representation": "typed NVVM declaration compiled in the combined CTA barrier-reduction floor probe",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "Pinned LLVM 22.1.2 selected the reviewed bar[rier].red instruction; combined source and emitted PTX artifacts are preserved in the design scratchpad."
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "bar",
+        "modifiers": [
+          "red",
+          "popc",
+          "u32"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register_or_immediate"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      }
+    }
+  ]
+}

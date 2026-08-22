@@ -748,7 +748,18 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
         validate_register_and_immediate_forms(&record.expected_ptx, 1, "-1", ptx)?;
     }
     if record.family == "counted_barrier" {
-        validate_two_register_and_immediate_forms(&record.expected_ptx, 0, "1", 1, "32", ptx)?;
+        if record.id == "barrier_cta_sync_all" {
+            validate_register_and_immediate_forms(&record.expected_ptx, 0, "1", ptx)?;
+        } else {
+            validate_two_register_and_immediate_forms(&record.expected_ptx, 0, "1", 1, "32", ptx)?;
+        }
+    }
+    if record.family == "barrier_reduction" {
+        if record.rust.arguments.len() == 2 {
+            validate_register_and_immediate_forms(&record.expected_ptx, 1, "1", ptx)?;
+        } else {
+            validate_two_register_and_immediate_forms(&record.expected_ptx, 1, "1", 2, "32", ptx)?;
+        }
     }
     if record.warp_barrier.is_some() {
         validate_register_and_immediate_forms(&record.expected_ptx, 0, "-1", ptx)?;

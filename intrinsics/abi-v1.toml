@@ -7075,3 +7075,94 @@ status = "active"
 catalog_id = "tcgen05_mma_e2m1"
 operation_key = "tcgen05.mma.shared.e2m1"
 raw_rust_signature = { safe = false, arguments = ["u32", "u64", "u64", "u32", "bool"], result = "()" }
+
+[[entry]]
+abi_id = "i1016"
+status = "active"
+catalog_id = "barrier_cta_red_and_all"
+operation_key = "synchronization.cta.barrier.reduction.and.all"
+raw_rust_signature = { safe = false, arguments = ["u32","bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i1017"
+status = "active"
+catalog_id = "barrier_cta_red_and_count"
+operation_key = "synchronization.cta.barrier.reduction.and.count"
+raw_rust_signature = { safe = false, arguments = ["u32","u32","bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i1018"
+status = "active"
+catalog_id = "barrier_cta_red_and_aligned_all"
+operation_key = "synchronization.cta.bar.reduction.and.all"
+raw_rust_signature = { safe = false, arguments = ["u32","bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i1019"
+status = "active"
+catalog_id = "barrier_cta_red_and_aligned_count"
+operation_key = "synchronization.cta.bar.reduction.and.count"
+raw_rust_signature = { safe = false, arguments = ["u32","u32","bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i1020"
+status = "active"
+catalog_id = "barrier_cta_red_or_all"
+operation_key = "synchronization.cta.barrier.reduction.or.all"
+raw_rust_signature = { safe = false, arguments = ["u32","bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i1021"
+status = "active"
+catalog_id = "barrier_cta_red_or_count"
+operation_key = "synchronization.cta.barrier.reduction.or.count"
+raw_rust_signature = { safe = false, arguments = ["u32","u32","bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i1022"
+status = "active"
+catalog_id = "barrier_cta_red_or_aligned_all"
+operation_key = "synchronization.cta.bar.reduction.or.all"
+raw_rust_signature = { safe = false, arguments = ["u32","bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i1023"
+status = "active"
+catalog_id = "barrier_cta_red_or_aligned_count"
+operation_key = "synchronization.cta.bar.reduction.or.count"
+raw_rust_signature = { safe = false, arguments = ["u32","u32","bool"], result = "bool" }
+
+[[entry]]
+abi_id = "i1024"
+status = "active"
+catalog_id = "barrier_cta_red_popc_all"
+operation_key = "synchronization.cta.barrier.reduction.popc.all"
+raw_rust_signature = { safe = false, arguments = ["u32","bool"], result = "u32" }
+
+[[entry]]
+abi_id = "i1025"
+status = "active"
+catalog_id = "barrier_cta_red_popc_count"
+operation_key = "synchronization.cta.barrier.reduction.popc.count"
+raw_rust_signature = { safe = false, arguments = ["u32","u32","bool"], result = "u32" }
+
+[[entry]]
+abi_id = "i1026"
+status = "active"
+catalog_id = "barrier_cta_red_popc_aligned_all"
+operation_key = "synchronization.cta.bar.reduction.popc.all"
+raw_rust_signature = { safe = false, arguments = ["u32","bool"], result = "u32" }
+
+[[entry]]
+abi_id = "i1027"
+status = "active"
+catalog_id = "barrier_cta_red_popc_aligned_count"
+operation_key = "synchronization.cta.bar.reduction.popc.count"
+raw_rust_signature = { safe = false, arguments = ["u32","u32","bool"], result = "u32" }
+
+[[entry]]
+abi_id = "i1028"
+status = "active"
+catalog_id = "barrier_cta_sync_all"
+operation_key = "synchronization.cta.barrier.all"
+raw_rust_signature = { safe = false, arguments = ["u32"], result = "()" }
