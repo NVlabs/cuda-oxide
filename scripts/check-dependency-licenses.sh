@@ -39,6 +39,7 @@ require_tool() {
 }
 require_tool cargo
 require_tool python3
+require_tool git
 
 test -s "${CSV}"
 
@@ -96,8 +97,9 @@ print("\n".join(sorted(names)))
 
 # Every first-party workspace root, not just the root one.  `cargo metadata`
 # stops at a `[workspace]` boundary, so one pass per root is the only way to
-# reach them all, and the tree has three under version control outside
-# `examples/` (the second half below covers those):
+# reach them all.  The list is no longer a claim: the self-check below compares
+# it against every tracked `[workspace]` manifest outside `examples/`, which the
+# second half covers.  Today that is three, and how each got here matters:
 #
 #   1. Cargo.toml -- the root workspace.
 #   2. crates/rustc-codegen-cuda/Cargo.toml -- its own `[workspace]` for the
@@ -115,12 +117,73 @@ print("\n".join(sorted(names)))
 #      for `cargo deny check` -- which judges the license *policy* -- and this
 #      guard covers the other half, that the human-readable inventory does not
 #      fall behind what a workspace declares.  Both halves need all three roots.
+FIRST_PARTY_WORKSPACE_ROOTS=(
+    Cargo.toml
+    crates/rustc-codegen-cuda/Cargo.toml
+    crates/cuda-macros/tests/device-only/Cargo.toml
+)
+
+# The vendored rustlantis subtree also declares `[workspace]`. It is
+# third-party code attributed in THIRD_PARTY_NOTICES, its dependencies are not
+# ours to record, and check-spdx-headers.sh excludes it for the same reason.
+VENDORED_WORKSPACE_ROOTS=(
+    crates/fuzzer/rustlantis/Cargo.toml
+)
+
+# Self-check on the list above, because that list going short is exactly how
+# this guard has failed twice. #662 found the backend workspace unread; the
+# device-only fixture was unread until the third entry was added, and in both
+# cases the guard reported OK while never looking at the workspace. A count
+# cannot catch it and neither can a comment, so compare the list against the
+# tree: every tracked manifest that declares `[workspace]` must be named here,
+# as first-party or as vendored, and every name here must still be such a
+# manifest.
+#
+# Roots under crates/rustc-codegen-cuda/examples are deliberately absent: the
+# second half of this script resolves those, including the two nested
+# sub-workspaces, from their committed lock files.
+on_disk_roots="$(
+    git ls-files -- '*Cargo.toml' |
+        grep -v '^crates/rustc-codegen-cuda/examples/' |
+        while IFS= read -r manifest; do
+            if grep -q '^\[workspace\]' "${manifest}"; then
+                printf '%s\n' "${manifest}"
+            fi
+        done | LC_ALL=C sort
+)"
+named_roots="$(
+    printf '%s\n' "${FIRST_PARTY_WORKSPACE_ROOTS[@]}" "${VENDORED_WORKSPACE_ROOTS[@]}" |
+        LC_ALL=C sort
+)"
+if [[ -z "${on_disk_roots}" ]]; then
+    echo "error: found no tracked [workspace] manifests outside the examples" >&2
+    echo "       tree; the scan broke, so a clean result means nothing" >&2
+    exit 1
+fi
+unnamed="$(comm -23 <(printf '%s\n' "${on_disk_roots}") <(printf '%s\n' "${named_roots}"))"
+if [[ -n "${unnamed}" ]]; then
+    echo "error: these manifests declare [workspace] but no pass below reads them," >&2
+    echo "       so nothing checks that ${CSV} records what they declare:" >&2
+    printf '%s\n' "${unnamed}" | sed 's/^/  /' >&2
+    echo >&2
+    echo "Add each to FIRST_PARTY_WORKSPACE_ROOTS in $0, or to" >&2
+    echo "VENDORED_WORKSPACE_ROOTS with the reason it is out of scope." >&2
+    exit 1
+fi
+stale="$(comm -13 <(printf '%s\n' "${on_disk_roots}") <(printf '%s\n' "${named_roots}"))"
+if [[ -n "${stale}" ]]; then
+    echo "error: these names are listed as workspace roots in $0 but are no longer" >&2
+    echo "       tracked manifests declaring [workspace]:" >&2
+    printf '%s\n' "${stale}" | sed 's/^/  /' >&2
+    echo >&2
+    echo "A renamed or removed root left behind here is a permanent hole; drop it." >&2
+    exit 1
+fi
+
 required="$(
-    {
-        declared_crates Cargo.toml
-        declared_crates crates/rustc-codegen-cuda/Cargo.toml
-        declared_crates crates/cuda-macros/tests/device-only/Cargo.toml
-    } | LC_ALL=C sort -u
+    for manifest in "${FIRST_PARTY_WORKSPACE_ROOTS[@]}"; do
+        declared_crates "${manifest}"
+    done | LC_ALL=C sort -u
 )"
 
 missing="$(comm -23 <(printf '%s\n' "${required}") <(printf '%s\n' "${recorded}"))"
