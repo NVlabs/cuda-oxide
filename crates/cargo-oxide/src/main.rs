@@ -838,11 +838,25 @@ fn main() {
                 compare_output,
             };
             match ptx_schedule::campaign::run_campaign(&options) {
+                // A decline is not a failure -- see `RunKind::baseline_verdict`.
+                // Exit 0 so sweeping a fleet does not read "below this
+                // example's arch floor" as a red run; `--fail-on-finding`
+                // remains the switch for failing on real findings.
                 Ok(summary)
-                    if !matches!(summary.baseline.kind, ptx_schedule::campaign::RunKind::Pass) =>
+                    if summary.baseline.kind.baseline_verdict()
+                        == ptx_schedule::campaign::BaselineVerdict::Declined =>
                 {
                     eprintln!(
-                        "Error: baseline example did not pass; no schedule variants were run"
+                        "Note: the example declined to run on this device; no schedule variants were run"
+                    );
+                }
+                Ok(summary)
+                    if summary.baseline.kind.baseline_verdict()
+                        != ptx_schedule::campaign::BaselineVerdict::Usable =>
+                {
+                    eprintln!(
+                        "Error: baseline example did not pass ({:?}); no schedule variants were run",
+                        summary.baseline.kind
                     );
                     std::process::exit(1);
                 }
