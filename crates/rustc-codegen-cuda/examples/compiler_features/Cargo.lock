@@ -138,8 +138,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-bindings"
-version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
+version = "0.3.0"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
 dependencies = [
  "bindgen",
  "libloading",
@@ -151,13 +151,24 @@ dependencies = [
 
 [[package]]
 name = "cuda-core"
-version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
+version = "0.3.0"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
 dependencies = [
  "anyhow",
  "cuda-bindings",
+ "cuda-core-derive",
  "half",
- "object",
+ "oxide-artifacts",
+]
+
+[[package]]
+name = "cuda-core-derive"
+version = "0.3.0"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -393,6 +404,15 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "oxide-artifacts"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74d9a941c0c43d2dceaf25f5c9ca4c9f9cceb28dfa5e4e3cfd14e476f003e7c9"
+dependencies = [
+ "object",
+]
 
 [[package]]
 name = "prettyplease"

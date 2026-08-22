@@ -212,7 +212,7 @@ dependencies = [
  "cuda-artifact-finalizer",
  "libnvvm-sys",
  "nvjitlink-sys",
- "oxide-artifacts",
+ "oxide-artifacts 0.2.1",
  "ptx-parse",
  "ptx-schedule",
  "reserved-oxide-symbols",
@@ -372,8 +372,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-async"
-version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
+version = "0.3.0"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -388,8 +388,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-bindings"
-version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
+version = "0.3.0"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
 dependencies = [
  "bindgen",
  "libloading",
@@ -401,13 +401,24 @@ dependencies = [
 
 [[package]]
 name = "cuda-core"
-version = "0.2.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5ea3b91458a46a211427295202c57a11e1f14d8e"
+version = "0.3.0"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
 dependencies = [
  "anyhow",
  "cuda-bindings",
+ "cuda-core-derive",
  "half",
- "object",
+ "oxide-artifacts 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "cuda-core-derive"
+version = "0.3.0"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -983,7 +994,7 @@ dependencies = [
  "llvm-export",
  "mir-lower",
  "once_cell",
- "oxide-artifacts",
+ "oxide-artifacts 0.2.1",
  "pliron",
  "pliron-derive",
  "rustc-hash 2.1.2",
@@ -1077,6 +1088,15 @@ checksum = "5a6298074a1742b584aaca148a6c61ecb27f0b55fdf237c235939c84924377a1"
 [[package]]
 name = "oxide-artifacts"
 version = "0.2.1"
+dependencies = [
+ "object",
+]
+
+[[package]]
+name = "oxide-artifacts"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74d9a941c0c43d2dceaf25f5c9ca4c9f9cceb28dfa5e4e3cfd14e476f003e7c9"
 dependencies = [
  "object",
 ]
@@ -1181,7 +1201,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dialect-ptx",
- "oxide-artifacts",
+ "oxide-artifacts 0.2.1",
  "ptx-parse",
  "serde",
  "serde_json",
