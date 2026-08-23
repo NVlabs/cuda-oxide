@@ -5,6 +5,7 @@
 
 //! User-authored inline PTX operations.
 
+use dialect_mir::{attributes::MirPointerKindAuthorityAttr, types::pointer_carriers_in_type};
 use pliron::{
     builtin::attributes::{BoolAttr, StringAttr},
     common_traits::Verify,
@@ -13,7 +14,7 @@ use pliron::{
     op::Op,
     operation::Operation,
     result::Error,
-    r#type::TypeHandle,
+    r#type::{TypeHandle, Typed},
     value::Value,
     verify_err,
 };
@@ -25,7 +26,10 @@ use pliron_derive::pliron_op;
 /// marker calls and lowered to LLVM inline assembly.
 ///
 /// Supports zero or more results for multi-output PTX instructions
-/// (e.g. MMA, vectorized loads).
+/// (e.g. MMA, vectorized loads). A result type that directly or recursively
+/// carries a MIR pointer must carry `InlineAsm` pointer-kind authority. The
+/// MIR importer attaches that authority from rustc's destination type; the
+/// PTX text alone is never trusted to invent a pointer category.
 #[pliron_op(
     name = "nvvm.inline_ptx",
     format,
@@ -33,7 +37,8 @@ use pliron_derive::pliron_op;
         ptx_template: StringAttr,
         ptx_constraints: StringAttr,
         ptx_sideeffect: BoolAttr,
-        ptx_convergent: BoolAttr
+        ptx_convergent: BoolAttr,
+        inline_ptx_pointer_kind_authority: MirPointerKindAuthorityAttr
     )
 )]
 pub struct InlinePtxOp;
@@ -68,6 +73,16 @@ impl InlinePtxOp {
         wrapped.set_attr_ptx_sideeffect(ctx, BoolAttr::new(sideeffect));
         wrapped.set_attr_ptx_convergent(ctx, BoolAttr::new(convergent));
         wrapped.get_operation()
+    }
+
+    /// Mark pointer-carrying results as originating at an inline-assembly
+    /// output boundary whose exact destination type came from rustc MIR.
+    pub fn set_pointer_kind_authority(
+        &self,
+        ctx: &mut Context,
+        authority: MirPointerKindAuthorityAttr,
+    ) {
+        self.set_attr_inline_ptx_pointer_kind_authority(ctx, authority);
     }
 
     /// Count the output constraints in an LLVM-style constraint string.
@@ -123,6 +138,36 @@ impl Verify for InlinePtxOp {
                 op.loc(),
                 "nvvm.inline_ptx has {num_results} results but {num_outputs} `=` output constraints"
             );
+        }
+
+        let has_pointer_result = (0..num_results).any(|index| {
+            let result_ty = op.get_result(index).get_type(ctx);
+            !pointer_carriers_in_type(ctx, result_ty).is_empty()
+        });
+        let authority = self.get_attr_inline_ptx_pointer_kind_authority(ctx);
+        match (has_pointer_result, authority) {
+            (true, Some(authority)) if *authority == MirPointerKindAuthorityAttr::InlineAsm => {}
+            (true, Some(authority)) => {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.inline_ptx pointer-carrying results require InlineAsm pointer-kind authority, found {:?}",
+                    authority
+                );
+            }
+            (true, None) => {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.inline_ptx pointer-carrying results require InlineAsm pointer-kind authority"
+                );
+            }
+            (false, Some(authority)) => {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.inline_ptx pointer-kind authority {:?} is spurious for pointer-free results",
+                    authority
+                );
+            }
+            (false, None) => {}
         }
         Ok(())
     }

@@ -7630,21 +7630,27 @@ fn render_dialect_mod(catalog: &CatalogFile, hash: &str) -> String {
 fn render_dialect_elect(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated warp leader-election operation.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
+        "//! Generated warp leader-election operation.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::IntegerType,\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::{TypeHandle, Typed},\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\n",
     );
     for record in elect_intrinsics(catalog) {
         writeln!(output, "/// {}", record.summary).unwrap();
         writeln!(
             output,
-            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<1>, NResultsInterface<2>],\n)]",
+            "#[pliron_op(\n    name = {:?},\n    format,\n    interfaces = [NOpdsInterface<1>, NResultsInterface<2>],\n)]",
             record.dialect.op_name
         )
         .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
+        writeln!(output, "impl Verify for {} {{", record.dialect.op_type).unwrap();
+        output.push_str(
+            "    fn verify(&self, ctx: &Context) -> Result<(), Error> {\n        let op = self.get_operation().deref(ctx);\n        if op.get_num_operands() != 1 || op.get_num_results() != 2 {\n            return verify_err!(op.loc(), \"nvvm.elect_sync requires one i32 operand and results [i32, i1]\");\n        }\n        if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)\n            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 32)\n            || !is_integer_width(ctx, op.get_result(1).get_type(ctx), 1)\n        {\n            return verify_err!(op.loc(), \"nvvm.elect_sync requires one i32 operand and results [i32, i1]\");\n        }\n        Ok(())\n    }\n}\n\n",
+        );
     }
-    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    output.push_str(
+        "fn is_integer_width(ctx: &Context, ty: TypeHandle, width: u32) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == width)\n}\n\npub(super) fn register(ctx: &mut Context) {\n",
+    );
     for record in elect_intrinsics(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
@@ -10899,7 +10905,7 @@ fn render_dialect_cluster_memory(catalog: &CatalogFile, hash: &str) -> String {
     output.push_str(
         r#"//! Structural operations for cluster address mapping and remote shared reads.
 
-use dialect_mir::types::MirPtrType;
+use dialect_mir::types::{MirPointerKind, MirPtrType, address_space};
 use pliron::{
     builtin::{
         op_interfaces::{NOpdsInterface, NResultsInterface},
@@ -10958,14 +10964,24 @@ impl MapaSharedClusterOp {
 
     pub fn build(ctx: &mut Context, source: Value, rank: Value) -> Ptr<Operation> {
         let source_ty = source.get_type(ctx);
-        let (pointee, is_mutable) = {
+        let (pointee, is_mutable, pointer_kind) = {
             let source_ty_obj = source_ty.deref(ctx);
             let source_ptr = source_ty_obj
                 .downcast_ref::<MirPtrType>()
                 .expect("nvvm.mapa_shared_cluster source must be a MIR pointer");
-            (source_ptr.pointee, source_ptr.is_mutable())
+            (
+                source_ptr.pointee,
+                source_ptr.is_mutable(),
+                source_ptr.pointer_kind(),
+            )
         };
-        let result_ty = MirPtrType::get_cluster_shared(ctx, pointee, is_mutable);
+        let result_ty = MirPtrType::get_with_kind(
+            ctx,
+            pointee,
+            is_mutable,
+            address_space::CLUSTER_SHARED,
+            pointer_kind,
+        );
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
@@ -10993,13 +11009,18 @@ impl Verify for MapaSharedClusterOp {
                 "nvvm.mapa_shared_cluster result must be a MIR pointer"
             );
         };
-        if result_ptr.pointee != source_ptr.pointee
+        if !matches!(
+            source_ptr.pointer_kind(),
+            MirPointerKind::RawConst | MirPointerKind::RawMut
+        )
+            || result_ptr.pointee != source_ptr.pointee
             || result_ptr.is_mutable() != source_ptr.is_mutable()
             || !result_ptr.is_cluster_shared()
+            || result_ptr.pointer_kind() != source_ptr.pointer_kind()
         {
             return verify_err!(
                 op.loc(),
-                "nvvm.mapa_shared_cluster must preserve pointee and mutability and return addrspace(7)"
+                "nvvm.mapa_shared_cluster requires a raw source pointer and must preserve its pointee, mutability, and raw kind while returning addrspace(7)"
             );
         }
         Ok(())
@@ -11266,22 +11287,38 @@ fn render_dialect_clc(catalog: &CatalogFile, hash: &str) -> String {
     assert_eq!(clc_intrinsics(catalog).count(), 6);
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated Cluster Launch Control operations.\n\nuse pliron::{\n    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},\n    context::{Context, Ptr},\n    op::Op,\n    operation::Operation,\n};\nuse pliron_derive::pliron_op;\n\n",
+        "//! Generated Cluster Launch Control operations.\n\nuse pliron::{\n    builtin::{\n        op_interfaces::{NOpdsInterface, NResultsInterface},\n        types::IntegerType,\n    },\n    common_traits::Verify,\n    context::{Context, Ptr},\n    location::Located,\n    op::Op,\n    operation::Operation,\n    result::Error,\n    r#type::{TypeHandle, Typed},\n    verify_err,\n};\nuse pliron_derive::pliron_op;\n\n",
     );
     for record in clc_intrinsics(catalog) {
         let result_count = record.dialect.results.len();
+        let verifier = if result_count == 0 {
+            "    verifier = \"succ\",\n"
+        } else {
+            ""
+        };
         writeln!(output, "/// {}", record.summary).unwrap();
         writeln!(
             output,
-            "#[pliron_op(\n    name = {:?},\n    format,\n    verifier = \"succ\",\n    interfaces = [NOpdsInterface<2>, NResultsInterface<{result_count}>],\n)]",
-            record.dialect.op_name
+            "#[pliron_op(\n    name = {:?},\n    format,\n{verifier}    interfaces = [NOpdsInterface<2>, NResultsInterface<{result_count}>],\n)]",
+            record.dialect.op_name,
         )
         .unwrap();
         writeln!(output, "pub struct {};", record.dialect.op_type).unwrap();
         writeln!(output, "\nimpl {} {{", record.dialect.op_type).unwrap();
         output.push_str("    pub fn new(op: Ptr<Operation>) -> Self { Self { op } }\n}\n\n");
+        if result_count == 1 {
+            writeln!(output, "impl Verify for {} {{", record.dialect.op_type).unwrap();
+            writeln!(
+                output,
+                "    fn verify(&self, ctx: &Context) -> Result<(), Error> {{\n        verify_query_shape(ctx, self.get_operation(), {:?})\n    }}\n}}\n",
+                record.dialect.op_name,
+            )
+            .unwrap();
+        }
     }
-    output.push_str("pub(super) fn register(ctx: &mut Context) {\n");
+    output.push_str(
+        "fn verify_query_shape(\n    ctx: &Context,\n    operation: Ptr<Operation>,\n    name: &str,\n) -> Result<(), Error> {\n    let op = operation.deref(ctx);\n    let valid = op.get_num_operands() == 2\n        && op.get_num_results() == 1\n        && is_integer_width(ctx, op.get_operand(0).get_type(ctx), 64)\n        && is_integer_width(ctx, op.get_operand(1).get_type(ctx), 64)\n        && is_integer_width(ctx, op.get_result(0).get_type(ctx), 32);\n    if !valid {\n        return verify_err!(\n            op.loc(),\n            \"{} requires two i64 operands and one i32 result\",\n            name\n        );\n    }\n    Ok(())\n}\n\nfn is_integer_width(ctx: &Context, ty: TypeHandle, width: u32) -> bool {\n    ty.deref(ctx)\n        .downcast_ref::<IntegerType>()\n        .is_some_and(|integer| integer.width() == width)\n}\n\npub(super) fn register(ctx: &mut Context) {\n",
+    );
     for record in clc_intrinsics(catalog) {
         writeln!(output, "    {}::register(ctx);", record.dialect.op_type).unwrap();
     }
@@ -23761,8 +23798,12 @@ mod tests {
         let dialect = render_dialect_cluster_memory(&catalog, "test-hash");
         assert!(dialect.contains("pub struct MapaSharedClusterOp"));
         assert!(dialect.contains("pub struct DsmemReadU32Op"));
+        assert!(dialect.contains("source_ptr.pointer_kind()"));
+        assert!(dialect.contains("address_space::CLUSTER_SHARED"));
+        assert!(dialect.contains("MirPointerKind::RawConst | MirPointerKind::RawMut"));
+        assert!(dialect.contains("result_ptr.pointer_kind() != source_ptr.pointer_kind()"));
         assert!(dialect.contains(
-            "nvvm.mapa_shared_cluster must preserve pointee and mutability and return addrspace(7)"
+            "nvvm.mapa_shared_cluster requires a raw source pointer and must preserve its pointee, mutability, and raw kind while returning addrspace(7)"
         ));
         assert!(dialect.contains("nvvm.dsmem_read_u32 result must be u32"));
         assert!(dialect.contains("MapaSharedClusterOp::register(ctx);"));
@@ -23937,6 +23978,9 @@ mod tests {
         }
         assert_eq!(dialect.matches("NResultsInterface<0>").count(), 2);
         assert_eq!(dialect.matches("NResultsInterface<1>").count(), 4);
+        assert_eq!(dialect.matches("impl Verify for ClcQuery").count(), 4);
+        assert!(dialect.contains("is_integer_width(ctx, op.get_operand(0).get_type(ctx), 64)"));
+        assert!(dialect.contains("is_integer_width(ctx, op.get_result(0).get_type(ctx), 32)"));
 
         let importer = render_importer(&catalog, "test-hash");
         assert!(importer.contains("cuda_device::clc::clc_try_cancel"));
@@ -23997,6 +24041,19 @@ mod tests {
             .unwrap()
             .adapter = ClcAdapter::PairU64ToI128U32;
         assert!(validate_renderable(&wrong_adapter).is_err());
+    }
+
+    #[test]
+    fn elect_dialect_verifies_its_scalar_shape() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let catalog = crate::resolve::resolve(&repo_root).unwrap();
+        let dialect = render_dialect_elect(&catalog, "test-hash");
+
+        assert!(dialect.contains("impl Verify for ElectSyncOp"));
+        assert!(dialect.contains("is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)"));
+        assert!(dialect.contains("is_integer_width(ctx, op.get_result(0).get_type(ctx), 32)"));
+        assert!(dialect.contains("is_integer_width(ctx, op.get_result(1).get_type(ctx), 1)"));
+        assert!(!dialect.contains("verifier = \"succ\""));
     }
 
     #[test]

@@ -4,18 +4,19 @@
  */
 
 use dialect_mir::{
-    attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr},
+    attributes::{FieldIndexAttr, MirCastKindAttr, MirPointerKindAuthorityAttr, VariantIndexAttr},
     ops::{
-        MirAddOp, MirAssertOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCmpOp,
-        MirCondBranchOp, MirConstantOp, MirConstructDisjointSliceOp, MirConstructEnumOp,
-        MirConstructSliceOp, MirDivOp, MirEnumPayloadOp, MirEqOp, MirExtractFieldOp,
-        MirFieldAddrOp, MirFuncOp, MirGeOp, MirGetDiscriminantOp, MirGlobalAllocOp, MirGotoOp,
-        MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp,
-        MirPtrOffsetOp, MirRemOp, MirReturnOp, MirSetDiscriminantOp, MirStoreOp, MirSubOp,
+        MirAddOp, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirAssignOp, MirCallOp,
+        MirCastOp, MirCheckedAddOp, MirCmpOp, MirCondBranchOp, MirConstantOp,
+        MirConstructDisjointSliceOp, MirConstructEnumOp, MirConstructSliceOp, MirDivOp,
+        MirEnumPayloadOp, MirEqOp, MirExtractFieldOp, MirFieldAddrOp, MirFuncOp, MirGeOp,
+        MirGetDiscriminantOp, MirGlobalAllocOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp,
+        MirMulOp, MirNeOp, MirNegOp, MirNotOp, MirPtrOffsetOp, MirRefOp, MirRemOp, MirReturnOp,
+        MirSetDiscriminantOp, MirStoreOp, MirSubOp,
     },
     types::{
-        EnumVariant, MirDisjointSliceType, MirEnumType, MirPointerKind, MirPtrType, MirSliceType,
-        MirTupleType, MirUnionType,
+        EnumVariant, MirArrayType, MirDisjointSliceType, MirEnumType, MirPointerKind, MirPtrType,
+        MirSliceType, MirStructType, MirTupleType, MirUnionType,
     },
 };
 use pliron::{
@@ -277,6 +278,80 @@ fn test_mir_pointer_kind_mutability_consistency_verify() {
 
     assert!(invalid_shared.verify(&ctx).is_err());
     assert!(invalid_raw_mut.verify(&ctx).is_err());
+
+    let invalid_shared_slice = MirSliceType {
+        element_ty: i32_ty.into(),
+        is_mutable: true,
+        kind: MirPointerKind::SharedRef,
+    };
+    let valid_erased_mut_slice = MirSliceType {
+        element_ty: i32_ty.into(),
+        is_mutable: true,
+        kind: MirPointerKind::Erased,
+    };
+    assert!(invalid_shared_slice.verify(&ctx).is_err());
+    assert!(valid_erased_mut_slice.verify(&ctx).is_ok());
+}
+
+#[test]
+fn test_alloca_cannot_claim_a_rust_pointer_kind() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let erased = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let erased_alloca = Operation::new(
+        &mut ctx,
+        MirAllocaOp::get_concrete_op_info(),
+        vec![erased.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(MirAllocaOp::new(erased_alloca).verify(&ctx).is_ok());
+
+    let immutable_erased = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let immutable_alloca = Operation::new(
+        &mut ctx,
+        MirAllocaOp::get_concrete_op_info(),
+        vec![immutable_erased.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(
+        MirAllocaOp::new(immutable_alloca).verify(&ctx).is_err(),
+        "an alloca cannot masquerade as the immutable canonical function-pointer carrier"
+    );
+
+    let shared_erased = MirPtrType::get_shared(&mut ctx, i32_ty.into(), true);
+    let shared_alloca = Operation::new(
+        &mut ctx,
+        MirAllocaOp::get_concrete_op_info(),
+        vec![shared_erased.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(
+        MirAllocaOp::new(shared_alloca).verify(&ctx).is_err(),
+        "a stack allocation must remain in generic address space"
+    );
+
+    let unique =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef);
+    let unique_alloca = Operation::new(
+        &mut ctx,
+        MirAllocaOp::get_concrete_op_info(),
+        vec![unique.into()],
+        vec![],
+        vec![],
+        0,
+    );
+    assert!(
+        MirAllocaOp::new(unique_alloca).verify(&ctx).is_err(),
+        "compiler storage must not manufacture UniqueRef"
+    );
 }
 
 #[test]
@@ -434,6 +509,1479 @@ fn test_mir_ptr_offset_verify() {
 }
 
 #[test]
+fn test_pointer_kind_laundering_requires_explicit_authority() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let usize_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let raw_mut_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::RawMut);
+    let erased_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let erased_read_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let unique_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef);
+    let shared_ty = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        i32_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    );
+    let raw_const_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), false, MirPointerKind::RawConst);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            raw_mut_ty.into(),
+            erased_ty.into(),
+            usize_ty.into(),
+            shared_ty.into(),
+            raw_const_ty.into(),
+            erased_read_ty.into(),
+        ],
+    );
+    let raw_mut = block.deref(&ctx).get_argument(0);
+    let erased = block.deref(&ctx).get_argument(1);
+    let offset = block.deref(&ctx).get_argument(2);
+    let shared = block.deref(&ctx).get_argument(3);
+    let raw_const = block.deref(&ctx).get_argument(4);
+    let erased_read = block.deref(&ctx).get_argument(5);
+
+    // The concrete laundering example: pointer arithmetic is not a Rust
+    // reborrow and cannot manufacture `&mut T` from `*mut T`.
+    let raw_offset_to_unique = Operation::new(
+        &mut ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![raw_mut, offset],
+        vec![],
+        0,
+    );
+    assert!(
+        MirPtrOffsetOp::new(raw_offset_to_unique)
+            .verify(&ctx)
+            .is_err(),
+        "ptr_offset must not invent UniqueRef from RawMut"
+    );
+
+    let erased_offset_to_unique = Operation::new(
+        &mut ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![erased, offset],
+        vec![],
+        0,
+    );
+    assert!(
+        MirPtrOffsetOp::new(erased_offset_to_unique)
+            .verify(&ctx)
+            .is_err(),
+        "ptr_offset must not recover UniqueRef from Erased"
+    );
+
+    let preserving_offset = Operation::new(
+        &mut ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![raw_mut_ty.into()],
+        vec![raw_mut, offset],
+        vec![],
+        0,
+    );
+    assert!(MirPtrOffsetOp::new(preserving_offset).verify(&ctx).is_ok());
+
+    let erasing_offset = Operation::new(
+        &mut ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![erased_ty.into()],
+        vec![raw_mut, offset],
+        vec![],
+        0,
+    );
+    assert!(MirPtrOffsetOp::new(erasing_offset).verify(&ctx).is_ok());
+
+    let mutability_launder = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![erased_ty.into()],
+        vec![erased_read],
+        vec![],
+        0,
+    );
+    let mutability_launder_cast = MirCastOp::new(mutability_launder);
+    mutability_launder_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    assert!(
+        mutability_launder_cast.verify(&ctx).is_err(),
+        "an unmarked cast cannot manufacture writable Erased evidence"
+    );
+
+    let reborrow = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![raw_mut],
+        vec![],
+        0,
+    );
+    let reborrow_cast = MirCastOp::new(reborrow);
+    reborrow_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    assert!(
+        reborrow_cast.verify(&ctx).is_err(),
+        "an unmarked cast must not manufacture UniqueRef"
+    );
+    reborrow_cast.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    assert!(
+        reborrow_cast.verify(&ctx).is_ok(),
+        "a rustc-declared reborrow is the explicit authority"
+    );
+
+    for (target, authority) in [
+        (unique_ty.into(), MirPointerKindAuthorityAttr::Reborrow),
+        (raw_mut_ty.into(), MirPointerKindAuthorityAttr::RawAddress),
+        (raw_mut_ty.into(), MirPointerKindAuthorityAttr::AbiBoundary),
+    ] {
+        let mutable_storage_boundary = Operation::new(
+            &mut ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![target],
+            vec![erased],
+            vec![],
+            0,
+        );
+        let mutable_storage_boundary_cast = MirCastOp::new(mutable_storage_boundary);
+        mutable_storage_boundary_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+        mutable_storage_boundary_cast.set_pointer_kind_authority(&mut ctx, authority);
+        assert!(
+            mutable_storage_boundary_cast.verify(&ctx).is_ok(),
+            "mutable compiler storage is a valid source for a mutable Rust boundary"
+        );
+    }
+
+    for (target, authority) in [
+        (unique_ty.into(), MirPointerKindAuthorityAttr::Reborrow),
+        (raw_mut_ty.into(), MirPointerKindAuthorityAttr::RawAddress),
+        (
+            raw_mut_ty.into(),
+            MirPointerKindAuthorityAttr::StaticAddress,
+        ),
+        (raw_mut_ty.into(), MirPointerKindAuthorityAttr::AbiBoundary),
+    ] {
+        let immutable_storage_boundary = Operation::new(
+            &mut ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![target],
+            vec![erased_read],
+            vec![],
+            0,
+        );
+        let immutable_storage_boundary_cast = MirCastOp::new(immutable_storage_boundary);
+        immutable_storage_boundary_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+        immutable_storage_boundary_cast.set_pointer_kind_authority(&mut ctx, authority);
+        assert!(
+            immutable_storage_boundary_cast.verify(&ctx).is_err(),
+            "an immutable Erased thin pointer cannot establish a mutable Rust pointer kind"
+        );
+    }
+
+    let wrong_authority = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![erased],
+        vec![],
+        0,
+    );
+    let wrong_authority_cast = MirCastOp::new(wrong_authority);
+    wrong_authority_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    wrong_authority_cast
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::RawAddress);
+    assert!(
+        wrong_authority_cast.verify(&ctx).is_err(),
+        "RawAddress authority cannot establish a reference kind"
+    );
+
+    let inline_asm_authority = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![erased],
+        vec![],
+        0,
+    );
+    let inline_asm_authority_cast = MirCastOp::new(inline_asm_authority);
+    inline_asm_authority_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    inline_asm_authority_cast
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::InlineAsm);
+    assert!(
+        inline_asm_authority_cast.verify(&ctx).is_err(),
+        "InlineAsm is a producer authority and must never authorize a cast"
+    );
+
+    let integer_reborrow = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![offset],
+        vec![],
+        0,
+    );
+    let integer_reborrow_cast = MirCastOp::new(integer_reborrow);
+    integer_reborrow_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    integer_reborrow_cast
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    assert!(
+        integer_reborrow_cast.verify(&ctx).is_err(),
+        "Reborrow authority cannot reinterpret an integer as a Rust reference"
+    );
+    integer_reborrow_cast
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::RustCast);
+    assert!(
+        integer_reborrow_cast.verify(&ctx).is_err(),
+        "RustCast authority cannot make an integer a PtrToPtr operand"
+    );
+    integer_reborrow_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::FnPtrToPtr);
+    assert!(
+        integer_reborrow_cast.verify(&ctx).is_err(),
+        "FnPtrToPtr also requires a real pointer carrier"
+    );
+
+    let f32_ty = FP32Type::get(&ctx);
+    let wrong_pointee_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, f32_ty.into(), true, MirPointerKind::RawMut);
+    let wrong_pointee_block = BasicBlock::new(&mut ctx, None, vec![wrong_pointee_ty.into()]);
+    let wrong_pointee = wrong_pointee_block.deref(&ctx).get_argument(0);
+    let wrong_pointee_reborrow = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![wrong_pointee],
+        vec![],
+        0,
+    );
+    let wrong_pointee_reborrow_cast = MirCastOp::new(wrong_pointee_reborrow);
+    wrong_pointee_reborrow_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    wrong_pointee_reborrow_cast
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    assert!(
+        wrong_pointee_reborrow_cast.verify(&ctx).is_err(),
+        "Reborrow authority must retain the pointee type"
+    );
+
+    for immutable_source in [shared, raw_const] {
+        let invalid_unique = Operation::new(
+            &mut ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![unique_ty.into()],
+            vec![immutable_source],
+            vec![],
+            0,
+        );
+        let invalid_unique_cast = MirCastOp::new(invalid_unique);
+        invalid_unique_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+        invalid_unique_cast
+            .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+        assert!(
+            invalid_unique_cast.verify(&ctx).is_err(),
+            "an immutable source cannot be relabelled as UniqueRef by Reborrow authority"
+        );
+
+        let invalid_raw_mut = Operation::new(
+            &mut ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![raw_mut_ty.into()],
+            vec![immutable_source],
+            vec![],
+            0,
+        );
+        let invalid_raw_mut_cast = MirCastOp::new(invalid_raw_mut);
+        invalid_raw_mut_cast.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+        invalid_raw_mut_cast
+            .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::RawAddress);
+        assert!(
+            invalid_raw_mut_cast.verify(&ctx).is_err(),
+            "an immutable source cannot be relabelled as RawMut by RawAddress authority"
+        );
+    }
+}
+
+#[test]
+fn test_mir_ref_requires_exact_pointer_kind_authority() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let shared_ty = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        i32_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    );
+    let unique_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef);
+    let raw_const_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), false, MirPointerKind::RawConst);
+    let raw_mut_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::RawMut);
+    let erased_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let global_shared_ty = MirPtrType::get_with_kind(
+        &mut ctx,
+        i32_ty.into(),
+        false,
+        dialect_mir::types::address_space::GLOBAL,
+        MirPointerKind::SharedRef,
+    );
+    let block = BasicBlock::new(&mut ctx, None, vec![i32_ty.into()]);
+    let value = block.deref(&ctx).get_argument(0);
+
+    let build =
+        |ctx: &mut Context, result_ty, mutable, authority: Option<MirPointerKindAuthorityAttr>| {
+            let op = Operation::new(
+                ctx,
+                MirRefOp::get_concrete_op_info(),
+                vec![result_ty],
+                vec![value],
+                vec![],
+                0,
+            );
+            let reference = MirRefOp::new(op);
+            reference.set_mutable(ctx, mutable);
+            if let Some(authority) = authority {
+                reference.set_pointer_kind_authority(ctx, authority);
+            }
+            op
+        };
+
+    for (result_ty, mutable, authority) in [
+        (
+            shared_ty.into(),
+            false,
+            MirPointerKindAuthorityAttr::Reborrow,
+        ),
+        (
+            unique_ty.into(),
+            true,
+            MirPointerKindAuthorityAttr::Reborrow,
+        ),
+        (
+            raw_const_ty.into(),
+            false,
+            MirPointerKindAuthorityAttr::RawAddress,
+        ),
+        (
+            raw_mut_ty.into(),
+            true,
+            MirPointerKindAuthorityAttr::RawAddress,
+        ),
+        (
+            shared_ty.into(),
+            false,
+            MirPointerKindAuthorityAttr::StaticAddress,
+        ),
+    ] {
+        assert!(
+            MirRefOp::new(build(&mut ctx, result_ty, mutable, Some(authority)))
+                .verify(&ctx)
+                .is_ok()
+        );
+    }
+
+    assert!(
+        MirRefOp::new(build(&mut ctx, shared_ty.into(), false, None))
+            .verify(&ctx)
+            .is_err(),
+        "mir.ref must visibly identify its Rust semantic origin"
+    );
+    assert!(
+        MirRefOp::new(build(&mut ctx, erased_ty.into(), false, None))
+            .verify(&ctx)
+            .is_err(),
+        "mir.ref is an explicit pointer-creation boundary, not generic Erased storage"
+    );
+    assert!(
+        MirRefOp::new(build(
+            &mut ctx,
+            shared_ty.into(),
+            false,
+            Some(MirPointerKindAuthorityAttr::RawAddress),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "RawAddress cannot manufacture SharedRef"
+    );
+    assert!(
+        MirRefOp::new(build(
+            &mut ctx,
+            unique_ty.into(),
+            true,
+            Some(MirPointerKindAuthorityAttr::StaticAddress),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "constant/static materialization cannot manufacture uniqueness"
+    );
+    assert!(
+        MirRefOp::new(build(
+            &mut ctx,
+            unique_ty.into(),
+            false,
+            Some(MirPointerKindAuthorityAttr::Reborrow),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "reference kind must agree with the operation's mutability"
+    );
+    assert!(
+        MirRefOp::new(build(
+            &mut ctx,
+            global_shared_ty.into(),
+            false,
+            Some(MirPointerKindAuthorityAttr::Reborrow),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "mir.ref materializes generic stack storage"
+    );
+}
+
+#[test]
+fn test_aggregate_cast_cannot_hide_pointer_kind_laundering() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let raw_mut_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::RawMut);
+    let unique_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef);
+    let raw_tuple_ty = MirTupleType::get(&mut ctx, vec![raw_mut_ty.into()]);
+    let unique_tuple_ty = MirTupleType::get(&mut ctx, vec![unique_ty.into()]);
+    let block = BasicBlock::new(&mut ctx, None, vec![raw_tuple_ty.into()]);
+    let raw_tuple = block.deref(&ctx).get_argument(0);
+
+    let build = |ctx: &mut Context, authority: Option<MirPointerKindAuthorityAttr>| {
+        let op = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![unique_tuple_ty.into()],
+            vec![raw_tuple],
+            vec![],
+            0,
+        );
+        let cast = MirCastOp::new(op);
+        cast.set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+        if let Some(authority) = authority {
+            cast.set_pointer_kind_authority(ctx, authority);
+        }
+        op
+    };
+
+    assert!(
+        MirCastOp::new(build(&mut ctx, None)).verify(&ctx).is_err(),
+        "nested RawMut -> UniqueRef laundering must be rejected"
+    );
+    assert!(
+        MirCastOp::new(build(&mut ctx, Some(MirPointerKindAuthorityAttr::Reborrow),))
+            .verify(&ctx)
+            .is_err(),
+        "Rvalue::Ref cannot authorize a nested aggregate transition"
+    );
+    assert!(
+        MirCastOp::new(build(&mut ctx, Some(MirPointerKindAuthorityAttr::RustCast),))
+            .verify(&ctx)
+            .is_ok(),
+        "an explicit rustc aggregate transmute is visible and authorized"
+    );
+}
+
+#[test]
+fn test_aggregate_reinterpretation_requires_rust_cast_authority() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let shared_ty = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        i64_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    );
+    // Both tuple declarations list the same pointer at field 0, but its byte
+    // offset changes from 0 to 8. Pairing by declaration index alone would
+    // therefore mistake an integer's old bytes for a preserved reference.
+    let source_ty = MirTupleType::get_with_layout(
+        &mut ctx,
+        vec![shared_ty.into(), i64_ty.into()],
+        vec![0, 1],
+        vec![0, 8],
+        16,
+        8,
+    );
+    let target_ty = MirTupleType::get_with_layout(
+        &mut ctx,
+        vec![shared_ty.into(), i64_ty.into()],
+        vec![1, 0],
+        vec![8, 0],
+        16,
+        8,
+    );
+    let block = BasicBlock::new(&mut ctx, None, vec![source_ty.into()]);
+    let source = block.deref(&ctx).get_argument(0);
+
+    let build = |ctx: &mut Context, authority: Option<MirPointerKindAuthorityAttr>| {
+        let op = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![target_ty.into()],
+            vec![source],
+            vec![],
+            0,
+        );
+        let cast = MirCastOp::new(op);
+        cast.set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+        if let Some(authority) = authority {
+            cast.set_pointer_kind_authority(ctx, authority);
+        }
+        op
+    };
+
+    assert!(
+        MirCastOp::new(build(&mut ctx, None)).verify(&ctx).is_err(),
+        "layout-changing aggregate casts must not infer pointer preservation by field index"
+    );
+    assert!(
+        MirCastOp::new(build(&mut ctx, Some(MirPointerKindAuthorityAttr::RustCast),))
+            .verify(&ctx)
+            .is_ok(),
+        "an explicit rustc transmute makes the representation reinterpretation auditable"
+    );
+}
+
+#[test]
+fn test_generic_aggregate_cast_cannot_invent_erased_pointer_carriers() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let word_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let erased_mut = MirPtrType::get_generic(&mut ctx, word_ty.into(), true);
+    let source_ty = MirTupleType::get_with_layout(
+        &mut ctx,
+        vec![erased_mut.into(), word_ty.into()],
+        vec![0, 1],
+        vec![0, 8],
+        16,
+        8,
+    );
+    let extra_pointer_ty = MirTupleType::get_with_layout(
+        &mut ctx,
+        vec![erased_mut.into(), erased_mut.into()],
+        vec![0, 1],
+        vec![0, 8],
+        16,
+        8,
+    );
+    let moved_pointer_ty = MirTupleType::get_with_layout(
+        &mut ctx,
+        vec![erased_mut.into(), word_ty.into()],
+        vec![1, 0],
+        vec![8, 0],
+        16,
+        8,
+    );
+    let one_pointer = MirArrayType::get(&mut ctx, erased_mut.into(), 1);
+    let two_pointers = MirArrayType::get(&mut ctx, erased_mut.into(), 2);
+
+    let source_block = BasicBlock::new(&mut ctx, None, vec![source_ty.into()]);
+    let source = source_block.deref(&ctx).get_argument(0);
+    let array_block = BasicBlock::new(&mut ctx, None, vec![one_pointer.into()]);
+    let array_source = array_block.deref(&ctx).get_argument(0);
+    let build = |ctx: &mut Context, source, target| {
+        let op = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![target],
+            vec![source],
+            vec![],
+            0,
+        );
+        MirCastOp::new(op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+        op
+    };
+
+    assert!(
+        MirCastOp::new(build(&mut ctx, source, extra_pointer_ty.into()))
+            .verify(&ctx)
+            .is_err(),
+        "PtrToPtr cannot reinterpret an integer field as writable Erased pointer evidence"
+    );
+    assert!(
+        MirCastOp::new(build(&mut ctx, source, moved_pointer_ty.into()))
+            .verify(&ctx)
+            .is_err(),
+        "field-index equality cannot hide an Erased pointer moving onto integer bytes"
+    );
+    assert!(
+        MirCastOp::new(build(&mut ctx, array_source, two_pointers.into()))
+            .verify(&ctx)
+            .is_err(),
+        "homogeneous array traversal must retain pointer-carrier cardinality"
+    );
+}
+
+#[test]
+fn test_rust_cast_authority_obeys_cast_kind_semantics() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let usize_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let array_ty = MirArrayType::get(&mut ctx, u8_ty.into(), 4);
+    let raw_mut =
+        MirPtrType::get_generic_with_kind(&mut ctx, u8_ty.into(), true, MirPointerKind::RawMut);
+    let raw_const =
+        MirPtrType::get_generic_with_kind(&mut ctx, u8_ty.into(), false, MirPointerKind::RawConst);
+    let unique =
+        MirPtrType::get_generic_with_kind(&mut ctx, u8_ty.into(), true, MirPointerKind::UniqueRef);
+    let fn_target = MirStructType::get_with_full_layout(
+        &mut ctx,
+        "FnPtrTarget".into(),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        0,
+        0,
+    );
+    let fn_target_ty: pliron::r#type::TypeHandle = fn_target.into();
+    let fn_carrier = MirPtrType::get_generic(&mut ctx, fn_target_ty, false);
+    let raw_mut_array =
+        MirPtrType::get_generic_with_kind(&mut ctx, array_ty.into(), true, MirPointerKind::RawMut);
+    let raw_const_array = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        array_ty.into(),
+        false,
+        MirPointerKind::RawConst,
+    );
+    let erased_array = MirPtrType::get_generic(&mut ctx, array_ty.into(), false);
+    let erased_slice = MirSliceType::get(&mut ctx, u8_ty.into());
+    let erased_mut_slice = MirSliceType::get_with_mutability(&mut ctx, u8_ty.into(), true);
+    let raw_const_slice =
+        MirSliceType::get_with_kind(&mut ctx, u8_ty.into(), MirPointerKind::RawConst);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            raw_mut.into(),
+            raw_const.into(),
+            fn_carrier.into(),
+            raw_mut_array.into(),
+            raw_const_array.into(),
+            erased_array.into(),
+            usize_ty.into(),
+        ],
+    );
+    let raw_mut_value = block.deref(&ctx).get_argument(0);
+    let raw_const_value = block.deref(&ctx).get_argument(1);
+    let fn_value = block.deref(&ctx).get_argument(2);
+    let raw_mut_array_value = block.deref(&ctx).get_argument(3);
+    let raw_const_array_value = block.deref(&ctx).get_argument(4);
+    let erased_array_value = block.deref(&ctx).get_argument(5);
+    let integer_value = block.deref(&ctx).get_argument(6);
+
+    let build = |ctx: &mut Context,
+                 source,
+                 target,
+                 kind,
+                 authority: Option<MirPointerKindAuthorityAttr>| {
+        let op = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![target],
+            vec![source],
+            vec![],
+            0,
+        );
+        let cast = MirCastOp::new(op);
+        cast.set_attr_cast_kind(ctx, kind);
+        if let Some(authority) = authority {
+            cast.set_pointer_kind_authority(ctx, authority);
+        }
+        op
+    };
+    let rust_cast = Some(MirPointerKindAuthorityAttr::RustCast);
+
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_mut_value,
+            unique.into(),
+            MirCastKindAttr::PtrToPtr,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "PtrToPtr cannot use RustCast to invent a reference"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_mut_value,
+            raw_const.into(),
+            MirCastKindAttr::PtrToPtr,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_ok(),
+        "PtrToPtr may perform an explicit raw-to-raw cast"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            fn_value,
+            raw_const.into(),
+            MirCastKindAttr::FnPtrToPtr,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_ok(),
+        "FnPtrToPtr may expose an opaque function pointer as a raw pointer"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            erased_array_value,
+            raw_const.into(),
+            MirCastKindAttr::FnPtrToPtr,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "FnPtrToPtr cannot relabel arbitrary Erased storage as a function pointer"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            fn_value,
+            unique.into(),
+            MirCastKindAttr::FnPtrToPtr,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_err()
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_mut_value,
+            raw_const.into(),
+            MirCastKindAttr::PointerCoercionMutToConst,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_ok()
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_const_value,
+            raw_mut.into(),
+            MirCastKindAttr::PointerCoercionMutToConst,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_err()
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_mut_value,
+            raw_mut.into(),
+            MirCastKindAttr::PointerCoercionMutToConst,
+            None,
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "MutToConst cannot masquerade as a same-category pointer cast"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_const_array_value,
+            raw_const_slice.into(),
+            MirCastKindAttr::PointerCoercionUnsize,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_ok(),
+        "Unsize may change thin/fat shape while preserving its carrier"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            erased_array_value,
+            erased_slice.into(),
+            MirCastKindAttr::PointerCoercionUnsize,
+            None,
+        ))
+        .verify(&ctx)
+        .is_ok(),
+        "an all-Erased unsize still preserves read-only carrier state"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            erased_array_value,
+            erased_mut_slice.into(),
+            MirCastKindAttr::PointerCoercionUnsize,
+            None,
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "Unsize cannot turn an immutable Erased thin pointer into writable fat evidence"
+    );
+
+    let prefix_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let sized_tail = MirStructType::get_with_full_layout(
+        &mut ctx,
+        "TailCarrier".into(),
+        vec!["prefix".into(), "tail".into()],
+        vec![prefix_ty.into(), array_ty.into()],
+        vec![0, 1],
+        vec![0, 8],
+        16,
+        8,
+    );
+    let shifted_unsized_tail = MirStructType::get_with_full_layout(
+        &mut ctx,
+        "TailCarrier".into(),
+        vec!["prefix".into(), "tail".into()],
+        vec![prefix_ty.into(), u8_ty.into()],
+        vec![0, 1],
+        vec![0, 16],
+        24,
+        8,
+    );
+    let sized_tail_ptr = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        sized_tail.into(),
+        false,
+        MirPointerKind::RawConst,
+    );
+    let shifted_tail_slice = MirSliceType::get_with_kind(
+        &mut ctx,
+        shifted_unsized_tail.into(),
+        MirPointerKind::RawConst,
+    );
+    let tail_block = BasicBlock::new(&mut ctx, None, vec![sized_tail_ptr.into()]);
+    let tail_value = tail_block.deref(&ctx).get_argument(0);
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            tail_value,
+            shifted_tail_slice.into(),
+            MirCastKindAttr::PointerCoercionUnsize,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "Unsize cannot move the trailing data behind a changed struct-field offset"
+    );
+
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_const_array_value,
+            raw_mut.into(),
+            MirCastKindAttr::PointerCoercionArrayToPointer,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "ArrayToPointer cannot strengthen const raw storage to mutable"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_mut_value,
+            raw_const.into(),
+            MirCastKindAttr::PointerCoercionArrayToPointer,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "ArrayToPointer requires a raw pointer to an array, not an arbitrary pointer"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_mut_value,
+            raw_mut.into(),
+            MirCastKindAttr::PointerCoercionArrayToPointer,
+            None,
+        ))
+        .verify(&ctx)
+        .is_err(),
+        "an unmarked same-kind ArrayToPointer still requires an array source"
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            raw_mut_array_value,
+            raw_const.into(),
+            MirCastKindAttr::PointerCoercionArrayToPointer,
+            rust_cast.clone(),
+        ))
+        .verify(&ctx)
+        .is_ok()
+    );
+    assert!(
+        MirCastOp::new(build(
+            &mut ctx,
+            integer_value,
+            unique.into(),
+            MirCastKindAttr::Transmute,
+            rust_cast,
+        ))
+        .verify(&ctx)
+        .is_ok(),
+        "only an explicit Transmute may establish an arbitrary pointer category"
+    );
+
+    let word_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let source_wrapper = MirStructType::get_with_full_layout(
+        &mut ctx,
+        "CarrierWrapper".into(),
+        vec!["pointer".into(), "word".into()],
+        vec![unique.into(), word_ty.into()],
+        vec![0, 1],
+        vec![0, 8],
+        16,
+        8,
+    );
+    let moved_wrapper = MirStructType::get_with_full_layout(
+        &mut ctx,
+        "CarrierWrapper".into(),
+        vec!["word".into(), "pointer".into()],
+        vec![word_ty.into(), unique.into()],
+        vec![0, 1],
+        vec![0, 8],
+        16,
+        8,
+    );
+    let wrapper_block = BasicBlock::new(&mut ctx, None, vec![source_wrapper.into()]);
+    let wrapper_value = wrapper_block.deref(&ctx).get_argument(0);
+    for kind in [
+        MirCastKindAttr::PointerCoercionUnsize,
+        MirCastKindAttr::Subtype,
+    ] {
+        assert!(
+            MirCastOp::new(build(
+                &mut ctx,
+                wrapper_value,
+                moved_wrapper.into(),
+                kind,
+                Some(MirPointerKindAuthorityAttr::RustCast),
+            ))
+            .verify(&ctx)
+            .is_err(),
+            "Unsize/Subtype cannot bless a pointer carrier moved onto integer bytes"
+        );
+    }
+}
+
+#[test]
+fn test_pointer_projections_preserve_or_erase_kind_only() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let usize_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let tuple_ty = MirTupleType::get(&mut ctx, vec![i32_ty.into()]);
+    let array_ty = MirArrayType::get(&mut ctx, i32_ty.into(), 4);
+    let raw_tuple_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, tuple_ty.into(), true, MirPointerKind::RawMut);
+    let raw_array_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, array_ty.into(), true, MirPointerKind::RawMut);
+    let raw_field_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::RawMut);
+    let erased_field_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let erased_read_field_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let unique_field_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![raw_tuple_ty.into(), raw_array_ty.into(), usize_ty.into()],
+    );
+    let tuple = block.deref(&ctx).get_argument(0);
+    let array = block.deref(&ctx).get_argument(1);
+    let index = block.deref(&ctx).get_argument(2);
+
+    let field = |ctx: &mut Context, result_ty| {
+        let op = Operation::new(
+            ctx,
+            MirFieldAddrOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![tuple],
+            vec![],
+            0,
+        );
+        MirFieldAddrOp::new(op).set_attr_field_index(ctx, FieldIndexAttr(0));
+        op
+    };
+    assert!(
+        MirFieldAddrOp::new(field(&mut ctx, raw_field_ty.into()))
+            .verify(&ctx)
+            .is_ok()
+    );
+    assert!(
+        MirFieldAddrOp::new(field(&mut ctx, erased_field_ty.into()))
+            .verify(&ctx)
+            .is_ok()
+    );
+    assert!(
+        MirFieldAddrOp::new(field(&mut ctx, unique_field_ty.into()))
+            .verify(&ctx)
+            .is_err()
+    );
+    assert!(
+        MirFieldAddrOp::new(field(&mut ctx, erased_read_field_ty.into()))
+            .verify(&ctx)
+            .is_err(),
+        "field projection cannot flip an Erased address from writable to read-only"
+    );
+
+    let array_launder = Operation::new(
+        &mut ctx,
+        MirArrayElementAddrOp::get_concrete_op_info(),
+        vec![unique_field_ty.into()],
+        vec![array, index],
+        vec![],
+        0,
+    );
+    assert!(
+        MirArrayElementAddrOp::new(array_launder)
+            .verify(&ctx)
+            .is_err()
+    );
+    let array_erase = Operation::new(
+        &mut ctx,
+        MirArrayElementAddrOp::get_concrete_op_info(),
+        vec![erased_field_ty.into()],
+        vec![array, index],
+        vec![],
+        0,
+    );
+    assert!(
+        MirArrayElementAddrOp::new(array_erase).verify(&ctx).is_ok(),
+        "projection may erase kind while preserving machine mutability"
+    );
+    let array_mutability_flip = Operation::new(
+        &mut ctx,
+        MirArrayElementAddrOp::get_concrete_op_info(),
+        vec![erased_read_field_ty.into()],
+        vec![array, index],
+        vec![],
+        0,
+    );
+    assert!(
+        MirArrayElementAddrOp::new(array_mutability_flip)
+            .verify(&ctx)
+            .is_err(),
+        "array projection cannot change machine mutability"
+    );
+}
+
+#[test]
+fn test_pointer_with_exposed_provenance_only_creates_raw_or_erased_pointer() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+    let usize_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let fn_target = MirStructType::get_with_full_layout(
+        &mut ctx,
+        "FnPtrTarget".into(),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        0,
+        0,
+    );
+    let fn_target_ty: pliron::r#type::TypeHandle = fn_target.into();
+    let raw_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::RawMut);
+    let opaque_fn_ty = MirPtrType::get_generic(&mut ctx, fn_target_ty, false);
+    let arbitrary_erased_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let writable_erased_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
+    let unique_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef);
+    let block = BasicBlock::new(&mut ctx, None, vec![usize_ty.into()]);
+    let address = block.deref(&ctx).get_argument(0);
+
+    let build = |ctx: &mut Context, result_ty| {
+        let op = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![address],
+            vec![],
+            0,
+        );
+        let cast = MirCastOp::new(op);
+        cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+        cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::RustCast);
+        op
+    };
+
+    assert!(
+        MirCastOp::new(build(&mut ctx, raw_ty.into()))
+            .verify(&ctx)
+            .is_ok()
+    );
+    assert!(
+        MirCastOp::new(build(&mut ctx, unique_ty.into()))
+            .verify(&ctx)
+            .is_err(),
+        "integer provenance cannot directly materialize a Rust reference"
+    );
+
+    let build_unmarked = |ctx: &mut Context, result_ty| {
+        let op = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![address],
+            vec![],
+            0,
+        );
+        MirCastOp::new(op).set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+        op
+    };
+    assert!(
+        MirCastOp::new(build_unmarked(&mut ctx, opaque_fn_ty.into()))
+            .verify(&ctx)
+            .is_ok(),
+        "function-pointer tokens may materialize only the canonical immutable Erased carrier"
+    );
+    assert!(
+        MirCastOp::new(build_unmarked(&mut ctx, arbitrary_erased_ty.into()))
+            .verify(&ctx)
+            .is_err(),
+        "an integer cannot manufacture arbitrary Erased pointer evidence"
+    );
+    assert!(
+        MirCastOp::new(build_unmarked(&mut ctx, writable_erased_ty.into()))
+            .verify(&ctx)
+            .is_err(),
+        "an integer cannot manufacture writable Erased evidence and then reborrow it as UniqueRef"
+    );
+
+    let fn_block = BasicBlock::new(&mut ctx, None, vec![opaque_fn_ty.into()]);
+    let opaque_fn = fn_block.deref(&ctx).get_argument(0);
+    let disguised_data_pointer = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![arbitrary_erased_ty.into()],
+        vec![opaque_fn],
+        vec![],
+        0,
+    );
+    MirCastOp::new(disguised_data_pointer)
+        .set_attr_cast_kind(&ctx, MirCastKindAttr::PointerCoercionArrayToPointer);
+    assert!(
+        MirCastOp::new(disguised_data_pointer).verify(&ctx).is_err(),
+        "an unrelated coercion cannot turn the opaque function token into Erased data storage"
+    );
+
+    let shared_fn_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, fn_target_ty, false, MirPointerKind::SharedRef);
+    let fake_reborrow = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![shared_fn_ty.into()],
+        vec![opaque_fn],
+        vec![],
+        0,
+    );
+    let fake_reborrow = MirCastOp::new(fake_reborrow);
+    fake_reborrow.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    fake_reborrow.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    assert!(
+        fake_reborrow.verify(&ctx).is_err(),
+        "an opaque function-pointer value is not compiler storage that may be reborrowed"
+    );
+
+    // Keeping only kind+mutability while recursively pairing aggregate fields
+    // is insufficient: the canonical function token is also identified by
+    // its pointee. Otherwise a tuple cast can disguise data storage as a
+    // function pointer (or vice versa), after which individually legal casts
+    // can manufacture a reference.
+    let data_tuple_ty = MirTupleType::get(&mut ctx, vec![arbitrary_erased_ty.into()]);
+    let fn_tuple_ty = MirTupleType::get(&mut ctx, vec![opaque_fn_ty.into()]);
+    let nested_block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![data_tuple_ty.into(), fn_tuple_ty.into()],
+    );
+    let data_tuple = nested_block.deref(&ctx).get_argument(0);
+    let fn_tuple = nested_block.deref(&ctx).get_argument(1);
+    let nested_cast = |ctx: &mut Context, source, target| {
+        let op = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![target],
+            vec![source],
+            vec![],
+            0,
+        );
+        MirCastOp::new(op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+        op
+    };
+    let data_to_fn = nested_cast(&mut ctx, data_tuple, fn_tuple_ty.into());
+    assert!(
+        MirCastOp::new(data_to_fn).verify(&ctx).is_err(),
+        "an aggregate cast cannot manufacture a nested canonical function token"
+    );
+    assert!(
+        MirCastOp::new(nested_cast(&mut ctx, fn_tuple, data_tuple_ty.into(),))
+            .verify(&ctx)
+            .is_err(),
+        "an aggregate cast cannot disguise a nested function token as Erased data"
+    );
+
+    let forged_fn_tuple = data_to_fn.deref(&ctx).get_result(0);
+    let extract_forged_fn = Operation::new(
+        &mut ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![opaque_fn_ty.into()],
+        vec![forged_fn_tuple],
+        vec![],
+        0,
+    );
+    let extract_forged_fn = MirExtractFieldOp::new(extract_forged_fn);
+    extract_forged_fn.set_attr_index(&ctx, FieldIndexAttr(0));
+    assert!(extract_forged_fn.verify(&ctx).is_ok());
+
+    let forged_fn = extract_forged_fn.get_operation().deref(&ctx).get_result(0);
+    let expose_forged_fn = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![raw_ty.into()],
+        vec![forged_fn],
+        vec![],
+        0,
+    );
+    let expose_forged_fn = MirCastOp::new(expose_forged_fn);
+    expose_forged_fn.set_attr_cast_kind(&ctx, MirCastKindAttr::FnPtrToPtr);
+    expose_forged_fn.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::RustCast);
+    assert!(expose_forged_fn.verify(&ctx).is_ok());
+
+    let forged_raw = expose_forged_fn.get_operation().deref(&ctx).get_result(0);
+    let reborrow_forged_fn = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![forged_raw],
+        vec![],
+        0,
+    );
+    let reborrow_forged_fn = MirCastOp::new(reborrow_forged_fn);
+    reborrow_forged_fn.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    reborrow_forged_fn.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    assert!(
+        reborrow_forged_fn.verify(&ctx).is_ok(),
+        "the laundering chain must be rejected at its aggregate reinterpretation"
+    );
+
+    let shared_marker_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, fn_target_ty, false, MirPointerKind::SharedRef);
+    let marker_tuple_ty = MirTupleType::get(&mut ctx, vec![fn_target_ty]);
+    let shared_marker_tuple_ty = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        marker_tuple_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    );
+    let marker_array_ty = MirArrayType::get(&mut ctx, fn_target_ty, 1);
+    let shared_marker_array_ty = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        marker_array_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    );
+    let shared_marker_slice_ty =
+        MirSliceType::get_with_kind(&mut ctx, fn_target_ty, MirPointerKind::SharedRef);
+    let projection_block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            shared_marker_ty.into(),
+            shared_marker_tuple_ty.into(),
+            shared_marker_array_ty.into(),
+            shared_marker_slice_ty.into(),
+            usize_ty.into(),
+        ],
+    );
+    let marker_address = projection_block.deref(&ctx).get_argument(0);
+    let marker_tuple_address = projection_block.deref(&ctx).get_argument(1);
+    let marker_array_address = projection_block.deref(&ctx).get_argument(2);
+    let marker_slice = projection_block.deref(&ctx).get_argument(3);
+    let zero = projection_block.deref(&ctx).get_argument(4);
+
+    let offset_to_token = Operation::new(
+        &mut ctx,
+        MirPtrOffsetOp::get_concrete_op_info(),
+        vec![opaque_fn_ty.into()],
+        vec![marker_address, zero],
+        vec![],
+        0,
+    );
+    assert!(
+        MirPtrOffsetOp::new(offset_to_token).verify(&ctx).is_err(),
+        "pointer arithmetic produces a data address, never a function token"
+    );
+
+    let field_address_to_token = Operation::new(
+        &mut ctx,
+        MirFieldAddrOp::get_concrete_op_info(),
+        vec![opaque_fn_ty.into()],
+        vec![marker_tuple_address],
+        vec![],
+        0,
+    );
+    let field_address_to_token = MirFieldAddrOp::new(field_address_to_token);
+    field_address_to_token.set_attr_field_index(&ctx, FieldIndexAttr(0));
+    assert!(
+        field_address_to_token.verify(&ctx).is_err(),
+        "a field address cannot masquerade as a function token"
+    );
+
+    let array_address_to_token = Operation::new(
+        &mut ctx,
+        MirArrayElementAddrOp::get_concrete_op_info(),
+        vec![opaque_fn_ty.into()],
+        vec![marker_array_address, zero],
+        vec![],
+        0,
+    );
+    assert!(
+        MirArrayElementAddrOp::new(array_address_to_token)
+            .verify(&ctx)
+            .is_err(),
+        "an array element address cannot masquerade as a function token"
+    );
+
+    let slice_data_to_token = Operation::new(
+        &mut ctx,
+        MirExtractFieldOp::get_concrete_op_info(),
+        vec![opaque_fn_ty.into()],
+        vec![marker_slice],
+        vec![],
+        0,
+    );
+    let slice_data_to_token = MirExtractFieldOp::new(slice_data_to_token);
+    slice_data_to_token.set_attr_index(&ctx, FieldIndexAttr(0));
+    assert!(
+        slice_data_to_token.verify(&ctx).is_err(),
+        "a slice data address cannot masquerade as a function token"
+    );
+
+    // A ClosureFnPointer cast must not extract captured reference bits as a
+    // function pointer, expose them as RawMut, and then reborrow them as
+    // UniqueRef. Only a genuinely non-capturing, zero-sized closure may enter
+    // the opaque function-pointer path.
+    let captured_ref = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        i32_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    );
+    let captured_closure = MirStructType::get_with_full_layout(
+        &mut ctx,
+        "CapturedClosure".into(),
+        vec!["capture_0".into()],
+        vec![captured_ref.into()],
+        vec![0],
+        vec![0],
+        8,
+        8,
+    );
+    let empty_closure = MirStructType::get_with_full_layout(
+        &mut ctx,
+        "NonCapturingClosure".into(),
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+        0,
+        1,
+    );
+    let closure_block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![captured_closure.into(), empty_closure.into()],
+    );
+    let captured_value = closure_block.deref(&ctx).get_argument(0);
+    let empty_value = closure_block.deref(&ctx).get_argument(1);
+    let closure_cast = |ctx: &mut Context, source| {
+        let op = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![opaque_fn_ty.into()],
+            vec![source],
+            vec![],
+            0,
+        );
+        MirCastOp::new(op)
+            .set_attr_cast_kind(ctx, MirCastKindAttr::PointerCoercionClosureFnPointer);
+        op
+    };
+    let captured_to_fn = closure_cast(&mut ctx, captured_value);
+    assert!(
+        MirCastOp::new(captured_to_fn).verify(&ctx).is_err(),
+        "a closure carrying SharedRef bytes cannot become an opaque function pointer"
+    );
+    assert!(
+        MirCastOp::new(closure_cast(&mut ctx, empty_value))
+            .verify(&ctx)
+            .is_err(),
+        "the importer materializes a closure function token directly; the legacy cast is not lowerable"
+    );
+
+    let captured_fn_value = captured_to_fn.deref(&ctx).get_result(0);
+    let exposed_capture = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![raw_ty.into()],
+        vec![captured_fn_value],
+        vec![],
+        0,
+    );
+    let exposed_capture = MirCastOp::new(exposed_capture);
+    exposed_capture.set_attr_cast_kind(&ctx, MirCastKindAttr::FnPtrToPtr);
+    exposed_capture.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::RustCast);
+    assert!(exposed_capture.verify(&ctx).is_ok());
+
+    let exposed_capture_value = exposed_capture.get_operation().deref(&ctx).get_result(0);
+    let unique_capture = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_ty.into()],
+        vec![exposed_capture_value],
+        vec![],
+        0,
+    );
+    let unique_capture = MirCastOp::new(unique_capture);
+    unique_capture.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    unique_capture.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    assert!(
+        unique_capture.verify(&ctx).is_ok(),
+        "the chain must be stopped at ClosureFnPointer before later individually legal boundaries"
+    );
+}
+
+#[test]
 fn test_mir_extract_field_verify() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);
@@ -499,7 +2047,8 @@ fn test_mir_construct_disjoint_slice_verify() {
     let f32_ty = FP32Type::get(&ctx);
     let usize_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
     let width_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
-    let f32_ptr_ty = MirPtrType::get_generic(&mut ctx, f32_ty.into(), true);
+    let f32_ptr_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, f32_ty.into(), true, MirPointerKind::RawMut);
     let plain_ty = MirDisjointSliceType::get(&mut ctx, f32_ty.into());
     let width_ty_handle: pliron::r#type::TypeHandle = width_ty.into();
     let row_width_ty =
@@ -542,6 +2091,24 @@ fn test_mir_construct_disjoint_slice_verify() {
             .verify(&ctx)
             .is_ok(),
         "Valid row-width disjoint slice construction"
+    );
+
+    let erased_ptr_ty = MirPtrType::get_generic(&mut ctx, f32_ty.into(), true);
+    let erased_block = BasicBlock::new(&mut ctx, None, vec![erased_ptr_ty.into()]);
+    let erased_ptr = erased_block.deref(&ctx).get_argument(0);
+    let op_erased_data = Operation::new(
+        &mut ctx,
+        MirConstructDisjointSliceOp::get_concrete_op_info(),
+        vec![plain_ty.into()],
+        vec![erased_ptr, len_val],
+        vec![],
+        0,
+    );
+    assert!(
+        MirConstructDisjointSliceOp::new(op_erased_data)
+            .verify(&ctx)
+            .is_err(),
+        "DisjointSlice's fixed RawMut field cannot be reconstructed from Erased"
     );
 
     // Invalid: the row width is missing, so the slice would carry whatever
@@ -682,6 +2249,215 @@ fn test_mir_construct_slice_verify() {
     assert!(
         MirConstructSliceOp::new(op_bad_res).verify(&ctx).is_err(),
         "Non-slice result type"
+    );
+}
+
+#[test]
+fn test_slice_carrier_cannot_launder_pointer_kind() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let usize_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let raw_mut_ptr =
+        MirPtrType::get_generic_with_kind(&mut ctx, u8_ty.into(), true, MirPointerKind::RawMut);
+    let erased_ptr = MirPtrType::get_generic(&mut ctx, u8_ty.into(), true);
+    let erased_const_ptr = MirPtrType::get_generic(&mut ctx, u8_ty.into(), false);
+    let global_raw_mut_ptr = MirPtrType::get_with_kind(
+        &mut ctx,
+        u8_ty.into(),
+        true,
+        dialect_mir::types::address_space::GLOBAL,
+        MirPointerKind::RawMut,
+    );
+    let unique_ptr =
+        MirPtrType::get_generic_with_kind(&mut ctx, u8_ty.into(), true, MirPointerKind::UniqueRef);
+    let raw_mut_slice = MirSliceType::get_with_kind(&mut ctx, u8_ty.into(), MirPointerKind::RawMut);
+    let unique_slice =
+        MirSliceType::get_with_kind(&mut ctx, u8_ty.into(), MirPointerKind::UniqueRef);
+    let erased_slice = MirSliceType::get(&mut ctx, u8_ty.into());
+    let erased_mut_slice = MirSliceType::get_with_mutability(&mut ctx, u8_ty.into(), true);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            raw_mut_ptr.into(),
+            erased_ptr.into(),
+            erased_const_ptr.into(),
+            global_raw_mut_ptr.into(),
+            usize_ty.into(),
+            raw_mut_slice.into(),
+            erased_slice.into(),
+            erased_mut_slice.into(),
+        ],
+    );
+    let raw_mut = block.deref(&ctx).get_argument(0);
+    let erased = block.deref(&ctx).get_argument(1);
+    let erased_const = block.deref(&ctx).get_argument(2);
+    let global_raw_mut = block.deref(&ctx).get_argument(3);
+    let len = block.deref(&ctx).get_argument(4);
+    let raw_slice = block.deref(&ctx).get_argument(5);
+    let erased_slice_value = block.deref(&ctx).get_argument(6);
+    let erased_mut_slice_value = block.deref(&ctx).get_argument(7);
+
+    let construct = |ctx: &mut Context, data, result_ty| {
+        Operation::new(
+            ctx,
+            MirConstructSliceOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![data, len],
+            vec![],
+            0,
+        )
+    };
+    assert!(
+        MirConstructSliceOp::new(construct(&mut ctx, raw_mut, raw_mut_slice.into()))
+            .verify(&ctx)
+            .is_ok()
+    );
+    assert!(
+        MirConstructSliceOp::new(construct(&mut ctx, raw_mut, unique_slice.into()))
+            .verify(&ctx)
+            .is_err(),
+        "construct_slice must not turn RawMut into UniqueRef"
+    );
+    assert!(
+        MirConstructSliceOp::new(construct(&mut ctx, erased, raw_mut_slice.into()))
+            .verify(&ctx)
+            .is_err(),
+        "construct_slice must not recover RawMut from Erased"
+    );
+    assert!(
+        MirConstructSliceOp::new(construct(&mut ctx, global_raw_mut, raw_mut_slice.into()))
+            .verify(&ctx)
+            .is_err(),
+        "ordinary slice carriers always use generic address space"
+    );
+    assert!(
+        MirConstructSliceOp::new(construct(&mut ctx, erased_const, erased_slice.into()))
+            .verify(&ctx)
+            .is_ok(),
+        "an immutable Erased data pointer constructs an immutable Erased slice"
+    );
+
+    let extract = |ctx: &mut Context, result_ty| {
+        let op = Operation::new(
+            ctx,
+            MirExtractFieldOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![raw_slice],
+            vec![],
+            0,
+        );
+        MirExtractFieldOp::new(op).set_attr_index(ctx, FieldIndexAttr(0));
+        op
+    };
+    assert!(
+        MirExtractFieldOp::new(extract(&mut ctx, raw_mut_ptr.into()))
+            .verify(&ctx)
+            .is_ok()
+    );
+    assert!(
+        MirExtractFieldOp::new(extract(&mut ctx, erased_ptr.into()))
+            .verify(&ctx)
+            .is_ok(),
+        "slice extraction may deliberately erase a concrete kind"
+    );
+    assert!(
+        MirExtractFieldOp::new(extract(&mut ctx, unique_ptr.into()))
+            .verify(&ctx)
+            .is_err(),
+        "slice extraction must not change RawMut into UniqueRef"
+    );
+    assert!(
+        MirExtractFieldOp::new(extract(&mut ctx, global_raw_mut_ptr.into()))
+            .verify(&ctx)
+            .is_err(),
+        "ordinary slice extraction cannot invent a non-generic address space"
+    );
+    assert!(
+        MirExtractFieldOp::new(extract(&mut ctx, erased_const_ptr.into()))
+            .verify(&ctx)
+            .is_err(),
+        "erasing a concrete slice kind must preserve machine mutability"
+    );
+
+    let extract_erased = |ctx: &mut Context, result_ty| {
+        let op = Operation::new(
+            ctx,
+            MirExtractFieldOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![erased_slice_value],
+            vec![],
+            0,
+        );
+        MirExtractFieldOp::new(op).set_attr_index(ctx, FieldIndexAttr(0));
+        op
+    };
+    assert!(
+        MirExtractFieldOp::new(extract_erased(&mut ctx, erased_const_ptr.into()))
+            .verify(&ctx)
+            .is_ok(),
+        "an immutable Erased slice extracts an immutable Erased data pointer"
+    );
+    assert!(
+        MirExtractFieldOp::new(extract_erased(&mut ctx, erased_ptr.into()))
+            .verify(&ctx)
+            .is_err(),
+        "an immutable Erased slice cannot manufacture writable data-pointer evidence"
+    );
+
+    let extract_erased_mut = |ctx: &mut Context, result_ty| {
+        let op = Operation::new(
+            ctx,
+            MirExtractFieldOp::get_concrete_op_info(),
+            vec![result_ty],
+            vec![erased_mut_slice_value],
+            vec![],
+            0,
+        );
+        MirExtractFieldOp::new(op).set_attr_index(ctx, FieldIndexAttr(0));
+        op
+    };
+    assert!(
+        MirExtractFieldOp::new(extract_erased_mut(&mut ctx, erased_ptr.into()))
+            .verify(&ctx)
+            .is_ok(),
+        "a mutable Erased slice retains writable data-pointer evidence"
+    );
+
+    let immutable_slice_reborrow = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_slice.into()],
+        vec![erased_slice_value],
+        vec![],
+        0,
+    );
+    let immutable_slice_reborrow = MirCastOp::new(immutable_slice_reborrow);
+    immutable_slice_reborrow.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    immutable_slice_reborrow
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    assert!(
+        immutable_slice_reborrow.verify(&ctx).is_err(),
+        "an immutable Erased slice cannot be reborrowed as UniqueRef"
+    );
+
+    let mutable_slice_reborrow = Operation::new(
+        &mut ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![unique_slice.into()],
+        vec![erased_mut_slice_value],
+        vec![],
+        0,
+    );
+    let mutable_slice_reborrow = MirCastOp::new(mutable_slice_reborrow);
+    mutable_slice_reborrow.set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    mutable_slice_reborrow
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    assert!(
+        mutable_slice_reborrow.verify(&ctx).is_ok(),
+        "a mutable Erased slice may establish UniqueRef at a real reborrow boundary"
     );
 }
 
@@ -1241,6 +3017,18 @@ fn test_mir_global_alloc_verify() {
     assert!(
         build(&mut ctx, ptr_shared).verify(&ctx).is_err(),
         "shared addrspace rejected"
+    );
+
+    let ptr_unique_global = MirPtrType::get_with_kind(
+        &mut ctx,
+        f32_ty.into(),
+        true,
+        dialect_mir::types::address_space::GLOBAL,
+        MirPointerKind::UniqueRef,
+    );
+    assert!(
+        build(&mut ctx, ptr_unique_global).verify(&ctx).is_err(),
+        "a storage allocation cannot directly claim UniqueRef"
     );
 
     // Missing required attributes.

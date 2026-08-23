@@ -1208,16 +1208,30 @@ pub(crate) fn emit_array_element_store(
     index: Value,
     value: Value,
     element_ty: pliron::r#type::TypeHandle,
-    address_space: u32,
+    _address_space: u32,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> Ptr<Operation> {
-    // This is an address produced solely to perform the store, not a Rust
-    // reference/raw-pointer value. The legacy constructor intentionally gives
-    // it `MirPointerKind::Erased` provenance.
-    let elem_ptr_ty =
-        dialect_mir::types::MirPtrType::get(ctx, element_ty, true, address_space).into();
+    // Address projections retain the base pointer's provenance, mutability,
+    // and address space. The result is not a new Rust borrow and therefore has
+    // no authority to erase and later recover a different pointer category.
+    let (base_mutability, base_address_space, base_kind) = {
+        let base_ty = array_ptr.get_type(ctx);
+        let base_ty = base_ty.deref(ctx);
+        let base_ty = base_ty
+            .downcast_ref::<dialect_mir::types::MirPtrType>()
+            .expect("array element store base must be a MirPtrType");
+        (base_ty.is_mutable, base_ty.address_space, base_ty.kind)
+    };
+    let elem_ptr_ty = dialect_mir::types::MirPtrType::get_with_kind(
+        ctx,
+        element_ty,
+        base_mutability,
+        base_address_space,
+        base_kind,
+    )
+    .into();
 
     use dialect_mir::ops::MirArrayElementAddrOp;
     let addr_op = Operation::new(

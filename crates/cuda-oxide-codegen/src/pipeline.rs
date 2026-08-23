@@ -273,6 +273,12 @@ pub fn compile_translated_module(
         add_device_extern_declarations(ctx, module, request.device_externs)?;
     }
 
+    // IKET materialization and extern insertion both run after the ordinary
+    // MIR preparation gates. Verify the resulting mixed module before backend
+    // selection and lowering so no late producer can bypass MIR pointer-kind
+    // or call-signature invariants.
+    verify_operation(ctx, module, "module immediately before MIR lowering")?;
+
     // Discover libdevice.10.bc early so the backend decision can account for
     // IR-level linking. When available, `needs_libdevice` no longer forces the
     // NVVM IR path — the PTX path links libdevice at the LLVM IR level instead.

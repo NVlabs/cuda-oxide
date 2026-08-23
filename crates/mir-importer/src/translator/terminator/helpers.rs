@@ -30,6 +30,7 @@ use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::r#type::TypeHandle;
 use pliron::value::Value;
 use rustc_public::mir;
 
@@ -314,11 +315,12 @@ pub fn emit_store_result_and_goto(
         );
     }
 
-    // The intrinsic's cuda-device signature declares the result's Rust type,
-    // so this store is a Rust-typed semantic boundary: an emitter-internal
-    // Erased pointer result takes the slot's declared kind here.
+    // Every pointer-producing intrinsic must establish its exact Rust result
+    // kind at the producer. This shared epilogue is intentionally ordinary
+    // local storage: it may preserve or erase provenance, but it must never
+    // manufacture a concrete pointer/reference kind for an emitter.
     let goto_prev = value_map
-        .store_local_at_rust_boundary(
+        .store_local(
             ctx,
             destination.local,
             result_value,
@@ -428,7 +430,8 @@ pub fn emit_function_call(
     callee_name: &str,
     args: &[mir::Operand],
     destination: &mir::Place,
-    return_type: pliron::r#type::TypeHandle,
+    return_type: TypeHandle,
+    external_callee_type: Option<TypeHandle>,
     target: &Option<usize>,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -463,6 +466,9 @@ pub fn emit_function_call(
         pliron::identifier::Identifier::try_from("callee").unwrap(),
         callee_attr,
     );
+    if let Some(signature) = external_callee_type {
+        MirCallOp::new(call_op).set_external_callee_signature(ctx, signature);
+    }
 
     let call_op = if let Some(prev) = last_op {
         call_op.insert_after(ctx, prev);

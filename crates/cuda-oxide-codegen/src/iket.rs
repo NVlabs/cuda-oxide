@@ -705,8 +705,11 @@ mod tests {
 
         let module = ModuleOp::new(ctx, "iket_test".try_into().unwrap());
         let module_region = module.get_operation().deref(ctx).get_region(0);
-        let module_block = BasicBlock::new(ctx, None, vec![]);
-        module_block.insert_at_back(module_region, ctx);
+        let module_block = module_region
+            .deref(ctx)
+            .iter(ctx)
+            .next()
+            .expect("ModuleOp creates its single body block");
 
         let function_type = FunctionType::get(ctx, vec![], vec![]);
         let function_operation = Operation::new(

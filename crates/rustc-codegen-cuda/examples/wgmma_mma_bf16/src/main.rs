@@ -5,12 +5,14 @@
 
 //! Compile-only BF16 WGMMA integration example.
 //!
-//! This example exercises three public-API lowering paths:
+//! This example exercises five public-API lowering paths:
 //!
 //! 1. an m64n64 accumulator with a final `wait_group<0>`;
-//! 2. two independent m64n64 accumulator slots with two committed groups,
+//! 2. two m64n64 MMAs using separate reborrows of one accumulator;
+//! 3. a counted m64n64 K-loop whose reborrow is created inside the loop;
+//! 4. two independent m64n64 accumulator slots with two committed groups,
 //!    `wait_group<1>`, and a mandatory final `wait_group<0>`;
-//! 3. an m64n128 64-value accumulator with a final `wait_group<0>`.
+//! 5. an m64n128 64-value accumulator with a final `wait_group<0>`.
 //!
 //! All kernels use zero descriptors intentionally. They validate Rust MIR
 //! import, WGMMA region selection, LLVM lowering, and PTX generation only.
@@ -38,6 +40,68 @@ pub unsafe fn wgmma_mma_kernel(mut out: DisjointSlice<u32>) {
     unsafe {
         wgmma_fence();
         wgmma_mma_m64n64k16_f32_bf16(&mut acc, 0u64, 0u64);
+        wgmma_commit_group();
+        wgmma_wait_group::<0>();
+    }
+
+    let idx = thread::index_1d();
+    if let Some(slot) = out.get_mut(idx) {
+        *slot = acc[0][0].to_bits();
+    }
+}
+
+/// Compile-only repeated-reborrow m64n64 WGMMA kernel.
+///
+/// Each `&mut acc` expression is a distinct Rust reborrow, but both calls must
+/// be recognized as operating on the same accumulator storage.
+///
+/// # Safety
+///
+/// The zero descriptors are not valid WGMMA shared-memory descriptors. This
+/// kernel must not be executed.
+#[kernel]
+pub unsafe fn wgmma_reborrow_kernel(mut out: DisjointSlice<u32>) {
+    let mut acc: [[f32; 8]; 4] = [[0.0f32; 8]; 4];
+
+    unsafe {
+        wgmma_fence();
+        wgmma_mma_m64n64k16_f32_bf16(&mut acc, 0u64, 0u64);
+        wgmma_mma_m64n64k16_f32_bf16(&mut acc, 0u64, 0u64);
+        wgmma_commit_group();
+        wgmma_wait_group::<0>();
+    }
+
+    let idx = thread::index_1d();
+    if let Some(slot) = out.get_mut(idx) {
+        *slot = acc[0][0].to_bits();
+    }
+}
+
+/// Compile-only counted m64n64 K-loop WGMMA kernel.
+///
+/// The `&mut acc` reborrow is created in the loop body. Fusion must identify
+/// the storage allocated before the loop so the accumulator can stay in
+/// registers across all four iterations.
+///
+/// # Safety
+///
+/// The zero-based descriptors are not valid WGMMA shared-memory descriptors.
+/// This kernel must not be executed.
+#[kernel]
+pub unsafe fn wgmma_counted_reborrow_kernel(mut out: DisjointSlice<u32>) {
+    let mut acc: [[f32; 8]; 4] = [[0.0f32; 8]; 4];
+    let mut desc_a = 0u64;
+    let mut desc_b = 0u64;
+    let mut k = 0u32;
+
+    unsafe {
+        wgmma_fence();
+        while k < 4 {
+            wgmma_mma_m64n64k16_f32_bf16(&mut acc, desc_a, desc_b);
+            k += 1;
+            desc_a += 16;
+            desc_b += 32;
+        }
         wgmma_commit_group();
         wgmma_wait_group::<0>();
     }
@@ -106,5 +170,7 @@ pub unsafe fn wgmma_m64n128_kernel(mut out: DisjointSlice<u32>) {
 }
 
 fn main() {
-    println!("SUCCESS: BF16 WGMMA value-threaded and partial-wait lowering compiled.");
+    println!(
+        "SUCCESS: BF16 WGMMA value-threaded, reborrow, counted-loop, and partial-wait lowering compiled."
+    );
 }

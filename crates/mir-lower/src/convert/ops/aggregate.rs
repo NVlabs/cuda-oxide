@@ -2108,8 +2108,8 @@ mod tests {
     use dialect_mir::attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr};
     use dialect_mir::ops as mir;
     use dialect_mir::types::{
-        EnumEncoding, EnumVariant, MirArrayType, MirPtrType, MirSliceType, MirStructType,
-        MirTupleType,
+        EnumEncoding, EnumVariant, MirArrayType, MirPointerKind, MirPtrType, MirSliceType,
+        MirStructType, MirTupleType,
     };
     use llvm_export::types as llvm_types;
     use pliron::builtin::attributes::IntegerAttr;
@@ -2274,7 +2274,9 @@ mod tests {
 
         let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
         let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
-        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, true).into();
+        let ptr_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, f32_ty, true, MirPointerKind::RawMut)
+                .into();
         let slice_ty: TypeHandle = MirDisjointSliceType::get(&mut ctx, f32_ty).into();
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, usize_ty], vec![]);
@@ -2328,7 +2330,9 @@ mod tests {
         let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
         let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
         let width_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
-        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, true).into();
+        let ptr_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, f32_ty, true, MirPointerKind::RawMut)
+                .into();
         let slice_ty: TypeHandle =
             MirDisjointSliceType::get_with_space(&mut ctx, f32_ty, vec![width_ty]).into();
 
@@ -4751,21 +4755,41 @@ mod tests {
     #[test]
     fn get_niche_discriminant_adds_large_range_start_at_logical_width() {
         let mut ctx = make_ctx();
-        let enum_ty = unit_niche_enum(
-            &mut ctx,
-            (EnumCarrierKind::Integer, 8, 0),
-            0,
-            298..=299,
-            0,
-            {
-                let mut inhabited = vec![0; 300];
-                inhabited[0] = 1;
-                inhabited[298] = 1;
-                inhabited[299] = 1;
-                inhabited
-            },
-        );
         let logical_ty: TypeHandle = IntegerType::get(&ctx, 16, Signedness::Unsigned).into();
+        let carrier_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let mut variants = (0..300)
+            .map(|index| EnumVariant::unit(format!("V{index}")))
+            .collect::<Vec<_>>();
+        // A valid niche layout stores the carrier inside the untagged
+        // variant's payload. Keep the large logical-variant test realistic
+        // instead of relying on a carrier with no backing field.
+        variants[0] = EnumVariant::new_with_layout("V0".into(), vec![carrier_ty], vec![0], vec![1]);
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "LargeNiche".into(),
+            logical_ty,
+            (0..300).collect(),
+            variants,
+            EnumEncoding {
+                total_size: 1,
+                abi_align: 1,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 8,
+                niche_variant_start: 298,
+                niche_variant_end: 299,
+                untagged_variant: 0,
+                variant_inhabited: {
+                    let mut inhabited = vec![0; 300];
+                    inhabited[0] = 1;
+                    inhabited[298] = 1;
+                    inhabited[299] = 1;
+                    inhabited
+                },
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
         let (module, block) = build_kernel(&mut ctx, vec![enum_ty], vec![logical_ty]);
         let value = block.deref(&ctx).get_argument(0);
         let get = Operation::new(

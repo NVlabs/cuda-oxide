@@ -35,7 +35,7 @@
 //! [`align_pointer_addr_space`] to pick an alloca pointee that matches what
 //! actually gets stored.
 
-use dialect_mir::attributes::MirCastKindAttr;
+use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
 use dialect_mir::ops::{MirAllocaOp, MirCastOp, MirLoadOp, MirStoreOp};
 use dialect_mir::types::{MirPointerKind, MirPtrType, MirSliceType, address_space};
 use pliron::basic_block::BasicBlock;
@@ -184,40 +184,6 @@ impl ValueMap {
         insert_at(ctx, op, block, prev_op);
         Some(op)
     }
-
-    /// Emit `mir.store` of a compiler-recognized device operation's result
-    /// into `local`'s slot. Returns `None` for ZST / unset locals.
-    ///
-    /// Unlike [`Self::store_local`], this is a Rust-typed semantic boundary:
-    /// the intrinsic's cuda-device signature declares the result's pointer or
-    /// reference type, so the destination slot's declared type is
-    /// authoritative, exactly as it is for `Rvalue::Ref`/`Rvalue::AddressOf`.
-    /// An emitter-internal `Erased` result therefore takes the declared kind
-    /// here. The pointee/element shape must still match, so this cannot hide
-    /// an unrelated representation mismatch.
-    pub fn store_local_at_rust_boundary(
-        &self,
-        ctx: &mut Context,
-        local: mir::Local,
-        value: Value,
-        block: Ptr<BasicBlock>,
-        prev_op: Option<Ptr<Operation>>,
-    ) -> Option<Ptr<Operation>> {
-        let slot = self.get_slot(local)?;
-        let slot_elem_ty = slot_pointee(ctx, slot);
-        let (value, prev_op) =
-            establish_declared_pointer_type(ctx, value, slot_elem_ty, block, prev_op);
-        let op = Operation::new(
-            ctx,
-            MirStoreOp::get_concrete_op_info(),
-            vec![],
-            vec![slot, value],
-            vec![],
-            0,
-        );
-        insert_at(ctx, op, block, prev_op);
-        Some(op)
-    }
 }
 
 /// If `value` and `target_ty` are pointer-like MIR types with the same
@@ -233,6 +199,7 @@ pub(crate) fn establish_declared_pointer_type(
     target_ty: TypeHandle,
     block: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
+    authority: MirPointerKindAuthorityAttr,
 ) -> (Value, Option<Ptr<Operation>>) {
     let value_ty = value.get_type(ctx);
     if value_ty == target_ty {
@@ -272,7 +239,9 @@ pub(crate) fn establish_declared_pointer_type(
         vec![],
         0,
     );
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    cast.set_pointer_kind_authority(ctx, authority);
     insert_at(ctx, cast_op, block, prev_op);
 
     (cast_op.deref(ctx).get_result(0), Some(cast_op))
@@ -324,7 +293,8 @@ pub(crate) fn maybe_ptr_coerce(
             target_ref.downcast_ref::<MirPtrType>(),
         ) {
             (Some(value_ptr), Some(target_ptr)) => {
-                generic_pointer_kind_retype_allowed(value_ptr.kind, target_ptr.kind)
+                value_ptr.is_mutable == target_ptr.is_mutable
+                    && generic_pointer_kind_retype_allowed(value_ptr.kind, target_ptr.kind)
             }
             _ => match (
                 value_ref.downcast_ref::<MirSliceType>(),
@@ -332,6 +302,7 @@ pub(crate) fn maybe_ptr_coerce(
             ) {
                 (Some(value_slice), Some(target_slice)) => {
                     value_slice.element_ty == target_slice.element_ty
+                        && value_slice.is_mutable == target_slice.is_mutable
                         && generic_pointer_kind_retype_allowed(value_slice.kind, target_slice.kind)
                 }
                 _ => false,
@@ -825,8 +796,14 @@ mod tests {
 
         let block = BasicBlock::new(&mut ctx, None, vec![erased]);
         let value = block.deref(&ctx).get_argument(0);
-        let (retyped, cast) =
-            establish_declared_pointer_type(&mut ctx, value, declared, block, None);
+        let (retyped, cast) = establish_declared_pointer_type(
+            &mut ctx,
+            value,
+            declared,
+            block,
+            None,
+            MirPointerKindAuthorityAttr::AbiBoundary,
+        );
 
         assert_eq!(
             retyped.get_type(&ctx),
@@ -858,8 +835,14 @@ mod tests {
 
         let block = BasicBlock::new(&mut ctx, None, vec![erased]);
         let value = block.deref(&ctx).get_argument(0);
-        let (unchanged, cast) =
-            establish_declared_pointer_type(&mut ctx, value, declared, block, None);
+        let (unchanged, cast) = establish_declared_pointer_type(
+            &mut ctx,
+            value,
+            declared,
+            block,
+            None,
+            MirPointerKindAuthorityAttr::AbiBoundary,
+        );
 
         assert_eq!(unchanged.get_type(&ctx), erased);
         assert!(
@@ -1027,6 +1010,35 @@ mod tests {
 
         assert_eq!(coerced.get_type(&ctx), source);
         assert!(cast.is_none());
+    }
+
+    #[test]
+    fn pointer_like_local_coercion_cannot_invent_writable_erased_carriers() {
+        use pliron::builtin::types::{IntegerType, Signedness};
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        let element: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        let immutable_ptr: TypeHandle = MirPtrType::get_generic(&mut ctx, element, false).into();
+        let mutable_ptr: TypeHandle = MirPtrType::get_generic(&mut ctx, element, true).into();
+        let ptr_block = BasicBlock::new(&mut ctx, None, vec![immutable_ptr]);
+        let ptr_value = ptr_block.deref(&ctx).get_argument(0);
+        let (ptr_result, ptr_cast) =
+            maybe_ptr_coerce(&mut ctx, ptr_value, mutable_ptr, ptr_block, None);
+        assert_eq!(ptr_result.get_type(&ctx), immutable_ptr);
+        assert!(ptr_cast.is_none());
+
+        let immutable_slice: TypeHandle =
+            MirSliceType::get_with_mutability(&mut ctx, element, false).into();
+        let mutable_slice: TypeHandle =
+            MirSliceType::get_with_mutability(&mut ctx, element, true).into();
+        let slice_block = BasicBlock::new(&mut ctx, None, vec![immutable_slice]);
+        let slice_value = slice_block.deref(&ctx).get_argument(0);
+        let (slice_result, slice_cast) =
+            maybe_ptr_coerce(&mut ctx, slice_value, mutable_slice, slice_block, None);
+        assert_eq!(slice_result.get_type(&ctx), immutable_slice);
+        assert!(slice_cast.is_none());
     }
 
     #[test]

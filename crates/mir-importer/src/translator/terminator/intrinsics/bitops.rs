@@ -112,6 +112,7 @@ pub fn emit_rust_bit_intrinsic(
         args,
         destination,
         return_type,
+        None,
         target,
         block_ptr,
         prev_op,

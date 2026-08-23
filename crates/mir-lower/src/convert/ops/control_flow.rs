@@ -738,10 +738,9 @@ mod tests {
     }
 
     #[test]
-    fn convert_goto_pads_missing_zst_arg_with_undef() {
-        // `next` expects (i32, ()) but the goto forwards only the i32. The
-        // omitted ZST arg must be filled with a synthesised `llvm.undef` so
-        // the lowered br still carries both operands.
+    fn convert_goto_forwards_explicit_zst_arg() {
+        // The MIR verifier requires exact successor arity. Materialize the
+        // ZST explicitly and ensure lowering forwards both values.
         let mut ctx = make_ctx();
         let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
         let unit_ty: TypeHandle = MirTupleType::get(&mut ctx, vec![]).into();
@@ -751,11 +750,15 @@ mod tests {
         let next = append_block(&mut ctx, entry, vec![i32_ty, unit_ty]);
         append_mir_return(&mut ctx, next, vec![]);
 
+        let unit = mir::MirUndefOp::new(&mut ctx, unit_ty);
+        unit.get_operation().insert_at_back(entry, &ctx);
+        let unit_value = unit.get_operation().deref(&ctx).get_result(0);
+
         let goto = Operation::new(
             &mut ctx,
             mir::MirGotoOp::get_concrete_op_info(),
             vec![],
-            vec![arg],
+            vec![arg, unit_value],
             vec![next],
             0,
         );
@@ -768,7 +771,7 @@ mod tests {
         assert_eq!(
             count_ops::<llvm::UndefOp>(&ctx, &body),
             1,
-            "missing ZST block arg must be filled with exactly one llvm.undef"
+            "the explicit ZST block arg must lower to exactly one llvm.undef"
         );
         let br = find_all::<llvm::BrOp>(&ctx, &body)
             .into_iter()
@@ -782,7 +785,7 @@ mod tests {
         assert_eq!(
             br.successor_operands(&ctx, 0).len(),
             2,
-            "br must forward the i32 plus the padded undef"
+            "br must forward the i32 plus the explicit undef"
         );
     }
 
@@ -810,7 +813,9 @@ mod tests {
         let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
             .expect_err("goto with a non-ZST missing argument must fail to lower");
         assert!(
-            err.err.to_string().contains("not a ZST"),
+            err.err
+                .to_string()
+                .contains("passing 1 arguments, but target block expects 2"),
             "unexpected error: {}",
             err.err
         );
@@ -866,7 +871,9 @@ mod tests {
         let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
             .expect_err("cond_branch with operand count mismatch must fail");
         assert!(
-            err.err.to_string().contains("operand count mismatch"),
+            err.err
+                .to_string()
+                .contains("passing 0 arguments, but target block expects 1"),
             "unexpected error: {}",
             err.err
         );
@@ -924,7 +931,9 @@ mod tests {
         let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
             .expect_err("goto with too many operands must fail");
         assert!(
-            err.err.to_string().contains("operand count mismatch"),
+            err.err
+                .to_string()
+                .contains("passing 1 arguments, but target block expects 0"),
             "unexpected error: {}",
             err.err
         );

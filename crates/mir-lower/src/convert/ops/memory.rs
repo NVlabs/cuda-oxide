@@ -1374,8 +1374,11 @@ mod tests {
 
     use super::*;
     use crate::convert::ops::test_util::*;
+    use dialect_mir::attributes::MirPointerKindAuthorityAttr;
     use dialect_mir::ops as mir;
-    use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType, MirUnionType};
+    use dialect_mir::types::{
+        MirArrayType, MirPointerKind, MirPtrType, MirStructType, MirTupleType, MirUnionType,
+    };
     use llvm_export::op_interfaces::PointerTypeResult;
     use llvm_export::ops as llvm;
     use llvm_export::types::{PointerType, StructType, address_space as llvm_addr};
@@ -2887,7 +2890,8 @@ mod tests {
     fn convert_ref_lowers_to_alloca_then_store() {
         let mut ctx = make_ctx();
         let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
-        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, i32_ty, false);
+        let mir_ptr_ty =
+            MirPtrType::get_generic_with_kind(&mut ctx, i32_ty, false, MirPointerKind::SharedRef);
 
         // Take a u32 by value, build `&x`.
         let (module_ptr, block) = build_kernel(&mut ctx, vec![i32_ty], vec![]);
@@ -2901,7 +2905,9 @@ mod tests {
             vec![],
             0,
         );
-        mir::MirRefOp::new(ref_op_ptr).set_mutable(&mut ctx, false);
+        let ref_op = mir::MirRefOp::new(ref_op_ptr);
+        ref_op.set_mutable(&mut ctx, false);
+        ref_op.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
         ref_op_ptr.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -2925,7 +2931,8 @@ mod tests {
     fn convert_ref_preserves_tuple_alignment_on_alloca_and_store() {
         let mut ctx = make_ctx();
         let tuple_ty = over_aligned_tuple_ty(&mut ctx);
-        let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, tuple_ty, false);
+        let mir_ptr_ty =
+            MirPtrType::get_generic_with_kind(&mut ctx, tuple_ty, false, MirPointerKind::SharedRef);
         let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
 
         let undef = mir::MirUndefOp::new(&mut ctx, tuple_ty);
@@ -2939,7 +2946,9 @@ mod tests {
             vec![],
             0,
         );
-        mir::MirRefOp::new(ref_op).set_mutable(&mut ctx, false);
+        let mir_ref = mir::MirRefOp::new(ref_op);
+        mir_ref.set_mutable(&mut ctx, false);
+        mir_ref.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
         ref_op.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -2973,7 +2982,12 @@ mod tests {
             )
             .into();
             let array_ty: TypeHandle = MirArrayType::get(&mut ctx, union_ty, 3).into();
-            let mir_ptr_ty = MirPtrType::get_generic(&mut ctx, array_ty, false);
+            let mir_ptr_ty = MirPtrType::get_generic_with_kind(
+                &mut ctx,
+                array_ty,
+                false,
+                MirPointerKind::SharedRef,
+            );
             let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
 
             let undef = mir::MirUndefOp::new(&mut ctx, array_ty);
@@ -2987,7 +3001,9 @@ mod tests {
                 vec![],
                 0,
             );
-            mir::MirRefOp::new(ref_op).set_mutable(&mut ctx, false);
+            let mir_ref = mir::MirRefOp::new(ref_op);
+            mir_ref.set_mutable(&mut ctx, false);
+            mir_ref.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
             ref_op.insert_at_back(block, &ctx);
             append_mir_return(&mut ctx, block, vec![]);
 
