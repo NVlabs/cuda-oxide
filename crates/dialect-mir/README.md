@@ -76,7 +76,7 @@ importer convention alone, enforces this transition matrix:
 | Generic cast, pointer offset, or projection | Preserve carrier mutability and the source kind, or erase a concrete kind to `Erased` | None |
 | `Rvalue::Ref` / `mir.ref` | `SharedRef` for `&T`; `UniqueRef` for `&mut T` | `Reborrow` |
 | `Rvalue::AddressOf` / `mir.ref` | `RawConst` or `RawMut`, matching source mutability | `RawAddress` |
-| Typed constant, static, or promoted address | `SharedRef`, `RawConst`, or `RawMut`; never `UniqueRef` | `StaticAddress` |
+| Typed constant, static, or promoted address | `SharedRef`, `RawConst`, or `RawMut`; `UniqueRef` only for rustc's promoted immutable `[T; 0]` backing of `&mut []` | `StaticAddress` |
 | Explicit rustc cast, coercion, or transmute | The concrete kind declared by that cast | `RustCast` |
 | Adaptation to a declared Rust function/intrinsic ABI | The exact concrete ABI type | `AbiBoundary` |
 | Inline PTX output whose type comes from its Rust destination | The exact destination-derived pointer carrier | `InlineAsm` |
@@ -99,6 +99,32 @@ The source is constrained too: `UniqueRef` may be reborrowed only from an
 already writable concrete pointer (`UniqueRef`/`RawMut`) or a writable
 top-level `Erased` thin/fat carrier. The same requirement applies when
 `RawAddress`, `StaticAddress`, or `AbiBoundary` establishes `RawMut`.
+For a pointer-to-pointer conversion, `StaticAddress` specifically requires an
+`Erased` physical/static source; it cannot relabel an arbitrary raw pointer as
+a Rust reference or a different raw category. Recovering a concrete kind from
+`Erased` with `StaticAddress` or `AbiBoundary` is currently thin-pointer-only:
+the verifier traces a closed set of pointer casts/offsets back to a
+`mir.global_alloc`/`mir.shared_alloc` or `mir.alloca`, respectively, and rejects
+block arguments, loads, calls, marked casts, and unknown producers. The sole
+static `UniqueRef` exception is rustc's promoted `&mut []`: the source must be
+the direct result of an immutable `mir.global_alloc` whose declared type and
+exact pointer pointee are the same `[T; 0]`, whose empty initializer is recorded,
+which carries no relocation, and whose explicit allocation alignment satisfies
+the full required alignment of `T` (natural scalar/pointer alignment as well as
+any rustc ABI alignment retained by an aggregate). Unit/empty markers and the
+slice/disjoint-slice value carriers have explicit conservative rules; a leaf
+whose alignment is not represented in this dialect fails closed.
+Non-empty arrays, arbitrary zero-sized types, raw-pointer laundering, and
+unproven `Erased` values remain rejected.
+Lowering treats `global_key`/shared `alloc_key` as allocation identities, not
+symbol-name hints: a repeated key is reused only when its complete physical
+declaration agrees (type/extent, alignment, address space, initializer,
+relocations, and immutability as applicable). Promoted-global keys include the
+evaluated allocation alignment. Conflicts fail closed before one address can be
+redirected to under-aligned or differently typed storage.
+Static shared allocations and per-function dynamic extern-shared declarations
+are distinct storage categories, so even an adversarial key collision cannot
+redirect one to the other's symbol or linkage.
 `InlineAsm` is accepted only by `nvvm.inline_ptx`, only when every recursive
 result pointer carrier is derived from the Rust destination type; a
 pointer-free result must not carry it. `SharedRef`, `RawConst`, and immutable `Erased` carriers cannot directly
@@ -149,13 +175,29 @@ same preserve-or-erase and mutability-preservation rules.
 but does not attempt to model dynamic Stacked Borrows / Tree Borrows tags or
 retag epochs.
 
+Union fields are alternative typed views of shared storage, not simultaneously
+live values. Recursive pointer-carrier discovery includes every declared union
+field so casts and ABI shapes fail closed, but that traversal is not evidence
+that an inactive pointer/reference alternative exists. A fully initialized,
+relocation-free raw-pointer/integer union constant is reconstructed as
+`[u8; pointer_width] -> integer`, followed by `mir.undef` plus
+`mir.insert_field` of that full-width integer; no pointer-producing cast occurs.
+A later pointer-typed `mir.extract_field` is the source's unsafe union-view read.
+Any future alias, validity, or dereferenceability attributes must therefore be
+union-blind unless the active field has been proven; they must not recursively
+trust all pointer kinds declared by a union type.
+
 MIR-to-LLVM lowering deliberately erases `MirPointerKind`. All four Rust source
 categories keep the same LLVM pointer/fat-pointer representation, and this
 change does not emit `noalias`, `readonly`, `dereferenceable`, or related
-metadata. Any future alias metadata requires a separate audited policy; it must
-not be inferred from `is_mutable` alone. In particular, store legality through
-`UnsafeCell` cannot be modeled by treating an immutable carrier as globally
-read-only.
+metadata. Pointer kind, transition authority, and the closed storage-lineage
+check are auditable classifications, not optimizer proof capabilities. They do
+not encode properties such as `Freeze`/`Unpin`, borrow scope or epoch, or an
+active union field. Any future alias metadata therefore requires a separate,
+first-class verified proof; it must not be inferred from pointer kind,
+authority, lineage, or `is_mutable` alone. In particular, store legality
+through `UnsafeCell` cannot be modeled by treating an immutable carrier as
+globally read-only.
 
 For GPU-specific abstractions such as `SharedArray`, the Rust reference kind is
 still retained when the source type is a reference, while the CUDA address

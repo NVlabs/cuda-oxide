@@ -962,6 +962,7 @@ impl Verify for MirPtrOffsetOp {
 ///
 /// - Must have `elem_type` and `size` attributes.
 /// - Result must be a pointer type with shared address space (3).
+/// - Result pointee type must exactly match `elem_type`.
 #[pliron_op(
     name = "mir.shared_alloc",
     format,
@@ -1008,9 +1009,10 @@ impl Verify for MirSharedAllocOp {
         let op = &*self.get_operation().deref(ctx);
 
         // Check required attributes
-        if self.get_attr_elem_type(ctx).is_none() {
+        let Some(elem_type_attr) = self.get_attr_elem_type(ctx) else {
             return verify_err!(op.loc(), "MirSharedAllocOp missing elem_type attribute");
-        }
+        };
+        let elem_type = elem_type_attr.get_type(ctx);
         if self.get_attr_size(ctx).is_none() {
             return verify_err!(op.loc(), "MirSharedAllocOp missing size attribute");
         }
@@ -1031,6 +1033,12 @@ impl Verify for MirSharedAllocOp {
                 return verify_err!(
                     op.loc(),
                     "MirSharedAllocOp creates storage and must return an Erased pointer kind"
+                );
+            }
+            if ptr_ty.pointee != elem_type {
+                return verify_err!(
+                    op.loc(),
+                    "MirSharedAllocOp result pointee type must match elem_type"
                 );
             }
         } else {

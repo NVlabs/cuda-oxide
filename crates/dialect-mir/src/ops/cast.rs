@@ -15,6 +15,7 @@ use crate::types::{
 };
 use pliron::{
     builtin::{
+        attributes::StringAttr,
         op_interfaces::{NOpdsInterface, NResultsInterface, OneOpdInterface, OneResultInterface},
         type_interfaces::FloatTypeInterface,
         types::IntegerType,
@@ -25,10 +26,16 @@ use pliron::{
     op::Op,
     operation::Operation,
     result::Error,
-    r#type::{Typed, type_impls},
+    r#type::{Typed, type_cast, type_impls},
+    value::Value,
     verify_err,
 };
 use pliron_derive::pliron_op;
+
+use super::{
+    aggregate::{MirArrayElementAddrOp, MirFieldAddrOp},
+    memory::{MirAllocaOp, MirGlobalAllocOp, MirPtrOffsetOp, MirSharedAllocOp},
+};
 
 // ============================================================================
 // MirCastOp
@@ -76,7 +83,8 @@ use pliron_derive::pliron_op;
 ///   pointer.
 /// - `Reborrow`, `RawAddress`, `StaticAddress`, and `AbiBoundary` accept only
 ///   top-level pointer/slice results with matching pointee/element shape
-///   (`StaticAddress` also covers the explicit integer-to-raw case).
+///   (`StaticAddress` pointer-to-pointer conversions must start from `Erased`
+///   physical/static storage and it also covers the explicit integer-to-raw case).
 /// - Only `RustCast` on `Transmute` can authorize nested aggregate pointer
 ///   transitions. Other casts require a structurally corresponding source for
 ///   every target carrier, including `Erased`, so integer bytes cannot become
@@ -100,6 +108,203 @@ use pliron_derive::pliron_op;
 pub struct MirCastOp;
 
 type PointerCarrier = MirPointerCarrier;
+
+#[derive(Clone, Copy)]
+enum ErasedStorageOrigin {
+    Static,
+    Compiler,
+}
+
+/// Check that an `Erased` thin pointer has the storage origin required by an
+/// origin-sensitive authority. This is a verifier admissibility check, not a
+/// dynamic borrow/provenance tag or an optimizer alias proof.
+///
+/// Merely checking the immediate kind is insufficient: a generic
+/// `RawConst -> Erased` cast could otherwise hide a raw pointer immediately
+/// before `StaticAddress` manufactures `SharedRef`. Walk only the closed set
+/// of representation/address operations used by the importer, require every
+/// value in the chain to remain `Erased`, and fail closed at block arguments,
+/// loads, calls, marked casts, or any other producer.
+fn has_erased_storage_lineage(
+    ctx: &Context,
+    mut value: Value,
+    expected_origin: ErasedStorageOrigin,
+) -> bool {
+    let mut visited = Vec::new();
+    loop {
+        let value_is_erased = value
+            .get_type(ctx)
+            .deref(ctx)
+            .downcast_ref::<MirPtrType>()
+            .is_some_and(|pointer| pointer.kind == MirPointerKind::Erased);
+        if !value_is_erased {
+            return false;
+        }
+
+        let Some(defining_op) = value.defining_op() else {
+            return false;
+        };
+        if visited.contains(&defining_op) {
+            return false;
+        }
+        visited.push(defining_op);
+
+        let has_expected_root = match expected_origin {
+            ErasedStorageOrigin::Static => {
+                Operation::get_op::<MirGlobalAllocOp>(defining_op, ctx).is_some()
+                    || Operation::get_op::<MirSharedAllocOp>(defining_op, ctx).is_some()
+            }
+            ErasedStorageOrigin::Compiler => {
+                Operation::get_op::<MirAllocaOp>(defining_op, ctx).is_some()
+            }
+        };
+        if has_expected_root {
+            return true;
+        }
+
+        if let Some(cast) = Operation::get_op::<MirCastOp>(defining_op, ctx) {
+            let is_unmarked_ptr_retype = cast
+                .get_attr_cast_kind(ctx)
+                .is_some_and(|kind| *kind == MirCastKindAttr::PtrToPtr)
+                && cast.get_attr_pointer_kind_authority(ctx).is_none();
+            if !is_unmarked_ptr_retype {
+                return false;
+            }
+            value = defining_op.deref(ctx).get_operand(0);
+            continue;
+        }
+
+        let is_pointer_transport = Operation::get_op::<MirPtrOffsetOp>(defining_op, ctx).is_some()
+            || matches!(expected_origin, ErasedStorageOrigin::Compiler)
+                && (Operation::get_op::<MirFieldAddrOp>(defining_op, ctx).is_some()
+                    || Operation::get_op::<MirArrayElementAddrOp>(defining_op, ctx).is_some());
+        if is_pointer_transport {
+            value = defining_op.deref(ctx).get_operand(0);
+            continue;
+        }
+
+        return false;
+    }
+}
+
+/// Rustc may promote `&mut []` to immutable static storage. Establishing a
+/// `UniqueRef` from static storage is normally invalid, but it is vacuously
+/// sound for an exact zero-length array: no byte can be read, written, or
+/// aliased through the reference. Keep this exception deliberately narrower
+/// than general ZST handling so it cannot authorize non-empty promoted data.
+fn is_promoted_empty_unique_ref_transition(
+    ctx: &Context,
+    source_value: Value,
+    source_ty: pliron::r#type::TypeHandle,
+    target_ty: pliron::r#type::TypeHandle,
+) -> bool {
+    let source = source_ty.deref(ctx);
+    let target = target_ty.deref(ctx);
+    let (Some(source), Some(target)) = (
+        source.downcast_ref::<MirPtrType>(),
+        target.downcast_ref::<MirPtrType>(),
+    ) else {
+        return false;
+    };
+
+    source.kind == MirPointerKind::Erased
+        && !source.is_mutable
+        && target.kind == MirPointerKind::UniqueRef
+        && target.is_mutable
+        && source.pointee == target.pointee
+        && target
+            .pointee
+            .deref(ctx)
+            .downcast_ref::<MirArrayType>()
+            .is_some_and(|array| array.size == 0)
+        && source_value.defining_op().is_some_and(|defining_op| {
+            Operation::get_op::<MirGlobalAllocOp>(defining_op, ctx).is_some_and(|global| {
+                let initializer_key = "global_initializer_hex".try_into().unwrap();
+                let has_empty_initializer = defining_op
+                    .deref(ctx)
+                    .attributes
+                    .get::<StringAttr>(&initializer_key)
+                    .is_some_and(|initializer| String::from((*initializer).clone()).is_empty());
+                let relocations_key = "global_initializer_relocations".try_into().unwrap();
+                let has_no_relocations = defining_op
+                    .deref(ctx)
+                    .attributes
+                    .get::<StringAttr>(&relocations_key)
+                    .is_none();
+                let required_alignment = required_pointee_alignment(ctx, target.pointee);
+                global.is_immutable(ctx)
+                    && has_empty_initializer
+                    && has_no_relocations
+                    && required_alignment.is_some_and(|required| {
+                        global.get_alignment_value(ctx).is_some_and(|alignment| {
+                            alignment.is_power_of_two() && alignment >= required
+                        })
+                    })
+                    && global
+                        .get_attr_global_type(ctx)
+                        .is_some_and(|global_type| global_type.get_type(ctx) == target.pointee)
+            })
+        })
+}
+
+/// Required alignment of a promoted empty pointee.
+///
+/// Even a zero-length reference must be aligned. Aggregate MIR types retain
+/// rustc's exact ABI alignment; arrays inherit it from their element. Scalar
+/// and pointer leaves use the NVPTX64 natural alignment modeled by lowering.
+/// Unknown leaves fail closed instead of relying on a later lowering error.
+fn required_pointee_alignment(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Option<u64> {
+    let ty = ty.deref(ctx);
+    if let Some(array) = ty.downcast_ref::<MirArrayType>() {
+        return required_pointee_alignment(ctx, array.element_ty);
+    }
+    if let Some(tuple) = ty.downcast_ref::<MirTupleType>() {
+        return if tuple.abi_align() > 0 {
+            Some(tuple.abi_align())
+        } else if tuple.types.is_empty() && tuple.total_size == 0 {
+            Some(1)
+        } else {
+            None
+        };
+    }
+    if let Some(structure) = ty.downcast_ref::<MirStructType>() {
+        return if structure.abi_align > 0 {
+            Some(structure.abi_align)
+        } else if structure.field_types.is_empty() && structure.total_size == 0 {
+            Some(1)
+        } else {
+            None
+        };
+    }
+    if let Some(enumeration) = ty.downcast_ref::<MirEnumType>() {
+        return (enumeration.abi_align() > 0).then(|| enumeration.abi_align());
+    }
+    if let Some(union) = ty.downcast_ref::<MirUnionType>() {
+        return (union.abi_align() > 0).then(|| union.abi_align());
+    }
+    if ty.is::<MirSliceType>() {
+        return Some(8);
+    }
+    if let Some(disjoint) = ty.downcast_ref::<MirDisjointSliceType>() {
+        let mut alignment = 8;
+        for &space_ty in &disjoint.space_tys {
+            alignment = alignment.max(required_pointee_alignment(ctx, space_ty)?);
+        }
+        return Some(alignment);
+    }
+    if let Some(integer) = ty.downcast_ref::<IntegerType>() {
+        let size = u64::from(integer.width()).div_ceil(8).max(1);
+        return Some(size.next_power_of_two().min(16));
+    }
+    if ty.is::<MirPtrType>() {
+        return Some(8);
+    }
+    if let Some(float) = type_cast::<dyn FloatTypeInterface>(&*ty) {
+        let size = u64::try_from(float.get_semantics().bits).ok()?.div_ceil(8);
+        return Some(size.next_power_of_two().min(16));
+    }
+    None
+}
 
 /// Pair every pointer carrier in `target` with the carrier at the same
 /// structural position in `source`, when one exists. This makes cast
@@ -991,6 +1196,11 @@ impl Verify for MirCastOp {
                 );
             }
 
+            let promoted_empty_unique_ref = *authority
+                == MirPointerKindAuthorityAttr::StaticAddress
+                && cast_kind == MirCastKindAttr::PtrToPtr
+                && is_promoted_empty_unique_ref_transition(ctx, opd_val, opd_ty, res_ty);
+
             if let Some(target_kind) =
                 concrete_target_kinds
                     .iter()
@@ -1001,12 +1211,15 @@ impl Verify for MirCastOp {
                             target_kind,
                             MirPointerKind::RawConst | MirPointerKind::RawMut
                         ),
-                        MirPointerKindAuthorityAttr::StaticAddress => matches!(
-                            target_kind,
-                            MirPointerKind::SharedRef
-                                | MirPointerKind::RawConst
-                                | MirPointerKind::RawMut
-                        ),
+                        MirPointerKindAuthorityAttr::StaticAddress => {
+                            matches!(
+                                target_kind,
+                                MirPointerKind::SharedRef
+                                    | MirPointerKind::RawConst
+                                    | MirPointerKind::RawMut
+                            ) || *target_kind == MirPointerKind::UniqueRef
+                                && promoted_empty_unique_ref
+                        }
                         MirPointerKindAuthorityAttr::RustCast
                         | MirPointerKindAuthorityAttr::AbiBoundary => true,
                         MirPointerKindAuthorityAttr::InlineAsm => false,
@@ -1042,6 +1255,26 @@ impl Verify for MirCastOp {
                     MirPointerKind::UniqueRef | MirPointerKind::RawMut => true,
                     MirPointerKind::SharedRef | MirPointerKind::RawConst => false,
                 };
+
+                if *authority == MirPointerKindAuthorityAttr::StaticAddress
+                    && source_carrier.kind == MirPointerKind::Erased
+                    && !has_erased_storage_lineage(ctx, opd_val, ErasedStorageOrigin::Static)
+                {
+                    return verify_err!(
+                        loc,
+                        "MirCastOp StaticAddress requires Erased storage rooted in mir.global_alloc or mir.shared_alloc"
+                    );
+                }
+                if *authority == MirPointerKindAuthorityAttr::AbiBoundary
+                    && source_carrier.kind == MirPointerKind::Erased
+                    && !has_erased_storage_lineage(ctx, opd_val, ErasedStorageOrigin::Compiler)
+                {
+                    return verify_err!(
+                        loc,
+                        "MirCastOp AbiBoundary requires an Erased source rooted in mir.alloca, or an already exact concrete pointer kind"
+                    );
+                }
+
                 let admissible = match authority {
                     MirPointerKindAuthorityAttr::Reborrow => match target_carrier.kind {
                         MirPointerKind::SharedRef => true,
@@ -1054,8 +1287,13 @@ impl Verify for MirCastOp {
                         _ => false,
                     },
                     MirPointerKindAuthorityAttr::StaticAddress => match target_carrier.kind {
-                        MirPointerKind::SharedRef | MirPointerKind::RawConst => true,
-                        MirPointerKind::RawMut => source_is_writable,
+                        MirPointerKind::SharedRef | MirPointerKind::RawConst => {
+                            source_carrier.kind == MirPointerKind::Erased
+                        }
+                        MirPointerKind::RawMut => {
+                            source_carrier.kind == MirPointerKind::Erased && source_is_writable
+                        }
+                        MirPointerKind::UniqueRef => promoted_empty_unique_ref,
                         _ => false,
                     },
                     MirPointerKindAuthorityAttr::AbiBoundary => {

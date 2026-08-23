@@ -189,12 +189,13 @@ pub mod address_space {
 
 /// Source-level pointer/reference category retained by `dialect-mir`.
 ///
-/// This is semantic provenance, not a physical representation choice. In
-/// particular, [`MirPointerKind::RawMut`] and [`MirPointerKind::UniqueRef`]
-/// are both mutable pointers at the machine level, but only the latter came
-/// from an `&mut T`-typed Rust value. [`MirPointerKind::Erased`] is used for
-/// compiler-generated storage and temporary addresses that must not acquire
-/// Rust aliasing guarantees merely because they are mutable.
+/// This is a source-level classification, not a physical representation,
+/// dynamic borrow tag/epoch, or optimizer alias capability. In particular,
+/// [`MirPointerKind::RawMut`] and [`MirPointerKind::UniqueRef`] are both mutable
+/// pointers at the machine level, but only the latter came from an `&mut T`-
+/// typed Rust value. [`MirPointerKind::Erased`] is used for compiler-generated
+/// storage and temporary addresses that must not acquire Rust aliasing
+/// guarantees merely because they are mutable.
 ///
 /// The MIR dialect deliberately does not translate this enum directly into
 /// LLVM `noalias`, `readonly`, or related attributes. It exists so any future

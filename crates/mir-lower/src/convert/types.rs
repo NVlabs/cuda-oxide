@@ -2870,7 +2870,7 @@ fn validate_initialized_global_type(
         Struct(MirStructType),
         Tuple(MirTupleType),
         Enum(MirEnumType),
-        Array(TypeHandle),
+        Array { element_ty: TypeHandle, size: u64 },
         Leaf,
     }
 
@@ -2883,7 +2883,10 @@ fn validate_initialized_global_type(
         } else if let Some(enum_ty) = ty_ref.downcast_ref::<MirEnumType>() {
             Kind::Enum(enum_ty.clone())
         } else if let Some(array_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
-            Kind::Array(array_ty.element_ty)
+            Kind::Array {
+                element_ty: array_ty.element_ty,
+                size: array_ty.size,
+            }
         } else {
             Kind::Leaf
         }
@@ -2940,8 +2943,15 @@ fn validate_initialized_global_type(
                 validate_initialized_global_type(ctx, field_ty, visited)?;
             }
         }
-        Kind::Array(element_ty) => {
-            validate_initialized_global_type(ctx, element_ty, visited)?;
+        Kind::Array { element_ty, size } => {
+            // A zero-length array contributes no element bytes. Its outer LLVM
+            // size/alignment is still checked by
+            // `validate_initialized_global_layout`, but recursively rejecting
+            // an element layout would incorrectly reject valid promoted
+            // `&mut [Packed; 0]` constants whose physical allocation is empty.
+            if size != 0 {
+                validate_initialized_global_type(ctx, element_ty, visited)?;
+            }
         }
         Kind::Leaf => {}
     }
@@ -5576,6 +5586,10 @@ mod tests {
             1,
         )
         .into();
+
+        let empty_packed: TypeHandle = MirArrayType::get(&mut ctx, packed, 0).into();
+        validate_initialized_global_layout(&mut ctx, empty_packed, 0, 1)
+            .expect("[Packed; 0] has no element bytes whose field layout can diverge");
 
         let err = validate_initialized_global_layout(&mut ctx, packed, 5, 1).unwrap_err();
         assert!(err.to_string().contains("field 1 lowers at byte 4"));
