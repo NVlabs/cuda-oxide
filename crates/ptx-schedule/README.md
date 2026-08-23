@@ -79,6 +79,9 @@ being mistaken for a reproducible schedule bug:
 | `GpuWedged` | the device stopped responding |
 | `HarnessError` | the campaign itself failed, not the kernel |
 
+A skipped baseline runs no seeds and exits successfully, including with
+`--fail-on-finding`. That flag fails only when a campaign finds a real variant.
+
 ## Consumers
 
 | Crate | Uses it for |

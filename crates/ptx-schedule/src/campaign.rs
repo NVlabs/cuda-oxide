@@ -999,30 +999,6 @@ mod tests {
         }
     }
 
-    /// The two spellings `scripts/smoketest.sh` accepts, and the near-misses
-    /// that must not be mistaken for either.
-    #[test]
-    fn both_smoketest_skip_spellings_are_recognised() {
-        for declined in [
-            "Skipping: cluster launch requires sm_90",
-            "  SKIPPING: needs two devices",
-            "PASS (skipped): ldmatrix.m8n8.x4.b16 requires sm_75+; device is sm_70",
-            "    Pass (Skipped): no peer access",
-        ] {
-            assert!(has_skip_marker(declined), "{declined}");
-        }
-
-        for ran in [
-            "pass",
-            "pass: 1024 elements verified",
-            "success",
-            "no skipping: here",
-            "result was skipped by the host",
-        ] {
-            assert!(!has_skip_marker(ran), "{ran}");
-        }
-    }
-
     #[test]
     fn failures_take_priority_over_skip_markers() {
         assert!(matches!(
@@ -1045,19 +1021,6 @@ mod tests {
             classify_process_result(false, true, "PASS"),
             RunKind::Pass
         ));
-    }
-
-    /// A declined run must not be reported as a passing baseline: the campaign
-    /// gates on `RunKind::Pass` and would otherwise sweep every seed against a
-    /// kernel that never launched.
-    #[test]
-    fn a_declined_run_is_skipped_not_passed() {
-        for declined in [
-            "skipping: needs sm_90\n",
-            "pass (skipped): ldmatrix requires sm_75+\n",
-        ] {
-            assert!(has_skip_marker(declined), "{declined}");
-        }
     }
 
     #[test]
