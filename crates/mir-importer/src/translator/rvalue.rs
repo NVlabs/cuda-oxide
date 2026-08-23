@@ -2292,9 +2292,6 @@ pub fn translate_operand(
                 );
             }
 
-            // Debug parsing remains temporarily for non-floating constants.
-            let const_str = format!("{:?}", constant.const_);
-
             // Handle pointer-to-array constants (byte strings, typed arrays like [f64; 3], etc.)
             if is_ptr_to_array {
                 return translate_ptr_to_array_constant(
@@ -2365,6 +2362,11 @@ pub fn translate_operand(
                 .deref(ctx)
                 .is::<dialect_mir::types::MirPtrType>()
             {
+                // Pointer constants still have legacy Debug-based handling in the
+                // no-provenance path. Keep that compatibility code isolated here;
+                // non-pointer constants below must not depend on rustc Debug output.
+                let const_str = format!("{:?}", constant.const_);
+
                 // Pointer type constant - could be:
                 // 1. A raw pointer constant (like core::ptr::null()) - just bytes,
                 //    no provenance
@@ -2728,21 +2730,18 @@ pub fn translate_operand(
                 };
 
                 let byte_size = (width_val as usize).div_ceil(8);
-                let int_val = constant_bytes(constant, "integer", loc.clone())
-                    .ok()
-                    .and_then(|bytes| {
-                        (bytes.len() >= byte_size)
-                            .then(|| read_uint_from_bytes(&bytes[..byte_size]))
-                    })
-                    .unwrap_or_else(|| {
-                        let val_str_base = const_str.split(':').next().unwrap_or("0").trim();
-                        let val_str = val_str_base.split('_').next().unwrap_or("0").trim();
-                        let val_clean: String = val_str
-                            .chars()
-                            .filter(|c| c.is_ascii_digit() || *c == '-')
-                            .collect();
-                        val_clean.parse::<i128>().unwrap_or(0) as u128
-                    });
+                let bytes = constant_bytes(constant, "integer", loc.clone())?;
+                if bytes.len() < byte_size {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "Integer constant needs {byte_size} byte(s) for i{width_val}, \
+                             but rustc provided only {} byte(s)",
+                            bytes.len()
+                        ))
+                    );
+                }
+                let int_val = read_uint_from_bytes(&bytes[..byte_size]);
 
                 let width = NonZeroUsize::new(width_val as usize).unwrap();
                 let apint = APInt::from_u128(int_val, width);
@@ -2782,11 +2781,11 @@ pub fn translate_operand(
                     "Unsupported constant type in translate_constant.\n\
                      \n  Rust type : {:?}\
                      \n  pliron type: {}\
-                     \n  const repr : {}\
+                     \n  const repr : {:?}\
                      \n\
                      \nThe type dispatch (ZST -> ptr_to_array -> array -> struct -> tuple -> enum -> union -> float -> pointer -> integer)\n\
                      did not match this constant. A new handler may need to be added.",
-                    rust_ty, pliron_ty_dbg, const_str
+                    rust_ty, pliron_ty_dbg, constant.const_
                 ))))
             }
         }
@@ -10519,96 +10518,30 @@ fn discriminant_to_variant_index(
     }
 }
 
-/// Extract enum discriminant from a MirConst using proper rustc_public API.
-///
-/// This function properly extracts the discriminant value from the constant's
-/// allocated bytes, avoiding fragile debug string parsing.
-///
-/// ## How it works
-///
-/// For enum constants, rustc stores the discriminant in `ConstantKind::Allocated(Allocation)`.
-/// The `Allocation.bytes` field contains the raw bytes of the discriminant value.
-/// We use `read_uint()` to properly interpret these bytes.
-///
-/// ## Fallback behavior
-///
-/// If the proper API extraction fails (e.g., for ZeroSized constants), we fall back
-/// to debug string parsing as a last resort, but this should be rare.
-pub(crate) fn extract_enum_discriminant(
-    mir_const: &rustc_public::ty::MirConst,
-    const_str: &str,
-) -> usize {
-    // Try to extract using proper API first
+/// Extract an enum discriminant from a `MirConst` without depending on rustc
+/// `Debug` output.
+pub(crate) fn extract_enum_discriminant(mir_const: &rustc_public::ty::MirConst) -> Option<usize> {
     match mir_const.kind() {
         ConstantKind::Allocated(alloc) => {
-            // Use read_uint() to properly parse the bytes
-            if let Ok(val) = alloc.read_uint() {
-                return val as usize;
+            if let Ok(value) = alloc.read_uint() {
+                return usize::try_from(value).ok();
             }
-            // If read_uint fails, try raw_bytes
+
             if let Ok(bytes) = alloc.raw_bytes()
                 && !bytes.is_empty()
             {
-                // Convert bytes to usize (little-endian)
-                let mut value: usize = 0;
-                for (i, &byte) in bytes.iter().take(8).enumerate() {
-                    value |= (byte as usize) << (i * 8);
-                }
-                return value;
+                return usize::try_from(read_uint_from_bytes(&bytes[..bytes.len().min(16)])).ok();
             }
-            // Last resort: bytes field directly
-            if !alloc.bytes.is_empty() {
-                let mut value: usize = 0;
-                for (i, opt_byte) in alloc.bytes.iter().take(8).enumerate() {
-                    if let Some(byte) = opt_byte {
-                        value |= (*byte as usize) << (i * 8);
-                    }
-                }
-                return value;
-            }
-            0
-        }
-        ConstantKind::ZeroSized => {
-            // ZeroSized typically means discriminant 0 (e.g., None)
-            0
-        }
-        ConstantKind::Ty(_ty_const) => {
-            // TyConst - try to evaluate
-            if let Ok(val) = mir_const.eval_target_usize() {
-                return val as usize;
-            }
-            // Fall back to parsing for TyConst
-            parse_discriminant_from_debug_string(const_str)
-        }
-        ConstantKind::Unevaluated(_) | ConstantKind::Param(_) => {
-            // These are rare for enum discriminants; fall back to string parsing
-            parse_discriminant_from_debug_string(const_str)
-        }
-    }
-}
 
-/// Fallback: parse discriminant from debug string representation.
-/// This is a last resort when the proper API doesn't work.
-fn parse_discriminant_from_debug_string(const_str: &str) -> usize {
-    // Try to extract discriminant from bytes: [Some(N)] format
-    if let Some(bytes_start) = const_str.find("bytes: [Some(") {
-        let after_prefix = &const_str[bytes_start + 13..]; // skip "bytes: [Some("
-        if let Some(end) = after_prefix.find(')') {
-            let discr_str = &after_prefix[..end];
-            if let Ok(discr) = discr_str.parse::<usize>() {
-                return discr;
-            }
+            None
         }
+        ConstantKind::ZeroSized => Some(0),
+        ConstantKind::Ty(_) => mir_const
+            .eval_target_usize()
+            .ok()
+            .and_then(|value| usize::try_from(value).ok()),
+        ConstantKind::Unevaluated(_) | ConstantKind::Param(_) => None,
     }
-    // Try variant name patterns
-    if const_str.contains("::None") || const_str.ends_with("None") {
-        return 0;
-    }
-    if const_str.contains("::Some") {
-        return 1;
-    }
-    // Default to 0
-    0
 }
 
 /// Check if a type is a pointer to SharedArray.
@@ -13072,35 +13005,11 @@ fn extract_shared_array_info(
 ) -> TranslationResult<(pliron::r#type::TypeHandle, usize, usize)> {
     use rustc_public::ty::{GenericArgKind, RigidTy, TyKind};
 
-    /// Parse a const generic value from debug string
-    fn parse_const_value(c: &rustc_public::ty::TyConst) -> Option<usize> {
-        let const_str = format!("{:?}", c);
-        // Parse the bytes from the debug string
-        if let Some(bytes_part) = const_str.split("bytes: [").nth(1)
-            && let Some(bytes_end) = bytes_part.split(']').next()
-        {
-            let mut bytes = Vec::new();
-            for byte_str in bytes_end.split(',') {
-                if bytes.len() >= 8 {
-                    break;
-                }
-                let b_str = byte_str.trim();
-                if let Some(num_str) = b_str
-                    .strip_prefix("Some(")
-                    .and_then(|s| s.strip_suffix(')'))
-                    && let Ok(byte) = num_str.parse::<u8>()
-                {
-                    bytes.push(byte);
-                }
-            }
-            // Convert bytes to usize (little-endian)
-            let mut value: usize = 0;
-            for (i, byte) in bytes.iter().enumerate() {
-                value |= (*byte as usize) << (i * 8);
-            }
-            return Some(value);
-        }
-        None
+    /// Evaluate a const generic through rustc's typed API.
+    fn eval_const_value(c: &rustc_public::ty::TyConst) -> Option<usize> {
+        c.eval_target_usize()
+            .ok()
+            .and_then(|value| usize::try_from(value).ok())
     }
 
     match ty.kind() {
@@ -13133,7 +13042,7 @@ fn extract_shared_array_info(
                     let const_values: Vec<usize> = generic_args
                         .iter()
                         .filter_map(|arg| match arg {
-                            GenericArgKind::Const(c) => parse_const_value(c),
+                            GenericArgKind::Const(c) => eval_const_value(c),
                             _ => None,
                         })
                         .collect();

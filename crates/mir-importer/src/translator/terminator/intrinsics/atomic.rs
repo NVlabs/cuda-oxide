@@ -236,18 +236,15 @@ fn method_to_rmw_kind(method: &str, info: &AtomicTypeInfo) -> Option<AtomicRmwKi
 ///   Relaxed=0, Acquire=1, Release=2, AcqRel=3, SeqCst=4
 fn extract_ordering(operand: &mir::Operand) -> AtomicOrdering {
     if let mir::Operand::Constant(constant) = operand {
-        let const_str = format!("{:?}", constant.const_);
-        let discr = rvalue::extract_enum_discriminant(&constant.const_, &const_str);
-        match discr {
-            0 => AtomicOrdering::Relaxed,
-            1 => AtomicOrdering::Acquire,
-            2 => AtomicOrdering::Release,
-            3 => AtomicOrdering::AcqRel,
-            4 => AtomicOrdering::SeqCst,
-            _ => AtomicOrdering::SeqCst, // Conservative fallback
+        match rvalue::extract_enum_discriminant(&constant.const_) {
+            Some(0) => AtomicOrdering::Relaxed,
+            Some(1) => AtomicOrdering::Acquire,
+            Some(2) => AtomicOrdering::Release,
+            Some(3) => AtomicOrdering::AcqRel,
+            Some(4) => AtomicOrdering::SeqCst,
+            Some(_) | None => AtomicOrdering::SeqCst,
         }
     } else {
-        // Non-constant ordering (dynamic) -- use SeqCst as conservative default.
         AtomicOrdering::SeqCst
     }
 }
