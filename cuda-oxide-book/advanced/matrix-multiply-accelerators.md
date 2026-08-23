@@ -124,10 +124,10 @@ hardware shape uses K=8.
 ### Current cuda-oxide WGMMA lowering
 
 The compiler supports `m64n64k16.f32.bf16.bf16` across three conservative
-lowering shapes, `m64n64k16.f32.f16.f16` for canonical linear full-drain and
-counted K-loop regions, `m64n64k8.f32.tf32.tf32` for canonical linear
-full-drain regions only, and `m64n128k16.f32.bf16.bf16` for canonical linear
-full-drain regions. In every accepted case, the entire asynchronous
+lowering shapes, `m64n64k16.f32.f16.f16` and `m64n64k8.f32.tf32.tf32` for
+canonical linear full-drain and counted K-loop regions, and
+`m64n128k16.f32.bf16.bf16` for canonical linear full-drain regions. In every
+accepted case, the entire asynchronous
 accumulator lifetime stays inside one convergent inline-PTX statement so LLVM
 cannot insert a spill boundary while a WGMMA group is pending.
 
@@ -144,7 +144,7 @@ carried as 64 tied SSA `f32` values through one or more homogeneous
 inline-PTX scope instead of being kept live across it. This shape has no
 pointer-form fallback, counted-loop lowering, or partial-wait pipeline lowering.
 
-**Canonical counted K-loop.** For a compile-time counted BF16 or F16 m64n64
+**Canonical counted K-loop.** For a compile-time counted BF16, F16, or TF32 m64n64
 loop with one MMA per iteration and affine `u64` descriptor recurrences,
 cuda-oxide moves the loop control and descriptor arithmetic into the same
 convergent PTX region as the WGMMA instruction. The accumulator is therefore
@@ -172,7 +172,7 @@ escapes the fused region.
 
 Selection is intentionally fail-closed. Dynamic partial waits, unsupported
 control flow, malformed accumulator schedules, F16 partial-wait shapes, TF32
-counted-loop or partial-wait shapes, m64n128 counted-loop or partial-wait
+partial-wait shapes, m64n128 counted-loop or partial-wait
 shapes, F16/TF32/m64n128 non-canonical accumulators, and the legacy K=16 TF32
 compatibility entry point are rejected instead of exposing an in-flight
 accumulator to LLVM.

@@ -20,7 +20,8 @@
 //!
 //! The `m64n64k16.f32.f16.f16` variant supports canonical linear full-drain
 //! regions and the canonical counted K-loop. The `m64n64k8.f32.tf32.tf32`
-//! variant uses the canonical linear full-drain carrier only. The
+//! variant supports the same canonical linear full-drain and counted-loop
+//! shapes. The
 //! `m64n128k16.f32.bf16.bf16` variant supports canonical linear full-drain
 //! regions with a 64-value `[[f32; 8]; 8]` accumulator. Every accepted
 //! asynchronous lifetime is fused into one convergent inline-PTX scope and ends
@@ -87,8 +88,8 @@
 //!   pipeline for F16.
 //! - **TF32 linear full drain:** `m64n64k8.f32.tf32.tf32` uses the same
 //!   canonical accumulator and full-drain lifetime. TF32 has no pointer
-//!   fallback, counted-loop lowering, or partial-wait pipeline.
-//! - **Canonical counted K-loop:** one BF16 or F16 m64n64 MMA per iteration,
+//!   fallback or partial-wait pipeline.
+//! - **Canonical counted K-loop:** one BF16, F16, or TF32 m64n64 MMA per iteration,
 //!   compile-time trip count, and `u64` descriptor recurrences of the form `desc + const`. The
 //!   fence-to-final-wait lifetime is fused so the accumulator is loaded and
 //!   stored once for the whole loop rather than once per iteration.
@@ -101,7 +102,7 @@
 //! - Unsupported BF16 full-drain accumulator pointer shapes retain the deferred
 //!   pointer-form lowering. Dynamic partial waits, unsupported control flow,
 //!   malformed pipeline schedules, F16 partial-wait/pipelined shapes, TF32
-//!   counted-loop or partial-wait shapes, and the legacy K=16 TF32
+//!   partial-wait/pipelined shapes, and the legacy K=16 TF32
 //!   compatibility entry point are rejected.
 //!
 //! # Hardware Support
@@ -310,10 +311,10 @@ pub unsafe fn wgmma_mma_m64n64k16_f32_f16(acc: &mut [[f32; 8]; 4], desc_a: u64, 
 
 /// WGMMA with f32 accumulator and TF32 inputs.
 ///
-/// This variant supports only the canonical linear full-drain region:
-/// `fence -> one or more MMA -> commit_group -> wait_group<0>`. TF32 uses the
-/// hardware K=8 shape; counted loops, partial waits, and non-canonical pointer
-/// fallback remain unsupported.
+/// This variant supports canonical linear full-drain regions and canonical
+/// counted K-loops. TF32 uses the hardware K=8 shape; counted loops require
+/// compile-time trip counts and affine `u64` descriptor recurrences. Partial
+/// waits and non-canonical pointer fallback remain unsupported.
 ///
 /// # PTX
 ///

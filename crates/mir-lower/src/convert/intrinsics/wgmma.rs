@@ -34,16 +34,6 @@ enum WgmmaInputKind {
     Tf32,
 }
 
-impl WgmmaInputKind {
-    fn ptx_suffix(self) -> &'static str {
-        match self {
-            Self::Bf16 => "bf16.bf16",
-            Self::F16 => "f16.f16",
-            Self::Tf32 => unreachable!("TF32 has no counted K-loop lowering"),
-        }
-    }
-}
-
 /// Convert WGMMA make_smem_desc to inline PTX.
 pub(crate) fn convert_make_smem_desc(
     ctx: &mut Context,
@@ -208,10 +198,23 @@ fn counted_loop_template(input_kind: WgmmaInputKind) -> String {
     template.push_str("    setp.eq.u64 %loop_more, %remaining, 0;\n");
     template.push_str("    @%loop_more bra.uni L__wgmma_done_${:uid};\n");
     template.push_str("L__wgmma_loop_${:uid}:\n");
-    let input_types = input_kind.ptx_suffix();
+    let (mnemonic, controls) = match input_kind {
+        WgmmaInputKind::Bf16 => (
+            "wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16",
+            "1, 1, 1, 0, 0",
+        ),
+        WgmmaInputKind::F16 => (
+            "wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16",
+            "1, 1, 1, 0, 0",
+        ),
+        WgmmaInputKind::Tf32 => (
+            "wgmma.mma_async.sync.aligned.m64n64k8.f32.tf32.tf32",
+            "1, 1, 1",
+        ),
+    };
     template.push_str(&format!(
-        "    wgmma.mma_async.sync.aligned.m64n64k16.f32.{input_types} \
-         {{{accumulators}}}, %desc_a, %desc_b, 1, 1, 1, 0, 0;\n"
+        "    {mnemonic} \
+         {{{accumulators}}}, %desc_a, %desc_b, {controls};\n"
     ));
     template.push_str(&format!("    add.u64 %desc_a, %desc_a, ${desc_a_step};\n"));
     template.push_str(&format!("    add.u64 %desc_b, %desc_b, ${desc_b_step};\n"));
@@ -526,6 +529,16 @@ pub(crate) fn convert_mma_loop_values_f16(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     convert_mma_loop_values_for_kind(ctx, rewriter, op, WgmmaInputKind::F16)
+}
+
+/// Lower a counted TF32 WGMMA K-loop to one multi-result inline-PTX scope.
+pub(crate) fn convert_mma_loop_values_tf32(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mma_loop_values_for_kind(ctx, rewriter, op, WgmmaInputKind::Tf32)
 }
 
 /// Lower one counted WGMMA K-loop to a tied-register inline-PTX scope.
@@ -965,6 +978,32 @@ mod tests {
         assert!(template.contains("add.u64 %desc_a, %desc_a, $66;"));
         assert!(template.contains("add.u64 %desc_b, %desc_b, $67;"));
         assert!(template.contains("mov.u64 %remaining, $68;"));
+        assert!(!template.contains("ld.f32"));
+        assert!(!template.contains("st.f32"));
+        assert!(!template.contains(".reg .f32"));
+    }
+
+    #[test]
+    fn tf32_counted_loop_template_uses_k8_without_transpose_operands() {
+        let template = counted_loop_template(WgmmaInputKind::Tf32);
+        assert_eq!(template.matches("wgmma.mma_async").count(), 1);
+        assert!(template.contains("m64n64k8.f32.tf32.tf32"));
+        assert!(!template.contains("m64n64k16"));
+        assert!(!template.contains(".bf16.bf16"));
+        assert!(!template.contains(".f16.f16"));
+        assert!(template.contains("%desc_a, %desc_b, 1, 1, 1;"));
+        assert!(!template.contains("1, 1, 1, 0, 0"));
+        assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+        assert_eq!(
+            template.matches("wgmma.commit_group.sync.aligned").count(),
+            1
+        );
+        assert_eq!(
+            template.matches("wgmma.wait_group.sync.aligned 0").count(),
+            1
+        );
+        assert!(template.contains("L__wgmma_loop_${:uid}:"));
+        assert!(template.contains("L__wgmma_done_${:uid}:"));
         assert!(!template.contains("ld.f32"));
         assert!(!template.contains("st.f32"));
         assert!(!template.contains(".reg .f32"));

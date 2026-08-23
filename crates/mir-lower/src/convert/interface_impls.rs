@@ -42,10 +42,10 @@ use dialect_nvvm::ops::{
     ReadPtxSregNclusterIdOp, VprintfOp, WgmmaMakeSmemDescOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
     WgmmaMmaGroupValuesM64N64K8F32Tf32Op, WgmmaMmaGroupValuesM64N64K16F32Bf16Op,
     WgmmaMmaGroupValuesM64N64K16F32F16Op, WgmmaMmaGroupValuesM64N128K16F32Bf16Op,
-    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaLoopValuesM64N64K16F32F16Op, WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32F16Op, WgmmaMmaM64N128K16F32Bf16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K8F32Tf32Op,
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32F16Op,
+    WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
+    WgmmaMmaM64N128K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
 
 // ---- Arithmetic ops --------------------------------------------------------
@@ -1221,6 +1221,23 @@ impl MirToLlvmConversion for WgmmaMmaLoopValuesM64N64K16F32F16Op {
         operands_info: &OperandsInfo,
     ) -> Result<()> {
         super::intrinsics::wgmma::convert_mma_loop_values_f16(
+            ctx,
+            rewriter,
+            self.get_operation(),
+            operands_info,
+        )
+    }
+}
+
+#[op_interface_impl]
+impl MirToLlvmConversion for WgmmaMmaLoopValuesM64N64K8F32Tf32Op {
+    fn convert(
+        &self,
+        ctx: &mut Context,
+        rewriter: &mut DialectConversionRewriter,
+        operands_info: &OperandsInfo,
+    ) -> Result<()> {
+        super::intrinsics::wgmma::convert_mma_loop_values_tf32(
             ctx,
             rewriter,
             self.get_operation(),

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Fuse sound BF16 WGMMA sequences, canonical F16 full-drain and counted
-//! K-loop regions, and canonical TF32 full-drain regions before MIR-to-LLVM
+//! Fuse sound BF16 WGMMA sequences and canonical F16/TF32 full-drain and
+//! counted K-loop regions before MIR-to-LLVM
 //! conversion.
 //!
 //! The public MMA operation exposes its accumulator through a pointer, but PTX
@@ -15,9 +15,8 @@
 //! values. BF16 m64n128 linear full drains use a canonical `[[f32; 8]; 8]`
 //! accumulator and 64 scalar SSA values. Unsupported m64n64 BF16 accumulator
 //! shapes retain the existing deferred pointer fallback.
-//! F16 m64n64 is accepted for the canonical accumulator in linear full-drain
-//! regions and the canonical single-slot counted K-loop. TF32 is accepted only
-//! for the canonical m64n64 accumulator in a linear full-drain region, using
+//! F16 and TF32 m64n64 are accepted for the canonical accumulator in linear
+//! full-drain regions and the canonical single-slot counted K-loop. TF32 uses
 //! the hardware `m64n64k8.f32.tf32.tf32` shape. BF16 m64n128 is accepted only
 //! for canonical linear full-drain regions. Partial waits, counted pipelines,
 //! and pointer fallback remain m64n64-BF16-only.
@@ -33,7 +32,7 @@
 //! wgmma.wait_group<0>
 //! ```
 //!
-//! A BF16 or F16 counted K-loop may place the fence in the loop preheader, one
+//! A BF16, F16, or TF32 counted K-loop may place the fence in the loop preheader, one
 //! pointer-form MMA in the unique latch, and the commit/final `wait_group<0>` in
 //! the unique exit. The loop must have a compile-time trip count and two `u64`
 //! descriptor block arguments whose back-edge values are either unchanged or `arg + const`.
@@ -67,10 +66,11 @@ use dialect_nvvm::ops::{
     WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaMmaGroupM64N64K16F32Bf16Op,
     WgmmaMmaGroupValuesM64N64K8F32Tf32Op, WgmmaMmaGroupValuesM64N64K16F32Bf16Op,
     WgmmaMmaGroupValuesM64N64K16F32F16Op, WgmmaMmaGroupValuesM64N128K16F32Bf16Op,
-    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
-    WgmmaMmaLoopValuesM64N64K16F32F16Op, WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32F16Op, WgmmaMmaM64N128K16F32Bf16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K8F32Tf32Op,
+    WgmmaMmaLoopValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32F16Op,
+    WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op, WgmmaMmaM64N64K16F32F16Op,
+    WgmmaMmaM64N128K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaWaitGroupSyncAlignedOp,
 };
 use mir_transforms::analyses::{induction, loop_info::LoopInfo};
 use pliron::{
@@ -761,8 +761,11 @@ fn match_counted_loop(
     let [(mma, kind)] = mmas.as_slice() else {
         return Ok(None);
     };
-    if !matches!(*kind, WgmmaMmaKind::Bf16M64N64 | WgmmaMmaKind::F16M64N64) {
-        // Only BF16/F16 m64n64 have counted-loop carriers; leave the region
+    if !matches!(
+        *kind,
+        WgmmaMmaKind::Bf16M64N64 | WgmmaMmaKind::F16M64N64 | WgmmaMmaKind::Tf32M64N64
+    ) {
+        // Only m64n64 BF16/F16/TF32 have counted-loop carriers; leave the region
         // for the linear matcher, which rejects unsupported shapes.
         return Ok(None);
     }
@@ -1464,7 +1467,16 @@ fn apply_counted_loop_plan(ctx: &mut Context, plan: CountedLoopPlan) {
             desc_b_step,
             trip_count,
         ),
-        WgmmaMmaKind::Tf32M64N64 | WgmmaMmaKind::Bf16M64N128 => {
+        WgmmaMmaKind::Tf32M64N64 => WgmmaMmaLoopValuesM64N64K8F32Tf32Op::build(
+            ctx,
+            accumulator_values,
+            desc_a_base,
+            desc_b_base,
+            desc_a_step,
+            desc_b_step,
+            trip_count,
+        ),
+        WgmmaMmaKind::Bf16M64N128 => {
             unreachable!("counted-loop matching rejects this variant before planning")
         }
     };
