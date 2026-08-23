@@ -6,9 +6,10 @@
 //! Proves that the codegen pipeline can carry tied WGMMA `f32` accumulator
 //! values through one inline-PTX operation and produce spill-free `sm_90a` code.
 //!
-//! The probe covers the 32-value m64n64 BF16/F16/TF32 carriers and the
-//! 64-value m64n128 BF16 carrier, for a single `wgmma.mma_async` and a chain
-//! of several under one fence/commit/wait sequence in the same asm region.
+//! The probe covers the 32-value m64n64 BF16/F16/TF32 carriers, the
+//! 64-value m64n128 BF16 carrier, and the 128-value m64n256 BF16 carrier.
+//! Existing 32/64-value cases cover both a single `wgmma.mma_async` and
+//! chained MMAs; the m64n256 case is a single-instruction feasibility probe.
 
 #![cfg(unix)]
 
@@ -36,6 +37,7 @@ use std::num::NonZeroUsize;
 
 const M64N64_ACCUMULATOR_LEN: usize = 32;
 const M64N128_ACCUMULATOR_LEN: usize = 64;
+const M64N256_ACCUMULATOR_LEN: usize = 128;
 
 #[derive(Clone, Copy, Debug)]
 enum WgmmaCarrierKind {
@@ -43,6 +45,7 @@ enum WgmmaCarrierKind {
     F16M64N64,
     Tf32M64N64,
     Bf16M64N128,
+    Bf16M64N256,
 }
 
 impl WgmmaCarrierKind {
@@ -50,6 +53,7 @@ impl WgmmaCarrierKind {
         match self {
             Self::Bf16M64N64 | Self::F16M64N64 | Self::Tf32M64N64 => M64N64_ACCUMULATOR_LEN,
             Self::Bf16M64N128 => M64N128_ACCUMULATOR_LEN,
+            Self::Bf16M64N256 => M64N256_ACCUMULATOR_LEN,
         }
     }
 
@@ -59,12 +63,15 @@ impl WgmmaCarrierKind {
             Self::F16M64N64 => "wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16",
             Self::Tf32M64N64 => "wgmma.mma_async.sync.aligned.m64n64k8.f32.tf32.tf32",
             Self::Bf16M64N128 => "wgmma.mma_async.sync.aligned.m64n128k16.f32.bf16.bf16",
+            Self::Bf16M64N256 => "wgmma.mma_async.sync.aligned.m64n256k16.f32.bf16.bf16",
         }
     }
 
     fn control_operands(self) -> &'static str {
         match self {
-            Self::Bf16M64N64 | Self::F16M64N64 | Self::Bf16M64N128 => "1, 1, 1, 0, 0",
+            Self::Bf16M64N64 | Self::F16M64N64 | Self::Bf16M64N128 | Self::Bf16M64N256 => {
+                "1, 1, 1, 0, 0"
+            }
             Self::Tf32M64N64 => "1, 1, 1",
         }
     }
@@ -199,7 +206,7 @@ fn build_wgmma_value_carrier_kernel(
 
         // Keep every result observably live across the inline-PTX boundary.
         //
-        // Immediately after the asm, all thirty-two values must remain available.
+        // Immediately after the asm, all accumulator values must remain available.
         // Each value is then written to output[index], preventing the backend from
         // discarding unused outputs or shortening the probe to one live result.
         for (index, result) in accumulator_results.into_iter().enumerate() {
@@ -330,7 +337,8 @@ fn assert_spill_free_value_carrier(kind: WgmmaCarrierKind, mma_count: usize) {
     match kind {
         WgmmaCarrierKind::Bf16M64N64
         | WgmmaCarrierKind::F16M64N64
-        | WgmmaCarrierKind::Bf16M64N128 => {
+        | WgmmaCarrierKind::Bf16M64N128
+        | WgmmaCarrierKind::Bf16M64N256 => {
             assert!(
                 text.contains("1, 1, 1, 0, 0;"),
                 "K=16 WGMMA must carry transpose controls:\n{text}"
@@ -458,6 +466,11 @@ fn bf16_m64n128_wgmma_uses_sixty_four_tied_f32_values_without_spills() {
 #[test]
 fn bf16_m64n128_wgmma_chains_two_mma_async_under_one_commit_without_spills() {
     assert_spill_free_value_carrier(WgmmaCarrierKind::Bf16M64N128, 2);
+}
+
+#[test]
+fn bf16_m64n256_wgmma_uses_one_hundred_twenty_eight_tied_f32_values_without_spills() {
+    assert_spill_free_value_carrier(WgmmaCarrierKind::Bf16M64N256, 1);
 }
 
 #[test]
