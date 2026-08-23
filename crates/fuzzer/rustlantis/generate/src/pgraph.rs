@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, BinaryHeap, HashMap, HashSet},
+    collections::{BTreeSet, BinaryHeap, HashSet},
     iter,
     rc::Rc,
     vec,
@@ -96,7 +96,6 @@ impl PlaceOperand {
 pub struct PlaceGraph {
     /// The callstack
     frames: Vec<Frame>,
-    index_candidates: HashMap<usize, SmallVec<[Local; 1]>>,
     pointer_tags: IndexVec<Tag, BTreeSet<PlaceIndex>>,
 
     places: Graph,
@@ -179,7 +178,6 @@ impl PlaceGraph {
                 /* fn0 dummy */ PlaceIndex::new(usize::MAX),
                 iter::empty(),
             )],
-            index_candidates: HashMap::new(),
             pointer_tags: IndexVec::new(),
             places: StableGraph::default(),
             memory: BasicMemory::new(),
@@ -284,7 +282,6 @@ impl PlaceGraph {
 
         // Frame switch
         self.frames.push(Frame::new(return_dest, moved_in));
-        self.index_candidates.clear();
 
         self.allocate_local(Local::RET, body.return_ty());
         body.args_decl_iter()
@@ -355,7 +352,6 @@ impl PlaceGraph {
             .expect("place exists");
         // Frame switch
         let old_frame = self.frames.pop().expect("call stack isn't empty");
-        self.index_candidates.clear(); // Invalidate cache
 
         // Copy ret
         self.copy_place(old_frame.return_destination, callee_ret);
@@ -1024,22 +1020,6 @@ impl PlaceGraph {
 
     pub fn assign_literal(&mut self, p: impl ToPlaceIndex, val: Option<Literal>) {
         let p = p.to_place_index(self).expect("place exists");
-        if let Some(local) = self.current_frame().get_by_index(p) {
-            // If place is a local
-            if let Some(&Literal::Uint(i, UintTy::Usize)) = self.known_val(p)
-                && let Some(old) = self.index_candidates.get_mut(&(i as usize))
-                && let Some(to_remove) = old.iter().position(|&l| l == local)
-            {
-                // unconditionally remove the old entry if it exists
-                old.remove(to_remove);
-            }
-            if let Some(Literal::Uint(i, UintTy::Usize)) = val {
-                self.index_candidates
-                    .entry(i as usize)
-                    .or_default()
-                    .push(local)
-            }
-        }
 
         if let Some(val) = val {
             self.places[p].val = Some(val);
@@ -1115,27 +1095,6 @@ impl PlaceGraph {
         assert!(self.places[p].ty.is_raw_ptr(&self.tcx));
 
         self.places[p].offset == Some(0)
-    }
-
-    fn locals_with_val(&self, val: usize) -> Vec<Local> {
-        if let Some(locals) = self.index_candidates.get(&val) {
-            locals
-                .iter()
-                .copied()
-                .filter(|local| {
-                    if self.is_place_init(local)
-                        && let Some(Literal::Uint(v, UintTy::Usize)) = self.known_val(local)
-                        && *v as usize == val
-                    {
-                        true
-                    } else {
-                        false
-                    }
-                })
-                .collect()
-        } else {
-            vec![]
-        }
     }
 
     #[allow(dead_code)]
@@ -1271,19 +1230,6 @@ impl PlaceGraph {
         let removed = self.places.remove_edge(e).expect("edge exists");
         assert!(removed.is_deref());
     }
-
-    // Returns if a ConstantIndex can be turned into an Index with local.
-    // Conditions are that a local with a known val equal to the index exists, and this local
-    // can be read
-    // HACK: ConstantIndex isn't supported in custom MIR syntax
-    fn usable_offset(&self, offset: u64) -> bool {
-        let locals = self.locals_with_val(offset as usize);
-        let has_usable = locals.iter().any(|local| {
-            let pidx = local.to_place_index(&self).expect("exists");
-            self.can_read_through(pidx, pidx)
-        });
-        has_usable
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1300,26 +1246,8 @@ impl PlacePath {
     }
 
     pub fn to_place(&self, pt: &PlaceGraph) -> Place {
-        let projs: SmallVec<[ProjectionElem; 8]> = self
-            .path
-            .iter()
-            .map(|&proj| {
-                let mut proj = pt.places[proj];
-                if let ProjectionElem::ConstantIndex { offset } = proj {
-                    let locals = pt.locals_with_val(offset as usize);
-                    let local = locals
-                        .iter()
-                        .filter(|local| {
-                            let pidx = local.to_place_index(pt).expect("exists");
-                            pt.can_read_through(pidx, pidx)
-                        })
-                        .next()
-                        .expect("has a usable local as index");
-                    proj = ProjectionElem::Index(*local);
-                }
-                proj
-            })
-            .collect();
+        let projs: SmallVec<[ProjectionElem; 8]> =
+            self.path.iter().map(|&proj| pt.places[proj]).collect();
         Place::from_projected(
             pt.current_frame().get_by_index(self.source).unwrap(),
             &projs,
@@ -1382,12 +1310,6 @@ impl<'pt> ProjectionIter<'pt> {
                     {
                         return None;
                     }
-                    if let ProjectionElem::ConstantIndex { offset } = e.weight()
-                        && !pt.usable_offset(*offset)
-                    {
-                        return None;
-                    }
-
                     if pt.ty(e.source()).is_raw_ptr(&pt.tcx) && pt.offseted(e.source()) {
                         return None;
                     }
@@ -1426,11 +1348,6 @@ impl<'pt> Iterator for ProjectionIter<'pt> {
                     return None;
                 }
 
-                if let ProjectionElem::ConstantIndex { offset } = e
-                    && !self.pt.usable_offset(offset)
-                {
-                    return None;
-                }
                 Some((eidx, depth + 1))
             }));
 
@@ -1707,6 +1624,33 @@ mod tests {
         assert_eq!(b.complexity(&pt), 2);
 
         assert_eq!(Place::from(local).complexity(&pt), 2);
+    }
+
+    #[test]
+    fn constant_index_paths_do_not_require_index_locals() {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        let ty = tcx.push(TyKind::Array(TyCtxt::I32, 4));
+
+        let mut pt = PlaceGraph::new(Rc::new(tcx));
+        let local = Local::new(1);
+        let local_pidx = pt.allocate_local(local, ty);
+
+        let place = pt
+            .reachable_from_node(local_pidx)
+            .filter(|ppath| !ppath.path.is_empty())
+            .map(|ppath| ppath.to_place(&pt))
+            .find(|place| {
+                matches!(
+                    place.projection(),
+                    [ProjectionElem::ConstantIndex { offset: 1 }]
+                )
+            })
+            .expect("constant-index array element is reachable without an index local");
+
+        assert_eq!(
+            place.to_place_index(&pt),
+            pt.project_from_node(local_pidx, ProjectionElem::ConstantIndex { offset: 1 })
+        );
     }
 
     #[test]
