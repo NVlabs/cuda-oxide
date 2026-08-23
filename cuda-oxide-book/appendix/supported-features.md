@@ -88,10 +88,16 @@ array-to-slice view. Their literal `usize` length metadata is decoded
 independently, including non-zero static byte addends and nested aggregate field
 offsets. Thin-pointer-only union constants preserve the same relocation
 provenance, including non-zero addends, by reconstructing one typed pointer
-carrier instead of transmuting placeholder bytes. Relocation-free
-pointer/integer unions whose storage is exactly one naturally aligned pointer
-word and whose integer alternatives are full-width may instead use rustc's
-evaluated byte image when no relocation overlaps the union storage.
+carrier instead of transmuting placeholder bytes. Compatible `SharedRef`
+alternatives must have the same translated pointee type; `UniqueRef` union
+constants remain rejected. Raw-pointer
+alternatives may differ only in pointee view while retaining the same raw kind,
+mutability, and address space. Relocation-free pointer/integer unions whose
+storage is exactly one fully initialized, naturally aligned pointer word, whose
+pointer alternatives are generic raw pointers of one kind, and whose integer
+alternatives are full-width may instead use rustc's evaluated byte image. The
+importer transmutes that image only to the integer field and inserts the field
+into the union, so no inactive pointer alternative is materialized.
 Relocation-bearing pointer/integer unions, fat or nested pointer storage in
 unions, over-aligned/padded pointer unions, unsupported fat-pointer metadata,
 and pointer-to-array union constants (`&[U; N]`) remain rejected. Top-level

@@ -18,6 +18,10 @@ const SECOND: u64 = 0x8877_6655_4433_2211;
 
 static TARGETS: [u64; 2] = [FIRST, SECOND];
 
+// This is a zero-addend pointer to an aggregate subobject: the static's
+// physical address has pointee `[u64; 2]`, while the Rust constant is `&u64`.
+// It pins shape normalization before the StaticAddress kind boundary.
+const FIRST_TARGET: &u64 = &TARGETS[0];
 const NICHE_STATIC: Option<&'static u64> = Some(&TARGETS[1]);
 const NICHE_NONE: Option<&'static u64> = None;
 
@@ -49,6 +53,11 @@ const NESTED_ARRAY: [TaggedReference; 2] = [
 #[inline(never)]
 fn niche_static() -> Option<&'static u64> {
     NICHE_STATIC
+}
+
+#[inline(never)]
+fn first_target() -> &'static u64 {
+    FIRST_TARGET
 }
 
 #[inline(never)]
@@ -95,7 +104,7 @@ mod kernels {
 
     /// # Safety
     ///
-    /// `output` must point to writable device memory for eight `u64` values.
+    /// `output` must point to writable device memory for nine `u64` values.
     #[kernel]
     pub unsafe fn enum_pointer_constants(output: *mut u64) {
         let static_value = niche_static().map_or(0, |pointer| *pointer);
@@ -111,6 +120,7 @@ mod kernels {
 
         let array_value = nested_array();
         let nested_array_value = tagged_value(array_value[1]);
+        let first_target_value = *first_target();
 
         unsafe {
             output.add(0).write(static_value);
@@ -121,19 +131,20 @@ mod kernels {
             output.add(5).write(nested_struct_value);
             output.add(6).write(nested_tuple_value);
             output.add(7).write(nested_array_value);
+            output.add(8).write(first_target_value);
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const OUTPUT_COUNT: usize = 8;
+    const OUTPUT_COUNT: usize = 9;
 
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
     let module = kernels::load(&ctx)?;
     let output = DeviceBuffer::<u64>::zeroed(&stream, OUTPUT_COUNT)?;
 
-    // SAFETY: the output allocation contains eight u64 values and exactly one
+    // SAFETY: the output allocation contains nine u64 values and exactly one
     // thread is launched.
     unsafe {
         module.enum_pointer_constants(
@@ -144,7 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }?;
 
     let actual = output.to_host_vec(&stream)?;
-    let expected = [SECOND, 0, 0, FIRST, 17, SECOND, FIRST, SECOND];
+    let expected = [SECOND, 0, 0, FIRST, 17, SECOND, FIRST, SECOND, FIRST];
 
     assert_eq!(
         actual.as_slice(),

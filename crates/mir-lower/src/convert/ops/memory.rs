@@ -48,7 +48,10 @@
 //! .extern .shared .align 16 .b8 __dynamic_smem_other_kernel[];
 //! ```
 
-use crate::context::{DeviceGlobalsMap, DynamicSmemAlignmentMap, SharedGlobalsMap};
+use crate::context::{
+    DeviceGlobalDeclaration, DeviceGlobalRecord, DeviceGlobalsMap, DynamicSmemAlignmentMap,
+    SharedGlobalDeclaration, SharedGlobalKind, SharedGlobalRecord, SharedGlobalsMap,
+};
 use crate::convert::types::{
     StructLayoutInfo, build_struct_slot_map, convert_type, get_type_size,
     llvm_packed_struct_contains_pointer_in_address_space, mir_type_abi_align,
@@ -758,14 +761,27 @@ pub fn convert_shared_alloc_dc(
         (alloc_key, source_name, mir_elem_type, size, alignment)
     };
 
-    // Cache hit only when the op carries a key AND that key is already in
-    // `shared_globals`. `as_ref()` borrows for the if-let scope so the else
-    // branch can still move `alloc_key` into `create_shared_global` (which
-    // takes ownership and inserts it into the cache).
+    let declaration = SharedGlobalDeclaration {
+        kind: SharedGlobalKind::Static,
+        mir_elem_type,
+        size,
+        alignment,
+    };
+
+    // A key names one physical allocation, not merely a preferred symbol.
+    // Reuse it only when the complete storage declaration agrees; otherwise
+    // the later address would silently inherit the first allocation's type,
+    // extent, or alignment.
     let global_name = if let Some(key) = alloc_key.as_ref()
-        && let Some(existing_name) = shared_globals.get(key)
+        && let Some(existing) = shared_globals.get(key)
     {
-        existing_name.clone()
+        if existing.declaration != declaration {
+            return Err(anyhow_to_pliron(anyhow::anyhow!(
+                "duplicate shared alloc_key {:?} has an incompatible declaration",
+                key
+            )));
+        }
+        existing.symbol.clone()
     } else {
         create_shared_global(
             ctx,
@@ -810,8 +826,8 @@ struct SharedAllocSpec<'a> {
 ///
 /// The global is inserted at the front of the module block. When
 /// `spec.alloc_key` is `Some`, the key is moved into `shared_globals` so that
-/// later allocations with the same key reuse this global (caller is
-/// expected to have already checked the cache for a hit).
+/// later allocations with the same key reuse this global only after the caller
+/// has checked that their complete declarations agree.
 ///
 /// `spec.source_name`, when present, is the Rust path of the `static` this
 /// allocation came from. The generated symbol stays anonymous; the name is
@@ -866,7 +882,18 @@ fn create_shared_global(
     global_op.get_operation().insert_at_front(module_block, ctx);
 
     if let Some(key) = spec.alloc_key {
-        shared_globals.insert(key, name.clone());
+        shared_globals.insert(
+            key,
+            SharedGlobalRecord {
+                symbol: name.clone(),
+                declaration: SharedGlobalDeclaration {
+                    kind: SharedGlobalKind::Static,
+                    mir_elem_type: spec.mir_elem_type,
+                    size: spec.size,
+                    alignment: spec.alignment,
+                },
+            },
+        );
     }
 
     Ok(name)
@@ -960,8 +987,23 @@ pub fn convert_global_alloc_dc(
         )
     };
 
-    let global_name = if let Some(existing_name) = device_globals.get(&global_key) {
-        existing_name.clone()
+    let declaration = DeviceGlobalDeclaration {
+        mir_type: mir_global_type,
+        alignment,
+        addr_space,
+        initializer_hex: initializer_hex.clone(),
+        initializer_relocations: initializer_relocations.clone(),
+        immutable,
+    };
+
+    let global_name = if let Some(existing) = device_globals.get(&global_key) {
+        if existing.declaration != declaration {
+            return Err(anyhow_to_pliron(anyhow::anyhow!(
+                "duplicate global_key {:?} has an incompatible declaration",
+                global_key
+            )));
+        }
+        existing.symbol.clone()
     } else {
         create_device_global(
             ctx,
@@ -1096,7 +1138,20 @@ fn create_device_global(
         .ok_or_else(|| anyhow_to_pliron(anyhow::anyhow!("Module is empty")))?;
 
     global_op.get_operation().insert_at_front(module_block, ctx);
-    device_globals.insert(spec.key.to_string(), name.clone());
+    device_globals.insert(
+        spec.key.to_string(),
+        DeviceGlobalRecord {
+            symbol: name.clone(),
+            declaration: DeviceGlobalDeclaration {
+                mir_type: spec.mir_type,
+                alignment: spec.alignment,
+                addr_space: spec.addr_space,
+                initializer_hex: spec.initializer_hex.map(str::to_owned),
+                initializer_relocations: spec.initializer_relocations.map(str::to_owned),
+                immutable: spec.immutable,
+            },
+        },
+    );
 
     Ok(name)
 }
@@ -1321,12 +1376,24 @@ fn get_or_create_extern_shared_global(
         },
     )?;
 
+    let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+    let declaration = SharedGlobalDeclaration {
+        kind: SharedGlobalKind::DynamicExtern,
+        mir_elem_type: i8_ty.into(),
+        size: 0,
+        alignment: max_alignment,
+    };
     let global_created_key = format!("__dynamic_smem_global_created_{}", func_name);
-    if shared_globals.contains_key(&global_created_key) {
-        return Ok(symbol_name);
+    if let Some(existing) = shared_globals.get(&global_created_key) {
+        if existing.declaration != declaration || existing.symbol != symbol_name {
+            return Err(anyhow_to_pliron(anyhow::anyhow!(
+                "dynamic shared-memory key {:?} has an incompatible declaration",
+                global_created_key
+            )));
+        }
+        return Ok(existing.symbol.clone());
     }
 
-    let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
     let array_type = ArrayType::get(ctx, i8_ty.into(), 0);
 
     let global_op = llvm::GlobalOp::new_with_alignment(
@@ -1356,7 +1423,13 @@ fn get_or_create_extern_shared_global(
 
     global_op.get_operation().insert_at_front(module_block, ctx);
 
-    shared_globals.insert(global_created_key, symbol_name.clone());
+    shared_globals.insert(
+        global_created_key,
+        SharedGlobalRecord {
+            symbol: symbol_name.clone(),
+            declaration,
+        },
+    );
 
     Ok(symbol_name)
 }
@@ -3427,8 +3500,13 @@ mod tests {
 
     /// Build a `mir.shared_alloc` returning `MirPtrType<i32, addrspace=3>` of
     /// length `size`, with the given alloc_key, and append it to `block`.
-    fn append_shared_alloc(ctx: &mut Context, block: Ptr<BasicBlock>, alloc_key: &str, size: u64) {
-        append_shared_alloc_named(ctx, block, alloc_key, size, None);
+    fn append_shared_alloc(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        alloc_key: &str,
+        size: u64,
+    ) -> Ptr<Operation> {
+        append_shared_alloc_named(ctx, block, alloc_key, size, None)
     }
 
     /// As [`append_shared_alloc`], additionally carrying the Rust path of the
@@ -3439,7 +3517,7 @@ mod tests {
         alloc_key: &str,
         size: u64,
         source_name: Option<&str>,
-    ) {
+    ) -> Ptr<Operation> {
         use pliron::builtin::attributes::IntegerAttr;
         use pliron::utils::apint::APInt;
 
@@ -3465,6 +3543,7 @@ mod tests {
             alloc.set_attr_source_name(ctx, StringAttr::new(source_name.to_string()));
         }
         op.insert_at_back(block, ctx);
+        op
     }
 
     #[test]
@@ -3542,6 +3621,83 @@ mod tests {
         // Each of the three mir.shared_alloc ops becomes one addressof.
         let body = kernel_blocks(&ctx, module_ptr);
         assert_eq!(count_ops::<llvm::AddressOfOp>(&ctx, &body), 3);
+    }
+
+    #[test]
+    fn convert_shared_alloc_rejects_conflicting_key_declarations() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_shared_alloc(&mut ctx, block, "conflicting-key", 1);
+        let differently_aligned = append_shared_alloc(&mut ctx, block, "conflicting-key", 1);
+        mir::MirSharedAllocOp::new(differently_aligned).set_alignment_value(&mut ctx, 16);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("one shared alloc_key must not name differently aligned storage");
+        assert!(
+            error.to_string().contains("incompatible declaration"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn dynamic_extern_then_static_shared_rejects_reserved_key_collision() {
+        use pliron::builtin::attributes::IntegerAttr;
+        use pliron::utils::apint::APInt;
+
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let i8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signless).into();
+        let shared_i8 = MirPtrType::get_shared(&mut ctx, i8_ty, true);
+
+        // Lower the dynamic declaration first. Its internal cache key is
+        // deliberately then reused by a static allocation with the same
+        // physical type, size, and alignment. Those declarations must still
+        // be rejected because one is extern storage and one is fixed storage.
+        let dynamic = Operation::new(
+            &mut ctx,
+            mir::MirExternSharedOp::get_concrete_op_info(),
+            vec![shared_i8.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        mir::MirExternSharedOp::new(dynamic).set_alignment_value(&mut ctx, 128);
+        dynamic.insert_at_back(block, &ctx);
+
+        let fixed = Operation::new(
+            &mut ctx,
+            mir::MirSharedAllocOp::get_concrete_op_info(),
+            vec![shared_i8.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        let fixed_alloc = mir::MirSharedAllocOp::new(fixed);
+        fixed_alloc.set_attr_elem_type(&ctx, TypeAttr::new(i8_ty));
+        fixed_alloc.set_attr_size(
+            &ctx,
+            IntegerAttr::new(
+                IntegerType::get(&ctx, 64, Signedness::Unsigned),
+                APInt::from_u64(0, std::num::NonZeroUsize::new(64).unwrap()),
+            ),
+        );
+        fixed_alloc.set_attr_alloc_key(
+            &ctx,
+            StringAttr::new("__dynamic_smem_global_created_kernel_func".to_string()),
+        );
+        fixed_alloc.set_alignment_value(&mut ctx, 128);
+        fixed.insert_at_back(block, &ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("a static allocation must not reuse a dynamic extern declaration");
+        let message = error.to_string();
+        assert!(message.contains("incompatible declaration"), "{message}");
+        assert!(
+            message.contains("duplicate shared alloc_key"),
+            "the dynamic declaration must be observed first, got: {message}"
+        );
     }
 
     /// Collect `(symbol, source_name)` for every shared global in the module.
@@ -3702,10 +3858,21 @@ mod tests {
         constant: bool,
     ) -> Ptr<Operation> {
         let i32_ty: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        append_global_alloc_typed(ctx, block, global_key, constant, !constant, i32_ty)
+    }
+
+    fn append_global_alloc_typed(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        global_key: &str,
+        constant: bool,
+        is_mutable: bool,
+        global_ty: TypeHandle,
+    ) -> Ptr<Operation> {
         let result_ty = if constant {
-            MirPtrType::get_constant(ctx, i32_ty, false)
+            MirPtrType::get_constant(ctx, global_ty, is_mutable)
         } else {
-            MirPtrType::get_global(ctx, i32_ty, true)
+            MirPtrType::get_global(ctx, global_ty, is_mutable)
         };
         let op = Operation::new(
             ctx,
@@ -3716,10 +3883,105 @@ mod tests {
             0,
         );
         let alloc = mir::MirGlobalAllocOp::new(op);
-        alloc.set_attr_global_type(ctx, TypeAttr::new(i32_ty));
+        alloc.set_attr_global_type(ctx, TypeAttr::new(global_ty));
         alloc.set_attr_global_key(ctx, StringAttr::new(global_key.to_string()));
         op.insert_at_back(block, ctx);
         op
+    }
+
+    #[test]
+    fn convert_global_alloc_deduplicates_matching_storage_across_pointer_mutability() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        append_global_alloc_typed(&mut ctx, block, "same-global", false, false, i32_ty);
+        append_global_alloc_typed(&mut ctx, block, "same-global", false, true, i32_ty);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect("pointer-carrier mutability does not change physical global storage");
+
+        let top = module_top_block(&ctx, module_ptr);
+        let globals = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .filter(|global| global.source_global_key(&ctx).as_deref() == Some("same-global"))
+            .count();
+        assert_eq!(globals, 1);
+        assert_eq!(
+            count_ops::<llvm::AddressOfOp>(&ctx, &kernel_blocks(&ctx, module_ptr)),
+            2
+        );
+    }
+
+    #[test]
+    fn convert_global_alloc_rejects_conflicting_key_declarations() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let byte_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Signless).into();
+        let word_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let empty_words: TypeHandle = MirArrayType::get(&mut ctx, word_ty, 0).into();
+
+        let byte =
+            append_global_alloc_typed(&mut ctx, block, "conflicting-global", false, false, byte_ty);
+        let byte = mir::MirGlobalAllocOp::new(byte);
+        byte.set_alignment_value(&mut ctx, 1);
+        byte.mark_immutable(&mut ctx);
+
+        let words = append_global_alloc_typed(
+            &mut ctx,
+            block,
+            "conflicting-global",
+            false,
+            false,
+            empty_words,
+        );
+        let words = mir::MirGlobalAllocOp::new(words);
+        words.set_alignment_value(&mut ctx, 4);
+        words.mark_immutable(&mut ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("one global_key must not name incompatible type/alignment storage");
+        assert!(
+            error.to_string().contains("incompatible declaration"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn device_global_declaration_identity_covers_every_storage_property() {
+        let ctx = make_ctx();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let i64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Signless).into();
+        let base = DeviceGlobalDeclaration {
+            mir_type: i32_ty,
+            alignment: 4,
+            addr_space: llvm_addr::GLOBAL,
+            initializer_hex: Some("00000000".to_string()),
+            initializer_relocations: Some("reloc-a".to_string()),
+            immutable: true,
+        };
+
+        let mut changed = base.clone();
+        changed.mir_type = i64_ty;
+        assert!(base != changed);
+        changed = base.clone();
+        changed.alignment = 8;
+        assert!(base != changed);
+        changed = base.clone();
+        changed.addr_space = llvm_addr::CONSTANT;
+        assert!(base != changed);
+        changed = base.clone();
+        changed.initializer_hex = Some("01000000".to_string());
+        assert!(base != changed);
+        changed = base.clone();
+        changed.initializer_relocations = Some("reloc-b".to_string());
+        assert!(base != changed);
+        changed = base.clone();
+        changed.immutable = false;
+        assert!(base != changed);
     }
 
     #[test]

@@ -63,7 +63,7 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
 use crate::translator::rvalue;
 use crate::translator::values::{ValueMap, maybe_ptr_coerce};
-use dialect_mir::attributes::MirPointerKindAuthorityAttr;
+use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
 use dialect_mir::ops::{
     MirAssertOp, MirCondBranchOp, MirConstantOp, MirEqOp, MirGotoOp, MirNotOp, MirReturnOp,
     MirUnrollHintOp,
@@ -1685,9 +1685,12 @@ fn translate_closure_call(
     )?;
     last_op = tuple_last_op;
 
-    // Bypassing a ClosureOnce adapter is the one case where the importer must
-    // synthesize a receiver borrow. Derive both the result type and mutability
-    // from the body parameter instead of guessing from the adapter shape.
+    // Derive the exact receiver reference from the closure body's first
+    // parameter. A ClosureOnce adapter may pass the closure by value and need
+    // a synthesized borrow. A direct `FnMut::call_mut` can also resolve to an
+    // `Fn` closure body: MIR then supplies `&mut Closure` while that body
+    // expects `&Closure`, so preserve the existing address with an explicit
+    // reborrow instead of taking the address of the reference value itself.
     let receiver_borrow_mutability = match closure_body.receiver_ty.kind() {
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, _, mutability))
             if self_value.get_type(ctx) != expected_receiver_type =>
@@ -1697,43 +1700,70 @@ fn translate_closure_call(
         _ => None,
     };
 
-    if receiver_borrow_mutability.is_some() && !resolved_is_shim {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(
-                "closure body expects a borrowed receiver but callable-trait resolution did not select an adapter shim"
-                    .to_string()
-            )
-        );
-    }
-
     let self_arg = if let Some(mutability) = receiver_borrow_mutability {
-        // Reproduce the adapter shim's borrow before calling the body directly.
         let is_mutable = mutability == mir::Mutability::Mut;
 
-        let ref_op = Operation::new(
-            ctx,
-            dialect_mir::ops::MirRefOp::get_concrete_op_info(),
-            vec![expected_receiver_type],
-            vec![self_value],
-            vec![],
-            0,
-        );
-        ref_op.deref_mut(ctx).set_loc(loc.clone());
-        let ref_op_wrapper = dialect_mir::ops::MirRefOp::new(ref_op);
-        ref_op_wrapper.set_mutable(ctx, is_mutable);
-        ref_op_wrapper.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
-
-        // Insert after previous op
-        if let Some(prev) = last_op {
-            ref_op.insert_after(ctx, prev);
+        if self_value
+            .get_type(ctx)
+            .deref(ctx)
+            .is::<dialect_mir::types::MirPtrType>()
+        {
+            // The callable-trait receiver is already an address. Retype the
+            // same pointee at the Rust reborrow boundary (`&mut C -> &C` for
+            // an Fn closure invoked through FnMut is the common case).
+            let cast_op = Operation::new(
+                ctx,
+                dialect_mir::ops::MirCastOp::get_concrete_op_info(),
+                vec![expected_receiver_type],
+                vec![self_value],
+                vec![],
+                0,
+            );
+            cast_op.deref_mut(ctx).set_loc(loc.clone());
+            let cast = dialect_mir::ops::MirCastOp::new(cast_op);
+            cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+            cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
+            if let Some(prev) = last_op {
+                cast_op.insert_after(ctx, prev);
+            } else {
+                cast_op.insert_at_front(block_ptr, ctx);
+            }
+            last_op = Some(cast_op);
+            cast_op.deref(ctx).get_result(0)
         } else {
-            ref_op.insert_at_front(block_ptr, ctx);
-        }
-        last_op = Some(ref_op);
+            if !resolved_is_shim {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "closure body expects a borrowed receiver but the direct callable-trait argument is not a pointer"
+                            .to_string()
+                    )
+                );
+            }
 
-        // Use the reference as self arg
-        ref_op.deref(ctx).get_result(0)
+            // Reproduce the ClosureOnce adapter's borrow before calling the
+            // closure body directly.
+            let ref_op = Operation::new(
+                ctx,
+                dialect_mir::ops::MirRefOp::get_concrete_op_info(),
+                vec![expected_receiver_type],
+                vec![self_value],
+                vec![],
+                0,
+            );
+            ref_op.deref_mut(ctx).set_loc(loc.clone());
+            let ref_op_wrapper = dialect_mir::ops::MirRefOp::new(ref_op);
+            ref_op_wrapper.set_mutable(ctx, is_mutable);
+            ref_op_wrapper.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
+
+            if let Some(prev) = last_op {
+                ref_op.insert_after(ctx, prev);
+            } else {
+                ref_op.insert_at_front(block_ptr, ctx);
+            }
+            last_op = Some(ref_op);
+            ref_op.deref(ctx).get_result(0)
+        }
     } else {
         // For call_mut/call the MIR operand is already the body's exact
         // reference type; for FnOnce the body receives the value unchanged.
