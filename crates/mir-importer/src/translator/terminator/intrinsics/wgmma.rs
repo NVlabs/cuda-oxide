@@ -272,9 +272,10 @@ pub fn emit_wgmma_mma_m64n128k16_f32_bf16(
 
 /// Emit F16 m64n64k16 WGMMA pointer form.
 ///
-/// `mir-lower` accepts this variant only in a canonical linear full-drain
-/// region ending in `wait_group<0>`. Counted loops and partial-wait pipelines
-/// remain BF16-only.
+/// `mir-lower` accepts this variant in a canonical linear full-drain region,
+/// the canonical counted K-loop, or the narrow two-slot straight-line
+/// `wait_group<1>` pipeline. Deeper partial waits and counted pipelines remain
+/// unsupported for F16.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_wgmma_mma_m64n64k16_f32_f16(
     ctx: &mut Context,
@@ -315,7 +316,7 @@ pub fn emit_wgmma_mma_m64n64k16_f32_f16(
 ///
 /// `mir-lower` accepts this variant only in a canonical linear full-drain
 /// region ending in `wait_group<0>`. Counted loops, partial-wait pipelines,
-/// and pointer fallback remain BF16-only.
+/// and pointer fallback remain unsupported for TF32.
 pub fn emit_wgmma_mma_m64n64k8_f32_tf32(
     ctx: &mut Context,
     body: &mir::Body,

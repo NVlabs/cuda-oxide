@@ -10107,6 +10107,117 @@ fn test_pointer_form_wgmma_partial_wait_pipeline_keeps_multiple_groups_in_flight
     Ok(())
 }
 
+#[test]
+fn test_pointer_form_f16_wgmma_two_slot_wait_one_pipeline_lowers() -> Result<(), anyhow::Error> {
+    const SLOT_COUNT: usize = 2;
+    const ACCUMULATOR_LEN: usize = 32;
+    const GROUP_COUNT: usize = 4;
+    const DESCRIPTOR_COUNT: usize = GROUP_COUNT * 2;
+    const RESULT_COUNT: usize = SLOT_COUNT * ACCUMULATOR_LEN;
+
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, SLOT_COUNT, DESCRIPTOR_COUNT);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    for group in 0..GROUP_COUNT {
+        append_pointer_wgmma_mma_f16(
+            &mut ctx,
+            entry,
+            accumulators[group % SLOT_COUNT],
+            descriptors[group * 2],
+            descriptors[group * 2 + 1],
+        );
+        nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+        if group + 1 >= SLOT_COUNT {
+            append_wgmma_wait_group_constant(&mut ctx, entry, 1);
+        }
+    }
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let body = lowered_kernel_body(&ctx, module_ptr);
+    let matching = body
+        .iter()
+        .copied()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("m64n64k16.f32.f16.f16"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected one fused F16 two-slot partial-wait WGMMA pipeline"
+    );
+
+    let asm = &matching[0];
+    let template = asm
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("F16 pipeline WGMMA template");
+
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(
+        template
+            .matches("wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16")
+            .count(),
+        GROUP_COUNT
+    );
+    assert!(!template.contains("m64n64k16.f32.bf16.bf16"));
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        GROUP_COUNT
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 1").count(),
+        GROUP_COUNT - SLOT_COUNT + 1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    assert!(template.contains("{$0, $1"));
+    assert!(template.contains("{$32, $33"));
+    assert!(
+        !template.contains(".reg .f32")
+            && !template.contains("ld.f32")
+            && !template.contains("st.f32"),
+        "F16 pipeline must keep accumulators value-threaded: {template}"
+    );
+
+    let mut expected_constraints = vec!["=f".to_owned(); RESULT_COUNT];
+    expected_constraints.extend((0..RESULT_COUNT).map(|index| index.to_string()));
+    expected_constraints.extend((0..DESCRIPTOR_COUNT).map(|_| "l".to_owned()));
+    expected_constraints.push("~{memory}".to_owned());
+    let expected_constraints = expected_constraints.join(",");
+    assert_eq!(
+        asm.get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .as_deref(),
+        Some(expected_constraints.as_str())
+    );
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+
+    let load_count = body
+        .iter()
+        .filter(|operation| Operation::get_op::<llvm::LoadOp>(**operation, &ctx).is_some())
+        .count();
+    let store_count = body
+        .iter()
+        .filter(|operation| Operation::get_op::<llvm::StoreOp>(**operation, &ctx).is_some())
+        .count();
+    assert_eq!(load_count, RESULT_COUNT);
+    assert_eq!(store_count, RESULT_COUNT);
+
+    Ok(())
+}
+
 fn build_pointer_form_wgmma_counted_pipeline_case(
     ctx: &mut Context,
     slot_count: usize,
@@ -11600,18 +11711,57 @@ fn test_linear_wgmma_full_drain_rejects_mixed_f16_and_tf32() -> Result<(), anyho
 }
 
 #[test]
-fn test_f16_wgmma_partial_wait_remains_unsupported() -> Result<(), anyhow::Error> {
+fn test_f16_wgmma_partial_wait_two_remains_unsupported() -> Result<(), anyhow::Error> {
+    const SLOT_COUNT: usize = 3;
+    const GROUP_COUNT: usize = 3;
     let mut ctx = make_test_ctx();
     let (module_ptr, entry, accumulators, descriptors) =
-        build_wgmma_canonical_pointer_test_kernel(&mut ctx, 1, 2);
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, SLOT_COUNT, GROUP_COUNT * 2);
 
     nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
-    append_pointer_wgmma_mma_f16(
+    for group in 0..GROUP_COUNT {
+        append_pointer_wgmma_mma_f16(
+            &mut ctx,
+            entry,
+            accumulators[group],
+            descriptors[group * 2],
+            descriptors[group * 2 + 1],
+        );
+        nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    }
+    append_wgmma_wait_group_constant(&mut ctx, entry, 2);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "F16 WGMMA partial-wait pipeline supports only wait_group<1> with two accumulator slots",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_wgmma_partial_wait_pipeline_rejects_mixed_bf16_and_f16() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, 2, 4);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma(
         &mut ctx,
         entry,
         accumulators[0],
         descriptors[0],
         descriptors[1],
+    );
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma_f16(
+        &mut ctx,
+        entry,
+        accumulators[1],
+        descriptors[2],
+        descriptors[3],
     );
     nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
     append_wgmma_wait_group_constant(&mut ctx, entry, 1);
@@ -11621,7 +11771,7 @@ fn test_f16_wgmma_partial_wait_remains_unsupported() -> Result<(), anyhow::Error
     assert_wgmma_lowering_rejected(
         &mut ctx,
         module_ptr,
-        "WGMMA deferred accumulator lowering requires wait_group<0>",
+        "one WGMMA partial-wait pipeline cannot mix MMA variants or shapes",
     );
     Ok(())
 }

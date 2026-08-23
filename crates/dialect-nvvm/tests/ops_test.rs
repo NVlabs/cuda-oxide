@@ -44,7 +44,7 @@ use dialect_nvvm::ops::{
     WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
     WgmmaMmaLoopValuesM64N64K16F32F16Op, WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op,
     WgmmaMmaM64N64K16F32F16Op, WgmmaMmaM64N128K16F32Bf16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32F16Op,
 };
 
 #[test]
@@ -106,6 +106,7 @@ fn handwritten_ops_match_reviewed_allowlist() {
         ("wgmma.rs", "WgmmaMmaLoopValuesM64N64K16F32F16Op"),
         ("wgmma.rs", "WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op"),
         ("wgmma.rs", "WgmmaMmaPipelineValuesM64N64K16F32Bf16Op"),
+        ("wgmma.rs", "WgmmaMmaPipelineValuesM64N64K16F32F16Op"),
     ];
     expected.sort_unstable();
     found.sort_unstable();
@@ -5186,6 +5187,30 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
     );
     assert!(
         WgmmaMmaPipelineValuesM64N64K16F32Bf16Op::new(too_few_pipeline_slots)
+            .verify(&ctx)
+            .is_err()
+    );
+
+    let f16_pipeline_group = WgmmaMmaPipelineValuesM64N64K16F32F16Op::build(
+        &mut ctx,
+        vec![f32_value; 64],
+        vec![u64_value; 8],
+    );
+    {
+        let pipeline_ref = f16_pipeline_group.deref(&ctx);
+        assert_eq!(pipeline_ref.get_num_operands(), 72);
+        assert_eq!(pipeline_ref.get_num_results(), 64);
+    }
+    let f16_pipeline = WgmmaMmaPipelineValuesM64N64K16F32F16Op::new(f16_pipeline_group);
+    assert!(f16_pipeline.verify(&ctx).is_ok());
+
+    let f16_too_few_pipeline_slots = WgmmaMmaPipelineValuesM64N64K16F32F16Op::build(
+        &mut ctx,
+        vec![f32_value; 32],
+        vec![u64_value; 4],
+    );
+    assert!(
+        WgmmaMmaPipelineValuesM64N64K16F32F16Op::new(f16_too_few_pipeline_slots)
             .verify(&ctx)
             .is_err()
     );

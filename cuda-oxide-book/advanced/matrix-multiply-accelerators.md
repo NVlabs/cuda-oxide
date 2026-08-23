@@ -124,8 +124,9 @@ hardware shape uses K=8.
 ### Current cuda-oxide WGMMA lowering
 
 The compiler supports `m64n64k16.f32.bf16.bf16` across three conservative
-lowering shapes, `m64n64k16.f32.f16.f16` for canonical linear full-drain and
-counted K-loop regions, `m64n64k8.f32.tf32.tf32` for canonical linear
+lowering shapes, `m64n64k16.f32.f16.f16` for canonical linear full-drain,
+counted K-loop, and two-slot `wait_group<1>` straight-line pipeline regions,
+`m64n64k8.f32.tf32.tf32` for canonical linear
 full-drain regions only, and `m64n128k16.f32.bf16.bf16` for canonical linear
 full-drain regions. In every accepted case, the entire asynchronous
 accumulator lifetime stays inside one convergent inline-PTX statement so LLVM
@@ -151,10 +152,11 @@ convergent PTX region as the WGMMA instruction. The accumulator is therefore
 loaded once before the K-loop and stored once after its final wait rather than
 round-tripped every iteration.
 
-**Static partial-wait pipeline.** A BF16 m64n64 `wait_group<N>` with `N > 0`
-uses `N + 1` independent accumulator slots. Groups are committed separately and
-slots are reused round-robin only after the partial wait has made the oldest
-slot safe. For example, two groups can remain overlapped with:
+**Static partial-wait pipeline.** BF16 m64n64 supports static `wait_group<N>`
+with `N > 0`, using `N + 1` independent accumulator slots. F16 deliberately
+supports only the first topology: `wait_group<1>` with two slots. Groups are
+committed separately and slots are reused round-robin only after the partial
+wait has made the oldest slot safe. For example, two groups can remain overlapped with:
 
 ```text
 wgmma_fence
@@ -171,8 +173,9 @@ accumulator. A final `wait_group<0>` is mandatory before any accumulator value
 escapes the fused region.
 
 Selection is intentionally fail-closed. Dynamic partial waits, unsupported
-control flow, malformed accumulator schedules, F16 partial-wait shapes, TF32
-counted-loop or partial-wait shapes, m64n128 counted-loop or partial-wait
+control flow, malformed accumulator schedules, F16 partial-wait depths other
+than one, F16 counted pipelines, TF32 counted-loop or partial-wait shapes,
+m64n128 counted-loop or partial-wait
 shapes, F16/TF32/m64n128 non-canonical accumulators, and the legacy K=16 TF32
 compatibility entry point are rejected instead of exposing an in-flight
 accumulator to LLVM.

@@ -16,11 +16,12 @@
 //! accumulator and 64 scalar SSA values. Unsupported m64n64 BF16 accumulator
 //! shapes retain the existing deferred pointer fallback.
 //! F16 m64n64 is accepted for the canonical accumulator in linear full-drain
-//! regions and the canonical single-slot counted K-loop. TF32 is accepted only
-//! for the canonical m64n64 accumulator in a linear full-drain region, using
-//! the hardware `m64n64k8.f32.tf32.tf32` shape. BF16 m64n128 is accepted only
-//! for canonical linear full-drain regions. Partial waits, counted pipelines,
-//! and pointer fallback remain m64n64-BF16-only.
+//! regions, the canonical single-slot counted K-loop, and the narrow two-slot
+//! straight-line `wait_group<1>` pipeline. TF32 is accepted only for the
+//! canonical m64n64 accumulator in a linear full-drain region, using the
+//! hardware `m64n64k8.f32.tf32.tf32` shape. BF16 m64n128 is accepted only for
+//! canonical linear full-drain regions. Counted pipelines and pointer fallback
+//! remain m64n64-BF16-only.
 //!
 //! Straight-line regions keep the existing shape:
 //!
@@ -40,12 +41,12 @@
 //! The complete asynchronous lifetime is then represented by one value-form loop
 //! operation so LLVM never sees an in-flight accumulator between iterations.
 //!
-//! Straight-line BF16 partial-wait pipelines are recognized separately. A
-//! static
-//! `wait_group<N>` with `N > 0` requires `N + 1` canonical accumulator slots.
-//! Groups are committed and the slots are reused round-robin only after the
-//! corresponding partial wait has made the oldest slot safe. Every accepted
-//! pipeline ends with `wait_group<0>` before any accumulator value escapes.
+//! Straight-line partial-wait pipelines are recognized separately. BF16 keeps
+//! the existing static `wait_group<N>` support, where `N > 0` requires `N + 1`
+//! canonical accumulator slots. F16 deliberately admits only `wait_group<1>`
+//! with two slots. Groups are committed and slots are reused round-robin only
+//! after the corresponding partial wait has made the oldest slot safe. Every
+//! accepted pipeline ends with `wait_group<0>` before any accumulator escapes.
 //!
 //! A second narrow loop form composes these properties for the production
 //! counted-pipeline depths validated on Hopper: two canonical accumulator slots
@@ -70,7 +71,8 @@ use dialect_nvvm::ops::{
     WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaLoopValuesM64N64K16F32Bf16Op,
     WgmmaMmaLoopValuesM64N64K16F32F16Op, WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op,
     WgmmaMmaM64N64K16F32F16Op, WgmmaMmaM64N128K16F32Bf16Op,
-    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op, WgmmaWaitGroupSyncAlignedOp,
+    WgmmaMmaPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32F16Op,
+    WgmmaWaitGroupSyncAlignedOp,
 };
 use mir_transforms::analyses::{induction, loop_info::LoopInfo};
 use pliron::{
@@ -133,6 +135,7 @@ struct PipelinePlan {
     accumulators: Vec<Value>,
     descriptors: Vec<Value>,
     max_pending_groups: u8,
+    kind: WgmmaMmaKind,
 }
 
 #[derive(Clone, Copy)]
@@ -142,6 +145,7 @@ enum PipelineEvent {
         accumulator: Value,
         desc_a: Value,
         desc_b: Value,
+        kind: WgmmaMmaKind,
     },
     Commit(Ptr<Operation>),
     Wait {
@@ -1587,7 +1591,15 @@ fn collect_pipeline_events(
                 );
             }
 
-            if Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some() {
+            let pipeline_kind =
+                if Operation::get_op::<WgmmaMmaM64N64K16F32Bf16Op>(operation, ctx).is_some() {
+                    Some(WgmmaMmaKind::Bf16M64N64)
+                } else if Operation::get_op::<WgmmaMmaM64N64K16F32F16Op>(operation, ctx).is_some() {
+                    Some(WgmmaMmaKind::F16M64N64)
+                } else {
+                    None
+                };
+            if let Some(kind) = pipeline_kind {
                 require_pointer_mma_shape(ctx, operation)?;
                 let operation_ref = operation.deref(ctx);
                 let accumulator = operation_ref.get_operand(0);
@@ -1597,6 +1609,7 @@ fn collect_pipeline_events(
                     accumulator,
                     desc_a: operation_ref.get_operand(1),
                     desc_b: operation_ref.get_operand(2),
+                    kind,
                 });
                 continue;
             }
@@ -1675,6 +1688,7 @@ fn validate_pipeline_events(
     let mut waits = Vec::new();
     let mut partial_wait_positions = Vec::new();
     let mut partial_wait_value = None;
+    let mut pipeline_kind = None;
     let mut index = 0usize;
     let mut saw_final_wait = false;
 
@@ -1684,12 +1698,22 @@ fn validate_pipeline_events(
             accumulator,
             desc_a,
             desc_b,
+            kind,
         } = events[index]
         else {
             return pliron::input_err_noloc!(
                 "WGMMA pipelined region requires exactly one MMA before each commit_group"
             );
         };
+        match pipeline_kind {
+            Some(expected) if expected != kind => {
+                return pliron::input_err_noloc!(
+                    "one WGMMA partial-wait pipeline cannot mix MMA variants or shapes"
+                );
+            }
+            None => pipeline_kind = Some(kind),
+            _ => {}
+        }
         index += 1;
 
         let Some(PipelineEvent::Commit(commit)) = events.get(index).copied() else {
@@ -1761,6 +1785,12 @@ fn validate_pipeline_events(
         );
     }
     let max_pending_groups = partial_wait_value.expect("pipeline collector saw a partial wait");
+    let kind = pipeline_kind.expect("pipeline validation saw at least one MMA");
+    if kind == WgmmaMmaKind::F16M64N64 && max_pending_groups != 1 {
+        return pliron::input_err_noloc!(
+            "F16 WGMMA partial-wait pipeline supports only wait_group<1> with two accumulator slots"
+        );
+    }
     let slot_count =
         usize::try_from(max_pending_groups + 1).expect("wait_group depth in 1..=7 must fit usize");
     if group_accumulators.len() < slot_count {
@@ -1812,6 +1842,7 @@ fn validate_pipeline_events(
         descriptors,
         max_pending_groups: u8::try_from(max_pending_groups)
             .expect("wait_group depth in 1..=7 must fit u8"),
+        kind,
     })
 }
 
@@ -1980,6 +2011,7 @@ fn apply_pipeline_plan(ctx: &mut Context, plan: PipelinePlan) {
         accumulators,
         descriptors,
         max_pending_groups,
+        kind,
     } = plan;
 
     let final_wait = *waits
@@ -2004,12 +2036,21 @@ fn apply_pipeline_plan(ctx: &mut Context, plan: PipelinePlan) {
         all_accumulator_values.extend(accumulator_values);
     }
 
-    let pipeline = WgmmaMmaPipelineValuesM64N64K16F32Bf16Op::build(
-        ctx,
-        all_accumulator_values,
-        descriptors,
-        max_pending_groups,
-    );
+    let pipeline = match kind {
+        WgmmaMmaKind::Bf16M64N64 => WgmmaMmaPipelineValuesM64N64K16F32Bf16Op::build(
+            ctx,
+            all_accumulator_values,
+            descriptors,
+            max_pending_groups,
+        ),
+        WgmmaMmaKind::F16M64N64 => {
+            debug_assert_eq!(max_pending_groups, 1);
+            WgmmaMmaPipelineValuesM64N64K16F32F16Op::build(ctx, all_accumulator_values, descriptors)
+        }
+        WgmmaMmaKind::Tf32M64N64 | WgmmaMmaKind::Bf16M64N128 => {
+            unreachable!("pipeline validation admits only m64n64 BF16/F16")
+        }
+    };
     pipeline.deref_mut(ctx).set_loc(loc.clone());
     let result_count = accumulators.len() * ACCUMULATOR_LEN;
     let accumulator_results = (0..result_count)

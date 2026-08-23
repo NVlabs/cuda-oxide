@@ -8,6 +8,7 @@
 use crate::convert::intrinsics::common::*;
 use dialect_nvvm::ops::{
     WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
+    WgmmaMmaPipelineValuesM64N64K16F32F16Op,
 };
 use llvm_export::ops as llvm;
 use llvm_export::types::{self as llvm_types, VoidType};
@@ -39,7 +40,7 @@ impl WgmmaInputKind {
         match self {
             Self::Bf16 => "bf16.bf16",
             Self::F16 => "f16.f16",
-            Self::Tf32 => unreachable!("TF32 has no counted K-loop lowering"),
+            Self::Tf32 => unreachable!("TF32 has no m64n64k16 WGMMA lowering"),
         }
     }
 }
@@ -298,9 +299,15 @@ fn pipeline_accumulator_operand_list(slot: usize) -> String {
         .join(", ")
 }
 
-fn pipeline_template(slot_count: usize, group_count: usize, max_pending_groups: u8) -> String {
+fn pipeline_template(
+    slot_count: usize,
+    group_count: usize,
+    max_pending_groups: u8,
+    input_kind: WgmmaInputKind,
+) -> String {
     let result_count = slot_count * VALUE_ACCUMULATOR_COUNT;
     let descriptor_base = result_count * 2;
+    let input_types = input_kind.ptx_suffix();
     let mut template = String::from("{\n    wgmma.fence.sync.aligned;\n");
 
     for group_index in 0..group_count {
@@ -309,7 +316,7 @@ fn pipeline_template(slot_count: usize, group_count: usize, max_pending_groups: 
         let desc_a = descriptor_base + group_index * 2;
         let desc_b = desc_a + 1;
         template.push_str(&format!(
-            "    wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
+            "    wgmma.mma_async.sync.aligned.m64n64k16.f32.{input_types} \
              {{{accumulators}}}, ${desc_a}, ${desc_b}, 1, 1, 1, 0, 0;\n"
         ));
         template.push_str("    wgmma.commit_group.sync.aligned;\n");
@@ -668,12 +675,14 @@ pub(crate) fn convert_mma_loop_pipeline_values(
     Ok(())
 }
 
-/// Lower a multi-slot BF16 WGMMA pipeline to one convergent inline-PTX scope.
+/// Lower a supported multi-slot BF16 or F16 WGMMA pipeline to one convergent inline-PTX scope.
 ///
 /// Each accumulator slot owns 32 tied `f32` registers. Groups are committed
 /// independently and issued round-robin across `N + 1` slots for
 /// `wait_group<N>`, ensuring a slot is not reused until its previous group has
-/// completed. A final `wait_group<0>` occurs before any result escapes to LLVM.
+/// completed. BF16 supports the existing static depths; F16 is deliberately
+/// restricted to the two-slot `wait_group<1>` form. A final `wait_group<0>`
+/// occurs before any result escapes to LLVM.
 pub(crate) fn convert_mma_pipeline_values(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -699,10 +708,17 @@ pub(crate) fn convert_mma_pipeline_values(
         return pliron::input_err_noloc!("pipeline WGMMA descriptors must form pairs");
     }
 
-    let pipeline = Operation::get_op::<WgmmaMmaPipelineValuesM64N64K16F32Bf16Op>(op, ctx)
-        .expect("pipeline conversion must be invoked for the pipeline WGMMA op");
-    let Some(max_pending_groups) = pipeline.max_pending_groups(ctx) else {
-        return pliron::input_err_noloc!("pipeline WGMMA is missing max_pending_groups");
+    let (max_pending_groups, input_kind) = if let Some(pipeline) =
+        Operation::get_op::<WgmmaMmaPipelineValuesM64N64K16F32Bf16Op>(op, ctx)
+    {
+        let Some(max_pending_groups) = pipeline.max_pending_groups(ctx) else {
+            return pliron::input_err_noloc!("pipeline WGMMA is missing max_pending_groups");
+        };
+        (max_pending_groups, WgmmaInputKind::Bf16)
+    } else if Operation::get_op::<WgmmaMmaPipelineValuesM64N64K16F32F16Op>(op, ctx).is_some() {
+        (1, WgmmaInputKind::F16)
+    } else {
+        return pliron::input_err_noloc!("unsupported pipeline WGMMA carrier");
     };
     if !(1..=7).contains(&max_pending_groups) {
         return pliron::input_err_noloc!("pipeline WGMMA max_pending_groups must be in 1..=7");
@@ -720,7 +736,7 @@ pub(crate) fn convert_mma_pipeline_values(
         );
     }
 
-    let template = pipeline_template(slot_count, group_count, max_pending_groups);
+    let template = pipeline_template(slot_count, group_count, max_pending_groups, input_kind);
     let constraints = pipeline_constraints(result_count, descriptor_count);
     let f32_ty = FP32Type::get(ctx);
     let struct_ty: TypeHandle = llvm_types::StructType::get_unnamed(
@@ -1073,7 +1089,7 @@ mod tests {
 
     #[test]
     fn pipeline_template_throttles_groups_and_finishes_with_wait_zero() {
-        let template = pipeline_template(2, 4, 1);
+        let template = pipeline_template(2, 4, 1, WgmmaInputKind::Bf16);
         assert_eq!(template.matches("wgmma.mma_async").count(), 4);
         assert_eq!(
             template.matches("wgmma.commit_group.sync.aligned").count(),
@@ -1092,6 +1108,28 @@ mod tests {
         assert!(!template.contains("ld.f32"));
         assert!(!template.contains("st.f32"));
         assert!(!template.contains(".reg .f32"));
+        assert!(template.contains("m64n64k16.f32.bf16.bf16"));
+        assert!(!template.contains("m64n64k16.f32.f16.f16"));
+
+        let f16_template = pipeline_template(2, 4, 1, WgmmaInputKind::F16);
+        assert_eq!(f16_template.matches("wgmma.mma_async").count(), 4);
+        assert_eq!(
+            f16_template
+                .matches("wgmma.wait_group.sync.aligned 1")
+                .count(),
+            3
+        );
+        assert_eq!(
+            f16_template
+                .matches("wgmma.wait_group.sync.aligned 0")
+                .count(),
+            1
+        );
+        assert!(f16_template.contains("m64n64k16.f32.f16.f16"));
+        assert!(!f16_template.contains("m64n64k16.f32.bf16.bf16"));
+        assert!(!f16_template.contains("ld.f32"));
+        assert!(!f16_template.contains("st.f32"));
+        assert!(!f16_template.contains(".reg .f32"));
 
         let constraints = pipeline_constraints(64, 8);
         assert_eq!(

@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Proves that a two-slot BF16 WGMMA pipeline with `wait_group<1>` can keep
-//! sixty-four tied `f32` accumulator values spill-free through code generation.
+//! Proves that two-slot BF16 and F16 WGMMA pipelines with `wait_group<1>` can
+//! keep sixty-four tied `f32` accumulator values spill-free through code
+//! generation.
 
 #![cfg(unix)]
 
@@ -43,7 +44,11 @@ fn accumulator_register_list(slot: usize) -> String {
         .join(", ")
 }
 
-fn build_wgmma_pipeline_carrier_kernel(module: &mut CodegenModule) {
+fn build_wgmma_pipeline_carrier_kernel(
+    module: &mut CodegenModule,
+    kernel_name: &str,
+    mnemonic: &str,
+) {
     module.edit(|ctx, module| {
         let module_region = module.get_operation().deref(ctx).get_region(0);
         let module_block = module_region
@@ -75,7 +80,7 @@ fn build_wgmma_pipeline_carrier_kernel(module: &mut CodegenModule) {
             1,
         );
         let function = MirFuncOp::new(ctx, function_op, TypeAttr::new(function_type.into()));
-        function.set_symbol_name(ctx, "wgmma_pipeline_carrier_kernel".try_into().unwrap());
+        function.set_symbol_name(ctx, kernel_name.try_into().unwrap());
 
         let function_region = function.get_operation().deref(ctx).get_region(0);
         let entry = BasicBlock::new(ctx, None, argument_types);
@@ -95,10 +100,10 @@ fn build_wgmma_pipeline_carrier_kernel(module: &mut CodegenModule) {
         let template = format!(
             "{{\n\
              \x20   wgmma.fence.sync.aligned;\n\
-             \x20   wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
+             \x20   {mnemonic} \
              {{{slot0}}}, ${descriptor_base}, ${}, 1, 1, 1, 0, 0;\n\
              \x20   wgmma.commit_group.sync.aligned;\n\
-             \x20   wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16 \
+             \x20   {mnemonic} \
              {{{slot1}}}, ${}, ${}, 1, 1, 1, 0, 0;\n\
              \x20   wgmma.commit_group.sync.aligned;\n\
              \x20   wgmma.wait_group.sync.aligned 1;\n\
@@ -185,7 +190,7 @@ fn build_wgmma_pipeline_carrier_kernel(module: &mut CodegenModule) {
     });
 
     module
-        .mark_kernel_entry("wgmma_pipeline_carrier_kernel")
+        .mark_kernel_entry(kernel_name)
         .expect("kernel entry must be marked");
 }
 
@@ -211,10 +216,9 @@ fn used_register_count(ptxas_stderr: &str) -> Option<u32> {
     })
 }
 
-#[test]
-fn bf16_wgmma_wait_group_one_keeps_two_accumulator_slots_without_spills() {
-    let mut module = CodegenModule::new("wgmma_pipeline_carrier").unwrap();
-    build_wgmma_pipeline_carrier_kernel(&mut module);
+fn run_wgmma_wait_group_one_pipeline_probe(kernel_name: &str, mnemonic: &str) {
+    let mut module = CodegenModule::new(kernel_name).unwrap();
+    build_wgmma_pipeline_carrier_kernel(&mut module, kernel_name, mnemonic);
 
     let compiler = Compiler::discover().expect("LLVM 21+ llc/opt must be installed");
     let options = CompileOptions::new(Target::parse("sm_90a").unwrap());
@@ -229,15 +233,11 @@ fn bf16_wgmma_wait_group_one_keeps_two_accumulator_slots_without_spills() {
         "PTX must target sm_90a:\n{text}"
     );
     assert!(
-        text.contains("wgmma_pipeline_carrier_kernel"),
+        text.contains(kernel_name),
         "pipeline carrier kernel is missing:\n{text}"
     );
     assert_eq!(text.matches("wgmma.fence.sync.aligned").count(), 1);
-    assert_eq!(
-        text.matches("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
-            .count(),
-        2
-    );
+    assert_eq!(text.matches(mnemonic).count(), 2);
     assert_eq!(text.matches("wgmma.commit_group.sync.aligned").count(), 2);
     assert_eq!(text.matches("wgmma.wait_group.sync.aligned 1").count(), 1);
     assert_eq!(text.matches("wgmma.wait_group.sync.aligned 0").count(), 1);
@@ -298,4 +298,20 @@ fn bf16_wgmma_wait_group_one_keeps_two_accumulator_slots_without_spills() {
     );
 
     eprintln!("{stderr}");
+}
+
+#[test]
+fn bf16_wgmma_wait_group_one_keeps_two_accumulator_slots_without_spills() {
+    run_wgmma_wait_group_one_pipeline_probe(
+        "wgmma_bf16_pipeline_carrier_kernel",
+        "wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16",
+    );
+}
+
+#[test]
+fn f16_wgmma_wait_group_one_keeps_two_accumulator_slots_without_spills() {
+    run_wgmma_wait_group_one_pipeline_probe(
+        "wgmma_f16_pipeline_carrier_kernel",
+        "wgmma.mma_async.sync.aligned.m64n64k16.f32.f16.f16",
+    );
 }
