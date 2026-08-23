@@ -102,16 +102,16 @@ unsafe {
 // `acc` is now safe to observe.
 ```
 
-The BF16 m64n128 full-drain variant uses the same synchronization contract but
-a 64-value per-thread accumulator:
+The BF16 and F16 m64n128 full-drain variants use the same synchronization
+contract but a 64-value per-thread accumulator:
 
 ```rust
-use cuda_device::wgmma::wgmma_mma_m64n128k16_f32_bf16;
+use cuda_device::wgmma::wgmma_mma_m64n128k16_f32_f16;
 
 let mut wide_acc = [[0.0f32; 8]; 8];
 unsafe {
     wgmma_fence();
-    wgmma_mma_m64n128k16_f32_bf16(&mut wide_acc, a_desc, b_desc);
+    wgmma_mma_m64n128k16_f32_f16(&mut wide_acc, a_desc, b_desc);
     wgmma_commit_group();
     wgmma_wait_group::<0>();
 }
@@ -126,8 +126,9 @@ hardware shape uses K=8.
 The compiler supports `m64n64k16.f32.bf16.bf16` across three conservative
 lowering shapes, `m64n64k16.f32.f16.f16` for canonical linear full-drain and
 counted K-loop regions, `m64n64k8.f32.tf32.tf32` for canonical linear
-full-drain regions only, and `m64n128k16.f32.bf16.bf16` for canonical linear
-full-drain regions. In every accepted case, the entire asynchronous
+full-drain regions only, and both `m64n128k16.f32.bf16.bf16` and
+`m64n128k16.f32.f16.f16` for canonical linear full-drain regions. In every
+accepted case, the entire asynchronous
 accumulator lifetime stays inside one convergent inline-PTX statement so LLVM
 cannot insert a spill boundary while a WGMMA group is pending.
 
@@ -137,9 +138,10 @@ into 32 SSA `f32` values before the WGMMA region and stored once after the final
 Unsupported BF16 full-drain pointer shapes retain the original deferred
 pointer-form lowering; F16 and TF32 do not have a pointer-form fallback.
 
-**m64n128 BF16 linear full drain.** A canonical `[[f32; 8]; 8]` accumulator is
-carried as 64 tied SSA `f32` values through one or more homogeneous
-`m64n128k16.f32.bf16.bf16` instructions, one commit, and a final
+**m64n128 BF16/F16 linear full drain.** A canonical `[[f32; 8]; 8]`
+accumulator is
+carried as 64 tied SSA `f32` values through one or more homogeneous BF16 or F16
+`m64n128k16` instructions, one commit, and a final
 `wait_group<0>`. Accumulator element addresses are recomputed after the fused
 inline-PTX scope instead of being kept live across it. This shape has no
 pointer-form fallback, counted-loop lowering, or partial-wait pipeline lowering.
