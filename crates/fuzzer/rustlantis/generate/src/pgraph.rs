@@ -1353,8 +1353,12 @@ impl PlacePath {
     }
 }
 
-/// A depth-first iterator over all reachable projections from a local variable
-/// FIXME: this breaks if there's a reference cycle in the graph
+/// A depth-first iterator over all reachable projection paths from a local variable.
+///
+/// The root may be followed through any outgoing projection, including `Deref`.
+/// Subsequent traversal only follows `subfield_edges`, which contain structural
+/// projections created by `add_place`. Reference cycles therefore cannot be
+/// re-entered by this iterator.
 #[derive(Clone)]
 pub struct ProjectionIter<'pt> {
     pt: &'pt PlaceGraph,
@@ -1419,6 +1423,11 @@ impl<'pt> Iterator for ProjectionIter<'pt> {
             let new_edges = self.pt.places[target].subfield_edges.iter();
             self.to_visit.extend(new_edges.filter_map(|&eidx| {
                 let e = self.pt.places[eidx];
+                debug_assert!(
+                    !e.is_deref(),
+                    "subfield_edges must not contain Deref projections"
+                );
+
                 // Only downcast to current variants
                 if let ProjectionElem::DowncastField(vid, _, _) = e
                     && self.pt.known_variant(target) != Some(vid)
