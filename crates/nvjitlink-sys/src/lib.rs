@@ -6,8 +6,27 @@
 //! Runtime (`dlopen`) bindings to NVIDIA's nvJitLink.
 //!
 //! nvJitLink links one or more LTOIR modules (and other input forms) into
-//! a final cubin or PTX. It is part of the CUDA Toolkit and ships at
-//! `<cuda>/lib64/libnvJitLink.so`.
+//! a final cubin or PTX. It is part of the CUDA Toolkit and ships as
+//! `libnvJitLink.so` under `<cuda>/lib64` on Linux and as versioned
+//! `nvJitLink_*.dll` files under `<cuda>/bin` on Windows.
+//!
+//! # Library discovery
+//!
+//! [`LibNvJitLink::load`] tries (in order):
+//! 1. `LIBNVJITLINK_PATH` env var, if set.
+//! 2. CUDA Toolkit roots from `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, and
+//!    `CUDA_PATH`.
+//!    - Linux: `<root>/lib64/libnvJitLink.so`.
+//!    - Windows: versioned `nvJitLink_*.dll` files under `<root>/bin/x64`
+//!      and `<root>/bin`, plus `<root>/lib/x64/nvJitLink.dll`.
+//! 3. Platform loader locations.
+//!    - Linux: `libnvJitLink.so.13`, `libnvJitLink.so.12`,
+//!      `libnvJitLink.so`.
+//!    - Windows: versioned `nvJitLink_*.dll` files found on `PATH`, followed
+//!      by known CUDA 13/12 loader names as fallbacks.
+//!
+//! Linux additionally probes `/usr/local/cuda` and `/opt/cuda` as Toolkit
+//! roots. Windows does not inherit those Unix defaults.
 //!
 //! # Symbol naming
 //!
@@ -97,20 +116,21 @@ pub enum InputType {
 /// All errors surfaced by this crate.
 #[derive(Debug, Error)]
 pub enum NvJitLinkError {
-    /// `libnvJitLink.so` could not be located on this system. `tried` lists
-    /// every path or SONAME that was probed, in order, joined by newlines.
+    /// The nvJitLink dynamic library could not be located on this system.
+    /// `tried` lists every path or loader name that was probed, in order,
+    /// joined by newlines.
     #[error(
-        "libnvJitLink.so could not be located. Set LIBNVJITLINK_PATH, CUDA_TOOLKIT_PATH, or CUDA_HOME, or install the CUDA Toolkit. Tried:\n  {tried}"
+        "nvJitLink dynamic library could not be located. Set LIBNVJITLINK_PATH, CUDA_TOOLKIT_PATH, or CUDA_HOME, or install the CUDA Toolkit. Tried:\n  {tried}"
     )]
     LibraryNotFound {
         /// Newline-joined list of paths and SONAMEs that were probed.
         tried: String,
     },
 
-    /// `libnvJitLink.so` was loaded, but `dlsym` failed to resolve a function
+    /// nvJitLink was loaded, but dynamic symbol lookup failed for a function
     /// this crate requires. Indicates an old or broken nvJitLink that does
     /// not export the standard linker API.
-    #[error("libnvJitLink.so was found but a required symbol is missing: {symbol}: {source}")]
+    #[error("nvJitLink was found but a required symbol is missing: {symbol}: {source}")]
     SymbolNotFound {
         /// Name of the missing nvJitLink function (e.g. `nvJitLinkCreate`).
         symbol: &'static str,
@@ -729,30 +749,130 @@ fn open_library(tried: &mut Vec<String>, retain_exact_file: bool) -> Option<Open
         }
     }
 
-    for root in cuda_roots() {
-        let path = root.join("lib64/libnvJitLink.so");
-        tried.push(path.display().to_string());
-        if let Some(opened) = open_library_path(&path, retain_exact_file) {
-            return Some(opened);
-        }
-    }
+    if cfg!(target_os = "windows") {
+        for root in cuda_roots() {
+            for directory in windows_toolkit_library_dirs(&root) {
+                for path in matching_versioned_dlls(&directory, "nvJitLink_") {
+                    tried.push(path.display().to_string());
+                    if let Some(opened) = open_library_path(&path, retain_exact_file) {
+                        return Some(opened);
+                    }
+                }
+            }
 
-    for soname in [
-        "libnvJitLink.so.13",
-        "libnvJitLink.so.12",
-        "libnvJitLink.so",
-    ] {
-        tried.push(soname.to_string());
-        if let Ok(lib) = unsafe { Library::new(soname) } {
-            return Some(OpenedLibrary {
-                library: lib,
-                loaded_file: None,
-                loaded_identity: None,
-            });
+            let path = windows_toolkit_unversioned_library_path(&root);
+            tried.push(path.display().to_string());
+            if let Some(opened) = open_library_path(&path, retain_exact_file) {
+                return Some(opened);
+            }
+        }
+
+        for directory in path_directories() {
+            for path in matching_versioned_dlls(&directory, "nvJitLink_") {
+                tried.push(path.display().to_string());
+                if let Some(opened) = open_library_path(&path, retain_exact_file) {
+                    return Some(opened);
+                }
+            }
+        }
+
+        // Keep explicit loader fallbacks for known CUDA ABI families. This
+        // covers standard Windows DLL search locations that
+        // are not represented in PATH.
+        for dll_name in ["nvJitLink_130_0.dll", "nvJitLink_120_0.dll"] {
+            tried.push(dll_name.to_string());
+            if let Ok(lib) = unsafe { Library::new(dll_name) } {
+                return Some(OpenedLibrary {
+                    library: lib,
+                    loaded_file: None,
+                    loaded_identity: None,
+                });
+            }
+        }
+    } else {
+        // Preserve the existing Linux/Unix discovery order exactly.
+        for root in cuda_roots() {
+            let path = root.join("lib64/libnvJitLink.so");
+            tried.push(path.display().to_string());
+            if let Some(opened) = open_library_path(&path, retain_exact_file) {
+                return Some(opened);
+            }
+        }
+
+        for soname in [
+            "libnvJitLink.so.13",
+            "libnvJitLink.so.12",
+            "libnvJitLink.so",
+        ] {
+            tried.push(soname.to_string());
+            if let Ok(lib) = unsafe { Library::new(soname) } {
+                return Some(OpenedLibrary {
+                    library: lib,
+                    loaded_file: None,
+                    loaded_identity: None,
+                });
+            }
         }
     }
 
     None
+}
+
+fn windows_toolkit_library_dirs(root: &Path) -> [PathBuf; 2] {
+    [root.join("bin").join("x64"), root.join("bin")]
+}
+
+fn windows_toolkit_unversioned_library_path(root: &Path) -> PathBuf {
+    root.join("lib").join("x64").join("nvJitLink.dll")
+}
+
+fn path_directories() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect())
+        .unwrap_or_default()
+}
+
+/// Return versioned Windows DLLs in newest-name-first order.
+///
+/// CUDA library filenames encode their ABI version, so descending lexical
+/// order selects the newest installed candidate for the current naming scheme
+/// without hard-coding every CUDA release. The prefix comparison is
+/// case-insensitive to match Windows filesystem conventions.
+fn matching_versioned_dlls(directory: &Path, prefix: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+
+    let prefix = prefix.to_ascii_lowercase();
+    let mut matches = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            if !entry.file_type().ok()?.is_file() {
+                return None;
+            }
+            let lowercase = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if lowercase.starts_with(&prefix) && lowercase.ends_with(".dll") {
+                Some(entry.path())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    matches.sort_by(|left, right| {
+        let left_name = left
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let right_name = right
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        right_name.cmp(&left_name)
+    });
+    matches
 }
 
 fn open_library_path(path: &Path, retain_exact_file: bool) -> Option<OpenedLibrary> {
@@ -803,8 +923,10 @@ fn cuda_roots_from_env(mut get_env: impl FnMut(&str) -> Option<String>) -> Vec<P
             roots.push(PathBuf::from(r));
         }
     }
-    roots.push(PathBuf::from("/usr/local/cuda"));
-    roots.push(PathBuf::from("/opt/cuda"));
+    if !cfg!(target_os = "windows") {
+        roots.push(PathBuf::from("/usr/local/cuda"));
+        roots.push(PathBuf::from("/opt/cuda"));
+    }
     roots
 }
 
@@ -1083,6 +1205,44 @@ mod tests {
     }
 
     #[test]
+    fn windows_toolkit_dirs_cover_current_nvjitlink_layouts() {
+        let root = PathBuf::from(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0");
+        assert_eq!(
+            windows_toolkit_library_dirs(&root),
+            [root.join("bin").join("x64"), root.join("bin")]
+        );
+        assert_eq!(
+            windows_toolkit_unversioned_library_path(&root),
+            root.join("lib").join("x64").join("nvJitLink.dll")
+        );
+    }
+
+    #[test]
+    fn versioned_dll_scan_is_case_insensitive_and_newest_first() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "nvjitlink-sys-dll-scan-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("nvJitLink_120_0.dll"), []).unwrap();
+        std::fs::write(directory.join("NVJITLINK_130_0.DLL"), []).unwrap();
+        std::fs::write(directory.join("not-nvJitLink_140_0.dll"), []).unwrap();
+        std::fs::create_dir(directory.join("nvJitLink_999_0.dll")).unwrap();
+
+        let names = matching_versioned_dlls(&directory, "nvJitLink_")
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, ["NVJITLINK_130_0.DLL", "nvJitLink_120_0.dll"]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn cuda_roots_prefers_project_toolkit_env_var() {
         let roots = cuda_roots_from_env(|var| match var {
             "CUDA_TOOLKIT_PATH" => Some("/cuda/toolkit".to_string()),
@@ -1091,16 +1251,15 @@ mod tests {
             _ => None,
         });
 
-        assert_eq!(
-            roots,
-            vec![
-                PathBuf::from("/cuda/toolkit"),
-                PathBuf::from("/cuda/home"),
-                PathBuf::from("/cuda/path"),
-                PathBuf::from("/usr/local/cuda"),
-                PathBuf::from("/opt/cuda"),
-            ]
-        );
+        let mut expected = vec![
+            PathBuf::from("/cuda/toolkit"),
+            PathBuf::from("/cuda/home"),
+            PathBuf::from("/cuda/path"),
+        ];
+        if !cfg!(target_os = "windows") {
+            expected.extend([PathBuf::from("/usr/local/cuda"), PathBuf::from("/opt/cuda")]);
+        }
+        assert_eq!(roots, expected);
     }
 
     #[test]

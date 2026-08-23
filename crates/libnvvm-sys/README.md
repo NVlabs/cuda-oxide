@@ -24,10 +24,19 @@ None. The library is loaded at runtime, so the CUDA Toolkit only needs to be pre
 `LibNvvm::load()` tries (in order):
 
 1. `LIBNVVM_PATH` env var, if set.
-2. `<root>/nvvm/lib64/libnvvm.so` for `<root>` in `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda`.
-3. The system loader (`libnvvm.so.4`, `libnvvm.so.3`, `libnvvm.so`).
+2. CUDA Toolkit roots from `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, and `CUDA_PATH`.
+   - Linux: `<root>/nvvm/lib64/libnvvm.so`.
+   - Windows: versioned `nvvm64_*.dll` files under `<root>/nvvm/bin/x64`
+     and `<root>/nvvm/bin`.
+3. Platform loader locations.
+   - Linux: `libnvvm.so.4`, `libnvvm.so.3`, `libnvvm.so`.
+   - Windows: versioned `nvvm64_*.dll` files found on `PATH`, then
+     `nvvm64_40_0.dll` as a known loader-name fallback.
 
-libNVVM ships with the standard CUDA Toolkit at `<cuda>/nvvm/lib64/`. No separate download.
+Linux additionally probes `/usr/local/cuda` and `/opt/cuda` as Toolkit roots.
+Windows does not inherit those Unix defaults.
+
+libNVVM ships with the standard CUDA Toolkit. No separate download.
 
 ## Usage
 

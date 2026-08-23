@@ -8,18 +8,27 @@
 //! libNVVM is the front-end of NVIDIA's PTX-targeting compiler. It accepts
 //! NVVM IR (an LLVM-IR dialect) and produces either PTX or LTOIR.
 //!
-//! This crate is a thin, RAII Rust binding that loads `libnvvm.so` lazily
-//! at runtime via `libloading`. It is not a `bindgen`-generated wrapper, so
-//! it does not require the CUDA Toolkit to be present at build time, only
-//! at run time.
+//! This crate is a thin, RAII Rust binding that loads libNVVM lazily at
+//! runtime via `libloading`. It is not a `bindgen`-generated wrapper, so it
+//! does not require the CUDA Toolkit to be present at build time, only at run
+//! time.
 //!
 //! # Library discovery
 //!
 //! [`LibNvvm::load`] tries (in order):
 //! 1. `LIBNVVM_PATH` env var, if set.
-//! 2. `<root>/nvvm/lib64/libnvvm.so` for `<root>` in `CUDA_TOOLKIT_PATH`,
-//!    `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda`.
-//! 3. The system loader (`libnvvm.so.4`, `libnvvm.so.3`, `libnvvm.so`).
+//! 2. CUDA Toolkit roots from `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, and
+//!    `CUDA_PATH`.
+//!    - Linux: `<root>/nvvm/lib64/libnvvm.so`.
+//!    - Windows: versioned `nvvm64_*.dll` files under
+//!      `<root>/nvvm/bin/x64` and `<root>/nvvm/bin`.
+//! 3. Platform loader locations.
+//!    - Linux: `libnvvm.so.4`, `libnvvm.so.3`, `libnvvm.so`.
+//!    - Windows: versioned `nvvm64_*.dll` files found on `PATH`, then the
+//!      known `nvvm64_40_0.dll` loader name as a fallback.
+//!
+//! Linux additionally probes `/usr/local/cuda` and `/opt/cuda` as Toolkit
+//! roots. Windows does not inherit those Unix defaults.
 //!
 //! # Symbol naming
 //!
@@ -202,20 +211,21 @@ impl NvvmResult {
 /// All errors surfaced by this crate.
 #[derive(Debug, Error)]
 pub enum NvvmError {
-    /// `libnvvm.so` could not be located on this system. `tried` lists every
-    /// path or SONAME that was probed, in order, joined by newlines.
+    /// The libNVVM dynamic library could not be located on this system.
+    /// `tried` lists every path or loader name that was probed, in order,
+    /// joined by newlines.
     #[error(
-        "libnvvm.so could not be located. Set LIBNVVM_PATH, CUDA_TOOLKIT_PATH, or CUDA_HOME, or install the CUDA Toolkit. Tried:\n  {tried}"
+        "libNVVM dynamic library could not be located. Set LIBNVVM_PATH, CUDA_TOOLKIT_PATH, or CUDA_HOME, or install the CUDA Toolkit. Tried:\n  {tried}"
     )]
     LibraryNotFound {
         /// Newline-joined list of paths and SONAMEs that were probed.
         tried: String,
     },
 
-    /// `libnvvm.so` was loaded, but `dlsym` failed to resolve a function this
-    /// crate requires. Indicates an old or broken libNVVM that does not
+    /// libNVVM was loaded, but dynamic symbol lookup failed for a function
+    /// this crate requires. Indicates an old or broken libNVVM that does not
     /// export the standard NVVM IR API.
-    #[error("libnvvm.so was found but a required symbol is missing: {symbol}: {source}")]
+    #[error("libNVVM was found but a required symbol is missing: {symbol}: {source}")]
     SymbolNotFound {
         /// Name of the missing libNVVM function (e.g. `nvvmCreateProgram`).
         symbol: &'static str,
@@ -686,26 +696,118 @@ fn open_library(tried: &mut Vec<String>, retain_exact_file: bool) -> Option<Open
         }
     }
 
-    for root in cuda_roots() {
-        let path = root.join("nvvm/lib64/libnvvm.so");
-        tried.push(path.display().to_string());
-        if let Some(opened) = open_library_path(&path, retain_exact_file) {
-            return Some(opened);
+    if cfg!(target_os = "windows") {
+        for root in cuda_roots() {
+            for directory in windows_toolkit_library_dirs(&root) {
+                for path in matching_versioned_dlls(&directory, "nvvm64_") {
+                    tried.push(path.display().to_string());
+                    if let Some(opened) = open_library_path(&path, retain_exact_file) {
+                        return Some(opened);
+                    }
+                }
+            }
         }
-    }
 
-    for soname in ["libnvvm.so.4", "libnvvm.so.3", "libnvvm.so"] {
-        tried.push(soname.to_string());
-        if let Ok(lib) = unsafe { Library::new(soname) } {
+        for directory in path_directories() {
+            for path in matching_versioned_dlls(&directory, "nvvm64_") {
+                tried.push(path.display().to_string());
+                if let Some(opened) = open_library_path(&path, retain_exact_file) {
+                    return Some(opened);
+                }
+            }
+        }
+
+        // CUDA 12.x/13.x currently ship this ABI name. Keep it as a loader
+        // fallback so standard Windows DLL search locations still work even
+        // when they are not explicitly represented in PATH.
+        let dll_name = "nvvm64_40_0.dll";
+        tried.push(dll_name.to_string());
+        if let Ok(lib) = unsafe { Library::new(dll_name) } {
             return Some(OpenedLibrary {
                 library: lib,
                 loaded_file: None,
                 loaded_identity: None,
             });
         }
+    } else {
+        // Preserve the existing Linux/Unix discovery order exactly.
+        for root in cuda_roots() {
+            let path = root.join("nvvm/lib64/libnvvm.so");
+            tried.push(path.display().to_string());
+            if let Some(opened) = open_library_path(&path, retain_exact_file) {
+                return Some(opened);
+            }
+        }
+
+        for soname in ["libnvvm.so.4", "libnvvm.so.3", "libnvvm.so"] {
+            tried.push(soname.to_string());
+            if let Ok(lib) = unsafe { Library::new(soname) } {
+                return Some(OpenedLibrary {
+                    library: lib,
+                    loaded_file: None,
+                    loaded_identity: None,
+                });
+            }
+        }
     }
 
     None
+}
+
+fn windows_toolkit_library_dirs(root: &Path) -> [PathBuf; 2] {
+    [
+        root.join("nvvm").join("bin").join("x64"),
+        root.join("nvvm").join("bin"),
+    ]
+}
+
+fn path_directories() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect())
+        .unwrap_or_default()
+}
+
+/// Return versioned Windows DLLs in newest-name-first order.
+///
+/// CUDA library filenames encode their ABI version, so descending lexical
+/// order selects the newest installed candidate for the current naming scheme
+/// without hard-coding every CUDA release. The prefix comparison is
+/// case-insensitive to match Windows filesystem conventions.
+fn matching_versioned_dlls(directory: &Path, prefix: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+
+    let prefix = prefix.to_ascii_lowercase();
+    let mut matches = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            if !entry.file_type().ok()?.is_file() {
+                return None;
+            }
+            let lowercase = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            if lowercase.starts_with(&prefix) && lowercase.ends_with(".dll") {
+                Some(entry.path())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    matches.sort_by(|left, right| {
+        let left_name = left
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let right_name = right
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        right_name.cmp(&left_name)
+    });
+    matches
 }
 
 fn open_library_path(path: &Path, retain_exact_file: bool) -> Option<OpenedLibrary> {
@@ -756,8 +858,10 @@ fn cuda_roots_from_env(mut get_env: impl FnMut(&str) -> Option<String>) -> Vec<P
             roots.push(PathBuf::from(r));
         }
     }
-    roots.push(PathBuf::from("/usr/local/cuda"));
-    roots.push(PathBuf::from("/opt/cuda"));
+    if !cfg!(target_os = "windows") {
+        roots.push(PathBuf::from("/usr/local/cuda"));
+        roots.push(PathBuf::from("/opt/cuda"));
+    }
     roots
 }
 
@@ -990,6 +1094,43 @@ entry:
     }
 
     #[test]
+    fn windows_toolkit_dirs_cover_current_libnvvm_layouts() {
+        let root = PathBuf::from(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0");
+        assert_eq!(
+            windows_toolkit_library_dirs(&root),
+            [
+                root.join("nvvm").join("bin").join("x64"),
+                root.join("nvvm").join("bin"),
+            ]
+        );
+    }
+
+    #[test]
+    fn versioned_dll_scan_is_case_insensitive_and_newest_first() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "libnvvm-sys-dll-scan-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("nvvm64_30_0.dll"), []).unwrap();
+        std::fs::write(directory.join("NVVM64_40_0.DLL"), []).unwrap();
+        std::fs::write(directory.join("not-nvvm64_50_0.dll"), []).unwrap();
+        std::fs::create_dir(directory.join("nvvm64_99_0.dll")).unwrap();
+
+        let names = matching_versioned_dlls(&directory, "nvvm64_")
+            .into_iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, ["NVVM64_40_0.DLL", "nvvm64_30_0.dll"]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn cuda_roots_prefers_project_toolkit_env_var() {
         let roots = cuda_roots_from_env(|var| match var {
             "CUDA_TOOLKIT_PATH" => Some("/cuda/toolkit".to_string()),
@@ -998,16 +1139,15 @@ entry:
             _ => None,
         });
 
-        assert_eq!(
-            roots,
-            vec![
-                PathBuf::from("/cuda/toolkit"),
-                PathBuf::from("/cuda/home"),
-                PathBuf::from("/cuda/path"),
-                PathBuf::from("/usr/local/cuda"),
-                PathBuf::from("/opt/cuda"),
-            ]
-        );
+        let mut expected = vec![
+            PathBuf::from("/cuda/toolkit"),
+            PathBuf::from("/cuda/home"),
+            PathBuf::from("/cuda/path"),
+        ];
+        if !cfg!(target_os = "windows") {
+            expected.extend([PathBuf::from("/usr/local/cuda"), PathBuf::from("/opt/cuda")]);
+        }
+        assert_eq!(roots, expected);
     }
 
     #[test]

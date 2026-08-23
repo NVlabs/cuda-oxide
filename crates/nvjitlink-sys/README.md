@@ -18,10 +18,20 @@ None. The library is loaded at runtime, so the CUDA Toolkit only needs to be pre
 `LibNvJitLink::load()` tries (in order):
 
 1. `LIBNVJITLINK_PATH` env var, if set.
-2. `<root>/lib64/libnvJitLink.so` for `<root>` in `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, `CUDA_PATH`, `/usr/local/cuda`, `/opt/cuda`.
-3. The system loader (`libnvJitLink.so.13`, `libnvJitLink.so.12`, `libnvJitLink.so`).
+2. CUDA Toolkit roots from `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, and `CUDA_PATH`.
+   - Linux: `<root>/lib64/libnvJitLink.so`.
+   - Windows: versioned `nvJitLink_*.dll` files under `<root>/bin/x64`
+     and `<root>/bin`, plus `<root>/lib/x64/nvJitLink.dll`.
+3. Platform loader locations.
+   - Linux: `libnvJitLink.so.13`, `libnvJitLink.so.12`,
+     `libnvJitLink.so`.
+   - Windows: versioned `nvJitLink_*.dll` files found on `PATH`, then the
+     known CUDA 13/12 loader names as fallbacks.
 
-nvJitLink ships with the standard CUDA Toolkit at `<cuda>/lib64/`. No separate download.
+Linux additionally probes `/usr/local/cuda` and `/opt/cuda` as Toolkit roots.
+Windows does not inherit those Unix defaults.
+
+nvJitLink ships with the standard CUDA Toolkit. No separate download.
 
 ## Symbol naming
 
