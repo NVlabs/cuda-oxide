@@ -733,23 +733,33 @@ fn run_binary(executable: &Path, cwd: &Path, timeout: Duration) -> RunResult {
     // Both marker predicates below fold case themselves, so this is the raw
     // combined stream rather than a lowercased copy.
     let combined = format!("{stdout}\n{stderr}");
-    let kind = if timed_out {
-        RunKind::Hang
-    } else if has_skip_marker(&combined) {
-        RunKind::Skipped
-    } else if has_mismatch_marker(&combined) {
-        RunKind::Mismatch
-    } else if success {
-        RunKind::Pass
-    } else {
-        RunKind::Crash
-    };
+    let kind = classify_process_result(timed_out, success, &combined);
     RunResult {
         kind,
         exit_code,
         timed_out,
         stdout,
         stderr,
+    }
+}
+
+/// Classify stronger failures before a graceful skip. This is the same order
+/// as `scripts/smoketest.sh`:
+///
+/// ```text
+/// timeout -> nonzero exit -> mismatch -> skip -> pass
+/// ```
+fn classify_process_result(timed_out: bool, success: bool, output: &str) -> RunKind {
+    if timed_out {
+        RunKind::Hang
+    } else if !success {
+        RunKind::Crash
+    } else if has_mismatch_marker(output) {
+        RunKind::Mismatch
+    } else if has_skip_marker(output) {
+        RunKind::Skipped
+    } else {
+        RunKind::Pass
     }
 }
 
@@ -871,13 +881,8 @@ const SKIP_MARKERS: [&str; 2] = ["skipping:", "pass (skipped)"];
 
 /// Case is folded here rather than by the caller.
 ///
-/// The smoketest greps these markers with `-i`, so matching them case-blind is
-/// the contract, not a convenience. It used to be met by `run_binary`
-/// lowercasing the output before calling in -- which worked, and left a
-/// predicate that silently disagreed with its own name for anyone who called
-/// it with a raw stream. `Skipping:` and `PASS (skipped):` are both spellings
-/// examples actually print, and both missed. Folding case in the predicate
-/// removes the precondition instead of documenting it.
+/// This matches the smoketest's `grep -i` rule and lets callers pass the raw
+/// process output. For example, `Skipping:` and `PASS (skipped):` both match.
 fn has_skip_marker(output: &str) -> bool {
     output.lines().any(|line| {
         let line = line.trim_start().as_bytes();
@@ -888,10 +893,7 @@ fn has_skip_marker(output: &str) -> bool {
     })
 }
 
-/// Case is folded here rather than by the caller, for the reason
-/// [`has_skip_marker`] gives. `MISMATCH` in capitals is the conventional
-/// spelling -- it is how the fuzzer reports the same finding -- and it was the
-/// one this list could not see on a raw stream.
+/// Case is folded here too, so `MISMATCH` and `Mismatch` mean the same thing.
 fn has_mismatch_marker(output: &str) -> bool {
     let output = output.to_ascii_lowercase();
     [
@@ -959,12 +961,11 @@ mod tests {
     /// that must not be mistaken for either.
     #[test]
     fn both_smoketest_skip_spellings_are_recognised() {
-        // `run_binary` lowercases before classifying, so these arrive lowered.
         for declined in [
-            "skipping: cluster launch requires sm_90",
-            "  skipping: needs two devices",
-            "pass (skipped): ldmatrix.m8n8.x4.b16 requires sm_75+; device is sm_70",
-            "    pass (skipped): no peer access",
+            "Skipping: cluster launch requires sm_90",
+            "  SKIPPING: needs two devices",
+            "PASS (skipped): ldmatrix.m8n8.x4.b16 requires sm_75+; device is sm_70",
+            "    Pass (Skipped): no peer access",
         ] {
             assert!(has_skip_marker(declined), "{declined}");
         }
@@ -978,6 +979,30 @@ mod tests {
         ] {
             assert!(!has_skip_marker(ran), "{ran}");
         }
+    }
+
+    #[test]
+    fn failures_take_priority_over_skip_markers() {
+        assert!(matches!(
+            classify_process_result(true, true, "Skipping: slow device"),
+            RunKind::Hang
+        ));
+        assert!(matches!(
+            classify_process_result(false, false, "Skipping: after an error"),
+            RunKind::Crash
+        ));
+        assert!(matches!(
+            classify_process_result(false, true, "Skipping: maybe\nMISMATCH at index 3"),
+            RunKind::Mismatch
+        ));
+        assert!(matches!(
+            classify_process_result(false, true, "Skipping: needs sm_90"),
+            RunKind::Skipped
+        ));
+        assert!(matches!(
+            classify_process_result(false, true, "PASS"),
+            RunKind::Pass
+        ));
     }
 
     /// A declined run must not be reported as a passing baseline: the campaign
