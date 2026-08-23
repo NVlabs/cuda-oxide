@@ -130,26 +130,40 @@ VENDORED_WORKSPACE_ROOTS=(
     crates/fuzzer/rustlantis/Cargo.toml
 )
 
-# Self-check on the list above, because that list going short is exactly how
-# this guard has failed twice. #662 found the backend workspace unread; the
-# device-only fixture was unread until the third entry was added, and in both
-# cases the guard reported OK while never looking at the workspace. A count
-# cannot catch it and neither can a comment, so compare the list against the
-# tree: every tracked manifest that declares `[workspace]` must be named here,
-# as first-party or as vendored, and every name here must still be such a
-# manifest.
+# Ask Cargo which workspace owns every tracked manifest. This handles valid
+# spellings such as `[ workspace ]` without raising the Python requirement.
+# The result feeds both checks below:
 #
-# Roots under crates/rustc-codegen-cuda/examples are deliberately absent: the
-# second half of this script resolves those, including the two nested
-# sub-workspaces, from their committed lock files.
+#   Cargo.toml -> Cargo workspace root
+#                      |-- named first-party or vendored root
+#                      `-- example root with a tracked Cargo.lock
+EXAMPLES_ROOT=crates/rustc-codegen-cuda/examples
+all_workspace_roots="$(
+    git ls-files -z -- '*Cargo.toml' |
+        while IFS= read -r -d '' manifest; do
+            root="$(
+                cargo locate-project --workspace --message-format plain --frozen \
+                    --manifest-path "${manifest}"
+            )"
+            case "${root}" in
+                "${PWD}/"*) printf '%s\n' "${root#"${PWD}/"}" ;;
+                *)
+                    echo "error: Cargo returned a workspace root outside this checkout:" >&2
+                    echo "       ${root}" >&2
+                    exit 1
+                    ;;
+            esac
+        done | LC_ALL=C sort -u
+)"
+if [[ -z "${all_workspace_roots}" ]]; then
+    echo "error: Cargo found no workspace roots; the scan broke" >&2
+    exit 1
+fi
+
 on_disk_roots="$(
-    git ls-files -- '*Cargo.toml' |
-        grep -v '^crates/rustc-codegen-cuda/examples/' |
-        while IFS= read -r manifest; do
-            if grep -q '^\[workspace\]' "${manifest}"; then
-                printf '%s\n' "${manifest}"
-            fi
-        done | LC_ALL=C sort
+    printf '%s\n' "${all_workspace_roots}" |
+        grep -v "^${EXAMPLES_ROOT}/" |
+        LC_ALL=C sort
 )"
 named_roots="$(
     printf '%s\n' "${FIRST_PARTY_WORKSPACE_ROOTS[@]}" "${VENDORED_WORKSPACE_ROOTS[@]}" |
@@ -177,6 +191,46 @@ if [[ -n "${stale}" ]]; then
     printf '%s\n' "${stale}" | sed 's/^/  /' >&2
     echo >&2
     echo "A renamed or removed root left behind here is a permanent hole; drop it." >&2
+    exit 1
+fi
+
+# Every example workspace is inventoried from its committed lock file. Compare
+# the two sets before reading any package names so a new nested workspace
+# cannot disappear merely because it has not committed a lock yet.
+mapfile -d '' -t EXAMPLE_LOCKFILES < <(
+    git ls-files -z -- "${EXAMPLES_ROOT}/**/Cargo.lock"
+)
+if [[ ${#EXAMPLE_LOCKFILES[@]} -lt 20 ]]; then
+    echo "error: found only ${#EXAMPLE_LOCKFILES[@]} tracked example lock files;" >&2
+    echo "       the scan broke, so a clean result means nothing" >&2
+    exit 1
+fi
+example_roots="$(
+    printf '%s\n' "${all_workspace_roots}" |
+        grep "^${EXAMPLES_ROOT}/" |
+        LC_ALL=C sort
+)"
+example_lock_roots="$(
+    for lock in "${EXAMPLE_LOCKFILES[@]}"; do
+        printf '%s/Cargo.toml\n' "${lock%/Cargo.lock}"
+    done | LC_ALL=C sort -u
+)"
+missing_example_locks="$(
+    comm -23 <(printf '%s\n' "${example_roots}") <(printf '%s\n' "${example_lock_roots}")
+)"
+if [[ -n "${missing_example_locks}" ]]; then
+    echo "error: these example workspaces have no adjacent tracked Cargo.lock:" >&2
+    printf '%s\n' "${missing_example_locks}" | sed 's/^/  /' >&2
+    echo "Commit each lock before trusting the example dependency inventory." >&2
+    exit 1
+fi
+orphan_example_locks="$(
+    comm -13 <(printf '%s\n' "${example_roots}") <(printf '%s\n' "${example_lock_roots}")
+)"
+if [[ -n "${orphan_example_locks}" ]]; then
+    echo "error: these tracked example locks have no Cargo workspace root:" >&2
+    printf '%s\n' "${orphan_example_locks}" | sed 's/^/  /' >&2
+    echo "Remove each stale lock or restore its workspace manifest." >&2
     exit 1
 fi
 
@@ -246,7 +300,7 @@ echo "OK: ${CSV} records all $(printf '%s\n' "${required}" | grep -c .) declared
 INVENTORY_EXEMPT_EXAMPLES=(cutile_inter_kernel)
 
 examples_missing="$(python3 -c '
-import glob, os, re, sys
+import os, re, sys
 
 def packages(path):
     """(name, has_source) for every [[package]] in a Cargo.lock."""
@@ -265,17 +319,19 @@ with open("dependency-licenses.csv", newline="") as handle:
     next(handle, None)
     covered |= {line.split(",")[0].strip().strip("\r") for line in handle if line.strip()}
 
-examples_root = "crates/rustc-codegen-cuda/examples"
-locks = sorted(glob.glob(os.path.join(examples_root, "**", "Cargo.lock"), recursive=True))
+separator = sys.argv.index("--")
+exempt = set(sys.argv[1:separator])
+locks = sorted(sys.argv[separator + 1:])
 if len(locks) < 20:
     sys.exit("parse self-test failed: found %d example lock files" % len(locks))
+
+examples_root = "crates/rustc-codegen-cuda/examples"
 
 def example_of(lock):
     """Top-level example directory a lockfile belongs to, however deep it sits."""
     return os.path.relpath(lock, examples_root).split(os.sep)[0]
 
 present = {example_of(lock) for lock in locks}
-exempt = set(sys.argv[1:])
 unknown = sorted(exempt - present)
 if unknown:
     sys.exit("INVENTORY_EXEMPT_EXAMPLES names no such example: " + ", ".join(unknown))
@@ -297,7 +353,7 @@ if seen < 100:
 
 for example, extra in findings:
     print("%s: %s" % (example, " ".join(extra)))
-' "${INVENTORY_EXEMPT_EXAMPLES[@]}")"
+' "${INVENTORY_EXEMPT_EXAMPLES[@]}" -- "${EXAMPLE_LOCKFILES[@]}")"
 
 if [[ -n "${examples_missing}" ]]; then
     echo "error: ${CSV} is missing rows for third-party crates that example" >&2
