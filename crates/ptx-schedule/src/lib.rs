@@ -39,6 +39,8 @@ pub enum SiteKind {
     Reduction,
     Barrier,
     Fence,
+    AsyncIssue,
+    AsyncWait,
     OrderedMemory,
     WarpCollective,
     Backedge,
@@ -291,7 +293,10 @@ fn injection_points(source: &str, site: &ScheduleSite) -> (usize, usize) {
 }
 
 fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
-    let head = instruction.head();
+    classify_head(instruction.head())
+}
+
+fn classify_head(head: &str) -> Option<SiteKind> {
     if head.starts_with("atom.") {
         return Some(SiteKind::Atomic);
     }
@@ -311,9 +316,47 @@ fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
     {
         return Some(SiteKind::Barrier);
     }
-    if head.starts_with("membar.") || head.starts_with("fence.") {
+    if head.starts_with("membar.") || head.starts_with("fence.") || head.starts_with("wgmma.fence.")
+    {
         return Some(SiteKind::Fence);
     }
+
+    // Waits must be classified before the broader cp.async.bulk issue prefix.
+    if [
+        "cp.async.wait_group",
+        "cp.async.wait_all",
+        "cp.async.bulk.wait_group",
+        "wgmma.wait_group",
+        "tcgen05.wait",
+    ]
+    .iter()
+    .any(|prefix| head.starts_with(prefix))
+    {
+        return Some(SiteKind::AsyncWait);
+    }
+
+    // AsyncIssue covers both work submission and commit boundaries. A commit
+    // orders work into a group but does not block for completion, so treating
+    // it as a fence or barrier would erase the distinction the campaign needs.
+    if [
+        "cp.async.ca.",
+        "cp.async.cg.",
+        "cp.async.commit_group",
+        "cp.async.bulk.",
+        "wgmma.commit_group",
+        "tcgen05.ld.",
+        "tcgen05.commit.",
+    ]
+    .iter()
+    .any(|prefix| head.starts_with(prefix))
+    {
+        return Some(SiteKind::AsyncIssue);
+    }
+
+    // `tcgen05.dealloc` and `tcgen05.relinquish_alloc_permit` are resource
+    // lifecycle operations, not issue/wait points. Keep them unclassified
+    // rather than widening the async categories by mnemonic family alone.
+
     // `redux.` needs its own entry: it is a warp-wide register reduction with
     // the same participation contract as the rest of this list, and the `red.`
     // arm above does not reach it -- that prefix carries the dot, so
@@ -642,6 +685,81 @@ L_loop:
             .filter(|decision| decision.before_ns > 0 || decision.after_ns > 0)
             .count();
         assert!(redux_injected > 0, "{:?}", rewrite.report.decisions);
+        assert!(rewrite.ptx.contains("nanosleep.u32"));
+    }
+
+    #[test]
+    fn async_pipeline_heads_have_distinct_issue_wait_and_fence_kinds() {
+        for (head, expected) in [
+            ("wgmma.fence.sync.aligned", SiteKind::Fence),
+            ("cp.async.ca.shared.global", SiteKind::AsyncIssue),
+            ("cp.async.cg.shared.global", SiteKind::AsyncIssue),
+            ("cp.async.bulk.tensor.2d.shared", SiteKind::AsyncIssue),
+            ("cp.async.commit_group", SiteKind::AsyncIssue),
+            ("wgmma.commit_group.sync.aligned", SiteKind::AsyncIssue),
+            (
+                "tcgen05.ld.sync.aligned.16x256b.x1.b32",
+                SiteKind::AsyncIssue,
+            ),
+            ("tcgen05.commit.cta_group", SiteKind::AsyncIssue),
+            ("cp.async.wait_group", SiteKind::AsyncWait),
+            ("cp.async.wait_all", SiteKind::AsyncWait),
+            ("cp.async.bulk.wait_group.read", SiteKind::AsyncWait),
+            ("wgmma.wait_group.sync.aligned", SiteKind::AsyncWait),
+            ("tcgen05.wait", SiteKind::AsyncWait),
+        ] {
+            assert_eq!(classify_head(head), Some(expected), "{head}");
+        }
+    }
+
+    #[test]
+    fn tcgen05_resource_lifecycle_is_not_folded_into_async_pipeline_sites() {
+        for head in [
+            "tcgen05.dealloc.cta_group",
+            "tcgen05.relinquish_alloc_permit.cta_group",
+        ] {
+            assert_eq!(classify_head(head), None, "{head}");
+        }
+    }
+
+    const ASYNC_PIPELINE: &str = r#".version 8.0
+.target sm_80
+.address_size 64
+
+.visible .entry async_pipeline()
+{
+    cp.async.commit_group;
+    cp.async.wait_all;
+    ret;
+}
+"#;
+
+    #[test]
+    fn async_pipeline_sites_can_be_perturbed() {
+        let analysis = analyze_ptx(ASYNC_PIPELINE).unwrap();
+        assert_eq!(analysis.sites().len(), 2);
+        assert_eq!(analysis.sites()[0].kind, SiteKind::AsyncIssue);
+        assert_eq!(analysis.sites()[1].kind, SiteKind::AsyncWait);
+
+        let rewrite = perturb_ptx(
+            ASYNC_PIPELINE,
+            &InjectionOptions {
+                seed: 7,
+                intensity: 1.0,
+                focus: Some("cp.async".to_string()),
+                ..InjectionOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            rewrite
+                .report
+                .decisions
+                .iter()
+                .any(|decision| decision.before_ns > 0 || decision.after_ns > 0),
+            "{:?}",
+            rewrite.report.decisions
+        );
         assert!(rewrite.ptx.contains("nanosleep.u32"));
     }
 

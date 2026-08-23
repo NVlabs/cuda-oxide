@@ -27,7 +27,9 @@ places where another thread's progress can be observed:
 | `Atomic` | an atomic read-modify-write |
 | `Reduction` | a `red.*` reduction with no returned value |
 | `Barrier` | `bar.*` / `barrier.*` / `mbarrier.*` synchronization |
-| `Fence` | `fence.*` / `membar.*` ordering |
+| `Fence` | `fence.*` / `membar.*` / `wgmma.fence.*` ordering |
+| `AsyncIssue` | asynchronous work issue or commit points (`cp.async`, `wgmma.commit_group`, `tcgen05.ld` / `tcgen05.commit`) |
+| `AsyncWait` | waits for asynchronous pipeline progress (`cp.async`, `wgmma`, `tcgen05`) |
 | `OrderedMemory` | a load or store carrying an explicit ordering qualifier (`.volatile`, `.acquire`, `.relaxed`, ...) |
 | `WarpCollective` | `shfl`, `vote`, `match`, `redux` and friends |
 | `Backedge` | a `bra` back to the same or an earlier block -- a conservative loop detector |

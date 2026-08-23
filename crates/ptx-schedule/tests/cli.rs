@@ -17,16 +17,18 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_source(
+            ".version 8.0\n.target sm_80\n.address_size 64\n.visible .entry k() {\n  bar.sync 0;\n  ret;\n}\n",
+        )
+    }
+
+    fn with_source(source: &str) -> Self {
         let id = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
         let dir =
             std::env::temp_dir().join(format!("ptx-schedule-cli-{}-{id}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let input = dir.join("input.ptx");
-        fs::write(
-            &input,
-            ".version 8.0\n.target sm_80\n.address_size 64\n.visible .entry k() {\n  bar.sync 0;\n  ret;\n}\n",
-        )
-        .unwrap();
+        fs::write(&input, source).unwrap();
         Self { dir, input }
     }
 
@@ -106,4 +108,43 @@ fn both_valid_modes_execute() {
     let rewritten = fixture.run(&["--seed", "7", "--output", output_path.to_str().unwrap()]);
     assert!(rewritten.status.success(), "{rewritten:?}");
     assert!(output_path.is_file());
+}
+
+#[test]
+fn async_site_kinds_are_stable_in_cli_json() {
+    let fixture = Fixture::with_source(
+        ".version 8.0\n.target sm_80\n.address_size 64\n.visible .entry k() {\n  cp.async.commit_group;\n  cp.async.wait_all;\n  ret;\n}\n",
+    );
+
+    let listed = fixture.run(&["--list-sites"]);
+    assert!(listed.status.success(), "{listed:?}");
+    let sites: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    let kinds = sites
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|site| site["kind"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(kinds, vec!["AsyncIssue", "AsyncWait"]);
+
+    let output_path = fixture.output();
+    let decisions_path = fixture.dir.join("decisions.json");
+    let rewritten = fixture.run(&[
+        "--seed",
+        "7",
+        "--output",
+        output_path.to_str().unwrap(),
+        "--decisions-json",
+        decisions_path.to_str().unwrap(),
+    ]);
+    assert!(rewritten.status.success(), "{rewritten:?}");
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(decisions_path).unwrap()).unwrap();
+    let decision_kinds = report["decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|decision| decision["site"]["kind"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(decision_kinds, vec!["AsyncIssue", "AsyncWait"]);
 }
