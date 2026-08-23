@@ -20,6 +20,7 @@ use pliron::{
     op::Op,
     operation::Operation,
     result::Result,
+    r#type::Typed,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -47,6 +48,24 @@ pub(crate) fn convert_generated_scalar_math(
     } else {
         FP32Type::get(ctx).into()
     };
+    let type_matches = |ty: pliron::r#type::TypeHandle| {
+        if is_f16 {
+            ty.deref(ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 16)
+        } else if is_f64 {
+            ty.deref(ctx).downcast_ref::<FP64Type>().is_some()
+        } else {
+            ty.deref(ctx).downcast_ref::<FP32Type>().is_some()
+        }
+    };
+    if !type_matches(operands[0].get_type(ctx))
+        || !type_matches(op.deref(ctx).get_result(0).get_type(ctx))
+    {
+        return pliron::input_err_noloc!(
+            "generated scalar math operand and result types must match the selected format"
+        );
+    }
     let backend = context::lowering_options(ctx).intrinsic_backend;
     let lowered = match backend {
         IntrinsicBackend::LlvmNvptx if !llvm_inline_ptx => {

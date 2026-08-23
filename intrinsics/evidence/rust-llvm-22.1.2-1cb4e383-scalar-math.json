@@ -151,10 +151,10 @@
           "mechanism": "inline_ptx",
           "outcome": "succeeded",
           "artifact_kind": "cubin",
-          "detail": "CUDA 12.0 ptxas assembled the 640-byte sm_75/PTX 7.0 output into a 680-byte cubin with SHA-256 44e56608ae38e0b15d4203d125168cf7953228cc650c30ff1c42e2d279d32be5.",
-          "tool_path": "/usr/bin/ptxas",
-          "tool_version": "Cuda compilation tools, release 12.0, V12.0.140",
-          "tool_sha256": "332c1b822fcab8d86db02236973deac3661cd4b122e0e54158ae38fd7f6d1def"
+          "detail": "CUDA 13.3 ptxas assembled the 640-byte sm_75/PTX 7.0 output into a 1,464-byte cubin with SHA-256 cbb5dbdfabb866accc3b6dd469ada00f0296aaca7012e3ae14c9b9396da5a887.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
         }
       ]
     }
@@ -1117,6 +1117,8 @@
         "source_record": "int_nvvm_ex2_approx",
         "llvm_symbol": "llvm.nvvm.ex2.approx",
         "facts": {
+          "gpu_target": "sm_75",
+          "ptx_feature": "+ptx70",
           "llvm_arguments": [
             "anonymous_14"
           ],

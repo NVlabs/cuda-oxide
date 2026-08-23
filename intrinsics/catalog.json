@@ -103,7 +103,7 @@
       "rust-llvm-22.1.2-1cb4e383-register-mma.json:6d81f18c407b60773dcc03a1e1a07d6dc69bd2320d135f03a0bf0059ac84c855",
       "rust-llvm-22.1.2-1cb4e383-scalar-arithmetic.json:44c174ea51470fd62868ca068d35569e81f4f220acfa9197870bf1b79abd256d",
       "rust-llvm-22.1.2-1cb4e383-scalar-conversion.json:3cc174b49ebb8ed6d29b894e0fc152c323520cba9bbcc4bd25849f5279d1e6a8",
-      "rust-llvm-22.1.2-1cb4e383-scalar-math.json:08c65095ca5248da30993914af7111e46bc69477a7d1a0b993d712eccb3c4582",
+      "rust-llvm-22.1.2-1cb4e383-scalar-math.json:8d0dade4ffbf29c43f08991fcfbab3a22d966be7a820aac2c98dad4d504958ad",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-int8-m16n8k64.json:16782300af2c019cef7219a6ed98fc562eb72c0aae2aa074d4c76605c5e49175",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-int8.json:b5d4277d5de3e04e4af46801c0b88e560a2c231a549f2bbe131a1e14a6d31811",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-f8f6f4-f16.json:ca85f6972d39b9bec169cee54436ccaf55d90c956ee59e2b68188b3144499ef0",
@@ -55513,7 +55513,7 @@
         "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
         "status": "validated",
         "target_triple": "nvptx64-nvidia-cuda",
-        "gpu_target": "sm_80",
+        "gpu_target": "sm_75",
         "ptx_feature": "+ptx70"
       },
       "backend_lowerings": [
@@ -55563,11 +55563,11 @@
               "stage": "ptx_assembly",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "CUDA 12.0 ptxas assembled the 640-byte sm_75/PTX 7.0 output into a 680-byte cubin with SHA-256 44e56608ae38e0b15d4203d125168cf7953228cc650c30ff1c42e2d279d32be5.",
+              "detail": "CUDA 13.3 ptxas assembled the 640-byte sm_75/PTX 7.0 output into a 1,464-byte cubin with SHA-256 cbb5dbdfabb866accc3b6dd469ada00f0296aaca7012e3ae14c9b9396da5a887.",
               "artifact_kind": "cubin",
-              "tool_path": "/usr/bin/ptxas",
-              "tool_version": "Cuda compilation tools, release 12.0, V12.0.140",
-              "tool_sha256": "332c1b822fcab8d86db02236973deac3661cd4b122e0e54158ae38fd7f6d1def"
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
             }
           ]
         },
