@@ -123,6 +123,18 @@ pub fn prepare_mir_module(
         "module post-mem2reg-compiler-result-forwarding",
     )?;
 
+    // Small immutable local arrays consumed through an inlined slice-iterator
+    // pointer walk can remain stack-backed even after mem2reg. Recover the
+    // canonical base -> ptr += 1 -> ptr/end guard as a bounded integer
+    // induction and feed the existing typed aggregate extraction lowering.
+    mir_transforms::scalarize_borrowed_aggregate_reads::
+        canonicalize_small_local_array_pointer_walks(module, ctx, preparation.verbose);
+    verify_operation(
+        ctx,
+        module,
+        "module post-small-array-pointer-walk-canonicalization",
+    )?;
+
     // Formation passes that need promoted SSA values but must still see the
     // original loop CFG run here. In particular, a reduction formation pass
     // cannot safely infer a source loop once generic unrolling has cloned it.

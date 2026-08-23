@@ -70,20 +70,27 @@
 //! callable device exports, and helpers without a single visible call site
 //! all fail closed and keep the original dynamic load.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZeroUsize};
 
 use dialect_mir::{
     attributes::{FieldIndexAttr, MirCastKindAttr},
     ops::{
-        MAX_SCALARIZED_CANDIDATES, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirCallOp,
-        MirCastOp, MirConstantOp, MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp,
-        MirFuncOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
+        MAX_SCALARIZED_CANDIDATES, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirAssignOp,
+        MirCallOp, MirCastOp, MirCondBranchOp, MirConstantOp, MirConstructArrayOp,
+        MirConstructEnumOp, MirConstructSliceOp, MirConstructStructOp, MirConstructTupleOp,
+        MirEnumPayloadOp, MirEqOp, MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp,
+        MirFuncOp, MirInsertFieldOp, MirLoadOp, MirLtOp, MirNeOp, MirNotOp, MirPtrOffsetOp,
+        MirRemOp, MirStoreOp, MirSubOp,
     },
     types::{MirArrayType, MirPtrType, MirStructType},
 };
 use pliron::{
-    builtin::op_interfaces::SymbolOpInterface,
-    builtin::types::{IntegerType, Signedness},
+    basic_block::BasicBlock,
+    builtin::{
+        attributes::IntegerAttr,
+        op_interfaces::{BranchOpInterface, SymbolOpInterface},
+        types::{IntegerType, Signedness},
+    },
     context::{Context, Ptr},
     graph::ControlFlowGraph,
     irbuild::{
@@ -92,9 +99,10 @@ use pliron::{
     },
     linked_list::ContainsLinkedList,
     location::Located,
-    op::Op,
+    op::{Op, op_cast},
     operation::Operation,
-    r#type::{TypeHandle, Typed},
+    r#type::{TypeHandle, Typed, TypedHandle},
+    utils::apint::APInt,
     value::Value,
 };
 
@@ -671,12 +679,29 @@ fn pointer_is_owned_aggregate_slot(
 
 fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
     let defining_op = value.defining_op()?;
-    let constant = Operation::get_op::<MirConstantOp>(defining_op, ctx)?;
-    let attribute = constant.get_attr_value(ctx)?;
-    let constant_value = attribute.value();
-    // `APInt::to_u64` truncates wider values, so a >64-bit constant could be
-    // misread as a small in-range bound. Fail closed on such widths.
-    (constant_value.bw() <= 64).then(|| constant_value.to_u64())
+    if let Some(constant) = Operation::get_op::<MirConstantOp>(defining_op, ctx) {
+        let attribute = constant.get_attr_value(ctx)?;
+        let constant_value = attribute.value();
+        // `APInt::to_u64` truncates wider values, so a >64-bit constant could be
+        // misread as a small in-range bound. Fail closed on such widths.
+        return (constant_value.bw() <= 64).then(|| constant_value.to_u64());
+    }
+    if Operation::get_op::<MirAssignOp>(defining_op, ctx).is_some() {
+        return integer_constant_u64(ctx, defining_op.deref(ctx).get_operand(0));
+    }
+    if let Some(extract) = Operation::get_op::<MirExtractFieldOp>(defining_op, ctx)
+        && extract
+            .get_attr_index(ctx)
+            .is_some_and(|index| index.0 == 1)
+    {
+        let aggregate = defining_op.deref(ctx).get_operand(0);
+        if let Some(aggregate_op) = aggregate.defining_op()
+            && Operation::get_op::<MirConstructSliceOp>(aggregate_op, ctx).is_some()
+        {
+            return integer_constant_u64(ctx, aggregate_op.deref(ctx).get_operand(1));
+        }
+    }
+    None
 }
 
 fn validate_candidate_count(candidate_count: u64, array_size: u64) -> Option<()> {
@@ -741,25 +766,1049 @@ fn rewrite_borrowed_pointer_read(ctx: &mut Context, plan: BorrowedPointerPlan) {
     rewriter.erase_operation(ctx, plan.array_addr);
 }
 
+#[derive(Clone, Copy)]
+struct ArrayAddressOrigin {
+    alloca: Ptr<Operation>,
+    element_type: TypeHandle,
+    array_size: u64,
+    offset: u64,
+}
+
+struct ElementwiseArrayInitialization {
+    array_type: TypeHandle,
+    element_type: TypeHandle,
+    array_size: u64,
+    values: Vec<Value>,
+    stores: Vec<Ptr<Operation>>,
+    element_addrs: Vec<Ptr<Operation>>,
+    block: Ptr<BasicBlock>,
+}
+
+struct MemoryResidentIteratorPlan {
+    iterator_initializer_store: Ptr<Operation>,
+    array: ElementwiseArrayInitialization,
+    initial_count: Value,
+    current_count: Value,
+    guard_compare: Ptr<Operation>,
+    guard_is_eq: bool,
+    element_load: Ptr<Operation>,
+    index_type: TypeHandle,
+}
+
+/// Recover the post-mem2reg shape emitted by rustc for
+/// `array.iter().copied().take(n)`.
+///
+/// rustc keeps the `Take<Copied<slice::Iter<T>>>` state in a local slot even
+/// after ordinary mem2reg. The current pointer, end pointer, and `Take::n` are
+/// therefore loaded and stored through nested `mir.field_addr` chains rather
+/// than represented as loop block arguments. The important invariant is still
+/// explicit in typed MIR:
+///
+/// - the iterator starts at element zero of one small local array,
+/// - the end pointer is exactly `base + N`,
+/// - the current pointer advances by exactly one element on the continue path,
+/// - `Take::n` is checked for zero and decremented exactly once before that
+///   pointer step.
+///
+/// For a successful element, the exact zero-based iteration index is therefore
+/// `initial_take_n - current_take_n_before_decrement`. Rewriting the pointer
+/// end check to the equivalent integer `index == N` and the payload load to
+/// `mir.extract_array_element` makes the existing bounded-array lowering emit
+/// the scalar select chain. The old iterator pointer machinery then becomes
+/// dead and is removed by the normal optimization pipeline.
+///
+/// This recognizer is deliberately structural and fail-closed. It requires the
+/// complete memory-resident adapter shape and never guesses from source names.
+fn canonicalize_memory_resident_small_array_iterators(
+    module: Ptr<Operation>,
+    ctx: &mut Context,
+) -> usize {
+    let mut operations = Vec::new();
+    collect_ops(ctx, module, &mut operations);
+    let allocas: Vec<_> = operations
+        .iter()
+        .copied()
+        .filter(|operation| Operation::get_op::<MirAllocaOp>(*operation, ctx).is_some())
+        .collect();
+
+    let mut rewritten = 0usize;
+    for iterator_alloca in allocas {
+        if iterator_alloca.deref(ctx).get_parent_block().is_none() {
+            continue;
+        }
+        let Some(function) = iterator_alloca.deref(ctx).get_parent_op(ctx) else {
+            continue;
+        };
+        if Operation::get_op::<MirFuncOp>(function, ctx).is_none() {
+            continue;
+        }
+        let Some(plan) =
+            analyze_memory_resident_small_array_iterator(ctx, function, iterator_alloca)
+        else {
+            continue;
+        };
+        rewrite_memory_resident_small_array_iterator(ctx, plan);
+        rewritten += 1;
+    }
+    rewritten
+}
+
+fn struct_field_type(ctx: &Context, ty: TypeHandle, index: usize) -> Option<TypeHandle> {
+    let ty_ref = ty.deref(ctx);
+    let struct_ty = ty_ref.downcast_ref::<MirStructType>()?;
+    struct_ty.get_field_type(index)
+}
+
+fn struct_field_count(ctx: &Context, ty: TypeHandle) -> Option<usize> {
+    let ty_ref = ty.deref(ctx);
+    Some(ty_ref.downcast_ref::<MirStructType>()?.field_count())
+}
+
+/// Validate the nested two-field / one-field / iterator state used by
+/// `Take<Copied<slice::Iter<T>>>` without depending on unstable Rust type
+/// names. The terminal iterator has `{ current_wrapper, end, ... }`, and the
+/// current wrapper must contain exactly one pointer with the same pointee as
+/// the end pointer.
+fn memory_resident_iterator_layout(ctx: &Context, iterator_type: TypeHandle) -> Option<TypeHandle> {
+    if struct_field_count(ctx, iterator_type)? != 2 {
+        return None;
+    }
+
+    let copied_type = struct_field_type(ctx, iterator_type, 0)?;
+    let count_type = struct_field_type(ctx, iterator_type, 1)?;
+    let count_ref = count_type.deref(ctx);
+    let count_integer = count_ref.downcast_ref::<IntegerType>()?;
+    if count_integer.signedness() != Signedness::Unsigned {
+        return None;
+    }
+    drop(count_ref);
+
+    if struct_field_count(ctx, copied_type)? != 1 {
+        return None;
+    }
+    let iter_type = struct_field_type(ctx, copied_type, 0)?;
+    if struct_field_count(ctx, iter_type)? < 2 {
+        return None;
+    }
+
+    let current_wrapper = struct_field_type(ctx, iter_type, 0)?;
+    let end_pointer = struct_field_type(ctx, iter_type, 1)?;
+    if struct_field_count(ctx, current_wrapper)? != 1 {
+        return None;
+    }
+    let current_pointer = struct_field_type(ctx, current_wrapper, 0)?;
+
+    let current_ref = current_pointer.deref(ctx);
+    let current_ptr = current_ref.downcast_ref::<MirPtrType>()?;
+    let current_pointee = current_ptr.pointee;
+    drop(current_ref);
+
+    let end_ref = end_pointer.deref(ctx);
+    let end_ptr = end_ref.downcast_ref::<MirPtrType>()?;
+    if end_ptr.pointee != current_pointee {
+        return None;
+    }
+
+    Some(count_type)
+}
+
+fn direct_alloca_initializer_store(
+    ctx: &Context,
+    alloca: Ptr<Operation>,
+) -> Option<(Ptr<Operation>, Value)> {
+    let root = alloca.deref(ctx).get_result(0);
+    let mut initializer = None;
+
+    for root_use in root.uses(ctx) {
+        if root_use.find_index(ctx) != 0 {
+            continue;
+        }
+        let user = root_use.user_op();
+        let Some(store) = Operation::get_op::<MirStoreOp>(user, ctx) else {
+            continue;
+        };
+        if store.is_volatile(ctx) || initializer.is_some() {
+            return None;
+        }
+        initializer = Some((user, store.value_opd(ctx)));
+    }
+
+    initializer
+}
+
+fn trace_array_address_origin(
+    ctx: &Context,
+    value: Value,
+    depth: usize,
+) -> Option<ArrayAddressOrigin> {
+    if depth > 32 {
+        return None;
+    }
+    let defining_op = value.defining_op()?;
+
+    if let Some(alloca) = Operation::get_op::<MirAllocaOp>(defining_op, ctx) {
+        let array_type = alloca.pointee_type(ctx);
+        let array_ref = array_type.deref(ctx);
+        let array = array_ref.downcast_ref::<MirArrayType>()?;
+        let array_size = array.size();
+        validate_candidate_count(array_size, array_size)?;
+        return Some(ArrayAddressOrigin {
+            alloca: defining_op,
+            element_type: array.element_type(),
+            array_size,
+            offset: 0,
+        });
+    }
+
+    if Operation::get_op::<MirAssignOp>(defining_op, ctx).is_some() {
+        return trace_array_address_origin(ctx, defining_op.deref(ctx).get_operand(0), depth + 1);
+    }
+
+    if let Some(cast) = Operation::get_op::<MirCastOp>(defining_op, ctx) {
+        let kind = cast.get_attr_cast_kind(ctx)?;
+        if !matches!(
+            *kind,
+            MirCastKindAttr::Transmute
+                | MirCastKindAttr::PtrToPtr
+                | MirCastKindAttr::PointerCoercionUnsize
+                | MirCastKindAttr::PointerCoercionArrayToPointer
+                | MirCastKindAttr::PointerCoercionMutToConst
+        ) {
+            return None;
+        }
+        return trace_array_address_origin(ctx, defining_op.deref(ctx).get_operand(0), depth + 1);
+    }
+
+    if Operation::get_op::<MirPtrOffsetOp>(defining_op, ctx).is_some() {
+        let increment = integer_constant_u64(ctx, defining_op.deref(ctx).get_operand(1))?;
+        let mut origin =
+            trace_array_address_origin(ctx, defining_op.deref(ctx).get_operand(0), depth + 1)?;
+        origin.offset = origin.offset.checked_add(increment)?;
+        return Some(origin);
+    }
+
+    if Operation::get_op::<MirArrayElementAddrOp>(defining_op, ctx).is_some() {
+        let increment = integer_constant_u64(ctx, defining_op.deref(ctx).get_operand(1))?;
+        let mut origin =
+            trace_array_address_origin(ctx, defining_op.deref(ctx).get_operand(0), depth + 1)?;
+        origin.offset = origin.offset.checked_add(increment)?;
+        return Some(origin);
+    }
+
+    None
+}
+
+fn field_addr_root_path(ctx: &Context, value: Value) -> Option<(Ptr<Operation>, Vec<u32>)> {
+    let mut current = value;
+    let mut reversed_path = Vec::new();
+
+    loop {
+        let defining_op = current.defining_op()?;
+        let Some(field) = Operation::get_op::<MirFieldAddrOp>(defining_op, ctx) else {
+            Operation::get_op::<MirAllocaOp>(defining_op, ctx)?;
+            reversed_path.reverse();
+            return Some((defining_op, reversed_path));
+        };
+        reversed_path.push(field.get_attr_field_index(ctx)?.0);
+        current = defining_op.deref(ctx).get_operand(0);
+    }
+}
+
+fn collect_elementwise_array_initialization(
+    ctx: &Context,
+    function: Ptr<Operation>,
+    alloca: Ptr<Operation>,
+) -> Option<ElementwiseArrayInitialization> {
+    let alloca_op = Operation::get_op::<MirAllocaOp>(alloca, ctx)?;
+    let array_type = alloca_op.pointee_type(ctx);
+    let array_ref = array_type.deref(ctx);
+    let array = array_ref.downcast_ref::<MirArrayType>()?;
+    let array_size = array.size();
+    let element_type = array.element_type();
+    validate_candidate_count(array_size, array_size)?;
+    drop(array_ref);
+
+    let root = alloca.deref(ctx).get_result(0);
+    let mut values = vec![None; array_size as usize];
+    let mut stores = Vec::with_capacity(array_size as usize);
+    let mut element_addrs = Vec::with_capacity(array_size as usize);
+    let mut initializer_block = None;
+
+    for root_use in root.uses(ctx) {
+        if root_use.find_index(ctx) != 0 {
+            continue;
+        }
+        let user = root_use.user_op();
+        if Operation::get_op::<MirArrayElementAddrOp>(user, ctx).is_none() {
+            continue;
+        }
+        let index = integer_constant_u64(ctx, user.deref(ctx).get_operand(1))?;
+        if index >= array_size {
+            return None;
+        }
+
+        let address = user.deref(ctx).get_result(0);
+        if address.num_uses(ctx) != 1 {
+            return None;
+        }
+        let address_use = address.uses(ctx).into_iter().next()?;
+        if address_use.find_index(ctx) != 0 {
+            return None;
+        }
+        let store_op = address_use.user_op();
+        let store = Operation::get_op::<MirStoreOp>(store_op, ctx)?;
+        if store.is_volatile(ctx) {
+            return None;
+        }
+        let value = store.value_opd(ctx);
+        if value.get_type(ctx) != element_type || values[index as usize].replace(value).is_some() {
+            return None;
+        }
+
+        let block = store_op.deref(ctx).get_parent_block()?;
+        if initializer_block
+            .replace(block)
+            .is_some_and(|existing| existing != block)
+        {
+            return None;
+        }
+        stores.push(store_op);
+        element_addrs.push(user);
+    }
+
+    if values.iter().any(Option::is_none) || stores.len() != array_size as usize {
+        return None;
+    }
+
+    let mut operations = Vec::new();
+    collect_ops(ctx, function, &mut operations);
+    for operation in operations {
+        if let Some(store) = Operation::get_op::<MirStoreOp>(operation, ctx) {
+            if stores.contains(&operation) {
+                continue;
+            }
+            if trace_array_address_origin(ctx, store.address_opd(ctx), 0)
+                .is_some_and(|origin| origin.alloca == alloca)
+            {
+                return None;
+            }
+        }
+        if Operation::get_op::<MirCallOp>(operation, ctx).is_some() {
+            for operand in operation.deref(ctx).operands() {
+                if trace_array_address_origin(ctx, operand, 0)
+                    .is_some_and(|origin| origin.alloca == alloca)
+                {
+                    return None;
+                }
+            }
+        }
+    }
+
+    Some(ElementwiseArrayInitialization {
+        array_type,
+        element_type,
+        array_size,
+        values: values.into_iter().map(Option::unwrap).collect(),
+        stores,
+        element_addrs,
+        block: initializer_block?,
+    })
+}
+
+fn initialization_dominates_iterator_store(
+    ctx: &Context,
+    initialization: &ElementwiseArrayInitialization,
+    iterator_store: Ptr<Operation>,
+) -> bool {
+    let Some(iterator_block) = iterator_store.deref(ctx).get_parent_block() else {
+        return false;
+    };
+    if iterator_block == initialization.block {
+        let operations: Vec<_> = iterator_block.deref(ctx).iter(ctx).collect();
+        let Some(anchor_index) = operations
+            .iter()
+            .position(|operation| *operation == iterator_store)
+        else {
+            return false;
+        };
+        return initialization.stores.iter().all(|store| {
+            operations
+                .iter()
+                .position(|operation| operation == store)
+                .is_some_and(|index| index < anchor_index)
+        });
+    }
+
+    let Some(region) = iterator_block.deref(ctx).get_parent_region() else {
+        return false;
+    };
+    let predecessors = region.predecessors(ctx, &iterator_block);
+    predecessors.as_slice() == [initialization.block]
+}
+
+fn strip_iterator_identity_casts(ctx: &Context, mut value: Value) -> Option<Value> {
+    for _ in 0..16 {
+        let Some(defining_op) = value.defining_op() else {
+            return Some(value);
+        };
+        if Operation::get_op::<MirAssignOp>(defining_op, ctx).is_some() {
+            value = defining_op.deref(ctx).get_operand(0);
+            continue;
+        }
+        if let Some(cast) = Operation::get_op::<MirCastOp>(defining_op, ctx) {
+            if !cast.get_attr_cast_kind(ctx).is_some_and(|kind| {
+                matches!(
+                    *kind,
+                    MirCastKindAttr::Transmute | MirCastKindAttr::PtrToPtr
+                )
+            }) {
+                return Some(value);
+            }
+            value = defining_op.deref(ctx).get_operand(0);
+            continue;
+        }
+        return Some(value);
+    }
+    None
+}
+
+fn unit_pointer_step_from(ctx: &Context, updated: Value, current: Value) -> bool {
+    let Some(updated) = strip_iterator_identity_casts(ctx, updated) else {
+        return false;
+    };
+    let Some(offset) = updated.defining_op() else {
+        return false;
+    };
+    if Operation::get_op::<MirPtrOffsetOp>(offset, ctx).is_none()
+        || integer_constant_u64(ctx, offset.deref(ctx).get_operand(1)) != Some(1)
+    {
+        return false;
+    }
+    strip_iterator_identity_casts(ctx, offset.deref(ctx).get_operand(0)) == Some(current)
+}
+
+fn condition_polarity(ctx: &Context, condition: Value, comparison_result: Value) -> Option<bool> {
+    if condition == comparison_result {
+        return Some(true);
+    }
+    let defining_op = condition.defining_op()?;
+    if Operation::get_op::<MirNotOp>(defining_op, ctx).is_some()
+        && defining_op.deref(ctx).get_operand(0) == comparison_result
+    {
+        return Some(false);
+    }
+    None
+}
+
+fn find_pointer_guard(
+    ctx: &Context,
+    guard_block: Ptr<BasicBlock>,
+    current: Value,
+    end: Value,
+    update_block: Ptr<BasicBlock>,
+) -> Option<(Ptr<Operation>, bool)> {
+    let mut match_result = None;
+    for operation in guard_block.deref(ctx).iter(ctx) {
+        let is_eq = Operation::get_op::<MirEqOp>(operation, ctx).is_some();
+        let is_ne = Operation::get_op::<MirNeOp>(operation, ctx).is_some();
+        if !is_eq && !is_ne {
+            continue;
+        }
+        let lhs = strip_iterator_identity_casts(ctx, operation.deref(ctx).get_operand(0));
+        let rhs = strip_iterator_identity_casts(ctx, operation.deref(ctx).get_operand(1));
+        if !((lhs == Some(current) && rhs == Some(end))
+            || (lhs == Some(end) && rhs == Some(current)))
+        {
+            continue;
+        }
+        if match_result.replace((operation, is_eq)).is_some() {
+            return None;
+        }
+    }
+
+    let (comparison, is_eq) = match_result?;
+    let terminator = guard_block.deref(ctx).get_terminator(ctx)?;
+    Operation::get_op::<MirCondBranchOp>(terminator, ctx)?;
+    let comparison_result = comparison.deref(ctx).get_result(0);
+    let polarity =
+        condition_polarity(ctx, terminator.deref(ctx).get_operand(0), comparison_result)?;
+
+    let compare_true_is_continue = !is_eq;
+    let condition_true_is_continue = if polarity {
+        compare_true_is_continue
+    } else {
+        !compare_true_is_continue
+    };
+    let continue_index = if condition_true_is_continue { 0 } else { 1 };
+    if terminator.deref(ctx).get_successor(continue_index) != update_block {
+        return None;
+    }
+
+    Some((comparison, is_eq))
+}
+
+fn find_nonzero_count_guard(
+    ctx: &Context,
+    count_loads: &[Ptr<Operation>],
+    decrement_load: Ptr<Operation>,
+    decrement_block: Ptr<BasicBlock>,
+) -> bool {
+    for load in count_loads {
+        if *load == decrement_load {
+            continue;
+        }
+        let Some(block) = load.deref(ctx).get_parent_block() else {
+            continue;
+        };
+        let count = load.deref(ctx).get_result(0);
+
+        for operation in block.deref(ctx).iter(ctx) {
+            let is_eq = Operation::get_op::<MirEqOp>(operation, ctx).is_some();
+            let is_ne = Operation::get_op::<MirNeOp>(operation, ctx).is_some();
+            if !is_eq && !is_ne {
+                continue;
+            }
+            let lhs = operation.deref(ctx).get_operand(0);
+            let rhs = operation.deref(ctx).get_operand(1);
+            let compares_zero = (lhs == count && integer_constant_u64(ctx, rhs) == Some(0))
+                || (rhs == count && integer_constant_u64(ctx, lhs) == Some(0));
+            if !compares_zero {
+                continue;
+            }
+
+            let Some(terminator) = block.deref(ctx).get_terminator(ctx) else {
+                continue;
+            };
+            if Operation::get_op::<MirCondBranchOp>(terminator, ctx).is_none() {
+                continue;
+            }
+            let comparison_result = operation.deref(ctx).get_result(0);
+            let Some(polarity) =
+                condition_polarity(ctx, terminator.deref(ctx).get_operand(0), comparison_result)
+            else {
+                continue;
+            };
+
+            let compare_true_is_nonzero = is_ne;
+            let condition_true_is_nonzero = if polarity {
+                compare_true_is_nonzero
+            } else {
+                !compare_true_is_nonzero
+            };
+            let nonzero_index = if condition_true_is_nonzero { 0 } else { 1 };
+            if terminator.deref(ctx).get_successor(nonzero_index) == decrement_block {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn collect_enum_constructs_from_current(
+    ctx: &Context,
+    value: Value,
+    update_block: Ptr<BasicBlock>,
+    depth: usize,
+    output: &mut Vec<Ptr<Operation>>,
+) {
+    if depth > 12 {
+        return;
+    }
+
+    for value_use in value.uses(ctx) {
+        if value_use.find_index(ctx) != 0 {
+            continue;
+        }
+        let user = value_use.user_op();
+        if user.deref(ctx).get_parent_block() != Some(update_block) {
+            continue;
+        }
+
+        if let Some(cast) = Operation::get_op::<MirCastOp>(user, ctx)
+            && cast.get_attr_cast_kind(ctx).is_some_and(|kind| {
+                matches!(
+                    *kind,
+                    MirCastKindAttr::Transmute | MirCastKindAttr::PtrToPtr
+                )
+            })
+        {
+            collect_enum_constructs_from_current(
+                ctx,
+                user.deref(ctx).get_result(0),
+                update_block,
+                depth + 1,
+                output,
+            );
+            continue;
+        }
+
+        if Operation::get_op::<MirAssignOp>(user, ctx).is_some() {
+            collect_enum_constructs_from_current(
+                ctx,
+                user.deref(ctx).get_result(0),
+                update_block,
+                depth + 1,
+                output,
+            );
+            continue;
+        }
+
+        if Operation::get_op::<MirConstructEnumOp>(user, ctx).is_some()
+            && user.deref(ctx).get_num_operands() == 1
+        {
+            output.push(user);
+        }
+    }
+}
+
+fn forwarded_block_arguments(ctx: &Context, value: Value) -> Vec<Value> {
+    let mut arguments = Vec::new();
+
+    for value_use in value.uses(ctx) {
+        let user = value_use.user_op();
+        let operation = Operation::get_op_dyn(user, ctx);
+        let Some(branch) = op_cast::<dyn BranchOpInterface>(operation.as_ref()) else {
+            continue;
+        };
+        let successors: Vec<_> = user.deref(ctx).successors().collect();
+        for (successor_index, successor) in successors.into_iter().enumerate() {
+            let operands = branch.successor_operands(ctx, successor_index);
+            for (argument_index, operand) in operands.iter().enumerate() {
+                if *operand == value && argument_index < successor.deref(ctx).get_num_arguments() {
+                    arguments.push(successor.deref(ctx).get_argument(argument_index));
+                }
+            }
+        }
+    }
+
+    arguments
+}
+
+fn find_element_load_from_current_pointer(
+    ctx: &Context,
+    current: Value,
+    update_block: Ptr<BasicBlock>,
+    element_type: TypeHandle,
+) -> Option<Ptr<Operation>> {
+    let mut constructors = Vec::new();
+    collect_enum_constructs_from_current(ctx, current, update_block, 0, &mut constructors);
+
+    let mut found = None;
+    for constructor in constructors {
+        let construct = Operation::get_op::<MirConstructEnumOp>(constructor, ctx)?;
+        let variant = construct.get_attr_construct_enum_variant_index(ctx)?.0;
+        let enum_value = constructor.deref(ctx).get_result(0);
+
+        for argument in forwarded_block_arguments(ctx, enum_value) {
+            for argument_use in argument.uses(ctx) {
+                if argument_use.find_index(ctx) != 0 {
+                    continue;
+                }
+                let payload_op = argument_use.user_op();
+                let Some(payload) = Operation::get_op::<MirEnumPayloadOp>(payload_op, ctx) else {
+                    continue;
+                };
+                if payload.get_attr_payload_variant_index(ctx)?.0 != variant
+                    || payload.get_attr_payload_field_index(ctx)?.0 != 0
+                {
+                    continue;
+                }
+
+                let payload_value = payload_op.deref(ctx).get_result(0);
+                if payload_value.num_uses(ctx) != 1 {
+                    continue;
+                }
+                let payload_use = payload_value.uses(ctx).into_iter().next()?;
+                if payload_use.find_index(ctx) != 0 {
+                    continue;
+                }
+                let load_op = payload_use.user_op();
+                let Some(load) = Operation::get_op::<MirLoadOp>(load_op, ctx) else {
+                    continue;
+                };
+                if load.is_volatile(ctx)
+                    || load_op.deref(ctx).get_result(0).get_type(ctx) != element_type
+                {
+                    continue;
+                }
+                if found.replace(load_op).is_some() {
+                    return None;
+                }
+            }
+        }
+    }
+
+    found
+}
+
+fn analyze_memory_resident_small_array_iterator(
+    ctx: &Context,
+    function: Ptr<Operation>,
+    iterator_alloca: Ptr<Operation>,
+) -> Option<MemoryResidentIteratorPlan> {
+    let iterator = Operation::get_op::<MirAllocaOp>(iterator_alloca, ctx)?;
+    let iterator_type = iterator.pointee_type(ctx);
+    let index_type = memory_resident_iterator_layout(ctx, iterator_type)?;
+
+    let (iterator_initializer_store, initializer_value) =
+        direct_alloca_initializer_store(ctx, iterator_alloca)?;
+    let initializer_op = initializer_value.defining_op()?;
+    Operation::get_op::<MirConstructStructOp>(initializer_op, ctx)?;
+
+    let initial_current = project_constructed_value(ctx, initializer_value, &[0, 0, 0])?;
+    let initial_end = project_constructed_value(ctx, initializer_value, &[0, 0, 1])?;
+    let initial_count = project_constructed_value(ctx, initializer_value, &[1])?;
+    if initial_count.get_type(ctx) != index_type {
+        return None;
+    }
+
+    let current_origin = trace_array_address_origin(ctx, initial_current, 0)?;
+    let end_origin = trace_array_address_origin(ctx, initial_end, 0)?;
+    if current_origin.alloca != end_origin.alloca
+        || current_origin.offset != 0
+        || end_origin.offset != current_origin.array_size
+        || current_origin.element_type != end_origin.element_type
+    {
+        return None;
+    }
+
+    let array = collect_elementwise_array_initialization(ctx, function, current_origin.alloca)?;
+    if array.array_size != current_origin.array_size
+        || array.element_type != current_origin.element_type
+        || !initialization_dominates_iterator_store(ctx, &array, iterator_initializer_store)
+    {
+        return None;
+    }
+
+    let mut operations = Vec::new();
+    collect_ops(ctx, function, &mut operations);
+
+    let mut current_loads = Vec::new();
+    let mut end_loads = Vec::new();
+    let mut count_loads = Vec::new();
+    let mut current_stores = Vec::new();
+    let mut count_stores = Vec::new();
+
+    for operation in operations {
+        if let Some(load) = Operation::get_op::<MirLoadOp>(operation, ctx) {
+            let Some((root_alloca, path)) = field_addr_root_path(ctx, load.address_opd(ctx)) else {
+                continue;
+            };
+            if root_alloca != iterator_alloca {
+                continue;
+            }
+            match path.as_slice() {
+                [0, 0, 0] => current_loads.push(operation),
+                [0, 0, 1] => end_loads.push(operation),
+                [1] => count_loads.push(operation),
+                _ => {}
+            }
+            continue;
+        }
+
+        if let Some(store) = Operation::get_op::<MirStoreOp>(operation, ctx) {
+            if operation == iterator_initializer_store {
+                continue;
+            }
+            let Some((root_alloca, path)) = field_addr_root_path(ctx, store.address_opd(ctx))
+            else {
+                continue;
+            };
+            if root_alloca != iterator_alloca {
+                continue;
+            }
+            match path.as_slice() {
+                [0, 0, 0] => current_stores.push(operation),
+                [1] => count_stores.push(operation),
+                _ => return None,
+            }
+        }
+    }
+
+    let [current_load] = current_loads.as_slice() else {
+        return None;
+    };
+    let [end_load] = end_loads.as_slice() else {
+        return None;
+    };
+    let [current_store] = current_stores.as_slice() else {
+        return None;
+    };
+    let [count_store] = count_stores.as_slice() else {
+        return None;
+    };
+
+    let guard_block = current_load.deref(ctx).get_parent_block()?;
+    if end_load.deref(ctx).get_parent_block() != Some(guard_block)
+        || current_store.deref(ctx).get_parent_block().is_none()
+        || count_store.deref(ctx).get_parent_block() != Some(guard_block)
+    {
+        return None;
+    }
+    let update_block = current_store.deref(ctx).get_parent_block()?;
+
+    let current = current_load.deref(ctx).get_result(0);
+    let end = end_load.deref(ctx).get_result(0);
+    if !unit_pointer_step_from(
+        ctx,
+        Operation::get_op::<MirStoreOp>(*current_store, ctx)?.value_opd(ctx),
+        current,
+    ) {
+        return None;
+    }
+
+    let decrement_loads: Vec<_> = count_loads
+        .iter()
+        .copied()
+        .filter(|load| load.deref(ctx).get_parent_block() == Some(guard_block))
+        .collect();
+    let [decrement_load] = decrement_loads.as_slice() else {
+        return None;
+    };
+    let current_count = decrement_load.deref(ctx).get_result(0);
+    if current_count.get_type(ctx) != index_type {
+        return None;
+    }
+
+    let count_store_value = Operation::get_op::<MirStoreOp>(*count_store, ctx)?.value_opd(ctx);
+    let count_sub = count_store_value.defining_op()?;
+    if Operation::get_op::<MirSubOp>(count_sub, ctx).is_none()
+        || count_sub.deref(ctx).get_operand(0) != current_count
+        || integer_constant_u64(ctx, count_sub.deref(ctx).get_operand(1)) != Some(1)
+    {
+        return None;
+    }
+
+    if !find_nonzero_count_guard(ctx, &count_loads, *decrement_load, guard_block) {
+        return None;
+    }
+
+    let (guard_compare, guard_is_eq) =
+        find_pointer_guard(ctx, guard_block, current, end, update_block)?;
+
+    let element_load =
+        find_element_load_from_current_pointer(ctx, current, update_block, array.element_type)?;
+
+    Some(MemoryResidentIteratorPlan {
+        iterator_initializer_store,
+        array,
+        initial_count,
+        current_count,
+        guard_compare,
+        guard_is_eq,
+        element_load,
+        index_type,
+    })
+}
+
+fn rewrite_memory_resident_small_array_iterator(
+    ctx: &mut Context,
+    plan: MemoryResidentIteratorPlan,
+) {
+    let array_construct = Operation::new(
+        ctx,
+        MirConstructArrayOp::get_concrete_op_info(),
+        vec![plan.array.array_type],
+        plan.array.values.clone(),
+        vec![],
+        0,
+    );
+    let initializer_location = plan.iterator_initializer_store.deref(ctx).loc().clone();
+    array_construct.deref_mut(ctx).set_loc(initializer_location);
+    array_construct.insert_before(ctx, plan.iterator_initializer_store);
+    let array_value = array_construct.deref(ctx).get_result(0);
+
+    let iteration_index = Operation::new(
+        ctx,
+        MirSubOp::get_concrete_op_info(),
+        vec![plan.index_type],
+        vec![plan.initial_count, plan.current_count],
+        vec![],
+        0,
+    );
+    let guard_location = plan.guard_compare.deref(ctx).loc().clone();
+    iteration_index
+        .deref_mut(ctx)
+        .set_loc(guard_location.clone());
+    iteration_index.insert_before(ctx, plan.guard_compare);
+    let index = iteration_index.deref(ctx).get_result(0);
+
+    let bound = insert_integer_constant_before(
+        ctx,
+        plan.guard_compare,
+        plan.index_type,
+        plan.array.array_size,
+    );
+    let guard_result_type = plan.guard_compare.deref(ctx).get_result(0).get_type(ctx);
+    let integer_guard = Operation::new(
+        ctx,
+        if plan.guard_is_eq {
+            MirEqOp::get_concrete_op_info()
+        } else {
+            MirNeOp::get_concrete_op_info()
+        },
+        vec![guard_result_type],
+        vec![index, bound],
+        vec![],
+        0,
+    );
+    integer_guard.deref_mut(ctx).set_loc(guard_location);
+    integer_guard.insert_before(ctx, plan.guard_compare);
+    let integer_guard_result = integer_guard.deref(ctx).get_result(0);
+    let old_guard_result = plan.guard_compare.deref(ctx).get_result(0);
+    old_guard_result.replace_all_uses_with(ctx, &integer_guard_result);
+
+    let load_location = plan.element_load.deref(ctx).loc().clone();
+    let bounded_index = Operation::new(
+        ctx,
+        MirRemOp::get_concrete_op_info(),
+        vec![plan.index_type],
+        vec![index, bound],
+        vec![],
+        0,
+    );
+    bounded_index.deref_mut(ctx).set_loc(load_location.clone());
+    bounded_index.insert_before(ctx, plan.element_load);
+    let bounded_index_value = bounded_index.deref(ctx).get_result(0);
+
+    let extraction = Operation::new(
+        ctx,
+        MirExtractArrayElementOp::get_concrete_op_info(),
+        vec![plan.array.element_type],
+        vec![array_value, bounded_index_value],
+        vec![],
+        0,
+    );
+    extraction.deref_mut(ctx).set_loc(load_location);
+    extraction.insert_before(ctx, plan.element_load);
+    let replacement = extraction.deref(ctx).get_result(0);
+    let old_load_result = plan.element_load.deref(ctx).get_result(0);
+    old_load_result.replace_all_uses_with(ctx, &replacement);
+
+    let mut rewriter = IRRewriter::<Recorder>::default();
+    rewriter.erase_operation(ctx, plan.element_load);
+    if plan.guard_compare.deref(ctx).get_result(0).num_uses(ctx) == 0 {
+        rewriter.erase_operation(ctx, plan.guard_compare);
+    }
+    for store in plan.array.stores {
+        rewriter.erase_operation(ctx, store);
+    }
+    for address in plan.array.element_addrs {
+        if address.deref(ctx).get_result(0).num_uses(ctx) == 0 {
+            rewriter.erase_operation(ctx, address);
+        }
+    }
+}
+
+fn project_constructed_value(ctx: &Context, value: Value, path: &[u32]) -> Option<Value> {
+    if path.is_empty() {
+        return Some(value);
+    }
+
+    let defining_op = value.defining_op()?;
+    let field = path[0] as usize;
+    let rest = &path[1..];
+
+    if Operation::get_op::<MirConstructStructOp>(defining_op, ctx).is_some()
+        || Operation::get_op::<MirConstructTupleOp>(defining_op, ctx).is_some()
+        || Operation::get_op::<MirConstructSliceOp>(defining_op, ctx).is_some()
+    {
+        if field >= defining_op.deref(ctx).get_num_operands() {
+            return None;
+        }
+        return project_constructed_value(ctx, defining_op.deref(ctx).get_operand(field), rest);
+    }
+
+    if let Some(insert) = Operation::get_op::<MirInsertFieldOp>(defining_op, ctx) {
+        let inserted_field = insert.get_attr_insert_index(ctx)?.0 as usize;
+        if inserted_field == field {
+            return project_constructed_value(ctx, defining_op.deref(ctx).get_operand(1), rest);
+        }
+        return project_constructed_value(ctx, defining_op.deref(ctx).get_operand(0), path);
+    }
+
+    if Operation::get_op::<MirAssignOp>(defining_op, ctx).is_some() {
+        return project_constructed_value(ctx, defining_op.deref(ctx).get_operand(0), path);
+    }
+
+    None
+}
+
+/// Scalarize the memory-resident pointer walk emitted by rustc for a bounded
+/// iterator over one small local array after mem2reg.
+///
+/// The accepted shape is the typed MIR representation of
+/// `array.iter().copied().take(n)`: the adapter state remains in a local slot,
+/// with nested fields for the current pointer, one-past-end pointer, and the
+/// remaining `Take::n` count. The recognizer proves local-array provenance,
+/// exact elementwise initialization, `base + N` as the end pointer, a unit
+/// pointer step, and the zero/decrement protocol for `Take::n`.
+///
+/// For each successful element, `initial_take_n - current_take_n` is the exact
+/// zero-based array index. Rewriting the pointer guard to an equivalent integer
+/// guard and the payload load to `mir.extract_array_element(array, index % N)`
+/// exposes the bounded SSA form already scalarized by typed MIR lowering.
+/// Unsupported layouts, pointer arithmetic, writes, escapes, or guards fail
+/// closed.
+pub fn canonicalize_small_local_array_pointer_walks(
+    module: Ptr<Operation>,
+    ctx: &mut Context,
+    verbose: bool,
+) {
+    let rewritten = canonicalize_memory_resident_small_array_iterators(module, ctx);
+
+    if rewritten > 0 && verbose {
+        eprintln!("small-array pointer-walk scalarization: rewrote {rewritten} loop(s)");
+    }
+}
+
+fn insert_integer_constant_before(
+    ctx: &mut Context,
+    before: Ptr<Operation>,
+    integer_type: TypeHandle,
+    value: u64,
+) -> Value {
+    let typed = TypedHandle::<IntegerType>::from_handle(integer_type, ctx)
+        .expect("validated integer induction type");
+    let width = typed.deref(ctx).width() as usize;
+    let attribute = IntegerAttr::new(
+        typed,
+        APInt::from_u64(
+            value,
+            NonZeroUsize::new(width).expect("integer width is non-zero"),
+        ),
+    );
+    let constant = Operation::new(
+        ctx,
+        MirConstantOp::get_concrete_op_info(),
+        vec![integer_type],
+        vec![],
+        vec![],
+        0,
+    );
+    MirConstantOp::new(constant).set_attr_value(ctx, attribute);
+    let location = before.deref(ctx).loc().clone();
+    constant.deref_mut(ctx).set_loc(location);
+    constant.insert_before(ctx, before);
+    constant.deref(ctx).get_result(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use dialect_mir::{
+        attributes::VariantIndexAttr,
         ops::{MirGotoOp, MirReturnOp},
-        types::MirArrayType,
+        types::{EnumVariant, MirArrayType, MirEnumType},
     };
-    use pliron::{
-        basic_block::BasicBlock,
-        builtin::{
-            attributes::{IntegerAttr, TypeAttr},
-            op_interfaces::{SingleBlockRegionInterface, SymbolOpInterface},
-            ops::ModuleOp,
-            types::FunctionType,
-        },
-        region::Region,
-        utils::apint::APInt,
+    use pliron::builtin::{
+        attributes::TypeAttr,
+        op_interfaces::{OperandSegmentInterface, SingleBlockRegionInterface, SymbolOpInterface},
+        ops::ModuleOp,
+        types::FunctionType,
     };
-    use std::num::NonZeroUsize;
+    use pliron::region::Region;
 
     struct Fixture {
         module: Ptr<Operation>,
@@ -1560,5 +2609,561 @@ mod tests {
         canonicalize_bounded_borrowed_pointer_arguments(fixture.module, &mut ctx, false);
 
         assert_single_dynamic_load_survives(&ctx, fixture.module);
+    }
+    struct MemoryResidentIteratorFixture {
+        module: Ptr<Operation>,
+    }
+
+    fn append_u64_constant(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        ty: TypedHandle<IntegerType>,
+        value: u64,
+    ) -> Value {
+        let width = ty.deref(ctx).width() as usize;
+        let constant = Operation::new(
+            ctx,
+            MirConstantOp::get_concrete_op_info(),
+            vec![ty.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        MirConstantOp::new(constant).set_attr_value(
+            ctx,
+            IntegerAttr::new(
+                ty,
+                APInt::from_u64(value, NonZeroUsize::new(width).unwrap()),
+            ),
+        );
+        constant.insert_at_back(block, ctx);
+        constant.deref(ctx).get_result(0)
+    }
+
+    fn append_cond_branch(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        condition: Value,
+        true_successor: Ptr<BasicBlock>,
+        false_successor: Ptr<BasicBlock>,
+    ) {
+        let (operands, segments) =
+            MirCondBranchOp::compute_segment_sizes(vec![vec![condition], Vec::new(), Vec::new()]);
+        let branch = Operation::new(
+            ctx,
+            MirCondBranchOp::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![true_successor, false_successor],
+            0,
+        );
+        Operation::get_op::<MirCondBranchOp>(branch, ctx)
+            .unwrap()
+            .set_operand_segment_sizes(ctx, segments);
+        branch.insert_at_back(block, ctx);
+    }
+
+    fn append_struct(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        result_type: TypeHandle,
+        fields: Vec<Value>,
+    ) -> Value {
+        let operation = Operation::new(
+            ctx,
+            MirConstructStructOp::get_concrete_op_info(),
+            vec![result_type],
+            fields,
+            vec![],
+            0,
+        );
+        operation.insert_at_back(block, ctx);
+        operation.deref(ctx).get_result(0)
+    }
+
+    fn append_field_addr_path(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        root: Value,
+        root_type: TypeHandle,
+        path: &[u32],
+    ) -> (Value, TypeHandle) {
+        let mut address = root;
+        let mut ty = root_type;
+        for &field_index in path {
+            let field_type = struct_field_type(ctx, ty, field_index as usize).unwrap();
+            let field_pointer: TypeHandle = MirPtrType::get_generic(ctx, field_type, true).into();
+            let field_addr = Operation::new(
+                ctx,
+                MirFieldAddrOp::get_concrete_op_info(),
+                vec![field_pointer],
+                vec![address],
+                vec![],
+                0,
+            );
+            MirFieldAddrOp::new(field_addr).set_attr_field_index(ctx, FieldIndexAttr(field_index));
+            field_addr.insert_at_back(block, ctx);
+            address = field_addr.deref(ctx).get_result(0);
+            ty = field_type;
+        }
+        (address, ty)
+    }
+
+    fn append_load_from_path(
+        ctx: &mut Context,
+        block: Ptr<BasicBlock>,
+        root: Value,
+        root_type: TypeHandle,
+        path: &[u32],
+    ) -> Value {
+        let (address, field_type) = append_field_addr_path(ctx, block, root, root_type, path);
+        let load = Operation::new(
+            ctx,
+            MirLoadOp::get_concrete_op_info(),
+            vec![field_type],
+            vec![address],
+            vec![],
+            0,
+        );
+        load.insert_at_back(block, ctx);
+        load.deref(ctx).get_result(0)
+    }
+
+    fn build_memory_resident_iterator_fixture(
+        ctx: &mut Context,
+        end_offset: u64,
+        step: u64,
+    ) -> MemoryResidentIteratorFixture {
+        dialect_mir::register(ctx);
+
+        let element_type = IntegerType::get(ctx, 32, Signedness::Unsigned);
+        let element_handle: TypeHandle = element_type.into();
+        let index_type = IntegerType::get(ctx, 64, Signedness::Unsigned);
+        let index_handle: TypeHandle = index_type.into();
+        let i1_type: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
+        let tag_type = IntegerType::get(ctx, 8, Signedness::Unsigned);
+
+        let array_type: TypeHandle = MirArrayType::get(ctx, element_handle, 4).into();
+        let array_pointer: TypeHandle = MirPtrType::get_generic(ctx, array_type, true).into();
+        let element_pointer: TypeHandle = MirPtrType::get_generic(ctx, element_handle, true).into();
+
+        let current_wrapper: TypeHandle = MirStructType::get_with_full_layout(
+            ctx,
+            "CurrentPointer".into(),
+            vec!["ptr".into()],
+            vec![element_pointer],
+            vec![0],
+            vec![0],
+            8,
+            8,
+        )
+        .into();
+        let iterator_type: TypeHandle = MirStructType::get_with_full_layout(
+            ctx,
+            "SliceIter".into(),
+            vec!["current".into(), "end".into()],
+            vec![current_wrapper, element_pointer],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into();
+        let copied_type: TypeHandle = MirStructType::get_with_full_layout(
+            ctx,
+            "Copied".into(),
+            vec!["iter".into()],
+            vec![iterator_type],
+            vec![0],
+            vec![0],
+            16,
+            8,
+        )
+        .into();
+        let take_type: TypeHandle = MirStructType::get_with_full_layout(
+            ctx,
+            "Take".into(),
+            vec!["iter".into(), "n".into()],
+            vec![copied_type, index_handle],
+            vec![0, 1],
+            vec![0, 16],
+            24,
+            8,
+        )
+        .into();
+        let take_pointer: TypeHandle = MirPtrType::get_generic(ctx, take_type, true).into();
+
+        let option_pointer: TypeHandle = MirEnumType::get(
+            ctx,
+            "PointerOption".into(),
+            tag_type.into(),
+            vec![0],
+            vec![EnumVariant::new("Some".into(), vec![element_pointer])],
+        )
+        .into();
+
+        let module = ModuleOp::new(ctx, "memory_resident_iterator".try_into().unwrap());
+        let function_type = FunctionType::get(ctx, vec![], vec![]);
+        let function = Operation::new(
+            ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let function_op = MirFuncOp::new(ctx, function, TypeAttr::new(function_type.into()));
+        function_op.set_symbol_name(ctx, "kernel".try_into().unwrap());
+        module.append_operation(ctx, function, 0);
+
+        let region: Ptr<Region> = function.deref(ctx).get_region(0);
+        let entry = BasicBlock::new(ctx, None, vec![]);
+        entry.insert_at_back(region, ctx);
+        let count_check = BasicBlock::new(ctx, None, vec![]);
+        count_check.insert_at_back(region, ctx);
+        let guard = BasicBlock::new(ctx, None, vec![]);
+        guard.insert_at_back(region, ctx);
+        let update = BasicBlock::new(ctx, None, vec![]);
+        update.insert_at_back(region, ctx);
+        let payload = BasicBlock::new(ctx, None, vec![option_pointer]);
+        payload.insert_at_back(region, ctx);
+        let exit = BasicBlock::new(ctx, None, vec![]);
+        exit.insert_at_back(region, ctx);
+
+        let array_alloca = Operation::new(
+            ctx,
+            MirAllocaOp::get_concrete_op_info(),
+            vec![array_pointer],
+            vec![],
+            vec![],
+            0,
+        );
+        array_alloca.insert_at_back(entry, ctx);
+        let array_slot = array_alloca.deref(ctx).get_result(0);
+
+        for index in 0..4_u64 {
+            let index_value = append_u64_constant(ctx, entry, index_type, index);
+            let element_addr = Operation::new(
+                ctx,
+                MirArrayElementAddrOp::get_concrete_op_info(),
+                vec![element_pointer],
+                vec![array_slot, index_value],
+                vec![],
+                0,
+            );
+            element_addr.insert_at_back(entry, ctx);
+            let value = append_u64_constant(ctx, entry, element_type, index + 1);
+            let element_pointer_value = element_addr.deref(ctx).get_result(0);
+            let store = Operation::new(
+                ctx,
+                MirStoreOp::get_concrete_op_info(),
+                vec![],
+                vec![element_pointer_value, value],
+                vec![],
+                0,
+            );
+            store.insert_at_back(entry, ctx);
+        }
+
+        let base = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![element_pointer],
+            vec![array_slot],
+            vec![],
+            0,
+        );
+        MirCastOp::new(base).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+        base.insert_at_back(entry, ctx);
+        let base_pointer = base.deref(ctx).get_result(0);
+
+        let current = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![current_wrapper],
+            vec![base_pointer],
+            vec![],
+            0,
+        );
+        MirCastOp::new(current).set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+        current.insert_at_back(entry, ctx);
+        let initial_current = current.deref(ctx).get_result(0);
+
+        let end_count = append_u64_constant(ctx, entry, index_type, end_offset);
+        let end = Operation::new(
+            ctx,
+            MirPtrOffsetOp::get_concrete_op_info(),
+            vec![element_pointer],
+            vec![base_pointer, end_count],
+            vec![],
+            0,
+        );
+        end.insert_at_back(entry, ctx);
+        let end_pointer = end.deref(ctx).get_result(0);
+
+        let iterator_value = append_struct(
+            ctx,
+            entry,
+            iterator_type,
+            vec![initial_current, end_pointer],
+        );
+        let copied_value = append_struct(ctx, entry, copied_type, vec![iterator_value]);
+        let initial_count = append_u64_constant(ctx, entry, index_type, 4);
+        let take_value = append_struct(ctx, entry, take_type, vec![copied_value, initial_count]);
+
+        let iterator_alloca = Operation::new(
+            ctx,
+            MirAllocaOp::get_concrete_op_info(),
+            vec![take_pointer],
+            vec![],
+            vec![],
+            0,
+        );
+        iterator_alloca.insert_at_back(entry, ctx);
+        let iterator_slot = iterator_alloca.deref(ctx).get_result(0);
+        let initializer_store = Operation::new(
+            ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![iterator_slot, take_value],
+            vec![],
+            0,
+        );
+        initializer_store.insert_at_back(entry, ctx);
+
+        let to_count_check = Operation::new(
+            ctx,
+            MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![count_check],
+            0,
+        );
+        to_count_check.insert_at_back(entry, ctx);
+
+        let remaining = append_load_from_path(ctx, count_check, iterator_slot, take_type, &[1]);
+        let zero = append_u64_constant(ctx, count_check, index_type, 0);
+        let empty = Operation::new(
+            ctx,
+            MirEqOp::get_concrete_op_info(),
+            vec![i1_type],
+            vec![remaining, zero],
+            vec![],
+            0,
+        );
+        empty.insert_at_back(count_check, ctx);
+        let is_empty = empty.deref(ctx).get_result(0);
+        append_cond_branch(ctx, count_check, is_empty, exit, guard);
+
+        let current_count = append_load_from_path(ctx, guard, iterator_slot, take_type, &[1]);
+        let one = append_u64_constant(ctx, guard, index_type, 1);
+        let decremented = Operation::new(
+            ctx,
+            MirSubOp::get_concrete_op_info(),
+            vec![index_handle],
+            vec![current_count, one],
+            vec![],
+            0,
+        );
+        decremented.insert_at_back(guard, ctx);
+        let (count_addr, _) = append_field_addr_path(ctx, guard, iterator_slot, take_type, &[1]);
+        let decremented_count = decremented.deref(ctx).get_result(0);
+        let count_store = Operation::new(
+            ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![count_addr, decremented_count],
+            vec![],
+            0,
+        );
+        count_store.insert_at_back(guard, ctx);
+
+        let current_value = append_load_from_path(ctx, guard, iterator_slot, take_type, &[0, 0, 0]);
+        let end_value = append_load_from_path(ctx, guard, iterator_slot, take_type, &[0, 0, 1]);
+        let current_pointer_cast = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![element_pointer],
+            vec![current_value],
+            vec![],
+            0,
+        );
+        MirCastOp::new(current_pointer_cast).set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+        current_pointer_cast.insert_at_back(guard, ctx);
+        let raw_current = current_pointer_cast.deref(ctx).get_result(0);
+        let at_end = Operation::new(
+            ctx,
+            MirEqOp::get_concrete_op_info(),
+            vec![i1_type],
+            vec![raw_current, end_value],
+            vec![],
+            0,
+        );
+        at_end.insert_at_back(guard, ctx);
+        let reached_end = at_end.deref(ctx).get_result(0);
+        append_cond_branch(ctx, guard, reached_end, exit, update);
+
+        // rustc materializes the current pointer again in the continue block
+        // before advancing it and building the iterator payload. Keep that
+        // block-local projection in the fixture so the recognizer exercises
+        // the same SSA use graph as the real `slice::Iter` lowering.
+        let update_current_cast = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![element_pointer],
+            vec![current_value],
+            vec![],
+            0,
+        );
+        MirCastOp::new(update_current_cast).set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+        update_current_cast.insert_at_back(update, ctx);
+        let update_raw_current = update_current_cast.deref(ctx).get_result(0);
+
+        let step_value = append_u64_constant(ctx, update, index_type, step);
+        let next_pointer = Operation::new(
+            ctx,
+            MirPtrOffsetOp::get_concrete_op_info(),
+            vec![element_pointer],
+            vec![update_raw_current, step_value],
+            vec![],
+            0,
+        );
+        next_pointer.insert_at_back(update, ctx);
+        let advanced_pointer = next_pointer.deref(ctx).get_result(0);
+        let next_current = Operation::new(
+            ctx,
+            MirCastOp::get_concrete_op_info(),
+            vec![current_wrapper],
+            vec![advanced_pointer],
+            vec![],
+            0,
+        );
+        MirCastOp::new(next_current).set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+        next_current.insert_at_back(update, ctx);
+        let (current_addr, _) =
+            append_field_addr_path(ctx, update, iterator_slot, take_type, &[0, 0, 0]);
+        let next_current_value = next_current.deref(ctx).get_result(0);
+        let current_store = Operation::new(
+            ctx,
+            MirStoreOp::get_concrete_op_info(),
+            vec![],
+            vec![current_addr, next_current_value],
+            vec![],
+            0,
+        );
+        current_store.insert_at_back(update, ctx);
+
+        let some_pointer = Operation::new(
+            ctx,
+            MirConstructEnumOp::get_concrete_op_info(),
+            vec![option_pointer],
+            vec![update_raw_current],
+            vec![],
+            0,
+        );
+        MirConstructEnumOp::new(some_pointer)
+            .set_attr_construct_enum_variant_index(ctx, VariantIndexAttr(0));
+        some_pointer.insert_at_back(update, ctx);
+        let some_pointer_value = some_pointer.deref(ctx).get_result(0);
+        let to_payload = Operation::new(
+            ctx,
+            MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![some_pointer_value],
+            vec![payload],
+            0,
+        );
+        to_payload.insert_at_back(update, ctx);
+
+        let payload_value = payload.deref(ctx).get_argument(0);
+        let payload_pointer = Operation::new(
+            ctx,
+            MirEnumPayloadOp::get_concrete_op_info(),
+            vec![element_pointer],
+            vec![payload_value],
+            vec![],
+            0,
+        );
+        let payload_op = MirEnumPayloadOp::new(payload_pointer);
+        payload_op.set_attr_payload_variant_index(ctx, VariantIndexAttr(0));
+        payload_op.set_attr_payload_field_index(ctx, FieldIndexAttr(0));
+        payload_pointer.insert_at_back(payload, ctx);
+        let payload_element_pointer = payload_pointer.deref(ctx).get_result(0);
+        let element_load = Operation::new(
+            ctx,
+            MirLoadOp::get_concrete_op_info(),
+            vec![element_handle],
+            vec![payload_element_pointer],
+            vec![],
+            0,
+        );
+        element_load.insert_at_back(payload, ctx);
+        let loop_back = Operation::new(
+            ctx,
+            MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![count_check],
+            0,
+        );
+        loop_back.insert_at_back(payload, ctx);
+
+        let return_op = Operation::new(
+            ctx,
+            MirReturnOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            0,
+        );
+        return_op.insert_at_back(exit, ctx);
+
+        MemoryResidentIteratorFixture {
+            module: module.get_operation(),
+        }
+    }
+
+    #[test]
+    fn memory_resident_small_array_iterator_becomes_bounded_extract() {
+        let mut ctx = Context::new();
+        let fixture = build_memory_resident_iterator_fixture(&mut ctx, 4, 1);
+
+        let rewritten =
+            canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
+        pliron::operation::verify_operation(fixture.module, &ctx).unwrap();
+
+        assert_eq!(rewritten, 1);
+        assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirRemOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 0);
+    }
+
+    #[test]
+    fn memory_resident_iterator_with_non_unit_step_is_left_unchanged() {
+        let mut ctx = Context::new();
+        let fixture = build_memory_resident_iterator_fixture(&mut ctx, 4, 2);
+
+        let rewritten =
+            canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
+
+        assert_eq!(rewritten, 0);
+        assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 4);
+    }
+
+    #[test]
+    fn memory_resident_iterator_with_wrong_end_pointer_is_left_unchanged() {
+        let mut ctx = Context::new();
+        let fixture = build_memory_resident_iterator_fixture(&mut ctx, 3, 1);
+
+        let rewritten =
+            canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
+
+        assert_eq!(rewritten, 0);
+        assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 4);
     }
 }
