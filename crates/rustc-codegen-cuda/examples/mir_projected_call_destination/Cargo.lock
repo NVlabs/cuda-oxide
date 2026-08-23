@@ -162,6 +162,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuda-intrinsics"
+version = "0.1.0"
+
+[[package]]
 name = "cuda-macros"
 version = "0.2.1"
 dependencies = [
@@ -315,6 +319,7 @@ dependencies = [
  "cuda-core",
  "cuda-device",
  "cuda-host",
+ "cuda-intrinsics",
  "libm",
 ]
 

@@ -13,14 +13,18 @@
     clippy::unit_arg
 )]
 
-//! An intrinsic call writing through a projected destination.
+//! Intrinsic calls writing through projected destinations.
 //!
 //! rustc lowers an ordinary call whose destination carries a projection into a
 //! call to a temporary followed by a store, so the projection never reaches
-//! code generation. An intrinsic keeps its destination, which leaves three
-//! shapes to translate: a dereferenced pointer, a struct field, and an array
-//! element. Each is written here in custom MIR, since surface Rust cannot
-//! produce them.
+//! code generation. An intrinsic keeps its destination. The original regression
+//! covers a dereferenced pointer, a struct field, and an array element. The
+//! chained cases additionally exercise `Field -> Index`, `Deref -> Field`, and
+//! `Index -> Field`, which must all use the same generic place-address walker.
+//! A final `Field -> Index` case calls the generated `block_dim_x` catalog
+//! intrinsic directly, proving the generated dispatcher uses that same store
+//! path. Each is written here in custom MIR, since surface Rust cannot produce
+//! them.
 //!
 //! Three translation paths build or store the call result themselves and so
 //! have store sites of their own, exercised separately: a float-math
@@ -34,9 +38,10 @@
 //! the bodies are `inline(never)` and the sincos pointer arrives as an
 //! opaque argument.
 //!
-//! Each case runs on the device and on the host from the same body, and the
-//! two results must agree. A result that landed at the wrong address shows up
-//! as a difference, since the host reads what the device wrote back.
+//! The first ten cases run on the device and on the host from the same body.
+//! The generated special-register case is device-only; its host-side expected
+//! value comes from the fixed launch contract below. A result that landed at
+//! the wrong address therefore still changes the folded device result.
 //!
 //! Build and run with:
 //!   cargo oxide run mir_projected_call_destination
@@ -98,6 +103,95 @@ fn through_index(mut _1: usize) -> [i32; 3] {
             Call(RET[_1] = core::intrinsics::bswap(451059808_i32), ReturnTo(bb1), UnwindUnreachable())
         }
         bb1 = {
+            Return()
+        }
+    }
+}
+
+/// `RET.1[i] = bswap(x)`: a field projection followed by a runtime index.
+///
+/// This is the first chained-destination regression. The call result must be
+/// stored through the complete `Field -> Index` chain rather than treating
+/// the field as the final destination.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_field_index(mut _1: usize) -> (u64, [u32; 3]) {
+    mir! {
+        type RET = (u64, [u32; 3]);
+        {
+            RET.1 = [3_u32, 5_u32, 7_u32];
+            Call(RET.1[_1] = core::intrinsics::bswap(0x01020304_u32), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            RET.0 = 11_u64;
+            Return()
+        }
+    }
+}
+
+/// `(*p).1 = bswap(x)`: a dereference followed by a field projection.
+///
+/// The base pointer names the whole tuple, but the result belongs in only its
+/// second field. The importer therefore has to preserve the full
+/// `Deref -> Field` chain when materialising the writable address.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_deref_field(mut _1: (u64, u32)) -> (u64, u32) {
+    mir! {
+        type RET = (u64, u32);
+        let _2: *mut (u64, u32);
+        {
+            _2 = core::ptr::addr_of_mut!(_1);
+            Call((*_2).1 = core::intrinsics::bswap(0x0a0b0c0d_u32), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            RET = _1;
+            Return()
+        }
+    }
+}
+
+/// `RET[i].1 = bswap(x)`: a runtime index followed by a field projection.
+///
+/// This is the converse chained aggregate shape to `through_field_index` and
+/// ensures the result store does not impose its own projection grammar.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_index_field(mut _1: usize) -> [(u32, u32); 3] {
+    mir! {
+        type RET = [(u32, u32); 3];
+        let _2: (u32, u32);
+        let _3: (u32, u32);
+        let _4: (u32, u32);
+        {
+            _2 = (1_u32, 2_u32);
+            _3 = (3_u32, 4_u32);
+            _4 = (5_u32, 6_u32);
+            RET = [_2, _3, _4];
+            Call(RET[_1].1 = core::intrinsics::bswap(0x11121314_u32), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            Return()
+        }
+    }
+}
+
+/// `RET.1[i] = block_dim_x()`: a generated catalog intrinsic through a chain.
+///
+/// `block_dim_x` is generated from the `sreg` catalog and lowers through the
+/// generated zero-operand NVVM path. Keeping its destination projected proves
+/// the real generated dispatch reaches the shared result-store path.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_generated_sreg_field_index(mut _1: usize) -> (u64, [u32; 2]) {
+    mir! {
+        type RET = (u64, [u32; 2]);
+        {
+            RET.1 = [0x13579bdf_u32, 0x2468ace0_u32];
+            Call(RET.1[_1] = cuda_intrinsics::sreg::block_dim_x(), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            RET.0 = 0x0123456789abcdef_u64;
             Return()
         }
     }
@@ -200,10 +294,10 @@ fn through_deref_sincos(_1: *mut (f32, f32), _2: f32) {
     }
 }
 
-/// Folds the seven results into one word per case, so the device can report
+/// Folds the ten results into one word per case, so the device can report
 /// them through a `u64` slice and the host can compare without a layout
 /// assumption.
-fn case_results() -> [u64; 7] {
+fn case_results() -> [u64; 10] {
     let deref = through_deref(0) as u32 as u64;
 
     let field = through_field();
@@ -213,6 +307,23 @@ fn case_results() -> [u64; 7] {
     let index = (indexed[0] as u32 as u64)
         ^ ((indexed[1] as u32 as u64) << 8)
         ^ ((indexed[2] as u32 as u64) << 16);
+
+    let field_indexed = through_field_index(1);
+    let field_index = field_indexed.0
+        ^ u64::from(field_indexed.1[0])
+        ^ u64::from(field_indexed.1[1]).rotate_left(13)
+        ^ u64::from(field_indexed.1[2]).rotate_left(29);
+
+    let deref_field = through_deref_field((13_u64, 17_u32));
+    let deref_field = deref_field.0 ^ u64::from(deref_field.1).rotate_left(21);
+
+    let indexed_field = through_index_field(2);
+    let index_field = u64::from(indexed_field[0].0)
+        ^ u64::from(indexed_field[0].1).rotate_left(7)
+        ^ u64::from(indexed_field[1].0).rotate_left(14)
+        ^ u64::from(indexed_field[1].1).rotate_left(21)
+        ^ u64::from(indexed_field[2].0).rotate_left(28)
+        ^ u64::from(indexed_field[2].1).rotate_left(35);
 
     let field_float = through_field_float(2.0_f32);
     let field_float = field_float.0 ^ u64::from(field_float.1.to_bits());
@@ -233,6 +344,9 @@ fn case_results() -> [u64; 7] {
         deref,
         field,
         index,
+        field_index,
+        deref_field,
+        index_field,
         field_float,
         index_float,
         field_fn,
@@ -247,36 +361,59 @@ mod kernels {
     #[kernel]
     pub fn projected_destinations(mut out: DisjointSlice<u64>) {
         let results = case_results();
+        let generated = through_generated_sreg_field_index(1);
+        let generated = generated.0
+            ^ u64::from(generated.1[0]).rotate_left(9)
+            ^ u64::from(generated.1[1]).rotate_left(27);
         if let Some(slot) = out.get_mut(thread::index_1d()) {
             *slot = results[0]
-                ^ results[1].rotate_left(8)
-                ^ results[2].rotate_left(16)
-                ^ results[3].rotate_left(24)
-                ^ results[4].rotate_left(32)
-                ^ results[5].rotate_left(40)
-                ^ results[6].rotate_left(48);
+                ^ results[1].rotate_left(6)
+                ^ results[2].rotate_left(12)
+                ^ results[3].rotate_left(18)
+                ^ results[4].rotate_left(24)
+                ^ results[5].rotate_left(30)
+                ^ results[6].rotate_left(36)
+                ^ results[7].rotate_left(42)
+                ^ results[8].rotate_left(48)
+                ^ results[9].rotate_left(54)
+                ^ generated.rotate_left(59);
         }
     }
 }
 
 fn main() {
     let host = case_results();
-    let host_folded = host[0]
-        ^ host[1].rotate_left(8)
-        ^ host[2].rotate_left(16)
-        ^ host[3].rotate_left(24)
-        ^ host[4].rotate_left(32)
-        ^ host[5].rotate_left(40)
-        ^ host[6].rotate_left(48);
+    let host_projected_folded = host[0]
+        ^ host[1].rotate_left(6)
+        ^ host[2].rotate_left(12)
+        ^ host[3].rotate_left(18)
+        ^ host[4].rotate_left(24)
+        ^ host[5].rotate_left(30)
+        ^ host[6].rotate_left(36)
+        ^ host[7].rotate_left(42)
+        ^ host[8].rotate_left(48)
+        ^ host[9].rotate_left(54);
+
+    // The launch below uses block_dim.x = 1. The generated catalog intrinsic
+    // is device-only, so compute the host-side expected value from that launch
+    // contract instead of executing the intrinsic on the host.
+    let generated_catalog_expected = 0x0123456789abcdef_u64
+        ^ u64::from(0x13579bdf_u32).rotate_left(9)
+        ^ u64::from(1_u32).rotate_left(27);
+    let host_folded = host_projected_folded ^ generated_catalog_expected.rotate_left(59);
 
     println!("=== intrinsic calls writing through a projected destination ===\n");
-    println!("host  deref case:       0x{:016x}", host[0]);
-    println!("host  field case:       0x{:016x}", host[1]);
-    println!("host  index case:       0x{:016x}", host[2]);
-    println!("host  float field case: 0x{:016x}", host[3]);
-    println!("host  float index case: 0x{:016x}", host[4]);
-    println!("host  fn field case:    0x{:016x}", host[5]);
-    println!("host  sincos case:      0x{:016x}", host[6]);
+    println!("host  deref case:        0x{:016x}", host[0]);
+    println!("host  field case:        0x{:016x}", host[1]);
+    println!("host  index case:        0x{:016x}", host[2]);
+    println!("host  field->index case: 0x{:016x}", host[3]);
+    println!("host  deref->field case: 0x{:016x}", host[4]);
+    println!("host  index->field case: 0x{:016x}", host[5]);
+    println!("host  float field case:  0x{:016x}", host[6]);
+    println!("host  float index case:  0x{:016x}", host[7]);
+    println!("host  fn field case:     0x{:016x}", host[8]);
+    println!("host  sincos case:       0x{:016x}", host[9]);
+    println!("host  generated sreg case: 0x{generated_catalog_expected:016x}");
 
     let ctx = CudaContext::new(0).expect("failed to create CUDA context");
     let stream = ctx.default_stream();
@@ -298,7 +435,7 @@ fn main() {
     println!("device folded:    0x{device_folded:016x}");
 
     if device_folded == host_folded {
-        println!("\nPASS: device and host agree on all seven projections");
+        println!("\nPASS: device and host expectation agree on all eleven projected destinations");
     } else {
         println!("\nFAIL: device and host disagree");
         std::process::exit(1);

@@ -594,7 +594,6 @@ pub fn emit_sincos(
     // store aimed at the wrong address.
     let goto_prev = helpers::store_result_to_place(
         ctx,
-        body,
         destination,
         tuple_val,
         value_map,

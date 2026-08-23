@@ -124,7 +124,6 @@ pub(crate) fn classify(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_and_store(
     ctx: &mut Context,
-    body: &mir::Body,
     value_map: &ValueMap,
     store: &CanonicalPayloadStore,
     new_value: Value,
@@ -136,7 +135,6 @@ pub(crate) fn rebuild_and_store(
 
     let Some((enum_ptr, prev)) = rvalue::translate_place_address(
         ctx,
-        body,
         value_map,
         &store.enum_place,
         /* is_mutable */ true,

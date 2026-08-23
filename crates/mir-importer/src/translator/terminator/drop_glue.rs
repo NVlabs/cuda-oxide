@@ -144,7 +144,6 @@ pub fn drop_instance_is_noop(instance: &Instance) -> bool {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_drop_glue(
     ctx: &mut Context,
-    body: &mir::Body,
     place: &mir::Place,
     dropped_ty: Ty,
     target: mir::BasicBlockIdx,
@@ -170,7 +169,7 @@ pub(super) fn emit_drop_glue(
     // For a simple local `_N`, this is just the alloca slot pointer.
     // For a projected place like `_N.field`, we compute the field address.
     let (place_ptr, last_op) =
-        compute_drop_place_address(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
+        compute_drop_place_address(ctx, place, value_map, block_ptr, prev_op, loc.clone())?;
 
     // The return type of drop_in_place is `()` (unit / void).
     let unit_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]);
@@ -222,7 +221,6 @@ pub(super) fn emit_drop_glue(
 /// via `translate_place_address`.
 fn compute_drop_place_address(
     ctx: &mut Context,
-    body: &mir::Body,
     place: &mir::Place,
     value_map: &ValueMap,
     block_ptr: Ptr<BasicBlock>,
@@ -232,7 +230,6 @@ fn compute_drop_place_address(
     // Try the full projection-aware address computation first.
     if let Some((addr, last_op)) = rvalue::translate_place_address(
         ctx,
-        body,
         value_map,
         place,
         /* is_mutable */ true,

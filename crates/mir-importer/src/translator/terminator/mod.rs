@@ -854,8 +854,7 @@ fn translate_drop(
 
     // Fallback: emit a device-side call to drop_in_place::<T>(ptr).
     drop_glue::emit_drop_glue(
-        ctx, body, place, dropped_ty, target, block_ptr, prev_op, value_map, block_map, legaliser,
-        loc,
+        ctx, place, dropped_ty, target, block_ptr, prev_op, value_map, block_map, legaliser, loc,
     )
 }
 
@@ -1493,7 +1492,6 @@ fn translate_function_item_call(
     let result_value = call_op.deref(ctx).get_result(0);
     let last_inserted = helpers::store_result_to_place(
         ctx,
-        body,
         destination,
         result_value,
         value_map,
@@ -1730,7 +1728,6 @@ fn translate_closure_call(
     let result_value = call_op.deref(ctx).get_result(0);
     let last_inserted = helpers::store_result_to_place(
         ctx,
-        body,
         destination,
         result_value,
         value_map,

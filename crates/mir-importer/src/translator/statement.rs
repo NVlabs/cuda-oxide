@@ -1002,7 +1002,6 @@ pub fn translate_statement(
             // Get the address of the enum place.
             let (enum_ptr, addr_prev) = match rvalue::translate_place_address(
                 ctx,
-                body,
                 value_map,
                 place,
                 /* is_mutable */ true,
@@ -1099,7 +1098,6 @@ fn store_through_place_address(
     if let Some(payload_store) = payload_store::classify(ctx, body, place)?
         && let Some(result) = payload_store::rebuild_and_store(
             ctx,
-            body,
             value_map,
             &payload_store,
             result_value,
@@ -1114,7 +1112,6 @@ fn store_through_place_address(
     // The destination is written through, so request a mutable address.
     let walked = rvalue::translate_place_address(
         ctx,
-        body,
         value_map,
         place,
         /* is_mutable */ true,

@@ -815,7 +815,6 @@ pub fn translate_rvalue(
             // through the borrow mutate the borrowed place.
             if let Some((result_val, last_inserted)) = translate_place_address(
                 ctx,
-                body,
                 value_map,
                 place,
                 is_mutable,
@@ -909,7 +908,6 @@ pub fn translate_rvalue(
             // composes field + element addresses, ...).
             if let Some((result_val, last_inserted)) = translate_place_address(
                 ctx,
-                body,
                 value_map,
                 place,
                 is_mutable,
@@ -2883,7 +2881,6 @@ pub fn translate_place(
         PlaceReadStrategy::Address => {
             if let Some((value, last_op)) = translate_place_load_from_address(
                 ctx,
-                body,
                 place,
                 value_map,
                 block_ptr,
@@ -3157,7 +3154,6 @@ fn classify_place_read_strategy(
 #[allow(clippy::too_many_arguments)]
 fn translate_place_load_from_address(
     ctx: &mut Context,
-    body: &mir::Body,
     place: &mir::Place,
     value_map: &ValueMap,
     block_ptr: Ptr<BasicBlock>,
@@ -3166,7 +3162,6 @@ fn translate_place_load_from_address(
 ) -> TranslationResult<Option<(Value, Option<Ptr<Operation>>)>> {
     let Some((addr, addr_prev_op)) = translate_place_address(
         ctx,
-        body,
         value_map,
         place,
         /* is_mutable */ false,
@@ -4054,10 +4049,12 @@ fn apply_enum_field_projection(
 /// of projected assignments (indexed `(*ptr)[i]` writes and 3+ element
 /// projection chains), where the same "walk the chain, then act through
 /// the address" logic applies with a store instead of a borrow.
+///
+/// Runtime `Index` projections load the index local directly from `ValueMap`,
+/// so address materialisation does not require the surrounding `mir::Body`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn translate_place_address(
     ctx: &mut Context,
-    body: &mir::Body,
     value_map: &ValueMap,
     place: &mir::Place,
     is_mutable: bool,
@@ -4070,7 +4067,6 @@ pub(crate) fn translate_place_address(
     };
     translate_place_addr_from_slot(
         ctx,
-        body,
         value_map,
         slot,
         &place.projection,
@@ -4588,7 +4584,6 @@ fn emit_array_subslice_value(
 /// final result pointer also carries this mutability.
 fn translate_place_addr_from_slot(
     ctx: &mut Context,
-    body: &mir::Body,
     value_map: &ValueMap,
     slot: Value,
     projection: &[mir::ProjectionElem],
@@ -5279,21 +5274,18 @@ fn translate_place_addr_from_slot(
                 if entered_as_slice_data {
                     pointee_kind = PointeeKind::Direct;
                 }
-
-                let index_place = mir::Place {
-                    local: *index_local,
-                    projection: vec![],
+                let Some((index_load, index_val)) =
+                    value_map.load_local(ctx, *index_local, block_ptr, current_prev_op)
+                else {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "runtime Index local {} has no alloca slot",
+                            Into::<usize>::into(*index_local)
+                        ))
+                    );
                 };
-                let (index_val, next_prev_op) = translate_place(
-                    ctx,
-                    body,
-                    &index_place,
-                    value_map,
-                    block_ptr,
-                    current_prev_op,
-                    loc.clone(),
-                )?;
-                current_prev_op = next_prev_op;
+                current_prev_op = Some(index_load);
 
                 let (addr_op, next_current) = emit_indexed_element_addr(
                     ctx,

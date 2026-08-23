@@ -618,7 +618,6 @@ pub fn emit_rust_layout_intrinsic(
 
     let store_op = helpers::store_result_to_place(
         ctx,
-        body,
         destination,
         result,
         value_map,

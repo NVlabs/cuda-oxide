@@ -11,6 +11,7 @@ license = "Apache-2.0"
 #   cargo oxide run mir_projected_call_destination
 
 [dependencies]
+cuda-intrinsics = { path = "../../../cuda-intrinsics" }
 cuda-device = { path = "../../../cuda-device" }
 cuda-host = { path = "../../../cuda-host" }
 cuda-core = { path = "../../../cuda-core" }
