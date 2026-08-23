@@ -1,6 +1,6 @@
 # tma_multicast
 
-## TMA Multicast — Blackwell Datacenter (sm_100a) Cluster Broadcast
+## TMA Multicast Cluster Broadcast
 
 Demonstrates TMA multicast: a single `cp.async.bulk.tensor` load broadcasts a
 tile from global memory into the shared memory of **every CTA** in a thread
@@ -113,34 +113,36 @@ Loading PTX from: tma_multicast.ptx
 === TMA Multicast Test Complete ===
 ```
 
-### On Consumer Blackwell (sm_120) or Hopper (sm_90):
+### On Consumer Blackwell (sm_120)
 
-```text
-GPU Compute Capability: sm_120
+Consumer Blackwell is supported by observed runtime evidence. PR #668
+confirmed that the example's PTX JIT-loads and runs successfully on an
+RTX 5090 (sm_120).
 
-✗ PTX load failed: DriverError(CUDA_ERROR_INVALID_PTX, ...)
+The previous documentation showing a PTX load failure on sm_120 was stale.
 
-  TMA multicast requires sm_100a (Blackwell datacenter: B100/B200/GB200).
-  Consumer Blackwell (sm_120) does NOT support multicast.
-  For basic TMA tests, use: cargo oxide run tma_copy
-```
+### On Hopper (sm_90/sm_90a)
+
+Hopper runtime behavior has not yet been validated on physical Hopper hardware.
+The current host-side example still skips devices with compute capability
+below 10, so this documentation change does not claim Hopper runtime support.
 
 ## Hardware Requirements
 
-- **Architecture**: sm_100a — Blackwell datacenter (B100, B200, GB200)
-- **NOT supported**: Consumer Blackwell (sm_120), Hopper (sm_90/sm_90a)
+- **Blackwell**: sm_100a datacenter GPUs; consumer sm_120 reported working in #668
+- **Hopper (sm_90/sm_90a)**: runtime validation pending; currently skipped by the host example
 - **CUDA Driver**: 12.0+
 - **Cluster launch**: Required (`cuLaunchKernelEx` with cluster dimensions)
 
 ## Multicast vs Unicast TMA
 
-| Aspect              | Unicast (`tma_copy`)             | Multicast (`tma_multicast`)         |
-|---------------------|----------------------------------|-------------------------------------|
-| Destination         | One CTA's shared memory          | All CTAs in cluster                 |
-| Bandwidth           | 1x tile transfer                 | 1x transfer, N copies               |
-| Architecture        | sm_90+ (Hopper+)                 | sm_100a (Blackwell datacenter)      |
-| Use case            | Single-CTA tile loads            | GEMM/convolution with shared tiles  |
-| `cluster_launch`    | Optional                         | Required                            |
+| Aspect              | Unicast (`tma_copy`)             | Multicast (`tma_multicast`)                  |
+|---------------------|----------------------------------|----------------------------------------------|
+| Destination         | One CTA's shared memory          | All CTAs in cluster                          |
+| Bandwidth           | 1x tile transfer                 | 1x transfer, N copies                        |
+| Architecture        | sm_90+ (Hopper+)                 | Blackwell; sm_120 reported working           |
+| Use case            | Single-CTA tile loads            | GEMM/convolution with shared tiles           |
+| `cluster_launch`    | Optional                         | Required                                     |
 
 ## Pitfalls
 
@@ -155,10 +157,12 @@ writes to every CTA's shared memory and signals every CTA's mbarrier. If any
 CTA hasn't finished `mbarrier_init` + `fence_proxy_async_shared_cta` before
 the multicast fires, the barrier tracking will be silently corrupt.
 
-## Why sm_100a Only?
+## Consumer Blackwell Compatibility
 
-The `a` suffix in `sm_100a` denotes architecture-specific extensions that are
-**not forward-compatible**. TMA multicast uses the L2 multicast fabric present
-only in datacenter Blackwell GPUs. Consumer Blackwell (sm_120) has the same
-base ISA (sm_100) but lacks this fabric, so `sm_100a` PTX cannot be JIT-compiled
-on sm_120.
+PR #668 established through runtime measurement that this example's PTX
+JIT-loads and executes successfully on an RTX 5090 (sm_120). Therefore,
+consumer Blackwell must not be documented as unsupported.
+
+This result does not establish Hopper runtime support. Hopper remains a
+separate validation question, and the current host-side example continues
+to skip devices with compute capability below 10.
