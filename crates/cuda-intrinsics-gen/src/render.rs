@@ -60,7 +60,7 @@ pub fn all_outputs(
             catalog.intrinsic_abi
         )
         .into(),
-        render_raw_abi(catalog, catalog_sha256),
+        render_raw_abi(catalog, catalog_sha256)?,
     );
     outputs.insert(
         "crates/cuda-device/src/generated/register_mma.rs".into(),
@@ -448,40 +448,6 @@ fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
         "catalog contains no intrinsics"
     );
     for record in &catalog.intrinsics {
-        if !record.rust.safe {
-            ensure!(
-                (record.family == "ldmatrix" && record.ldmatrix.is_some())
-                    || record.family == "stmatrix"
-                    || (record.family == "register_mma" && record.register_mma.is_some())
-                    || (record.family == "sparse_mma" && record.sparse_mma.is_some())
-                    || (record.family == "packed_atomic" && record.packed_atomic.is_some())
-                    || (record.family == "redux" && record.redux.is_some())
-                    || (record.family == "vote" && record.vote.is_some())
-                    || (record.family == "warp_match" && record.warp_match.is_some())
-                    || record.family == "elect"
-                    || (record.family == "warp_barrier" && record.warp_barrier.is_some())
-                    || (record.family == "warp_shuffle" && record.warp_shuffle.is_some())
-                    || (record.family == "cp_async_copy" && record.cp_async_copy.is_some())
-                    || (record.family == "cp_async_control" && record.cp_async_control.is_some())
-                    || (record.family == "cp_async_mbarrier" && record.cp_async_mbarrier.is_some())
-                    || (record.family == "mbarrier_basic" && record.mbarrier_basic.is_some())
-                    || (record.family == "movmatrix" && record.movmatrix.is_some())
-                    || (record.family == "mbarrier_extended" && record.mbarrier_extended.is_some())
-                    || (record.family == "cluster_barrier" && record.cluster_barrier.is_some())
-                    || (record.family == "cluster_memory" && record.cluster_memory.is_some())
-                    || (record.family == "clc" && record.clc.is_some())
-                    || (record.family == "wgmma_control" && record.wgmma_control.is_some())
-                    || (record.family == "tma" && record.tma.is_some())
-                    || (record.family == "tcgen05" && record.tcgen05.is_some())
-                    || matches!(
-                        record.family.as_str(),
-                        "counted_barrier" | "grid_dependency" | "register_control"
-                    )
-                    || record.family == "sync",
-                "{} is unsafe but has no dedicated family safety renderer",
-                record.id
-            );
-        }
         match record.family.as_str() {
             "sreg" => {
                 if let Some(special) = &record.special_register {
@@ -2367,6 +2333,58 @@ fn clc_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrins
         .intrinsics
         .iter()
         .filter(|record| record.family == "clc")
+}
+
+#[derive(Clone, Copy)]
+enum ClcSafetyArgNames {
+    RawAbi,
+    Compatibility,
+}
+
+fn clc_safety_lines(operation: ClcOperation, names: ClcSafetyArgNames) -> Vec<String> {
+    let (response, mbar, resp_lo, resp_hi) = match names {
+        ClcSafetyArgNames::RawAbi => ("`_arg0`", "`_arg1`", "`_arg0`", "`_arg1`"),
+        ClcSafetyArgNames::Compatibility => ("`response`", "`mbar`", "`resp_lo`", "`resp_hi`"),
+    };
+    match operation {
+        ClcOperation::TryCancel => vec![
+            format!(
+                "{response} must designate a writable, 16-byte-aligned 16-byte region in `shared::cta` memory, and {mbar} must designate a valid, aligned shared-memory mbarrier."
+            ),
+            format!(
+                "The calling CTA must issue `arrive_expect_tx` for {mbar} with 16 bytes before this request."
+            ),
+            "This CTA must not have observed a prior CLC try-cancel request fail.".into(),
+        ],
+        ClcOperation::TryCancelMulticast => vec![
+            format!(
+                "{response} must designate a writable, 16-byte-aligned 16-byte region in `shared::cta` memory, and {mbar} must designate a valid, aligned shared-memory mbarrier."
+            ),
+            format!(
+                "Each CTA must issue `arrive_expect_tx` for its own corresponding mbarrier with 16 bytes before this request."
+            ),
+            "This CTA must not have observed a prior CLC try-cancel request fail.".into(),
+            "The response is written to every CTA's shared-memory window and signals every CTA's mbarrier.".into(),
+            "Every CTA in the cluster must still be active.".into(),
+        ],
+        ClcOperation::QueryIsCanceled => vec![format!(
+            "{resp_lo} and {resp_hi} must be the two halves of an opaque response observed complete from a prior CLC try-cancel request."
+        )],
+        ClcOperation::QueryGetFirstCtaidX
+        | ClcOperation::QueryGetFirstCtaidY
+        | ClcOperation::QueryGetFirstCtaidZ => vec![
+            format!(
+                "{resp_lo} and {resp_hi} must be the two halves of an opaque response observed complete from a prior CLC try-cancel request."
+            ),
+            "The result is meaningful only when `clc_query_is_canceled` returned one for this response.".into(),
+        ],
+    }
+}
+
+fn render_clc_safety_lines(output: &mut String, operation: ClcOperation, names: ClcSafetyArgNames) {
+    for line in clc_safety_lines(operation, names) {
+        writeln!(output, "/// {line}").unwrap();
+    }
 }
 
 fn tma_intrinsics(catalog: &CatalogFile) -> impl Iterator<Item = &CatalogIntrinsic> {
@@ -4726,7 +4744,7 @@ fn render_raw_mod(catalog: &CatalogFile, hash: &str) -> String {
     output
 }
 
-fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
+fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> Result<String> {
     let mut output = rust_header(catalog, hash);
     output.push_str("//! Raw ABI functions recognized by cuda-oxide.\n\n");
     for record in &catalog.intrinsics {
@@ -5173,11 +5191,19 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
                         "/// The caller must satisfy the tcgen05 address, lifetime, and participation rules.\n",
                     );
                 }
-            } else {
+            } else if record.packed_atomic.is_some() {
                 output.push_str(
                     "/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.\n\
                      /// Do not overlap this operation with a whole-word atomic or any non-atomic access to either 16-bit lane.\n\
                      /// Racing atomics must use scopes that include each other; this relaxed GPU-scope operation is not atomic with host/system access.\n",
+                );
+            } else if let Some(clc) = &record.clc {
+                render_clc_safety_lines(&mut output, clc.operation, ClcSafetyArgNames::RawAbi);
+            } else {
+                anyhow::bail!(
+                    "{} ({}) is unsafe but has no dedicated family safety renderer",
+                    record.id,
+                    record.family
                 );
             }
         }
@@ -5211,7 +5237,7 @@ fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("}\n\n");
     }
-    output
+    Ok(output)
 }
 
 fn render_compat_register_mma(catalog: &CatalogFile, hash: &str) -> String {
@@ -5946,12 +5972,9 @@ fn render_compat_clc(catalog: &CatalogFile, hash: &str) -> String {
         let operation = record.clc.as_ref().expect("CLC contract").operation;
         writeln!(output, "/// {}", record.summary).unwrap();
         output.push_str("///\n/// # Safety\n");
+        render_clc_safety_lines(&mut output, operation, ClcSafetyArgNames::Compatibility);
         match operation {
             ClcOperation::TryCancel | ClcOperation::TryCancelMulticast => {
-                output.push_str("/// `response` and `mbar` must be valid, aligned shared-memory objects for this request.\n");
-                if operation == ClcOperation::TryCancelMulticast {
-                    output.push_str("/// Every CTA in the cluster must still be active.\n");
-                }
                 output.push_str("#[inline(never)]\n");
                 writeln!(
                     output,
@@ -5965,8 +5988,6 @@ fn render_compat_clc(catalog: &CatalogFile, hash: &str) -> String {
             | ClcOperation::QueryGetFirstCtaidX
             | ClcOperation::QueryGetFirstCtaidY
             | ClcOperation::QueryGetFirstCtaidZ => {
-                output
-                    .push_str("/// The response halves must come from a completed CLC request.\n");
                 output.push_str("#[inline(never)]\n");
                 writeln!(
                     output,
@@ -20989,7 +21010,7 @@ mod tests {
     #[test]
     fn unsafe_safety_docs_never_reference_missing_addr() {
         let catalog = catalog_with_clc();
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         let offenders = catalog
             .intrinsics
             .iter()
@@ -21014,7 +21035,7 @@ mod tests {
     #[test]
     fn unsafe_safety_blocks_are_exclusive_to_one_family() {
         let catalog = catalog_with_clc();
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         let mut families_by_block = BTreeMap::<&str, BTreeSet<&str>>::new();
         for record in catalog.intrinsics.iter().filter(|record| !record.rust.safe) {
             families_by_block
@@ -21028,7 +21049,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(
             collisions.is_empty(),
-            "unsafe safety blocks shared across families: {collisions:?}"
+            "unsafe safety blocks shared across families: {collisions:?}; render a legitimate shared contract through a shared arm"
         );
     }
 
@@ -21045,7 +21066,7 @@ mod tests {
         assert!(compatibility.contains("__wgmma_wait_group(N as u64);"));
         assert!(compatibility.contains("pub(crate) fn __wgmma_wait_group(_max_pending: u64)"));
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub unsafe fn i0317()"));
         assert!(raw.contains("pub unsafe fn i0318()"));
         assert!(raw.contains("pub unsafe fn i0319(_arg0: u64)"));
@@ -21472,7 +21493,7 @@ mod tests {
         }
         assert_eq!(typed_probe_count, 4);
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub fn i0062(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
         assert!(raw.contains("pub fn i0071(_arg0: f32, _arg1: f32) -> u32"));
         assert!(raw.contains("pub fn i0072(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
@@ -21623,7 +21644,7 @@ mod tests {
         );
         assert!(compatibility.contains("pub fn cvt_rna_tf32_f32(value: f32) -> u32"));
         assert!(compatibility.contains("pub fn cvt_rz_relu_satfinite_tf32_f32(value: f32) -> u32"));
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub fn i0368(_arg0: f32) -> u32"));
         assert!(raw.contains("pub fn i0377(_arg0: f32) -> u32"));
     }
@@ -21728,7 +21749,7 @@ mod tests {
         ));
         assert!(rendered.contains("ldmatrix.sync.aligned.m16n16.x2.trans.shared.b8x16.b6x16_p32"));
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains(
             "Instruction floor PTX 8.6; the selected target may require a newer PTX version."
         ));
@@ -21807,7 +21828,7 @@ mod tests {
     fn packed_atomic_raw_abi_is_unsafe_and_must_use() {
         let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let catalog = crate::resolve::resolve(&repo_root).unwrap();
-        let rendered = render_raw_abi(&catalog, "test-hash");
+        let rendered = render_raw_abi(&catalog, "test-hash").unwrap();
         for abi_id in ["i0014", "i0015"] {
             let signature = format!("pub unsafe fn {abi_id}(_arg0: *mut u32, _arg1: u32) -> u32");
             let index = rendered.find(&signature).unwrap();
@@ -21922,7 +21943,7 @@ mod tests {
         let records: Vec<_> = cp_async_mbarriers(&catalog).collect();
         assert_eq!(records.len(), 4);
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub unsafe fn i0101(_arg0: *mut u64)"));
         assert!(raw.contains("live, initialized, eight-byte-aligned mbarrier"));
         assert!(raw.contains("initial pending count must already include"));
@@ -22059,7 +22080,7 @@ mod tests {
                 .contains("call float @llvm.nvvm.redux.sync.fmin(float %value, i32 %member_mask)")
         );
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         let signature = "pub unsafe fn i0017(_arg0: u32, _arg1: u32) -> u32";
         let index = raw.find(signature).unwrap();
         assert!(raw[..index].ends_with("#[must_use]\n#[inline(never)]\n"));
@@ -22111,7 +22132,7 @@ mod tests {
         assert!(probe.contains("define i32 @probe_ballot_sync_immediate(i1 %predicate)"));
         assert!(probe.contains("i32 -1, i1 %predicate"));
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         for abi_id in ["i0040", "i0041", "i0042", "i0043"] {
             assert!(raw.contains(&format!("pub unsafe fn {abi_id}")));
         }
@@ -22160,7 +22181,7 @@ mod tests {
         }
         assert!(probe.contains("declare { i32, i1 } @llvm.nvvm.match.all.sync.i32p"));
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub fn i0044() -> u32"));
         assert!(!raw.contains("pub unsafe fn i0044() -> u32"));
         assert!(raw.contains("pub unsafe fn i0045(_arg0: u32, _arg1: u32) -> u32"));
@@ -22218,7 +22239,7 @@ mod tests {
         assert!(probe.contains("define void @probe_sync_mask_immediate()"));
         assert!(probe.contains("call void @llvm.nvvm.bar.warp.sync(i32 -1)"));
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub unsafe fn i0049(_arg0: u32) -> ()"));
         assert!(raw.contains("On `sm_6x` and earlier"));
         assert!(raw.contains("no lane outside `mask` may be active"));
@@ -22352,7 +22373,7 @@ mod tests {
             }
         }
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub unsafe fn i0050(_arg0: u32, _arg1: u32, _arg2: u32) -> u32"));
         assert!(raw.contains("pub unsafe fn i0057(_arg0: u32, _arg1: f32, _arg2: u32) -> f32"));
         for abi_id in ["i0058", "i0059", "i0060", "i0061"] {
@@ -22427,7 +22448,7 @@ mod tests {
         let record = sync_intrinsics(&catalog).next().unwrap();
         assert_eq!(sync_intrinsics(&catalog).count(), 4);
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub unsafe fn i0034() -> ()"));
         assert!(raw.contains("Every active thread in the CTA must reach the same barrier"));
 
@@ -22565,7 +22586,7 @@ mod tests {
         let importer = render_importer(&catalog, "test-hash");
         let lowering = render_lowering(&catalog, "test-hash");
         let targets = render_targets(&catalog, "test-hash");
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         for record in mbarrier_basics(&catalog) {
             assert!(dialect.contains(&format!("pub struct {}", record.dialect.op_type)));
             assert!(dialect.contains(&format!("{}::register(ctx)", record.dialect.op_type)));
@@ -22788,7 +22809,7 @@ mod tests {
         let dialect = render_dialect_mbarrier_extended(&catalog, "test-hash");
         let importer = render_importer(&catalog, "test-hash");
         let lowering = render_lowering(&catalog, "test-hash");
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         for record in &records {
             assert!(dialect.contains(&format!("pub struct {}", record.dialect.op_type)));
             assert!(dialect.contains(&format!("{}::register(ctx);", record.dialect.op_type)));
@@ -22888,7 +22909,7 @@ mod tests {
         assert_eq!(generated_records.len(), 149);
         assert_eq!(existing_records.len(), 5);
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         for record in &records {
             assert!(raw.contains(&format!("pub unsafe fn {}(", record.rust.abi_id)));
         }
@@ -23493,7 +23514,7 @@ mod tests {
         );
         assert_eq!(sparse_mma_selector_values(ordered_f8f6f4_f16), &[0]);
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("must be the compile-time constant `0` or `1`"));
         assert!(raw.contains("must be the compile-time constant `0`"));
         for record in &records {
@@ -23878,7 +23899,7 @@ mod tests {
         assert!(read_probe.contains("~{memory}"));
         assert!(read_probe.contains("attributes #0 = { convergent }"));
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub unsafe fn i0320(_arg0: *const u8, _arg1: u32) -> *const u8"));
         assert!(raw.contains("pub unsafe fn i0321(_arg0: *const u32, _arg1: u32) -> u32"));
         assert!(raw.contains(
@@ -24388,7 +24409,7 @@ mod tests {
         );
         assert!(!compatibility.contains("tcgen05_mma_ws_f16_with_collector"));
 
-        let raw = render_raw_abi(&catalog, "test-hash");
+        let raw = render_raw_abi(&catalog, "test-hash").unwrap();
         assert!(raw.contains("pub unsafe fn i0578(_arg0: u32, _arg1: u64) -> ()"));
         assert!(raw.contains("pub unsafe fn i0611(_arg0: u32, _arg1: u64) -> ()"));
         assert!(raw.contains("pub unsafe fn i0612(_arg0: u32) -> u32"));

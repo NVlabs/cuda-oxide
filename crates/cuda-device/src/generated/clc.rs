@@ -12,7 +12,8 @@
 /// Returns the X coordinate from a successful cancellation response.
 ///
 /// # Safety
-/// The response halves must come from a completed CLC request.
+/// `resp_lo` and `resp_hi` must be the two halves of an opaque response observed complete from a prior CLC try-cancel request.
+/// The result is meaningful only when `clc_query_is_canceled` returned one for this response.
 #[inline(never)]
 pub unsafe fn clc_query_get_first_ctaid_x(resp_lo: u64, resp_hi: u64) -> u32 {
     let _ = (resp_lo, resp_hi);
@@ -22,7 +23,8 @@ pub unsafe fn clc_query_get_first_ctaid_x(resp_lo: u64, resp_hi: u64) -> u32 {
 /// Returns the Y coordinate from a successful cancellation response.
 ///
 /// # Safety
-/// The response halves must come from a completed CLC request.
+/// `resp_lo` and `resp_hi` must be the two halves of an opaque response observed complete from a prior CLC try-cancel request.
+/// The result is meaningful only when `clc_query_is_canceled` returned one for this response.
 #[inline(never)]
 pub unsafe fn clc_query_get_first_ctaid_y(resp_lo: u64, resp_hi: u64) -> u32 {
     let _ = (resp_lo, resp_hi);
@@ -32,7 +34,8 @@ pub unsafe fn clc_query_get_first_ctaid_y(resp_lo: u64, resp_hi: u64) -> u32 {
 /// Returns the Z coordinate from a successful cancellation response.
 ///
 /// # Safety
-/// The response halves must come from a completed CLC request.
+/// `resp_lo` and `resp_hi` must be the two halves of an opaque response observed complete from a prior CLC try-cancel request.
+/// The result is meaningful only when `clc_query_is_canceled` returned one for this response.
 #[inline(never)]
 pub unsafe fn clc_query_get_first_ctaid_z(resp_lo: u64, resp_hi: u64) -> u32 {
     let _ = (resp_lo, resp_hi);
@@ -42,7 +45,7 @@ pub unsafe fn clc_query_get_first_ctaid_z(resp_lo: u64, resp_hi: u64) -> u32 {
 /// Returns whether the Cluster Launch Control request was canceled.
 ///
 /// # Safety
-/// The response halves must come from a completed CLC request.
+/// `resp_lo` and `resp_hi` must be the two halves of an opaque response observed complete from a prior CLC try-cancel request.
 #[inline(never)]
 pub unsafe fn clc_query_is_canceled(resp_lo: u64, resp_hi: u64) -> u32 {
     let _ = (resp_lo, resp_hi);
@@ -52,7 +55,9 @@ pub unsafe fn clc_query_is_canceled(resp_lo: u64, resp_hi: u64) -> u32 {
 /// Requests one pending CTA and writes its response to shared memory.
 ///
 /// # Safety
-/// `response` and `mbar` must be valid, aligned shared-memory objects for this request.
+/// `response` must designate a writable, 16-byte-aligned 16-byte region in `shared::cta` memory, and `mbar` must designate a valid, aligned shared-memory mbarrier.
+/// The calling CTA must issue `arrive_expect_tx` for `mbar` with 16 bytes before this request.
+/// This CTA must not have observed a prior CLC try-cancel request fail.
 #[inline(never)]
 pub unsafe fn clc_try_cancel(response: *mut u8, mbar: *mut Barrier) {
     let _ = (response, mbar);
@@ -62,7 +67,10 @@ pub unsafe fn clc_try_cancel(response: *mut u8, mbar: *mut Barrier) {
 /// Requests one pending CTA and multicasts its response across the cluster.
 ///
 /// # Safety
-/// `response` and `mbar` must be valid, aligned shared-memory objects for this request.
+/// `response` must designate a writable, 16-byte-aligned 16-byte region in `shared::cta` memory, and `mbar` must designate a valid, aligned shared-memory mbarrier.
+/// Each CTA must issue `arrive_expect_tx` for its own corresponding mbarrier with 16 bytes before this request.
+/// This CTA must not have observed a prior CLC try-cancel request fail.
+/// The response is written to every CTA's shared-memory window and signals every CTA's mbarrier.
 /// Every CTA in the cluster must still be active.
 #[inline(never)]
 pub unsafe fn clc_try_cancel_multicast(response: *mut u8, mbar: *mut Barrier) {

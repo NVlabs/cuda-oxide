@@ -644,9 +644,8 @@ pub fn i0296() -> () {
 /// Available on `sm_100+` targets from PTX 8.6.
 ///
 /// # Safety
-/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.
-/// Do not overlap this operation with a whole-word atomic or any non-atomic access to either 16-bit lane.
-/// Racing atomics must use scopes that include each other; this relaxed GPU-scope operation is not atomic with host/system access.
+/// `_arg0` and `_arg1` must be the two halves of an opaque response observed complete from a prior CLC try-cancel request.
+/// The result is meaningful only when `clc_query_is_canceled` returned one for this response.
 #[inline(never)]
 pub unsafe fn i0325(_arg0: u64, _arg1: u64) -> u32 {
     unreachable!(
@@ -660,9 +659,8 @@ pub unsafe fn i0325(_arg0: u64, _arg1: u64) -> u32 {
 /// Available on `sm_100+` targets from PTX 8.6.
 ///
 /// # Safety
-/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.
-/// Do not overlap this operation with a whole-word atomic or any non-atomic access to either 16-bit lane.
-/// Racing atomics must use scopes that include each other; this relaxed GPU-scope operation is not atomic with host/system access.
+/// `_arg0` and `_arg1` must be the two halves of an opaque response observed complete from a prior CLC try-cancel request.
+/// The result is meaningful only when `clc_query_is_canceled` returned one for this response.
 #[inline(never)]
 pub unsafe fn i0326(_arg0: u64, _arg1: u64) -> u32 {
     unreachable!(
@@ -676,9 +674,8 @@ pub unsafe fn i0326(_arg0: u64, _arg1: u64) -> u32 {
 /// Available on `sm_100+` targets from PTX 8.6.
 ///
 /// # Safety
-/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.
-/// Do not overlap this operation with a whole-word atomic or any non-atomic access to either 16-bit lane.
-/// Racing atomics must use scopes that include each other; this relaxed GPU-scope operation is not atomic with host/system access.
+/// `_arg0` and `_arg1` must be the two halves of an opaque response observed complete from a prior CLC try-cancel request.
+/// The result is meaningful only when `clc_query_is_canceled` returned one for this response.
 #[inline(never)]
 pub unsafe fn i0327(_arg0: u64, _arg1: u64) -> u32 {
     unreachable!(
@@ -692,9 +689,7 @@ pub unsafe fn i0327(_arg0: u64, _arg1: u64) -> u32 {
 /// Available on `sm_100+` targets from PTX 8.6.
 ///
 /// # Safety
-/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.
-/// Do not overlap this operation with a whole-word atomic or any non-atomic access to either 16-bit lane.
-/// Racing atomics must use scopes that include each other; this relaxed GPU-scope operation is not atomic with host/system access.
+/// `_arg0` and `_arg1` must be the two halves of an opaque response observed complete from a prior CLC try-cancel request.
 #[inline(never)]
 pub unsafe fn i0324(_arg0: u64, _arg1: u64) -> u32 {
     unreachable!(
@@ -708,9 +703,9 @@ pub unsafe fn i0324(_arg0: u64, _arg1: u64) -> u32 {
 /// Available on `sm_100+` targets from PTX 8.6.
 ///
 /// # Safety
-/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.
-/// Do not overlap this operation with a whole-word atomic or any non-atomic access to either 16-bit lane.
-/// Racing atomics must use scopes that include each other; this relaxed GPU-scope operation is not atomic with host/system access.
+/// `_arg0` must designate a writable, 16-byte-aligned 16-byte region in `shared::cta` memory, and `_arg1` must designate a valid, aligned shared-memory mbarrier.
+/// The calling CTA must issue `arrive_expect_tx` for `_arg1` with 16 bytes before this request.
+/// This CTA must not have observed a prior CLC try-cancel request fail.
 #[inline(never)]
 pub unsafe fn i0322(_arg0: *mut u8, _arg1: *mut u64) -> () {
     unreachable!(
@@ -724,9 +719,11 @@ pub unsafe fn i0322(_arg0: *mut u8, _arg1: *mut u64) -> () {
 /// Available on `sm_100a or sm_101a or sm_103a or sm_110a or sm_120a or sm_121a` targets from PTX 8.6.
 ///
 /// # Safety
-/// `addr` must designate four writable bytes in global memory and be naturally aligned to four bytes.
-/// Do not overlap this operation with a whole-word atomic or any non-atomic access to either 16-bit lane.
-/// Racing atomics must use scopes that include each other; this relaxed GPU-scope operation is not atomic with host/system access.
+/// `_arg0` must designate a writable, 16-byte-aligned 16-byte region in `shared::cta` memory, and `_arg1` must designate a valid, aligned shared-memory mbarrier.
+/// Each CTA must issue `arrive_expect_tx` for its own corresponding mbarrier with 16 bytes before this request.
+/// This CTA must not have observed a prior CLC try-cancel request fail.
+/// The response is written to every CTA's shared-memory window and signals every CTA's mbarrier.
+/// Every CTA in the cluster must still be active.
 #[inline(never)]
 pub unsafe fn i0323(_arg0: *mut u8, _arg1: *mut u64) -> () {
     unreachable!(
