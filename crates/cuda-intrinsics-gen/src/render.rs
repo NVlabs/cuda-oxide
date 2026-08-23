@@ -20966,6 +20966,72 @@ mod tests {
         catalog
     }
 
+    fn raw_abi_item<'a>(raw: &'a str, id: &str) -> &'a str {
+        let marker = format!("Catalog ID: `{id}`");
+        let marker_offset = raw.find(&marker).unwrap();
+        let start = raw[..marker_offset]
+            .rfind("\n\n")
+            .map_or(0, |offset| offset + 2);
+        let end = raw[marker_offset..]
+            .find("\n}\n")
+            .map_or(raw.len(), |offset| marker_offset + offset + 3);
+        &raw[start..end]
+    }
+
+    fn raw_abi_safety_block<'a>(raw: &'a str, id: &str) -> &'a str {
+        let item = raw_abi_item(raw, id);
+        let marker = "/// # Safety\n";
+        let start = item.find(marker).unwrap() + marker.len();
+        let end = item[start..].find("#[").unwrap() + start;
+        &item[start..end]
+    }
+
+    #[test]
+    fn unsafe_safety_docs_never_reference_missing_addr() {
+        let catalog = catalog_with_clc();
+        let raw = render_raw_abi(&catalog, "test-hash");
+        let offenders = catalog
+            .intrinsics
+            .iter()
+            .filter(|record| !record.rust.safe)
+            .filter(|record| raw_abi_item(&raw, &record.id).contains("/// `addr`"))
+            .filter(|record| {
+                !record
+                    .rust
+                    .arguments
+                    .iter()
+                    .any(|argument| argument.starts_with('*'))
+            })
+            .map(|record| record.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            offenders.is_empty(),
+            "unsafe safety docs reference `addr` without a pointer argument: {}",
+            offenders.join(", ")
+        );
+    }
+
+    #[test]
+    fn unsafe_safety_blocks_are_exclusive_to_one_family() {
+        let catalog = catalog_with_clc();
+        let raw = render_raw_abi(&catalog, "test-hash");
+        let mut families_by_block = BTreeMap::<&str, BTreeSet<&str>>::new();
+        for record in catalog.intrinsics.iter().filter(|record| !record.rust.safe) {
+            families_by_block
+                .entry(raw_abi_safety_block(&raw, &record.id))
+                .or_default()
+                .insert(&record.family);
+        }
+        let collisions = families_by_block
+            .values()
+            .filter(|families| families.len() != 1)
+            .collect::<Vec<_>>();
+        assert!(
+            collisions.is_empty(),
+            "unsafe safety blocks shared across families: {collisions:?}"
+        );
+    }
+
     #[test]
     fn wgmma_controls_render_closed_compatibility_and_backend_routes() {
         let catalog = catalog_with_wgmma_controls();
