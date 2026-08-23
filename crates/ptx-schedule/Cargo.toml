@@ -12,6 +12,7 @@ description = "Structural PTX schedule analysis and deterministic perturbation"
 readme = "README.md"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 dialect-ptx = { workspace = true }
 oxide-artifacts = { workspace = true, features = ["object-read"] }
 ptx-parse = { workspace = true }
