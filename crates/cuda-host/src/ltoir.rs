@@ -358,9 +358,32 @@ pub fn build_cubin_from_nvvm_ir_with_compile_options(
     arch: &str,
     compile_options: ArtifactCompileOptions,
 ) -> Result<Vec<u8>, LtoirError> {
+    build_cubin_from_nvvm_ir_with_compile_options_and_expected_kernels(
+        nvvm_ir,
+        module_name,
+        &[],
+        arch,
+        compile_options,
+    )
+}
+
+pub(crate) fn build_cubin_from_nvvm_ir_with_compile_options_and_expected_kernels(
+    nvvm_ir: &[u8],
+    module_name: &str,
+    expected_kernels: &[&str],
+    arch: &str,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
     let arch: CudaArch = arch.parse()?;
     let options = finalization_options(&arch, compile_options);
-    Ok(Finalizer::discover()?.materialize_nvvm_ir(module_name, nvvm_ir, &options)?)
+    Ok(
+        Finalizer::discover()?.materialize_nvvm_ir_with_expected_kernels(
+            module_name,
+            nvvm_ir,
+            expected_kernels,
+            &options,
+        )?,
+    )
 }
 
 /// Compile NVVM IR bytes to forward-compatible PTX.
@@ -404,6 +427,22 @@ pub fn build_ptx_from_nvvm_ir_with_compile_options(
     arch: &str,
     compile_options: ArtifactCompileOptions,
 ) -> Result<Vec<u8>, LtoirError> {
+    build_ptx_from_nvvm_ir_with_compile_options_and_expected_kernels(
+        nvvm_ir,
+        module_name,
+        &[],
+        arch,
+        compile_options,
+    )
+}
+
+pub(crate) fn build_ptx_from_nvvm_ir_with_compile_options_and_expected_kernels(
+    nvvm_ir: &[u8],
+    module_name: &str,
+    expected_kernels: &[&str],
+    arch: &str,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
     let arch: CudaArch = arch.parse()?;
     let finalizer = Finalizer::discover()?;
     let options = finalization_options(&arch, compile_options);
@@ -411,8 +450,9 @@ pub fn build_ptx_from_nvvm_ir_with_compile_options(
         .compiler()
         .compile_nvvm_ir_to_ltoir(module_name, nvvm_ir, &options)?;
     let ltoir_name = format!("{module_name}.ltoir");
-    Ok(finalizer.link_ltoir(
+    Ok(finalizer.link_ltoir_with_expected_kernels(
         &[NamedInput::new(&ltoir_name, &ltoir)],
+        expected_kernels,
         &options,
         FinalizerOutput::Ptx,
     )?)
@@ -454,8 +494,30 @@ pub fn link_ltoir_to_cubin_with_compile_options(
     arch: &str,
     compile_options: ArtifactCompileOptions,
 ) -> Result<Vec<u8>, LtoirError> {
+    link_ltoir_to_cubin_with_compile_options_and_expected_kernels(
+        ltoir,
+        module_name,
+        &[],
+        arch,
+        compile_options,
+    )
+}
+
+pub(crate) fn link_ltoir_to_cubin_with_compile_options_and_expected_kernels(
+    ltoir: &[u8],
+    module_name: &str,
+    expected_kernels: &[&str],
+    arch: &str,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
     let arch: CudaArch = arch.parse()?;
-    link_ltoir_to_cubin_parsed_with_compile_options(ltoir, module_name, &arch, compile_options)
+    link_ltoir_to_cubin_parsed_with_compile_options(
+        ltoir,
+        module_name,
+        expected_kernels,
+        &arch,
+        compile_options,
+    )
 }
 
 /// Link one LTOIR payload to forward-compatible PTX.
@@ -498,19 +560,43 @@ pub fn link_ltoir_to_ptx_with_compile_options(
     arch: &str,
     compile_options: ArtifactCompileOptions,
 ) -> Result<Vec<u8>, LtoirError> {
+    link_ltoir_to_ptx_with_compile_options_and_expected_kernels(
+        ltoir,
+        module_name,
+        &[],
+        arch,
+        compile_options,
+    )
+}
+
+pub(crate) fn link_ltoir_to_ptx_with_compile_options_and_expected_kernels(
+    ltoir: &[u8],
+    module_name: &str,
+    expected_kernels: &[&str],
+    arch: &str,
+    compile_options: ArtifactCompileOptions,
+) -> Result<Vec<u8>, LtoirError> {
     let arch: CudaArch = arch.parse()?;
-    link_ltoir_to_ptx_parsed_with_compile_options(ltoir, module_name, &arch, compile_options)
+    link_ltoir_to_ptx_parsed_with_compile_options(
+        ltoir,
+        module_name,
+        expected_kernels,
+        &arch,
+        compile_options,
+    )
 }
 
 fn link_ltoir_to_cubin_parsed_with_compile_options(
     ltoir: &[u8],
     module_name: &str,
+    expected_kernels: &[&str],
     arch: &CudaArch,
     compile_options: ArtifactCompileOptions,
 ) -> Result<Vec<u8>, LtoirError> {
     link_ltoir_with_shared_finalizer(
         ltoir,
         module_name,
+        expected_kernels,
         arch,
         compile_options,
         FinalizerOutput::Cubin,
@@ -520,12 +606,14 @@ fn link_ltoir_to_cubin_parsed_with_compile_options(
 fn link_ltoir_to_ptx_parsed_with_compile_options(
     ltoir: &[u8],
     module_name: &str,
+    expected_kernels: &[&str],
     arch: &CudaArch,
     compile_options: ArtifactCompileOptions,
 ) -> Result<Vec<u8>, LtoirError> {
     link_ltoir_with_shared_finalizer(
         ltoir,
         module_name,
+        expected_kernels,
         arch,
         compile_options,
         FinalizerOutput::Ptx,
@@ -535,13 +623,15 @@ fn link_ltoir_to_ptx_parsed_with_compile_options(
 fn link_ltoir_with_shared_finalizer(
     ltoir: &[u8],
     module_name: &str,
+    expected_kernels: &[&str],
     arch: &CudaArch,
     compile_options: ArtifactCompileOptions,
     output: FinalizerOutput,
 ) -> Result<Vec<u8>, LtoirError> {
     let options = finalization_options(arch, compile_options);
-    Ok(LtoLinker::discover()?.link_ltoir(
+    Ok(LtoLinker::discover()?.link_ltoir_with_expected_kernels(
         &[NamedInput::new(module_name, ltoir)],
+        expected_kernels,
         &options,
         output,
     )?)
@@ -893,6 +983,7 @@ pub fn load_kernel_module(
                 ExecutionRoute::PtxBridge => link_ltoir_to_ptx_parsed_with_compile_options(
                     &bytes,
                     &ltoir.display().to_string(),
+                    &[],
                     &emitted,
                     compile_options,
                 )?,

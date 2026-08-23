@@ -10,7 +10,7 @@ use crate::provenance::{
     PinnedToolProvenance, StableDigest, linker_provenance_digest, recipe_digest,
     with_revalidated_tool_identity,
 };
-use crate::validation::is_valid_cubin;
+use crate::validation::{cubin_kernel_entries, is_valid_cubin, ptx_kernel_entries};
 use crate::{FinalizerError, validate_name};
 use nvjitlink_sys::{InputType, LibNvJitLink, LinkOutput, Linker, NvJitLinkError};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -87,7 +87,20 @@ impl LtoLinker {
         options: &FinalizationOptions,
         output: FinalizerOutput,
     ) -> Result<Vec<u8>, FinalizerError> {
-        Ok(self.link_ltoir_impl(inputs, options, output, false)?.image)
+        self.link_ltoir_with_expected_kernels(inputs, &[], options, output)
+    }
+
+    /// Link LTOIR while rooting and verifying every host-visible kernel.
+    pub fn link_ltoir_with_expected_kernels(
+        &self,
+        inputs: &[NamedInput<'_>],
+        expected_kernels: &[&str],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Result<Vec<u8>, FinalizerError> {
+        Ok(self
+            .link_ltoir_impl(inputs, expected_kernels, options, output, false)?
+            .image)
     }
 
     /// Link LTOIR while collecting non-semantic ptxas resource diagnostics.
@@ -113,20 +126,34 @@ impl LtoLinker {
         options: &FinalizationOptions,
         output: FinalizerOutput,
     ) -> Result<LinkReport, FinalizerError> {
-        self.link_ltoir_impl(inputs, options, output, true)
+        self.link_ltoir_with_report_and_expected_kernels(inputs, &[], options, output)
+    }
+
+    /// Link LTOIR with diagnostics while rooting and verifying expected kernels.
+    pub fn link_ltoir_with_report_and_expected_kernels(
+        &self,
+        inputs: &[NamedInput<'_>],
+        expected_kernels: &[&str],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Result<LinkReport, FinalizerError> {
+        self.link_ltoir_impl(inputs, expected_kernels, options, output, true)
     }
 
     fn link_ltoir_impl(
         &self,
         inputs: &[NamedInput<'_>],
+        expected_kernels: &[&str],
         options: &FinalizationOptions,
         output: FinalizerOutput,
         collect_resource_usage: bool,
     ) -> Result<LinkReport, FinalizerError> {
         validate_inputs(inputs)?;
+        validate_expected_kernels(expected_kernels)?;
         self.link_inputs(
             inputs,
             InputType::Ltoir,
+            expected_kernels,
             options,
             output,
             collect_resource_usage,
@@ -149,6 +176,7 @@ impl LtoLinker {
             .link_inputs(
                 std::slice::from_ref(&input),
                 InputType::Ptx,
+                &[],
                 options,
                 FinalizerOutput::Cubin,
                 false,
@@ -160,6 +188,7 @@ impl LtoLinker {
         &self,
         inputs: &[NamedInput<'_>],
         input_type: InputType,
+        expected_kernels: &[&str],
         options: &FinalizationOptions,
         output: FinalizerOutput,
         collect_resource_usage: bool,
@@ -169,7 +198,14 @@ impl LtoLinker {
             self.tool.digest,
             || current_linker_tool_digest(&self.tool),
             || {
-                match self.run_link(inputs, input_type, options, output, collect_resource_usage) {
+                match self.run_link(
+                    inputs,
+                    input_type,
+                    expected_kernels,
+                    options,
+                    output,
+                    collect_resource_usage,
+                ) {
                     // Older nvJitLink versions reject the diagnostic-only
                     // reporting options with NVJITLINK_ERROR_UNRECOGNIZED_OPTION.
                     // The caller asked for the same program plus a best-effort
@@ -178,7 +214,7 @@ impl LtoLinker {
                     Err(FinalizerError::NvJitLink(error))
                         if collect_resource_usage && error.is_unrecognized_option() =>
                     {
-                        self.run_link(inputs, input_type, options, output, false)
+                        self.run_link(inputs, input_type, expected_kernels, options, output, false)
                     }
                     result => result,
                 }
@@ -190,6 +226,7 @@ impl LtoLinker {
         &self,
         inputs: &[NamedInput<'_>],
         input_type: InputType,
+        expected_kernels: &[&str],
         options: &FinalizationOptions,
         output: FinalizerOutput,
         collect_resource_usage: bool,
@@ -199,6 +236,9 @@ impl LtoLinker {
         } else {
             options.nvjitlink_ltoir_options(output)
         };
+        if input_type == InputType::Ltoir {
+            option_storage.extend(expected_kernel_options(expected_kernels));
+        }
         if collect_resource_usage {
             option_storage.extend(options.nvjitlink_diagnostic_options(output));
         }
@@ -221,6 +261,7 @@ impl LtoLinker {
         if output == FinalizerOutput::Ptx && image.is_empty() {
             return Err(FinalizerError::EmptyPtx);
         }
+        verify_expected_kernels(&image, output, expected_kernels)?;
 
         let resource_usage = if collect_resource_usage {
             info_log
@@ -244,9 +285,24 @@ impl LtoLinker {
         options: &FinalizationOptions,
         output: FinalizerOutput,
     ) -> Option<[u8; 32]> {
+        self.artifact_digest_with_expected_kernels(inputs, &[], options, output)
+    }
+
+    /// Digest an LTOIR link including the complete expected-kernel root set.
+    pub fn artifact_digest_with_expected_kernels(
+        &self,
+        inputs: &[NamedInput<'_>],
+        expected_kernels: &[&str],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Option<[u8; 32]> {
         let nvjitlink = self.nvjitlink_digest()?;
         Some(ltoir_artifact_digest_parts(
-            inputs, options, output, &nvjitlink,
+            inputs,
+            expected_kernels,
+            options,
+            output,
+            &nvjitlink,
         ))
     }
 
@@ -266,6 +322,65 @@ impl LtoLinker {
             options,
             &nvjitlink,
         )))
+    }
+}
+
+fn validate_expected_kernels(expected_kernels: &[&str]) -> Result<(), FinalizerError> {
+    for kernel in expected_kernels {
+        if kernel.is_empty() || kernel.as_bytes().contains(&0) {
+            return Err(FinalizerError::InvalidExpectedKernelName {
+                name: (*kernel).to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn normalized_expected_kernels<'a>(expected_kernels: &[&'a str]) -> Vec<&'a str> {
+    let mut kernels = expected_kernels.to_vec();
+    kernels.sort_unstable();
+    kernels.dedup();
+    kernels
+}
+
+fn expected_kernel_options(expected_kernels: &[&str]) -> Vec<String> {
+    normalized_expected_kernels(expected_kernels)
+        .into_iter()
+        .map(|kernel| format!("-kernels-used={kernel}"))
+        .collect()
+}
+
+fn verify_expected_kernels(
+    image: &[u8],
+    output: FinalizerOutput,
+    expected_kernels: &[&str],
+) -> Result<(), FinalizerError> {
+    if expected_kernels.is_empty() {
+        return Ok(());
+    }
+    let actual = match output {
+        FinalizerOutput::Cubin => cubin_kernel_entries(image),
+        FinalizerOutput::Ptx => ptx_kernel_entries(image),
+    }
+    .ok_or(FinalizerError::LinkedKernelInventoryUnavailable {
+        output: match output {
+            FinalizerOutput::Cubin => "cubin",
+            FinalizerOutput::Ptx => "PTX",
+        },
+    })?;
+    let missing = normalized_expected_kernels(expected_kernels)
+        .into_iter()
+        .filter(|kernel| {
+            actual
+                .binary_search_by(|entry| entry.as_str().cmp(kernel))
+                .is_err()
+        })
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(FinalizerError::MissingExpectedKernels { missing })
     }
 }
 
@@ -341,6 +456,7 @@ fn load_linker_tool(
 
 pub(crate) fn ltoir_artifact_digest_parts(
     inputs: &[NamedInput<'_>],
+    expected_kernels: &[&str],
     options: &FinalizationOptions,
     output: FinalizerOutput,
     nvjitlink_digest: &[u8; 32],
@@ -357,6 +473,9 @@ pub(crate) fn ltoir_artifact_digest_parts(
         digest = digest
             .field("ltoir-name", input.name.as_bytes())
             .field("ltoir", input.bytes);
+    }
+    for kernel in normalized_expected_kernels(expected_kernels) {
+        digest = digest.field("expected-kernel", kernel.as_bytes());
     }
     for option in options.nvjitlink_ltoir_options(output) {
         digest = digest.field("nvjitlink-option", option.as_bytes());
@@ -394,15 +513,16 @@ mod tests {
         let a = NamedInput::new("a.ltoir", b"a");
         let b = NamedInput::new("b.ltoir", b"b");
         let baseline =
-            ltoir_artifact_digest_parts(&[a, b], &options, FinalizerOutput::Cubin, &[7; 32]);
+            ltoir_artifact_digest_parts(&[a, b], &[], &options, FinalizerOutput::Cubin, &[7; 32]);
         assert_ne!(
             baseline,
-            ltoir_artifact_digest_parts(&[b, a], &options, FinalizerOutput::Cubin, &[7; 32])
+            ltoir_artifact_digest_parts(&[b, a], &[], &options, FinalizerOutput::Cubin, &[7; 32])
         );
         assert_ne!(
             baseline,
             ltoir_artifact_digest_parts(
                 &[NamedInput::new("renamed.ltoir", b"a"), b],
+                &[],
                 &options,
                 FinalizerOutput::Cubin,
                 &[7; 32]
@@ -412,6 +532,7 @@ mod tests {
             baseline,
             ltoir_artifact_digest_parts(
                 &[a, b],
+                &[],
                 &FinalizationOptions::new("sm_90".parse().unwrap()),
                 FinalizerOutput::Cubin,
                 &[7; 32]
@@ -421,6 +542,7 @@ mod tests {
             baseline,
             ltoir_artifact_digest_parts(
                 &[a, b],
+                &[],
                 &options
                     .clone()
                     .with_debug_policy(crate::DebugPolicy::LineTables),
@@ -430,21 +552,89 @@ mod tests {
         );
         assert_ne!(
             baseline,
-            ltoir_artifact_digest_parts(&[a, b], &options, FinalizerOutput::Cubin, &[8; 32])
+            ltoir_artifact_digest_parts(&[a, b], &[], &options, FinalizerOutput::Cubin, &[8; 32])
         );
         assert_ne!(
             baseline,
-            ltoir_artifact_digest_parts(&[a, b], &options, FinalizerOutput::Ptx, &[7; 32])
+            ltoir_artifact_digest_parts(&[a, b], &[], &options, FinalizerOutput::Ptx, &[7; 32])
         );
         assert_ne!(
             baseline,
             ltoir_artifact_digest_parts(
                 &[a, b],
+                &[],
                 &options.clone().with_fma_contraction(false),
                 FinalizerOutput::Cubin,
                 &[7; 32]
             )
         );
+    }
+
+    #[test]
+    fn link_digest_covers_expected_kernel_set_without_order_or_duplicate_noise() {
+        let options = FinalizationOptions::new("sm_120".parse().unwrap());
+        let input = [NamedInput::new("a.ltoir", b"a")];
+        let baseline = ltoir_artifact_digest_parts(
+            &input,
+            &["kernel_a", "kernel_b"],
+            &options,
+            FinalizerOutput::Cubin,
+            &[7; 32],
+        );
+        assert_eq!(
+            baseline,
+            ltoir_artifact_digest_parts(
+                &input,
+                &["kernel_b", "kernel_a", "kernel_a"],
+                &options,
+                FinalizerOutput::Cubin,
+                &[7; 32],
+            )
+        );
+        assert_ne!(
+            baseline,
+            ltoir_artifact_digest_parts(
+                &input,
+                &["kernel_a"],
+                &options,
+                FinalizerOutput::Cubin,
+                &[7; 32],
+            )
+        );
+    }
+
+    #[test]
+    fn expected_kernel_options_are_complete_canonical_roots() {
+        assert_eq!(
+            expected_kernel_options(&["kernel_b", "kernel_a", "kernel_a"]),
+            vec![
+                "-kernels-used=kernel_a".to_string(),
+                "-kernels-used=kernel_b".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn expected_kernel_validation_and_missing_inventory_fail_closed() {
+        assert!(matches!(
+            validate_expected_kernels(&[""]),
+            Err(FinalizerError::InvalidExpectedKernelName { .. })
+        ));
+        assert!(matches!(
+            validate_expected_kernels(&["bad\0kernel"]),
+            Err(FinalizerError::InvalidExpectedKernelName { .. })
+        ));
+        let error = verify_expected_kernels(
+            b".version 8.9\n.visible .entry kernel_a() { ret; }\n",
+            FinalizerOutput::Ptx,
+            &["kernel_a", "kernel_b"],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            FinalizerError::MissingExpectedKernels { ref missing }
+                if missing == &["kernel_b".to_string()]
+        ));
     }
 
     #[test]
