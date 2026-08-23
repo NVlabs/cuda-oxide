@@ -17,8 +17,10 @@ use oxide_artifacts::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
@@ -240,8 +242,18 @@ pub fn run_campaign(options: &CampaignOptions) -> Result<CampaignSummary, Campai
         format_site_kinds(&static_sites.sites_by_kind)
     );
 
+    // Captured once, so the baseline, every variant and every replay script
+    // describe the same environment.
+    let environment = RunEnvironment::from_process();
+    println!(
+        "schedule-fuzz: environment captured={} unset={} required-external={}",
+        environment.replay.captured.len(),
+        environment.replay.unset.len(),
+        environment.replay.required_external.len()
+    );
+
     println!("schedule-fuzz: baseline {}", executable.display());
-    let baseline = run_binary(&executable, &example_dir, options.timeout);
+    let baseline = run_binary(&executable, &example_dir, options.timeout, &environment);
     println!("schedule-fuzz: baseline {:?}", baseline.kind);
     if !matches!(baseline.kind, RunKind::Pass) {
         let summary = CampaignSummary {
@@ -264,22 +276,21 @@ pub fn run_campaign(options: &CampaignOptions) -> Result<CampaignSummary, Campai
         return Ok(summary);
     }
 
+    let context = SeedContext {
+        options,
+        pristine: &pristine,
+        executable: &executable,
+        example_dir: &example_dir,
+        baseline: &baseline,
+        environment: &environment,
+    };
     let mut seeds = Vec::new();
     for seed in options.seed_start..options.seed_end {
         let artifact_dir = output_dir.join(format!("seed-{seed}"));
         // A perturbation or patching failure is scoped to this seed: record
         // it and keep going so the campaign still covers the remaining seeds
         // and still writes summary.json.
-        let result = run_seed(
-            options,
-            seed,
-            &artifact_dir,
-            &pristine,
-            &executable,
-            &example_dir,
-            &baseline,
-        )
-        .unwrap_or_else(|error| {
+        let result = run_seed(&context, seed, &artifact_dir).unwrap_or_else(|error| {
             harness_error_result(seed, options.intensity, artifact_dir, &error)
         });
         print_seed_result(&result);
@@ -307,15 +318,33 @@ pub fn run_campaign(options: &CampaignOptions) -> Result<CampaignSummary, Campai
     Ok(summary)
 }
 
+/// Everything a seed needs that does not change between seeds.
+///
+/// These were threaded through `run_seed` one parameter at a time, which grew
+/// past what a signature carries legibly once the environment joined them. All
+/// six are constant for the whole campaign, so they belong together.
+struct SeedContext<'a> {
+    options: &'a CampaignOptions,
+    pristine: &'a str,
+    executable: &'a Path,
+    example_dir: &'a Path,
+    baseline: &'a RunResult,
+    environment: &'a RunEnvironment,
+}
+
 fn run_seed(
-    options: &CampaignOptions,
+    context: &SeedContext<'_>,
     seed: u64,
     artifact_dir: &Path,
-    pristine: &str,
-    executable: &Path,
-    example_dir: &Path,
-    baseline: &RunResult,
 ) -> Result<SeedResult, CampaignError> {
+    let SeedContext {
+        options,
+        pristine,
+        executable,
+        example_dir,
+        baseline,
+        environment,
+    } = context;
     let rewrite = crate::perturb_ptx(
         pristine,
         &InjectionOptions {
@@ -325,7 +354,7 @@ fn run_seed(
             focus: options.focus.clone(),
         },
     )?;
-    fs::create_dir_all(artifact_dir)?;
+    create_private_dir(artifact_dir)?;
     let mutated_ptx = artifact_dir.join("module.ptx");
     let report_path = artifact_dir.join("report.json");
     let stdout_path = artifact_dir.join("stdout.log");
@@ -345,13 +374,19 @@ fn run_seed(
         pristine.as_bytes(),
         rewrite.ptx.as_bytes(),
     )?;
-    write_replay_script(&replay_path, example_dir, &variant_executable)?;
+    write_replay_script(
+        &replay_path,
+        example_dir,
+        &variant_executable,
+        &environment.replay,
+    )?;
 
     let mut run = run_variant(
         &variant_executable,
         executable,
         example_dir,
         options.timeout,
+        environment,
     );
     classify_output_change(baseline, &mut run, options.compare_output);
 
@@ -366,6 +401,7 @@ fn run_seed(
                 executable,
                 example_dir,
                 options.timeout,
+                environment,
             );
             classify_output_change(baseline, &mut confirmed_run, options.compare_output);
             if confirmed_run.kind.is_finding() {
@@ -558,30 +594,221 @@ fn format_site_kinds(sites_by_kind: &BTreeMap<String, usize>) -> String {
         .join(",")
 }
 
-fn write_replay_script(path: &Path, cwd: &Path, executable: &Path) -> Result<(), CampaignError> {
-    let mut script = "#!/bin/sh\nset -eu\n".to_string();
-    for key in [
-        "CUDA_VISIBLE_DEVICES",
-        "CUDA_LAUNCH_BLOCKING",
-        "GEMM_SOL_PHASE",
-    ] {
-        if let Ok(value) = std::env::var(key) {
-            script.push_str(&format!("export {key}={}\n", shell_quote_value(&value)));
+/// The exact environment a variant runs under, and that its replay script
+/// reproduces.
+///
+/// A variant used to inherit the campaign's whole environment -- `run_binary`
+/// built a `Command` and never called `env_clear` -- while the replay script
+/// re-exported a prefix-matched subset. Two different environments, so the
+/// script could not reproduce the run, and it also persisted anything whose
+/// name happened to start with a captured prefix: `CUDA_API_TOKEN` and
+/// `CUDA_OXIDE_LICENSE_KEY` were both written into a file on disk.
+///
+/// One value now decides both. Every name is explicit, and each falls in
+/// exactly one of three fields:
+///
+/// * `captured` -- run-affecting knobs with a recordable value. Set on the
+///   child, and written to the script as `export`.
+/// * `unset` -- captured names the campaign did *not* have. Written as `unset`,
+///   so an ambient value in the replay shell cannot silently change the run.
+/// * `required_external` -- names the child needs but that are not recorded,
+///   either because they are machine-specific (`PATH`, `LD_LIBRARY_PATH`) or
+///   because the value is not valid UTF-8 and cannot be written into a POSIX
+///   script. The script guards each with `${NAME:?}`, so a replay in the wrong
+///   environment *refuses* instead of reproducing something else.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReplayEnvironment {
+    captured: Vec<(String, String)>,
+    unset: Vec<String>,
+    required_external: Vec<String>,
+}
+
+/// Names whose values change what a run does, and are safe to write down.
+///
+/// Explicit names, never prefixes. A prefix cannot distinguish
+/// `CUDA_VISIBLE_DEVICES` from `CUDA_API_TOKEN`, and this list is written to a
+/// file, so the only defensible rule is one an author states deliberately.
+/// Every entry is read at run time by something in this tree:
+///
+/// * `CUDA_VISIBLE_DEVICES`, `CUDA_LAUNCH_BLOCKING` -- driver knobs that pick
+///   the device and serialize launches.
+/// * `CUDA_OXIDE_TARGET` -- read by `device_ffi_test`, `mathdx_ffi_test` and
+///   `small_type_ffi_test`.
+/// * `GEMM_SOL_PHASE` -- read by `gemm_sol`; `GEMM_SOL_MODE` and
+///   `GEMM_SOL_VARIANT` by `gemm_sol_final`, where they select the mode and the
+///   kernel variant.
+/// * `MATHDX_ROOT` -- read by `mathdx_ffi_test`.
+const CAPTURED_ENV: [&str; 7] = [
+    "CUDA_LAUNCH_BLOCKING",
+    "CUDA_OXIDE_TARGET",
+    "CUDA_VISIBLE_DEVICES",
+    "GEMM_SOL_MODE",
+    "GEMM_SOL_PHASE",
+    "GEMM_SOL_VARIANT",
+    "MATHDX_ROOT",
+];
+
+/// Names passed through to the child but never recorded.
+///
+/// The child is a dynamically linked binary that has to find libcuda, and
+/// `mathdx_ffi_test` reads `HOME`. These are machine-specific and can carry
+/// paths a reader has no business seeing, so the script requires them from the
+/// replaying environment rather than pinning this machine's values.
+const REQUIRED_EXTERNAL_ENV: [&str; 3] = ["HOME", "LD_LIBRARY_PATH", "PATH"];
+
+/// The captured environment plus the process environment it came from.
+///
+/// The two are always used together -- one says what to set, the other holds
+/// the values for names that are required but not recorded -- so they travel as
+/// one value instead of as a pair threaded through every call.
+pub struct RunEnvironment {
+    replay: ReplayEnvironment,
+    source: BTreeMap<OsString, OsString>,
+}
+
+impl RunEnvironment {
+    /// Capture from this process.
+    fn from_process() -> Self {
+        let source: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
+        Self {
+            replay: ReplayEnvironment::capture(source.clone()),
+            source,
         }
     }
-    script.push_str(&format!(
-        "cd {}\nexec {}\n",
+
+    /// Give `command` exactly this environment and nothing else.
+    ///
+    /// `env_clear` first: without it the child inherits every variable the
+    /// campaign happened to hold, which is the half of the reproducibility gap
+    /// no replay script can fix.
+    fn apply_to(&self, command: &mut Command) {
+        command.env_clear();
+        for (name, value) in &self.replay.captured {
+            command.env(name, value);
+        }
+        for name in &self.replay.required_external {
+            if let Some(value) = self.source.get(OsStr::new(name.as_str())) {
+                command.env(name, value);
+            }
+        }
+    }
+}
+
+impl ReplayEnvironment {
+    /// Classify one process environment into the three fields.
+    ///
+    /// Takes `OsString` pairs so a value that is not valid UTF-8 is
+    /// representable: the child still receives it, but it moves to
+    /// `required_external` because no POSIX script can carry it.
+    ///
+    /// Pure, so every rule below is testable without mutating the process
+    /// environment -- which `set_var` is `unsafe` for in edition 2024, and which
+    /// races across test threads.
+    pub fn capture<I>(vars: I) -> Self
+    where
+        I: IntoIterator<Item = (OsString, OsString)>,
+    {
+        let present: BTreeMap<OsString, OsString> = vars.into_iter().collect();
+        let mut captured = Vec::new();
+        let mut unset = Vec::new();
+        let mut required_external = Vec::new();
+
+        for name in CAPTURED_ENV {
+            match present.get(OsStr::new(name)) {
+                None => unset.push(name.to_owned()),
+                Some(value) => match value.to_str() {
+                    Some(value) => captured.push((name.to_owned(), value.to_owned())),
+                    // Recordable only as a requirement, not as a value.
+                    None => required_external.push(name.to_owned()),
+                },
+            }
+        }
+        for name in REQUIRED_EXTERNAL_ENV {
+            if present.contains_key(OsStr::new(name)) {
+                required_external.push(name.to_owned());
+            }
+        }
+
+        captured.sort();
+        unset.sort();
+        required_external.sort();
+        Self {
+            captured,
+            unset,
+            required_external,
+        }
+    }
+
+    /// The environment prelude of a replay script.
+    fn script_prelude(&self) -> String {
+        let mut prelude = String::new();
+        for name in &self.required_external {
+            prelude.push_str(&format!(
+                ": \"${{{name}:?required by this run and not recorded here}}\"\n"
+            ));
+        }
+        for name in &self.unset {
+            prelude.push_str(&format!("unset {name}\n"));
+        }
+        for (name, value) in &self.captured {
+            prelude.push_str(&format!("export {name}={}\n", shell_quote_value(value)));
+        }
+        prelude
+    }
+}
+
+fn write_replay_script(
+    path: &Path,
+    cwd: &Path,
+    executable: &Path,
+    environment: &ReplayEnvironment,
+) -> Result<(), CampaignError> {
+    let script = format!(
+        "#!/bin/sh\nset -eu\n{}cd {}\nexec {}\n",
+        environment.script_prelude(),
         shell_quote(cwd),
         shell_quote(executable)
-    ));
-    fs::write(path, script)?;
+    );
+    write_private_file(path, script.as_bytes())
+}
+
+/// Create `path` with owner-only permissions from the start.
+///
+/// `fs::write` followed by `set_permissions` created the file at the process
+/// umask -- world-readable on a default configuration -- and only narrowed it
+/// afterwards, so a file holding captured values was readable by other users
+/// for a window. `mode` on `OpenOptions` applies at creation, which closes it;
+/// `create_new` after an explicit remove keeps a stale file from surviving with
+/// its old mode, since `mode` would not touch it.
+fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), CampaignError> {
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(path)?.permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(path, permissions)?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o700);
     }
+    let mut file = options.open(path)?;
+    file.write_all(contents)?;
+    Ok(())
+}
+
+/// Create `path` as an owner-only directory.
+///
+/// The seed directory holds the replay script and both output logs, so its mode
+/// matters for the same reason the script's does.
+fn create_private_dir(path: &Path) -> Result<(), CampaignError> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(path)?;
     Ok(())
 }
 
@@ -661,14 +888,20 @@ fn find_executable(example_dir: &Path, example: &str) -> Result<PathBuf, Campaig
     }
 }
 
-fn run_variant(variant: &Path, pristine: &Path, cwd: &Path, timeout: Duration) -> RunResult {
-    let mut run = run_binary(variant, cwd, timeout);
+fn run_variant(
+    variant: &Path,
+    pristine: &Path,
+    cwd: &Path,
+    timeout: Duration,
+    environment: &RunEnvironment,
+) -> RunResult {
+    let mut run = run_binary(variant, cwd, timeout, environment);
 
     // A CUDA watchdog timeout can leave the device unusable. Re-run the
     // pristine binary before continuing so a real device wedge is not
     // misreported as a collection of independent schedule failures.
     if matches!(run.kind, RunKind::Hang) {
-        let health = run_binary(pristine, cwd, timeout);
+        let health = run_binary(pristine, cwd, timeout, environment);
         if !matches!(health.kind, RunKind::Pass) {
             run.kind = RunKind::GpuWedged;
         }
@@ -685,13 +918,19 @@ fn classify_output_change(baseline: &RunResult, run: &mut RunResult, compare_out
     }
 }
 
-fn run_binary(executable: &Path, cwd: &Path, timeout: Duration) -> RunResult {
+fn run_binary(
+    executable: &Path,
+    cwd: &Path,
+    timeout: Duration,
+    environment: &RunEnvironment,
+) -> RunResult {
     let mut command = Command::new(executable);
     command
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    environment.apply_to(&mut command);
 
     let Ok(mut child) = command.spawn() else {
         return RunResult {
@@ -977,6 +1216,267 @@ mod tests {
         assert!(matches!(changed.kind, RunKind::OutputChanged));
     }
 
+    fn env(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+        pairs
+            .iter()
+            .map(|(key, value)| (OsString::from(*key), OsString::from(*value)))
+            .collect()
+    }
+
+    fn run_environment(pairs: &[(&str, &str)]) -> RunEnvironment {
+        let source: BTreeMap<OsString, OsString> = env(pairs).into_iter().collect();
+        RunEnvironment {
+            replay: ReplayEnvironment::capture(source.clone()),
+            source,
+        }
+    }
+
+    /// A prefix rule cannot tell `CUDA_VISIBLE_DEVICES` from `CUDA_API_TOKEN`,
+    /// and this text is written to a file. Nothing outside the explicit list
+    /// reaches any field or the script, whatever its name looks like.
+    #[test]
+    fn a_secret_is_never_captured_or_written() {
+        let secrets = [
+            "CUDA_API_TOKEN",
+            "CUDA_OXIDE_LICENSE_KEY",
+            "GEMM_SOL_API_KEY",
+            "MATHDX_TOKEN",
+            "AWS_SECRET_ACCESS_KEY",
+        ];
+        let mut pairs = vec![("CUDA_VISIBLE_DEVICES", "0")];
+        for secret in secrets {
+            pairs.push((secret, "sk-live-do-not-persist"));
+        }
+        let environment = ReplayEnvironment::capture(env(&pairs));
+        let script = environment.script_prelude();
+
+        assert_eq!(
+            environment.captured,
+            vec![("CUDA_VISIBLE_DEVICES".to_owned(), "0".to_owned())]
+        );
+        for secret in secrets {
+            assert!(
+                !environment.captured.iter().any(|(name, _)| name == secret),
+                "{secret} captured"
+            );
+            assert!(
+                !environment.unset.contains(&secret.to_owned()),
+                "{secret} named"
+            );
+            assert!(
+                !environment.required_external.contains(&secret.to_owned()),
+                "{secret} named"
+            );
+            assert!(!script.contains(secret), "{secret} reached the script");
+        }
+        assert!(!script.contains("sk-live-do-not-persist"));
+    }
+
+    /// A captured name the campaign did not have must be *unset* by the script,
+    /// not merely absent from it. Left absent, an ambient value in the replay
+    /// shell silently changes the run -- which for `GEMM_SOL_MODE` picks a
+    /// different mode than the one that produced the finding.
+    #[test]
+    fn an_absent_variable_is_unset_rather_than_left_to_the_replay_shell() {
+        let environment = ReplayEnvironment::capture(env(&[("GEMM_SOL_MODE", "bench")]));
+        assert!(environment.unset.contains(&"GEMM_SOL_VARIANT".to_owned()));
+        assert!(
+            environment
+                .unset
+                .contains(&"CUDA_VISIBLE_DEVICES".to_owned())
+        );
+
+        let script = environment.script_prelude();
+        assert!(script.contains("unset GEMM_SOL_VARIANT\n"), "{script}");
+        assert!(
+            script.contains("export GEMM_SOL_MODE='bench'\n"),
+            "{script}"
+        );
+
+        // Every captured name is accounted for exactly once.
+        assert_eq!(
+            environment.captured.len() + environment.unset.len(),
+            CAPTURED_ENV.len()
+        );
+    }
+
+    /// A value that is not valid UTF-8 cannot go into a POSIX script. The child
+    /// still receives it, so the run is faithful, but the script must say the
+    /// value is required from outside instead of inventing one.
+    #[cfg(unix)]
+    #[test]
+    fn a_non_unicode_value_becomes_a_requirement_not_a_guess() {
+        use std::os::unix::ffi::OsStringExt;
+        let invalid = OsString::from_vec(vec![b'/', 0x80, 0xff, b'x']);
+        let environment = ReplayEnvironment::capture(vec![
+            (OsString::from("MATHDX_ROOT"), invalid),
+            (OsString::from("CUDA_VISIBLE_DEVICES"), OsString::from("0")),
+        ]);
+
+        assert!(!environment.captured.iter().any(|(n, _)| n == "MATHDX_ROOT"));
+        assert!(!environment.unset.contains(&"MATHDX_ROOT".to_owned()));
+        assert!(
+            environment
+                .required_external
+                .contains(&"MATHDX_ROOT".to_owned())
+        );
+        let script = environment.script_prelude();
+        assert!(script.contains(": \"${MATHDX_ROOT:?"), "{script}");
+        assert!(script.is_ascii(), "a non-UTF-8 byte reached the script");
+    }
+
+    /// The run must see the captured environment and nothing else. This is the
+    /// half a replay script cannot fix: without `env_clear` the child inherits
+    /// whatever the campaign held, so the script and the run describe different
+    /// environments no matter how careful the script is.
+    #[cfg(unix)]
+    #[test]
+    fn the_child_inherits_nothing_that_was_not_captured() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("ptx-schedule-env-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("dump-env.sh");
+        fs::write(&script, "#!/bin/sh\nenv\n").unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let pairs = [
+            ("CUDA_VISIBLE_DEVICES", "3"),
+            ("CUDA_API_TOKEN", "sk-live-do-not-inherit"),
+            ("UNRELATED_CARRIER", "should-not-appear"),
+            ("PATH", "/usr/bin:/bin"),
+        ];
+        let environment = run_environment(&pairs);
+        let result = run_binary(&script, &dir, Duration::from_secs(30), &environment);
+        fs::remove_dir_all(&dir).ok();
+
+        assert!(matches!(result.kind, RunKind::Pass), "{result:?}");
+        let seen: Vec<&str> = result
+            .stdout
+            .lines()
+            .filter_map(|line| line.split('=').next())
+            .collect();
+        assert!(seen.contains(&"CUDA_VISIBLE_DEVICES"), "{seen:?}");
+        assert!(seen.contains(&"PATH"), "{seen:?}");
+        assert!(!seen.contains(&"CUDA_API_TOKEN"), "{seen:?}");
+        assert!(!seen.contains(&"UNRELATED_CARRIER"), "{seen:?}");
+        assert!(!result.stdout.contains("sk-live-do-not-inherit"));
+
+        // The assertions above are not enough on their own: a name that exists
+        // only in the synthetic map is absent from the child whether
+        // `env_clear` ran or not, so they pass vacuously. What proves the clear
+        // is that nothing from *this* process's real environment reached the
+        // child. `sh` adds `PWD`, `SHLVL` and `_` itself, so those are not
+        // inheritance.
+        let intended: Vec<&str> = environment
+            .replay
+            .captured
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .chain(
+                environment
+                    .replay
+                    .required_external
+                    .iter()
+                    .map(String::as_str),
+            )
+            .collect();
+        let leaked: Vec<&&str> = seen
+            .iter()
+            .filter(|name| !intended.contains(*name))
+            .filter(|name| !["PWD", "SHLVL", "_"].contains(*name))
+            .filter(|name| std::env::var_os(*name).is_some())
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "{} variables reached the child from the parent environment: {leaked:?}",
+            leaked.len()
+        );
+    }
+
+    /// The script and the directory holding it carry captured values, so both
+    /// are owner-only, and the script is created that way rather than narrowed
+    /// afterwards.
+    #[cfg(unix)]
+    #[test]
+    fn the_script_and_its_directory_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("ptx-schedule-mode-{}", std::process::id()));
+        fs::remove_dir_all(&root).ok();
+        let seed_dir = root.join("seed-0");
+        create_private_dir(&seed_dir).unwrap();
+        let path = seed_dir.join("replay.sh");
+        let environment = ReplayEnvironment::capture(env(&[("CUDA_VISIBLE_DEVICES", "0")]));
+        write_replay_script(&path, &seed_dir, Path::new("/bin/true"), &environment).unwrap();
+
+        let dir_mode = fs::metadata(&seed_dir).unwrap().permissions().mode() & 0o777;
+        let file_mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(dir_mode, 0o700, "directory mode {dir_mode:o}");
+        assert_eq!(file_mode, 0o700, "script mode {file_mode:o}");
+
+        // Rewriting must not leave a wider mode behind either.
+        write_replay_script(&path, &seed_dir, Path::new("/bin/true"), &environment).unwrap();
+        let again = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(again, 0o700, "script mode after rewrite {again:o}");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// The `${NAME:?}` guard has to make the script refuse, not warn. A replay
+    /// in an environment missing something the run needed must stop.
+    #[cfg(unix)]
+    #[test]
+    fn a_replay_missing_a_required_variable_refuses_to_run() {
+        let dir = std::env::temp_dir().join(format!("ptx-schedule-guard-{}", std::process::id()));
+        fs::remove_dir_all(&dir).ok();
+        create_private_dir(&dir).unwrap();
+        let path = dir.join("replay.sh");
+        let environment = ReplayEnvironment::capture(env(&[
+            ("CUDA_VISIBLE_DEVICES", "0"),
+            ("LD_LIBRARY_PATH", "/opt/cuda/lib64"),
+        ]));
+        assert!(
+            environment
+                .required_external
+                .contains(&"LD_LIBRARY_PATH".to_owned())
+        );
+        write_replay_script(&path, &dir, Path::new("/bin/true"), &environment).unwrap();
+
+        let refused = Command::new("/bin/sh")
+            .arg(&path)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .unwrap();
+        assert!(!refused.status.success(), "the guard did not refuse");
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("LD_LIBRARY_PATH"),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+
+        let accepted = Command::new("/bin/sh")
+            .arg(&path)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LD_LIBRARY_PATH", "/opt/cuda/lib64")
+            .output()
+            .unwrap();
+        assert!(
+            accepted.status.success(),
+            "{}",
+            String::from_utf8_lossy(&accepted.stderr)
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A value with a quote in it still has to survive the round trip.
+    #[test]
+    fn a_value_containing_a_quote_is_escaped_for_the_shell() {
+        assert_eq!(shell_quote_value("it's"), "'it'\\''s'");
+        assert_eq!(shell_quote_value("plain"), "'plain'");
+    }
+
     #[test]
     fn shell_quotes_replay_values() {
         assert_eq!(shell_quote_value("a'b"), "'a'\\''b'");
@@ -999,7 +1499,12 @@ mod tests {
         let mut permissions = fs::metadata(&script).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&script, permissions).unwrap();
-        let result = run_binary(&script, &dir, Duration::from_secs(30));
+        let result = run_binary(
+            &script,
+            &dir,
+            Duration::from_secs(30),
+            &run_environment(&[]),
+        );
         fs::remove_dir_all(&dir).ok();
         assert!(matches!(result.kind, RunKind::Pass), "{:?}", result.kind);
         assert!(!result.timed_out);
