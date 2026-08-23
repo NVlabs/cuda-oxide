@@ -1089,9 +1089,17 @@ fn collect_elementwise_array_initialization(
             }
             if trace_array_address_origin(ctx, store.address_opd(ctx), 0)
                 .is_some_and(|origin| origin.alloca == alloca)
+                || trace_array_address_origin(ctx, store.value_opd(ctx), 0)
+                    .is_some_and(|origin| origin.alloca == alloca)
             {
                 return None;
             }
+        }
+        if let Some(load) = Operation::get_op::<MirLoadOp>(operation, ctx)
+            && trace_array_address_origin(ctx, load.address_opd(ctx), 0)
+                .is_some_and(|origin| origin.alloca == alloca)
+        {
+            return None;
         }
         if Operation::get_op::<MirCallOp>(operation, ctx).is_some() {
             for operand in operation.deref(ctx).operands() {
@@ -1113,6 +1121,129 @@ fn collect_elementwise_array_initialization(
         element_addrs,
         block: initializer_block?,
     })
+}
+
+fn array_address_uses_are_closed(
+    ctx: &Context,
+    value: Value,
+    initialization: &ElementwiseArrayInitialization,
+    iterator_initializer_store: Ptr<Operation>,
+    depth: usize,
+) -> bool {
+    if depth > 32 {
+        return false;
+    }
+
+    for value_use in value.uses(ctx) {
+        let user = value_use.user_op();
+        let operand_index = value_use.find_index(ctx);
+
+        if initialization.element_addrs.contains(&user) {
+            if operand_index != 0 {
+                return false;
+            }
+            continue;
+        }
+
+        if user == iterator_initializer_store {
+            if operand_index != 1 {
+                return false;
+            }
+            continue;
+        }
+
+        let forwards_address = if Operation::get_op::<MirAssignOp>(user, ctx).is_some() {
+            operand_index == 0
+        } else if let Some(cast) = Operation::get_op::<MirCastOp>(user, ctx) {
+            operand_index == 0
+                && cast.get_attr_cast_kind(ctx).is_some_and(|kind| {
+                    matches!(
+                        *kind,
+                        MirCastKindAttr::Transmute
+                            | MirCastKindAttr::PtrToPtr
+                            | MirCastKindAttr::PointerCoercionUnsize
+                            | MirCastKindAttr::PointerCoercionArrayToPointer
+                            | MirCastKindAttr::PointerCoercionMutToConst
+                    )
+                })
+        } else if Operation::get_op::<MirPtrOffsetOp>(user, ctx).is_some()
+            || Operation::get_op::<MirArrayElementAddrOp>(user, ctx).is_some()
+        {
+            operand_index == 0
+        } else {
+            Operation::get_op::<MirConstructStructOp>(user, ctx).is_some()
+                || Operation::get_op::<MirConstructTupleOp>(user, ctx).is_some()
+                || Operation::get_op::<MirConstructSliceOp>(user, ctx).is_some()
+                || Operation::get_op::<MirInsertFieldOp>(user, ctx).is_some()
+        };
+
+        if !forwards_address || user.deref(ctx).get_num_results() != 1 {
+            return false;
+        }
+
+        if !array_address_uses_are_closed(
+            ctx,
+            user.deref(ctx).get_result(0),
+            initialization,
+            iterator_initializer_store,
+            depth + 1,
+        ) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn iterator_address_uses_are_closed(
+    ctx: &Context,
+    value: Value,
+    iterator_initializer_store: Ptr<Operation>,
+    depth: usize,
+) -> bool {
+    if depth > 16 {
+        return false;
+    }
+
+    for value_use in value.uses(ctx) {
+        let user = value_use.user_op();
+        let operand_index = value_use.find_index(ctx);
+
+        if user == iterator_initializer_store {
+            if operand_index != 0 {
+                return false;
+            }
+            continue;
+        }
+
+        if operand_index != 0 {
+            return false;
+        }
+
+        if Operation::get_op::<MirFieldAddrOp>(user, ctx).is_some() {
+            if user.deref(ctx).get_num_results() != 1
+                || !iterator_address_uses_are_closed(
+                    ctx,
+                    user.deref(ctx).get_result(0),
+                    iterator_initializer_store,
+                    depth + 1,
+                )
+            {
+                return false;
+            }
+            continue;
+        }
+
+        if Operation::get_op::<MirLoadOp>(user, ctx).is_some()
+            || Operation::get_op::<MirStoreOp>(user, ctx).is_some()
+        {
+            continue;
+        }
+
+        return false;
+    }
+
+    true
 }
 
 fn initialization_dominates_iterator_store(
@@ -1477,6 +1608,19 @@ fn analyze_memory_resident_small_array_iterator(
     if array.array_size != current_origin.array_size
         || array.element_type != current_origin.element_type
         || !initialization_dominates_iterator_store(ctx, &array, iterator_initializer_store)
+        || !array_address_uses_are_closed(
+            ctx,
+            current_origin.alloca.deref(ctx).get_result(0),
+            &array,
+            iterator_initializer_store,
+            0,
+        )
+        || !iterator_address_uses_are_closed(
+            ctx,
+            iterator_alloca.deref(ctx).get_result(0),
+            iterator_initializer_store,
+            0,
+        )
     {
         return None;
     }
@@ -1502,7 +1646,7 @@ fn analyze_memory_resident_small_array_iterator(
                 [0, 0, 0] => current_loads.push(operation),
                 [0, 0, 1] => end_loads.push(operation),
                 [1] => count_loads.push(operation),
-                _ => {}
+                _ => return None,
             }
             continue;
         }
@@ -2610,6 +2754,14 @@ mod tests {
 
         assert_single_dynamic_load_survives(&ctx, fixture.module);
     }
+    #[derive(Clone, Copy)]
+    enum MemoryResidentIteratorExtraUse {
+        None,
+        AdditionalArrayRead,
+        ArrayAddressEscape,
+        IteratorAddressEscape,
+    }
+
     struct MemoryResidentIteratorFixture {
         module: Ptr<Operation>,
     }
@@ -2733,6 +2885,7 @@ mod tests {
         ctx: &mut Context,
         end_offset: u64,
         step: u64,
+        extra_use: MemoryResidentIteratorExtraUse,
     ) -> MemoryResidentIteratorFixture {
         dialect_mir::register(ctx);
 
@@ -2865,6 +3018,46 @@ mod tests {
             store.insert_at_back(entry, ctx);
         }
 
+        match extra_use {
+            MemoryResidentIteratorExtraUse::AdditionalArrayRead => {
+                let read = Operation::new(
+                    ctx,
+                    MirLoadOp::get_concrete_op_info(),
+                    vec![array_type],
+                    vec![array_slot],
+                    vec![],
+                    0,
+                );
+                read.insert_at_back(entry, ctx);
+            }
+            MemoryResidentIteratorExtraUse::ArrayAddressEscape => {
+                let escape_slot_type: TypeHandle =
+                    MirPtrType::get_generic(ctx, array_pointer, true).into();
+                let escape_slot = Operation::new(
+                    ctx,
+                    MirAllocaOp::get_concrete_op_info(),
+                    vec![escape_slot_type],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                escape_slot.insert_at_back(entry, ctx);
+                let escape_address = escape_slot.deref(ctx).get_result(0);
+
+                let escape_store = Operation::new(
+                    ctx,
+                    MirStoreOp::get_concrete_op_info(),
+                    vec![],
+                    vec![escape_address, array_slot],
+                    vec![],
+                    0,
+                );
+                escape_store.insert_at_back(entry, ctx);
+            }
+            MemoryResidentIteratorExtraUse::None
+            | MemoryResidentIteratorExtraUse::IteratorAddressEscape => {}
+        }
+
         let base = Operation::new(
             ctx,
             MirCastOp::get_concrete_op_info(),
@@ -2930,6 +3123,34 @@ mod tests {
             0,
         );
         initializer_store.insert_at_back(entry, ctx);
+
+        if matches!(
+            extra_use,
+            MemoryResidentIteratorExtraUse::IteratorAddressEscape
+        ) {
+            let escape_slot_type: TypeHandle =
+                MirPtrType::get_generic(ctx, take_pointer, true).into();
+            let escape_slot = Operation::new(
+                ctx,
+                MirAllocaOp::get_concrete_op_info(),
+                vec![escape_slot_type],
+                vec![],
+                vec![],
+                0,
+            );
+            escape_slot.insert_at_back(entry, ctx);
+            let escape_address = escape_slot.deref(ctx).get_result(0);
+
+            let escape_store = Operation::new(
+                ctx,
+                MirStoreOp::get_concrete_op_info(),
+                vec![],
+                vec![escape_address, iterator_slot],
+                vec![],
+                0,
+            );
+            escape_store.insert_at_back(entry, ctx);
+        }
 
         let to_count_check = Operation::new(
             ctx,
@@ -3126,7 +3347,12 @@ mod tests {
     #[test]
     fn memory_resident_small_array_iterator_becomes_bounded_extract() {
         let mut ctx = Context::new();
-        let fixture = build_memory_resident_iterator_fixture(&mut ctx, 4, 1);
+        let fixture = build_memory_resident_iterator_fixture(
+            &mut ctx,
+            4,
+            1,
+            MemoryResidentIteratorExtraUse::None,
+        );
 
         let rewritten =
             canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
@@ -3142,7 +3368,12 @@ mod tests {
     #[test]
     fn memory_resident_iterator_with_non_unit_step_is_left_unchanged() {
         let mut ctx = Context::new();
-        let fixture = build_memory_resident_iterator_fixture(&mut ctx, 4, 2);
+        let fixture = build_memory_resident_iterator_fixture(
+            &mut ctx,
+            4,
+            2,
+            MemoryResidentIteratorExtraUse::None,
+        );
 
         let rewritten =
             canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
@@ -3156,10 +3387,78 @@ mod tests {
     #[test]
     fn memory_resident_iterator_with_wrong_end_pointer_is_left_unchanged() {
         let mut ctx = Context::new();
-        let fixture = build_memory_resident_iterator_fixture(&mut ctx, 3, 1);
+        let fixture = build_memory_resident_iterator_fixture(
+            &mut ctx,
+            3,
+            1,
+            MemoryResidentIteratorExtraUse::None,
+        );
 
         let rewritten =
             canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
+
+        assert_eq!(rewritten, 0);
+        assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 4);
+    }
+
+    #[test]
+    fn array_with_additional_read_is_left_unchanged() {
+        let mut ctx = Context::new();
+        let fixture = build_memory_resident_iterator_fixture(
+            &mut ctx,
+            4,
+            1,
+            MemoryResidentIteratorExtraUse::AdditionalArrayRead,
+        );
+
+        pliron::operation::verify_operation(fixture.module, &ctx).unwrap();
+        let rewritten =
+            canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
+        pliron::operation::verify_operation(fixture.module, &ctx).unwrap();
+
+        assert_eq!(rewritten, 0);
+        assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 4);
+    }
+
+    #[test]
+    fn array_address_escape_is_left_unchanged() {
+        let mut ctx = Context::new();
+        let fixture = build_memory_resident_iterator_fixture(
+            &mut ctx,
+            4,
+            1,
+            MemoryResidentIteratorExtraUse::ArrayAddressEscape,
+        );
+
+        pliron::operation::verify_operation(fixture.module, &ctx).unwrap();
+        let rewritten =
+            canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
+        pliron::operation::verify_operation(fixture.module, &ctx).unwrap();
+
+        assert_eq!(rewritten, 0);
+        assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 4);
+    }
+
+    #[test]
+    fn iterator_address_escape_is_left_unchanged() {
+        let mut ctx = Context::new();
+        let fixture = build_memory_resident_iterator_fixture(
+            &mut ctx,
+            4,
+            1,
+            MemoryResidentIteratorExtraUse::IteratorAddressEscape,
+        );
+
+        pliron::operation::verify_operation(fixture.module, &ctx).unwrap();
+        let rewritten =
+            canonicalize_memory_resident_small_array_iterators(fixture.module, &mut ctx);
+        pliron::operation::verify_operation(fixture.module, &ctx).unwrap();
 
         assert_eq!(rewritten, 0);
         assert_eq!(count::<MirConstructArrayOp>(&ctx, fixture.module), 0);
