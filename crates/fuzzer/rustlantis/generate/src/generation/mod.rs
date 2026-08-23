@@ -343,7 +343,12 @@ impl GenerationCtx {
             .except(lhs);
         if let Some(_) = self.pt.pointee(lhs.to_place_index(&self.pt).unwrap()) {
             // The MIR linter doesn't like it if we do x = &(*x)
-            selector = selector.except(lhs.clone().project(ProjectionElem::Deref));
+            let local_ty = self.current_decls()[lhs.local()].ty;
+            selector = selector.except(lhs.clone().project(
+                local_ty,
+                ProjectionElem::Deref,
+                &self.tcx,
+            ));
         }
         let (candidates, weights) = selector
             .into_weighted(&self.pt)

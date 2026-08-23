@@ -92,7 +92,13 @@ impl Place {
         }
     }
 
-    pub fn from_projected(local: Local, projections: &[ProjectionElem]) -> Self {
+    pub fn from_projected(
+        local: Local,
+        local_ty: TyId,
+        projections: &[ProjectionElem],
+        tcx: &TyCtxt,
+    ) -> Self {
+        local_ty.projected_ty(tcx, projections);
         Place {
             local,
             projection: SmallVec::from(projections),
@@ -107,8 +113,9 @@ impl Place {
         &self.projection
     }
 
-    pub fn project(&mut self, proj: ProjectionElem) -> &mut Self {
-        // TODO: validation
+    pub fn project(&mut self, local_ty: TyId, proj: ProjectionElem, tcx: &TyCtxt) -> &mut Self {
+        let current_ty = local_ty.projected_ty(tcx, self.projection());
+        current_ty.projected_ty(tcx, &[proj]);
         self.projection.push(proj);
         self
     }
@@ -349,39 +356,90 @@ impl TyId {
         self.kind(tcx).is_scalar()
     }
 
-    pub fn projected_ty(self, tcx: &TyCtxt, projs: &[ProjectionElem]) -> Self {
-        match projs {
-            [] => self,
-            [head, tail @ ..] => {
-                let projected = match head {
-                    ProjectionElem::Deref => match self.kind(tcx) {
-                        TyKind::RawPtr(pointee, ..) | TyKind::Ref(pointee, ..) => *pointee,
-                        _ => panic!("not a reference"),
-                    },
-                    ProjectionElem::TupleField(idx) => {
-                        self.tuple_elems(tcx).expect("is a tuple")[idx.index()]
-                    }
-                    ProjectionElem::Index(_) | ProjectionElem::ConstantIndex { .. } => {
-                        match self.kind(tcx) {
-                            TyKind::Array(ty, ..) => *ty,
-                            _ => panic!("not an array"),
-                        }
-                    }
-                    ProjectionElem::Field(fid) => match self.kind(tcx) {
-                        TyKind::Adt(adt) => {
-                            let fields = &adt.variants.first().expect("adt is a struct").fields;
-                            fields[*fid]
-                        }
-                        _ => panic!("not an adt"),
-                    },
-                    ProjectionElem::DowncastField(vid, fid, _) => match self.kind(tcx) {
-                        TyKind::Adt(adt) => adt.variants[*vid].fields[*fid],
-                        _ => panic!("not an adt"),
-                    },
-                };
-                projected.projected_ty(tcx, tail)
-            }
+    fn project_ty(self, tcx: &TyCtxt, proj: ProjectionElem) -> Self {
+        match proj {
+            ProjectionElem::Deref => match self.kind(tcx) {
+                TyKind::RawPtr(pointee, ..) | TyKind::Ref(pointee, ..) => *pointee,
+                kind => panic!("cannot dereference projected type {kind:?}"),
+            },
+            ProjectionElem::TupleField(idx) => match self.kind(tcx) {
+                TyKind::Tuple(fields) => {
+                    assert!(
+                        idx.index() < fields.len(),
+                        "tuple projection index {} out of bounds for {} fields",
+                        idx.index(),
+                        fields.len()
+                    );
+                    fields[idx.index()]
+                }
+                kind => panic!("tuple-field projection requires a tuple, got {kind:?}"),
+            },
+            ProjectionElem::Index(_) => match self.kind(tcx) {
+                TyKind::Array(ty, ..) => *ty,
+                kind => panic!("index projection requires an array, got {kind:?}"),
+            },
+            ProjectionElem::ConstantIndex { offset } => match self.kind(tcx) {
+                TyKind::Array(ty, len) => {
+                    assert!(
+                        offset < *len as u64,
+                        "constant index {offset} out of bounds for array of length {len}"
+                    );
+                    *ty
+                }
+                kind => panic!("constant-index projection requires an array, got {kind:?}"),
+            },
+            ProjectionElem::Field(fid) => match self.kind(tcx) {
+                TyKind::Adt(adt) if !adt.is_enum() => {
+                    let fields = &adt
+                        .variants
+                        .first()
+                        .expect("struct ADT has one variant")
+                        .fields;
+                    assert!(
+                        fid.index() < fields.len(),
+                        "field projection index {} out of bounds for {} fields",
+                        fid.index(),
+                        fields.len()
+                    );
+                    fields[fid]
+                }
+                TyKind::Adt(_) => panic!("field projection on an enum requires a downcast"),
+                kind => panic!("field projection requires an ADT, got {kind:?}"),
+            },
+            ProjectionElem::DowncastField(vid, fid, declared_ty) => match self.kind(tcx) {
+                TyKind::Adt(adt) if adt.is_enum() => {
+                    assert!(
+                        vid.index() < adt.variants.len(),
+                        "downcast variant index {} out of bounds for {} variants",
+                        vid.index(),
+                        adt.variants.len()
+                    );
+                    let fields = &adt.variants[vid].fields;
+                    assert!(
+                        fid.index() < fields.len(),
+                        "downcast field index {} out of bounds for {} fields in variant {}",
+                        fid.index(),
+                        fields.len(),
+                        vid.index()
+                    );
+                    let actual_ty = fields[fid];
+                    assert_eq!(
+                        declared_ty, actual_ty,
+                        "downcast field type does not match the selected enum field"
+                    );
+                    actual_ty
+                }
+                TyKind::Adt(_) => panic!("downcast-field projection requires an enum ADT"),
+                kind => panic!("downcast-field projection requires an ADT, got {kind:?}"),
+            },
         }
+    }
+
+    pub fn projected_ty(self, tcx: &TyCtxt, projs: &[ProjectionElem]) -> Self {
+        projs
+            .iter()
+            .copied()
+            .fold(self, |ty, proj| ty.project_ty(tcx, proj))
     }
 
     pub fn contains<P>(self, tcx: &TyCtxt, predicate: P) -> bool
@@ -931,5 +989,146 @@ impl UnOp {
             UnOp::Not => "!",
             UnOp::Neg => "-",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use config::TyConfig;
+
+    use crate::tyctxt::{AdtMeta, TyCtxt};
+
+    use super::*;
+
+    fn adt_meta() -> AdtMeta {
+        AdtMeta { copy: true }
+    }
+
+    #[test]
+    fn place_construction_validates_projection_chain() {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        let array_ty = tcx.push(TyKind::Array(TyCtxt::I32, 2));
+        let tuple_ty = tcx.push(TyKind::Tuple(vec![TyCtxt::I8, array_ty]));
+        let ptr_ty = tcx.push(TyKind::RawPtr(tuple_ty, Mutability::Not));
+        let projections = [
+            ProjectionElem::Deref,
+            ProjectionElem::TupleField(FieldIdx::new(1)),
+            ProjectionElem::ConstantIndex { offset: 1 },
+        ];
+
+        let place = Place::from_projected(Local::new(1), ptr_ty, &projections, &tcx);
+
+        assert_eq!(place.projection(), &projections);
+        assert_eq!(ptr_ty.projected_ty(&tcx, &projections), TyCtxt::I32);
+    }
+
+    #[test]
+    fn project_rejects_invalid_projection_before_mutating_place() {
+        let tcx = TyCtxt::from_primitives(TyConfig::default());
+        let mut place = Place::from_local(Local::new(1));
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            place.project(TyCtxt::I32, ProjectionElem::Deref, &tcx);
+        }));
+
+        assert!(result.is_err());
+        assert!(place.projection().is_empty());
+    }
+
+    #[test]
+    fn place_construction_rejects_out_of_bounds_projection() {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        let array_ty = tcx.push(TyKind::Array(TyCtxt::I32, 2));
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            Place::from_projected(
+                Local::new(1),
+                array_ty,
+                &[ProjectionElem::ConstantIndex { offset: 2 }],
+                &tcx,
+            );
+        }));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn enum_projections_require_downcast_and_matching_field_type() {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        let enum_ty = tcx.push_adt(
+            Adt {
+                variants: IndexVec::from_vec(vec![
+                    VariantDef {
+                        fields: IndexVec::from_vec(vec![TyCtxt::I32]),
+                    },
+                    VariantDef {
+                        fields: IndexVec::from_vec(vec![TyCtxt::I64]),
+                    },
+                ]),
+            },
+            adt_meta(),
+        );
+
+        let direct_field = catch_unwind(AssertUnwindSafe(|| {
+            Place::from_projected(
+                Local::new(1),
+                enum_ty,
+                &[ProjectionElem::Field(FieldIdx::new(0))],
+                &tcx,
+            );
+        }));
+        assert!(direct_field.is_err());
+
+        let mismatched_type = catch_unwind(AssertUnwindSafe(|| {
+            Place::from_projected(
+                Local::new(1),
+                enum_ty,
+                &[ProjectionElem::DowncastField(
+                    VariantIdx::new(1),
+                    FieldIdx::new(0),
+                    TyCtxt::I32,
+                )],
+                &tcx,
+            );
+        }));
+        assert!(mismatched_type.is_err());
+
+        let valid = Place::from_projected(
+            Local::new(1),
+            enum_ty,
+            &[ProjectionElem::DowncastField(
+                VariantIdx::new(1),
+                FieldIdx::new(0),
+                TyCtxt::I64,
+            )],
+            &tcx,
+        );
+        assert_eq!(enum_ty.projected_ty(&tcx, valid.projection()), TyCtxt::I64);
+    }
+
+    #[test]
+    fn struct_field_projection_rejects_out_of_bounds_field() {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        let struct_ty = tcx.push_adt(
+            Adt {
+                variants: IndexVec::from_vec(vec![VariantDef {
+                    fields: IndexVec::from_vec(vec![TyCtxt::I32]),
+                }]),
+            },
+            adt_meta(),
+        );
+
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            Place::from_projected(
+                Local::new(1),
+                struct_ty,
+                &[ProjectionElem::Field(FieldIdx::new(1))],
+                &tcx,
+            );
+        }));
+
+        assert!(result.is_err());
     }
 }

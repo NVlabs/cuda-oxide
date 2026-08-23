@@ -1322,7 +1322,9 @@ impl PlacePath {
             .collect();
         Place::from_projected(
             pt.current_frame().get_by_index(self.source).unwrap(),
+            pt.ty(self.source),
             &projs,
+            &pt.tcx,
         )
     }
 
@@ -1529,17 +1531,40 @@ mod tests {
         let local = Local::new(1);
         pt.allocate_local(local, t_root);
 
-        let a = Place::from_projected(local, &[ProjectionElem::TupleField(FieldIdx::new(0))]);
-        let b = Place::from_projected(local, &[ProjectionElem::TupleField(FieldIdx::new(1))]);
-        let c = Place::from_projected(local, &[ProjectionElem::TupleField(FieldIdx::new(2))]);
+        let a = Place::from_projected(
+            local,
+            t_root,
+            &[ProjectionElem::TupleField(FieldIdx::new(0))],
+            &pt.tcx,
+        );
+        let b = Place::from_projected(
+            local,
+            t_root,
+            &[ProjectionElem::TupleField(FieldIdx::new(1))],
+            &pt.tcx,
+        );
+        let c = Place::from_projected(
+            local,
+            t_root,
+            &[ProjectionElem::TupleField(FieldIdx::new(2))],
+            &pt.tcx,
+        );
 
         let d = b
             .clone()
-            .project(ProjectionElem::TupleField(FieldIdx::new(0)))
+            .project(
+                t_root,
+                ProjectionElem::TupleField(FieldIdx::new(0)),
+                &pt.tcx,
+            )
             .clone();
         let e = b
             .clone()
-            .project(ProjectionElem::TupleField(FieldIdx::new(1)))
+            .project(
+                t_root,
+                ProjectionElem::TupleField(FieldIdx::new(1)),
+                &pt.tcx,
+            )
             .clone();
         (pt, local, a, b, c, d, e)
     }
@@ -1604,7 +1629,9 @@ mod tests {
         // root -[Deref]-> tuple -[Field(0)]-> tuple.0 -[Deref]-> int
         let tuple_0 = Place::from_projected(
             tuple,
+            inner_ty,
             &[ProjectionElem::TupleField(FieldIdx::from_usize(0))],
+            &pt.tcx,
         );
         pt.set_ref(tuple_0.clone(), int, None);
 
@@ -1760,10 +1787,12 @@ mod tests {
         // local[one].0
         let one_zero = Place::from_projected(
             local,
+            ty,
             &[
                 ProjectionElem::Index(one),
                 ProjectionElem::TupleField(FieldIdx::new(0)),
             ],
+            &pt.tcx,
         );
         let one_zero = pt.get_node(&one_zero).unwrap();
         assert_eq!(pt.places[one_zero].ty, TyCtxt::I32);
@@ -1784,12 +1813,22 @@ mod tests {
         pt.allocate_local(root, t_i16_i32);
         pt.mark_place_init(root);
 
-        let root_0 = Place::from_projected(root, &[ProjectionElem::TupleField(FieldIdx::new(0))])
-            .to_place_index(&pt)
-            .unwrap();
-        let root_1 = Place::from_projected(root, &[ProjectionElem::TupleField(FieldIdx::new(1))])
-            .to_place_index(&pt)
-            .unwrap();
+        let root_0 = Place::from_projected(
+            root,
+            t_i16_i32,
+            &[ProjectionElem::TupleField(FieldIdx::new(0))],
+            &pt.tcx,
+        )
+        .to_place_index(&pt)
+        .unwrap();
+        let root_1 = Place::from_projected(
+            root,
+            t_i16_i32,
+            &[ProjectionElem::TupleField(FieldIdx::new(1))],
+            &pt.tcx,
+        )
+        .to_place_index(&pt)
+        .unwrap();
 
         // root_ptr1 = addr_of!(root)
         let root_ptr1 = Local::new(2);
@@ -1822,7 +1861,9 @@ mod tests {
         pt.place_written(
             &Place::from_projected(
                 root_ptr1,
+                t_ptr,
                 &[ProjectionElem::Deref, ProjectionElem::TupleField(0.into())],
+                &pt.tcx,
             ),
             pt.places[root_ptr1_p].tag,
         );
