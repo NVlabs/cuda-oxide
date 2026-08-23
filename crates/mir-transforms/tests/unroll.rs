@@ -23,6 +23,7 @@ use dialect_mir::ops::{
 use mir_transforms::unroll::unroll_annotated_loops;
 use pliron::builtin::attributes::{IntegerAttr, StringAttr};
 use pliron::builtin::ops::ConstantOp;
+use pliron::builtin::types::FunctionType;
 use pliron::context::{Context, Ptr};
 use pliron::graph::{ControlFlowGraph, dominance::DomInfo};
 use pliron::linked_list::ContainsLinkedList;
@@ -509,8 +510,11 @@ fn side_effecting_loop_header_is_skipped() {
         vec![],
         0,
     );
-    MirCallOp::new(side_effect).set_attr_callee(&ctx, StringAttr::new("header_effect".into()));
-    side_effect.insert_before(&ctx, header_term);
+    let side_effect = MirCallOp::new(side_effect);
+    side_effect.set_attr_callee(&ctx, StringAttr::new("header_effect".into()));
+    let signature = FunctionType::get(&ctx, vec![], vec![]);
+    side_effect.set_external_callee_signature(&mut ctx, signature.into());
+    side_effect.get_operation().insert_before(&ctx, header_term);
 
     MirUnrollHintOp::new(&mut ctx, 0)
         .get_operation()

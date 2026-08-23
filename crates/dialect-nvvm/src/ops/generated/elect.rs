@@ -10,10 +10,18 @@
 //! Generated warp leader-election operation.
 
 use pliron::{
-    builtin::op_interfaces::{NOpdsInterface, NResultsInterface},
+    builtin::{
+        op_interfaces::{NOpdsInterface, NResultsInterface},
+        types::IntegerType,
+    },
+    common_traits::Verify,
     context::{Context, Ptr},
+    location::Located,
     op::Op,
     operation::Operation,
+    result::Error,
+    r#type::{TypeHandle, Typed},
+    verify_err,
 };
 use pliron_derive::pliron_op;
 
@@ -21,7 +29,6 @@ use pliron_derive::pliron_op;
 #[pliron_op(
     name = "nvvm.elect_sync",
     format,
-    verifier = "succ",
     interfaces = [NOpdsInterface<1>, NResultsInterface<2>],
 )]
 pub struct ElectSyncOp;
@@ -30,6 +37,34 @@ impl ElectSyncOp {
     pub fn new(op: Ptr<Operation>) -> Self {
         Self { op }
     }
+}
+
+impl Verify for ElectSyncOp {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 1 || op.get_num_results() != 2 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.elect_sync requires one i32 operand and results [i32, i1]"
+            );
+        }
+        if !is_integer_width(ctx, op.get_operand(0).get_type(ctx), 32)
+            || !is_integer_width(ctx, op.get_result(0).get_type(ctx), 32)
+            || !is_integer_width(ctx, op.get_result(1).get_type(ctx), 1)
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.elect_sync requires one i32 operand and results [i32, i1]"
+            );
+        }
+        Ok(())
+    }
+}
+
+fn is_integer_width(ctx: &Context, ty: TypeHandle, width: u32) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| integer.width() == width)
 }
 
 pub(super) fn register(ctx: &mut Context) {

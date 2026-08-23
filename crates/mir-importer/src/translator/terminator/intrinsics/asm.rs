@@ -9,8 +9,9 @@ use super::super::helpers::{emit_goto, emit_store_result_and_goto};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
 use crate::translator::{rvalue, types};
+use dialect_mir::attributes::MirPointerKindAuthorityAttr;
 use dialect_mir::ops::MirConstructTupleOp;
-use dialect_mir::types::MirTupleType;
+use dialect_mir::types::{MirTupleType, pointer_carriers_in_type};
 use dialect_nvvm::ops::InlinePtxOp;
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
@@ -176,6 +177,11 @@ pub fn emit_inline_ptx(
             destination,
             &loc,
         )?];
+        // Pointer authority follows rustc's destination type, never the PTX
+        // template or register constraint chosen by the user.
+        let has_pointer_result = result_tys
+            .iter()
+            .any(|result_ty| !pointer_carriers_in_type(ctx, *result_ty).is_empty());
 
         let inline_ptx = InlinePtxOp::build(
             ctx,
@@ -186,6 +192,10 @@ pub fn emit_inline_ptx(
             options.sideeffect,
             options.convergent,
         );
+        if has_pointer_result {
+            InlinePtxOp::new(inline_ptx)
+                .set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::InlineAsm);
+        }
         inline_ptx.deref_mut(ctx).set_loc(loc.clone());
 
         let inline_ptx = if let Some(prev) = last_op {
@@ -227,6 +237,11 @@ pub fn emit_inline_ptx(
                 }
             }
         };
+        // Each result type is an element of rustc's exact destination tuple;
+        // one pointer-carrying element marks the whole producer boundary.
+        let has_pointer_result = element_types
+            .iter()
+            .any(|result_ty| !pointer_carriers_in_type(ctx, *result_ty).is_empty());
 
         let inline_ptx = InlinePtxOp::build(
             ctx,
@@ -237,6 +252,10 @@ pub fn emit_inline_ptx(
             options.sideeffect,
             options.convergent,
         );
+        if has_pointer_result {
+            InlinePtxOp::new(inline_ptx)
+                .set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::InlineAsm);
+        }
         inline_ptx.deref_mut(ctx).set_loc(loc.clone());
 
         let inline_ptx = if let Some(prev) = last_op {

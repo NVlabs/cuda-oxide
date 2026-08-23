@@ -6,13 +6,56 @@
 use dialect_mir::ops as mir;
 use dialect_nvvm::ops as nvvm;
 use llvm_export::ops as llvm;
-use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface};
+use pliron::builtin::op_interfaces::{
+    CallOpCallable, CallOpInterface, OneRegionInterface, SymbolOpInterface,
+};
 use pliron::builtin::ops::ModuleOp;
 use pliron::context::Context;
 use pliron::linked_list::ContainsLinkedList;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::r#type::Typed;
+
+#[test]
+fn test_standalone_lowering_rejects_builtin_pointer_constant() {
+    use dialect_mir::types::{MirPointerKind, MirPtrType};
+    use pliron::builtin::{
+        attributes::IntegerAttr,
+        ops::ConstantOp,
+        types::{IntegerType, Signedness},
+    };
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+    mir_lower::register(&mut ctx);
+
+    let module = ModuleOp::new(&mut ctx, "pointer_constant".try_into().unwrap());
+    let block = module
+        .get_region(&ctx)
+        .deref(&ctx)
+        .iter(&ctx)
+        .next()
+        .unwrap();
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let pointer_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, u32_ty.into(), true, MirPointerKind::UniqueRef);
+    let value = APInt::from_u64(0, NonZeroUsize::new(32).unwrap());
+    let constant = ConstantOp::new(&mut ctx, IntegerAttr::new(u32_ty, value).into());
+    let result = constant.get_operation().deref(&ctx).get_result(0);
+    result.set_type(&ctx, pointer_ty.into());
+    constant.get_operation().insert_at_back(block, &ctx);
+
+    let error = mir_lower::lower_mir_to_llvm(&mut ctx, module.get_operation()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("builtin.constant cannot produce a MIR pointer carrier")
+    );
+}
 
 #[test]
 fn test_intrinsic_insertion() -> Result<(), anyhow::Error> {
@@ -1573,14 +1616,14 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-/// Regression cover for the per-call-site address-space coercion pass.
+/// Regression cover for explicit MIR address-space coercion before a call.
 ///
 /// When a caller passes a pointer in one address space to a callee whose
 /// declared parameter lives in a different address space (the
 /// `*mut SharedArray<T, N>` / `addrspace(3)` case that surfaces from
-/// `block_reduce` and friends), the lowerer must look up the callee's
-/// declared signature and insert an `llvm.addrspacecast` so the LLVM-IR
-/// verifier sees matching pointer types at the call site.
+/// `block_reduce` and friends), MIR must record the representational cast
+/// before the exact call-signature verifier sees the argument. Lowering then
+/// emits the corresponding `llvm.addrspacecast`.
 ///
 /// This test builds two MIR functions in one module:
 ///   - `callee(p: *mut i32 in addrspace(3))`
@@ -1671,12 +1714,24 @@ fn addrspace_coercion_inserts_addrspacecast_at_call_site() -> Result<(), anyhow:
         let block = BasicBlock::new(&mut ctx, None, vec![generic_ptr_ty.into()]);
         block.insert_at_back(region, &ctx);
         let arg = block.deref(&ctx).get_argument(0);
+        let cast_op_ptr = Operation::new(
+            &mut ctx,
+            mir::MirCastOp::get_concrete_op_info(),
+            vec![shared_ptr_ty.into()],
+            vec![arg],
+            vec![],
+            0,
+        );
+        mir::MirCastOp::new(cast_op_ptr)
+            .set_attr_cast_kind(&ctx, dialect_mir::attributes::MirCastKindAttr::PtrToPtr);
+        cast_op_ptr.insert_at_back(block, &ctx);
+        let coerced_arg = cast_op_ptr.deref(&ctx).get_result(0);
 
         let call_op_ptr = Operation::new(
             &mut ctx,
             mir::MirCallOp::get_concrete_op_info(),
             vec![],
-            vec![arg],
+            vec![coerced_arg],
             vec![],
             0,
         );
@@ -2458,8 +2513,8 @@ fn test_cluster_mbarrier_and_fences_lower_to_exact_inline_ptx() -> Result<(), an
 
     let mut ctx = make_test_ctx();
     let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
-    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
     let bar_ptr_ty = MirPtrType::get_shared(&mut ctx, i64_ty.into(), false);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![bar_ptr_ty.into(), i32_ty.into()]);
 
@@ -4420,7 +4475,7 @@ fn test_cp_async_ca_zfill_4_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
 
     let mut ctx = make_test_ctx();
     let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let dst_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
     let src_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), false);
     let (module_ptr, entry) =
@@ -4451,7 +4506,7 @@ fn test_cp_async_ca_zfill_8_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
 
     let mut ctx = make_test_ctx();
     let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let dst_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
     let src_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), false);
     let (module_ptr, entry) =
@@ -4482,7 +4537,7 @@ fn test_cp_async_ca_zfill_16_lowers_to_inline_asm() -> Result<(), anyhow::Error>
 
     let mut ctx = make_test_ctx();
     let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let dst_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), true);
     let src_ty = MirPtrType::get_generic(&mut ctx, i8_ty.into(), false);
     let (module_ptr, entry) =
@@ -6061,8 +6116,8 @@ fn lower_all_ldmatrix_forms(
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
-    let ptr_ty = MirPtrType::get(&mut ctx, i8_ty.into(), true, address_space);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let ptr_ty = MirPtrType::get(&mut ctx, u32_ty.into(), true, address_space);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
     let pointer = entry.deref(&ctx).get_argument(0);
     if compatibility {
@@ -6686,10 +6741,7 @@ fn test_blackwell_ldmatrix_rejects_unadmitted_m16n16_x4() {
         )
         .expect_err("m16n16.x4 must fail closed")
         .to_string();
-        assert!(
-            error.contains("variant has no generated lowering recipe"),
-            "{error}"
-        );
+        assert!(error.contains("missing or unsupported variant"), "{error}");
     }
 }
 
@@ -6803,8 +6855,8 @@ fn test_ldmatrix_rejects_non_shared_pointer_spaces() {
     ] {
         for address_space in [1, 4, 5] {
             let mut ctx = make_test_ctx();
-            let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
-            let ptr_ty = MirPtrType::get(&mut ctx, i8_ty.into(), false, address_space);
+            let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+            let ptr_ty = MirPtrType::get(&mut ctx, u32_ty.into(), false, address_space);
             let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
             let pointer = entry.deref(&ctx).get_argument(0);
             nvvm::LdmatrixOp::build(
@@ -6830,7 +6882,7 @@ fn test_ldmatrix_rejects_non_shared_pointer_spaces() {
             .expect_err("global/constant pointers must fail closed")
             .to_string();
             assert!(
-                error.contains(&format!("got address space {address_space}")),
+                error.contains(&format!("not address space {address_space}")),
                 "{error}"
             );
         }
@@ -6860,10 +6912,7 @@ fn test_ldmatrix_rejects_non_pointer_operand() {
     let error = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
         .expect_err("non-pointer ldmatrix input must fail closed")
         .to_string();
-    assert!(
-        error.contains("requires an LLVM pointer operand"),
-        "{error}"
-    );
+    assert!(error.contains("operand must be a MIR pointer"), "{error}");
 }
 
 #[test]
@@ -6872,9 +6921,9 @@ fn test_ldmatrix_rejects_wrong_result_arity() {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
-    let ptr_ty = MirPtrType::get_shared(&mut ctx, i8_ty.into(), false);
+    let ptr_ty = MirPtrType::get_shared(&mut ctx, u32_ty.into(), false);
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
     let pointer = entry.deref(&ctx).get_argument(0);
     let op = Operation::new(
@@ -6897,10 +6946,7 @@ fn test_ldmatrix_rejects_wrong_result_arity() {
     let error = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
         .expect_err("x1 must return exactly one register")
         .to_string();
-    assert!(
-        error.contains("requires 1 i32 result register(s), got 2"),
-        "{error}"
-    );
+    assert!(error.contains("requires 1 u32 results"), "{error}");
 }
 
 #[test]
@@ -9609,9 +9655,8 @@ fn test_pointer_form_wgmma_sequence_preserves_deferred_fallback() -> Result<(), 
 }
 
 #[test]
-fn test_pointer_form_wgmma_region_tolerates_kind_only_pointer_retype() -> Result<(), anyhow::Error>
-{
-    use dialect_mir::attributes::MirCastKindAttr;
+fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<(), anyhow::Error> {
+    use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
     use dialect_mir::types::{MirArrayType, MirPointerKind, MirPtrType};
     use pliron::builtin::attributes::IntegerAttr;
     use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
@@ -9642,9 +9687,10 @@ fn test_pointer_form_wgmma_region_tolerates_kind_only_pointer_retype() -> Result
 
     nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
 
-    // The importer emits a kind-only retype at `Rvalue::Ref` between the
-    // fence and the MMA; the fused region must look through it.
-    let retype = Operation::new(
+    // The importer emits a fresh kind-only retype for each `Rvalue::Ref`.
+    // Both typed operands must canonicalize to the same storage identity, while
+    // the first typed operand remains available to the linear lowering plan.
+    let first_retype = Operation::new(
         &mut ctx,
         mir::MirCastOp::get_concrete_op_info(),
         vec![unique_ptr_ty],
@@ -9652,15 +9698,55 @@ fn test_pointer_form_wgmma_region_tolerates_kind_only_pointer_retype() -> Result
         vec![],
         0,
     );
-    mir::MirCastOp::new(retype).set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
-    retype.insert_at_back(entry, &ctx);
-    let retyped_accumulator = retype.deref(&ctx).get_result(0);
+    mir::MirCastOp::new(first_retype).set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    mir::MirCastOp::new(first_retype)
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    first_retype.insert_at_back(entry, &ctx);
+    let first_reborrow = first_retype.deref(&ctx).get_result(0);
 
     Operation::new(
         &mut ctx,
         nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
         vec![],
-        vec![retyped_accumulator, desc_a, desc_b],
+        vec![first_reborrow, desc_a, desc_b],
+        vec![],
+        0,
+    )
+    .insert_at_back(entry, &ctx);
+
+    let second_retype = Operation::new(
+        &mut ctx,
+        mir::MirCastOp::get_concrete_op_info(),
+        vec![unique_ptr_ty],
+        vec![accumulator],
+        vec![],
+        0,
+    );
+    mir::MirCastOp::new(second_retype).set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    mir::MirCastOp::new(second_retype)
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    second_retype.insert_at_back(entry, &ctx);
+    let second_reborrow = second_retype.deref(&ctx).get_result(0);
+    assert_ne!(
+        first_reborrow, second_reborrow,
+        "the regression requires two distinct reborrow SSA values"
+    );
+    let first_reborrow_ty = first_reborrow.get_type(&ctx);
+    assert_eq!(
+        first_reborrow_ty
+            .deref(&ctx)
+            .downcast_ref::<MirPtrType>()
+            .expect("first reborrow must remain a typed MIR pointer")
+            .pointer_kind(),
+        MirPointerKind::UniqueRef,
+        "the regression must provide a typed UniqueRef for the linear plan to retain"
+    );
+
+    Operation::new(
+        &mut ctx,
+        nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+        vec![],
+        vec![second_reborrow, desc_a, desc_b],
         vec![],
         0,
     )
@@ -9699,7 +9785,16 @@ fn test_pointer_form_wgmma_region_tolerates_kind_only_pointer_retype() -> Result
     assert_eq!(
         matching.len(),
         1,
-        "a kind-only pointer retype inside the region must not break deferred fusion"
+        "distinct reborrow SSA values for one accumulator must not break deferred fusion"
+    );
+    let template = matching[0]
+        .get_attr_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("WGMMA template");
+    assert_eq!(
+        template.matches("wgmma.mma_async").count(),
+        2,
+        "both reborrows must remain in one fused accumulator region"
     );
     Ok(())
 }
@@ -10854,7 +10949,8 @@ fn test_pointer_form_wgmma_counted_pipeline_rejects_reused_accumulator_slot() {
 
 #[test]
 fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<(), anyhow::Error> {
-    use dialect_mir::types::{MirArrayType, MirPtrType};
+    use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
+    use dialect_mir::types::{MirArrayType, MirPointerKind, MirPtrType};
     use pliron::basic_block::BasicBlock;
     use pliron::builtin::op_interfaces::OperandSegmentInterface;
     use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
@@ -10870,6 +10966,13 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
     let row_ty = MirArrayType::get(&mut ctx, f32_ty.into(), 8);
     let accumulator_ty = MirArrayType::get(&mut ctx, row_ty.into(), 4);
     let accumulator_ptr_ty = MirPtrType::get_generic(&mut ctx, accumulator_ty.into(), true);
+    let unique_accumulator_ptr_ty: pliron::r#type::TypeHandle = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        accumulator_ty.into(),
+        true,
+        MirPointerKind::UniqueRef,
+    )
+    .into();
     let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
     let i1_ty = IntegerType::get(&ctx, 1, Signedness::Signless);
@@ -10893,10 +10996,14 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
         vec![u32_ty.into(), u64_ty.into(), u64_ty.into()],
     );
     header.insert_at_back(function_region, &ctx);
+    let body = BasicBlock::new(&mut ctx, None, vec![]);
+    body.insert_at_back(function_region, &ctx);
     let latch = BasicBlock::new(&mut ctx, None, vec![]);
     latch.insert_at_back(function_region, &ctx);
     let exit = BasicBlock::new(&mut ctx, None, vec![]);
     exit.insert_at_back(function_region, &ctx);
+    let wait_block = BasicBlock::new(&mut ctx, None, vec![]);
+    wait_block.insert_at_back(function_region, &ctx);
 
     // preheader: fence; i0 = 0; goto header(i0, desc_a_base, desc_b_base)
     nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(preheader, &ctx);
@@ -10911,7 +11018,7 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
     )
     .insert_at_back(preheader, &ctx);
 
-    // header(i, desc_a, desc_b): if !(i < 4) exit else latch.
+    // header(i, desc_a, desc_b): if !(i < 4) exit else body.
     let i = header.deref(&ctx).get_argument(0);
     let desc_a = header.deref(&ctx).get_argument(1);
     let desc_b = header.deref(&ctx).get_argument(2);
@@ -10943,7 +11050,7 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
         mir::MirCondBranchOp::get_concrete_op_info(),
         vec![],
         branch_operands,
-        vec![exit, latch],
+        vec![exit, body],
         0,
     );
     Operation::get_op::<mir::MirCondBranchOp>(branch, &ctx)
@@ -10951,9 +11058,35 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
         .set_operand_segment_sizes(&ctx, segment_sizes);
     branch.insert_at_back(header, &ctx);
 
-    // latch: one WGMMA per K iteration and affine descriptor recurrences.
-    append_pointer_wgmma_mma(&mut ctx, latch, accumulator, desc_a, desc_b);
+    // body: a fresh Rust `&mut` reborrow and one WGMMA per K iteration. Rust
+    // calls end a MIR block, so the post-call arithmetic lives in the latch.
+    // The reborrow is loop-local, but its canonical storage identity is the
+    // preheader accumulator argument.
+    let retype = Operation::new(
+        &mut ctx,
+        mir::MirCastOp::get_concrete_op_info(),
+        vec![unique_accumulator_ptr_ty],
+        vec![accumulator],
+        vec![],
+        0,
+    );
+    mir::MirCastOp::new(retype).set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+    mir::MirCastOp::new(retype)
+        .set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::Reborrow);
+    retype.insert_at_back(body, &ctx);
+    let reborrowed_accumulator = retype.deref(&ctx).get_result(0);
+    append_pointer_wgmma_mma(&mut ctx, body, reborrowed_accumulator, desc_a, desc_b);
+    Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![latch],
+        0,
+    )
+    .insert_at_back(body, &ctx);
 
+    // latch: affine induction and descriptor recurrences, then the back edge.
     let one = append_mir_unsigned_constant(&mut ctx, latch, u32_ty, 1);
     let i_next = Operation::new(
         &mut ctx,
@@ -11000,10 +11133,20 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
     )
     .insert_at_back(latch, &ctx);
 
-    // exit: the only place where the asynchronous lifetime may become visible.
+    // Rust calls split the exit sequence too: commit in the loop exit, then
+    // wait_group<0> in its unique linear successor.
     nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(exit, &ctx);
-    append_wgmma_wait_group_constant(&mut ctx, exit, 0);
-    append_return(&mut ctx, exit);
+    Operation::new(
+        &mut ctx,
+        mir::MirGotoOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![wait_block],
+        0,
+    )
+    .insert_at_back(exit, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, wait_block, 0);
+    append_return(&mut ctx, wait_block);
 
     mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
         .map_err(|error| anyhow::anyhow!("{error}"))?;

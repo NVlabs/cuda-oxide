@@ -14,7 +14,7 @@ The dialect defines nine types that preserve Rust-level semantics:
 |-----------------------|--------------------------------------------------------------|-----------------------------------------------------------------------|
 | `MirTupleType`        | Heterogeneous tuples                                         | `mir.tuple<i32, f32, i64>`                                            |
 | `MirPtrType`          | Thin pointers with address space, mutability, and source kind | `mir.ptr<f32, mutable: true, addrspace: 3, kind: UniqueRef>`           |
-| `MirSliceType`        | Fat pointers with retained source kind (ptr + len)           | `mir.slice<f32, kind: SharedRef>`                                     |
+| `MirSliceType`        | Fat pointers with carrier mutability and source kind (ptr + len) | `mir.slice<f32, mutable: false, kind: SharedRef>`                  |
 | `MirDisjointSliceType`| `DisjointSlice<T>` -- per-thread unique access               | `mir.disjoint_slice<f32, ...>`                                        |
 | `MirStructType`       | Named structs with layout metadata                           | `mir.struct<"Point", [f32, f32]>`                                   |
 | `MirUnionType`        | Rust unions -- each field a view of the same bytes           | `mir.union<"Repr", [a, b], [i32, f32], 4, 4>`                       |
@@ -60,28 +60,90 @@ pointer-like Rust value:
 | `*mut T` | `RawMut` | Mutable raw pointer |
 | compiler-generated address | `Erased` | Storage/projection pointer with no Rust alias guarantee |
 
-The existing `is_mutable` bit remains part of `MirPtrType` because operations
-need writeability information, but it is not proof of uniqueness. In
-particular, `RawMut` and `UniqueRef` are both mutable while only the latter
+The `is_mutable` bit records the source pointer carrier's mutability spelling;
+it is not a general storage-write permission and is not proof of uniqueness.
+For example, a `SharedRef` carrier is immutable even though Rust may legally
+mutate an `UnsafeCell` reached through it. `RawMut`, `UniqueRef`, and compiler
+internal mutable `Erased` carriers set the bit, while only `UniqueRef`
 originates from `&mut T`.
 
 Pointer kind is propagated through Rust type import, references, raw-address
-formation, slices, and compatible casts. Internal alloca/projection addresses
-are created as `Erased`; a new concrete Rust kind may be established only at
-a Rust-typed semantic boundary such as `Rvalue::Ref`, `Rvalue::AddressOf`, an
-explicit rustc cast/coercion, or a compiler-recognized operation whose Rust
-return type is authoritative. For example, the `SharedArray::as_ptr`,
-`as_mut_ptr`, and `as_raw_mut_ptr` intrinsic expansions use their rustc-declared
-`*const T` / `*mut T` result type directly.
+formation, slices, and compatible casts. The dialect verifier, rather than
+importer convention alone, enforces this transition matrix:
+
+| Producer or transition | Permitted result | Required authority |
+|------------------------|------------------|--------------------|
+| Generic cast, pointer offset, or projection | Preserve carrier mutability and the source kind, or erase a concrete kind to `Erased` | None |
+| `Rvalue::Ref` / `mir.ref` | `SharedRef` for `&T`; `UniqueRef` for `&mut T` | `Reborrow` |
+| `Rvalue::AddressOf` / `mir.ref` | `RawConst` or `RawMut`, matching source mutability | `RawAddress` |
+| Typed constant, static, or promoted address | `SharedRef`, `RawConst`, or `RawMut`; never `UniqueRef` | `StaticAddress` |
+| Explicit rustc cast, coercion, or transmute | The concrete kind declared by that cast | `RustCast` |
+| Adaptation to a declared Rust function/intrinsic ABI | The exact concrete ABI type | `AbiBoundary` |
+| Inline PTX output whose type comes from its Rust destination | The exact destination-derived pointer carrier | `InlineAsm` |
+| Allocation (`alloca`, shared/global/extern storage) | `Erased` only; `alloca` is specifically mutable AS0 storage, while shared/global producers retain their declared carrier mutability and fixed address space | None |
+| Integer with exposed provenance | `RawConst`/`RawMut`, or the exact immutable `Erased` `FnPtrTarget` carrier used for reified function tokens; never a Rust reference or arbitrary writable `Erased` storage | `StaticAddress` or `RustCast` when concrete; none for the opaque function token |
+
+The four address/conversion authorities (`Reborrow`, `RawAddress`,
+`StaticAddress`, and `AbiBoundary`) apply only to a top-level pointer or slice. They require an
+actual pointer-to-pointer or slice-to-slice conversion with the same
+pointee/element shape; `StaticAddress` also permits the explicit
+integer-to-raw-pointer case. Only `RustCast` on an explicit `Transmute` may
+authorize a pointer kind nested in a representation-reinterpreting aggregate.
+Every target pointer carrier, including `Erased`, otherwise needs a
+structurally corresponding source carrier with matching aggregate category,
+cardinality, field order, offsets, size, alignment, and ABI. This keeps a cast
+from turning integer bytes into writable `Erased` evidence, or claiming that a
+pointer was preserved merely because source and target list one at the same
+declaration index.
+The source is constrained too: `UniqueRef` may be reborrowed only from an
+already writable concrete pointer (`UniqueRef`/`RawMut`) or a writable
+top-level `Erased` thin/fat carrier. The same requirement applies when
+`RawAddress`, `StaticAddress`, or `AbiBoundary` establishes `RawMut`.
+`InlineAsm` is accepted only by `nvvm.inline_ptx`, only when every recursive
+result pointer carrier is derived from the Rust destination type; a
+pointer-free result must not carry it. `SharedRef`, `RawConst`, and immutable `Erased` carriers cannot directly
+establish a mutable concrete kind. `AbiBoundary` may otherwise establish a
+concrete kind from internal `Erased` storage or preserve the already exact
+concrete kind; it does not relabel one concrete Rust category as another.
+
+`RustCast` is also checked against rustc's cast kind; the label is not a
+universal escape hatch. `Transmute` may reinterpret a pointer-bearing
+representation. `PtrToPtr` changes only raw-pointer categories,
+`FnPtrToPtr` converts only the canonical immutable `Erased` `FnPtrTarget`
+function-pointer carrier to a raw pointer,
+`MutToConst` is exactly `RawMut -> RawConst`, and `ArrayToPointer` stays raw
+without turning const into mut. `Unsize` is the supported thin-to-fat trailing
+array conversion with kind, mutability, field order, offsets, and ABI prefix
+preserved; `Subtype` is type-identical after translation. The importer resolves
+function-item and noncapturing-closure coercions and materializes the canonical
+opaque token directly; the legacy `ReifyFnPointer` and `ClosureFnPointer`
+`mir.cast` forms are rejected because their zero-sized operands contain no
+address bits to lower. Exposed-provenance materialization may create only that
+exact `Erased` function token or a raw pointer. Ordinary integer bytes cannot
+manufacture writable `Erased` evidence for a later reborrow.
 
 Generic representation normalization and local storage may preserve a concrete
 kind or deliberately forget it by converting to `Erased`, but they never
 recover a concrete kind from `Erased` or switch directly between two distinct
 concrete Rust kinds. This prevents `SharedRef -> Erased -> UniqueRef` laundering
 while still allowing legitimate reborrows such as `RawMut -> UniqueRef` at
-`Rvalue::Ref`. A projection of an existing slice preserves the source kind,
-while an explicit reborrow or raw address takes the new Rust result type
-declared by rustc.
+`Rvalue::Ref`.
+
+Pointer projections and offsets preserve address space and carrier mutability.
+They may not produce the canonical `FnPtrTarget` carrier: it is a resolved
+function value, never a data address. The same recursive identity rule keeps a
+nested function token in the same aggregate position unless an explicit Rust
+`Transmute` performs the reinterpretation.
+Unmarked representation casts preserve carrier mutability and kind (or erase a
+concrete kind), while an explicit pointer-representation cast may also change
+address space.
+That makes writable `Erased` a traceable input to a later authorized
+`UniqueRef`/`RawMut` boundary rather than a property a generic operation can
+invent. Reading through a writable address does not require first changing its
+pointer type. Ordinary slice carriers use generic address space 0 and obey the
+same preserve-or-erase and mutability-preservation rules.
+`MirDisjointSliceType` has a fixed field-0 carrier contract:
+`MirPtr<T, mutable, addrspace(0), RawMut>`.
 
 `Retag` remains a codegen no-op. The dialect records the static pointer category
 but does not attempt to model dynamic Stacked Borrows / Tree Borrows tags or
@@ -91,7 +153,9 @@ MIR-to-LLVM lowering deliberately erases `MirPointerKind`. All four Rust source
 categories keep the same LLVM pointer/fat-pointer representation, and this
 change does not emit `noalias`, `readonly`, `dereferenceable`, or related
 metadata. Any future alias metadata requires a separate audited policy; it must
-not be inferred from `is_mutable` alone.
+not be inferred from `is_mutable` alone. In particular, store legality through
+`UnsafeCell` cannot be modeled by treating an immutable carrier as globally
+read-only.
 
 For GPU-specific abstractions such as `SharedArray`, the Rust reference kind is
 still retained when the source type is a reference, while the CUDA address
@@ -134,7 +198,10 @@ Pointers carry an NVPTX address space independently of their source kind:
 
 ## Verification
 
-Every operation implements pliron's `Verify` trait to catch bugs early during the import phase:
+Every operation implements pliron's `Verify` trait to catch bugs early during the import phase.
+Both public lowering entry points also run a whole-tree producer gate: generic
+`builtin.constant` may produce scalars, but cannot claim a direct or nested MIR
+pointer carrier.
 
 | Category     | What's Checked                                             |
 |--------------|------------------------------------------------------------|
@@ -145,7 +212,7 @@ Every operation implements pliron's `Verify` trait to catch bugs early during th
 | Comparison   | Operands same type, result is `i1`                         |
 | Aggregate    | Struct/tuple types, index within bounds, element types     |
 | Enum         | Discriminant type valid, payload types match variant       |
-| Cast         | Cast kind attribute present (full validation at lowering)  |
+| Cast         | Cast kind, recursive pointer-kind transitions, authority compatibility, and exposed-provenance targets |
 | Constants    | Type attribute present and well-formed                     |
 | Call         | Callee exists, argument count and types match              |
 
@@ -153,11 +220,12 @@ This catches mismatches immediately after `mir-importer` translates from rustc, 
 
 ## Attributes
 
-The dialect defines seven domain-specific attribute types (following the pliron best practice of avoiding overloaded `IntegerAttr`), one row per `#[pliron_attr(...)]` in `src/attributes.rs`:
+The dialect defines eight domain-specific attribute types (following the pliron best practice of avoiding overloaded `IntegerAttr`), one row per `#[pliron_attr(...)]` in `src/attributes.rs`:
 
 | Attribute                     | Rust Type                   | Description                                                                                                          |
 |-------------------------------|-----------------------------|----------------------------------------------------------------------------------------------------------------------|
 | `mir.cast_kind`               | `MirCastKindAttr`           | Preserves Rust cast intent (e.g. `IntToFloat`, `PtrToPtr`, `Transmute`) so lowering picks the right LLVM instruction |
+| `mir.pointer_kind_authority`  | `MirPointerKindAuthorityAttr` | Names the semantic origin (`Reborrow`, `RawAddress`, `RustCast`, `StaticAddress`, `AbiBoundary`, or `InlineAsm`) of a pointer-kind transition |
 | `mir.mutability`              | `MutabilityAttr`            | Boolean: `&` vs `&mut` for `mir.ref`                                                                                 |
 | `mir.field_index`             | `FieldIndexAttr`            | Structural field index for `extract_field`, `insert_field`, `field_addr`, `enum_payload`                             |
 | `mir.variant_index`           | `VariantIndexAttr`          | Enum variant index for `construct_enum`, `enum_payload`                                                              |
@@ -181,10 +249,11 @@ register(&mut ctx);  // Registers all ops, types, and attributes
 src/
 ├── lib.rs                       # Dialect registration
 ├── types.rs                     # 9 MIR types + address_space constants
-├── attributes.rs                # 7 domain-specific attributes
+├── attributes.rs                # 8 domain-specific attributes
 ├── const_fold.rs                # Constant folding over dialect-mir ops
 ├── rust_intrinsics.rs           # Recognised core/std intrinsic calls
 ├── side_effects.rs              # Per-op side-effect classification
+├── verification.rs              # Whole-tree pointer-producer gates shared by all lowerers
 ├── ops/
 │   ├── mod.rs                   # Op module registry + re-exports
 │   ├── function.rs              # MirFuncOp

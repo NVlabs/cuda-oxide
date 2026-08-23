@@ -31,10 +31,10 @@ use pliron::{
 };
 use pliron_derive::pliron_op;
 
-use crate::attributes::MutabilityAttr;
+use crate::attributes::{MirPointerKindAuthorityAttr, MutabilityAttr};
 use crate::ops::constants::MirUndefOp;
 use crate::ops::debug::debug_value_for_promoted_slot;
-use crate::types::MirPtrType;
+use crate::types::{MirPointerKind, MirPtrType, is_opaque_fn_pointer_type};
 
 type PlironResult<T> = pliron::result::Result<T>;
 
@@ -80,7 +80,8 @@ fn bool_integer_attr(ctx: &mut Context, value: bool) -> IntegerAttr {
 ///
 /// # Verification
 ///
-/// - Result must be a `MirPtrType`.
+/// - Result must be a mutable, generic-address-space `MirPtrType` with Erased
+///   provenance.
 #[pliron_op(
     name = "mir.alloca",
     format,
@@ -109,8 +110,18 @@ impl Verify for MirAllocaOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = &*self.get_operation().deref(ctx);
         let res_ty = op.get_result(0).get_type(ctx);
-        if res_ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+        let res_ty_obj = res_ty.deref(ctx);
+        let Some(ptr_ty) = res_ty_obj.downcast_ref::<MirPtrType>() else {
             return verify_err!(op.loc(), "MirAllocaOp result must be a MirPtrType");
+        };
+        if ptr_ty.kind != MirPointerKind::Erased
+            || !ptr_ty.is_mutable
+            || ptr_ty.address_space != crate::types::address_space::GENERIC
+        {
+            return verify_err!(
+                op.loc(),
+                "MirAllocaOp must return a mutable Erased pointer in generic address space"
+            );
         }
         Ok(())
     }
@@ -626,6 +637,7 @@ impl PromotableOpInterface for MirLoadOp {
 /// | Name      | Type            | Description                              |
 /// |-----------|-----------------|------------------------------------------|
 /// | `mutable` | MutabilityAttr  | Boolean: true for &mut, false for &      |
+/// | `ref_pointer_kind_authority` | MirPointerKindAuthorityAttr | `Reborrow` for a Rust reference, `RawAddress` for a raw address, or `StaticAddress` for a typed constant/promoted address |
 /// ```
 ///
 /// # Results
@@ -640,11 +652,19 @@ impl PromotableOpInterface for MirLoadOp {
 ///
 /// - Result must be a `MirPtrType`.
 /// - Result pointee type must match operand type.
+/// - Result must be in generic address space.
+/// - `Reborrow` produces exactly `SharedRef` / `UniqueRef` according to
+///   `mutable`; `RawAddress` produces exactly `RawConst` / `RawMut`;
+///   `StaticAddress` may produce `SharedRef` or a raw kind, but never
+///   `UniqueRef`.
 #[pliron_op(
     name = "mir.ref",
     format,
     interfaces = [NOpdsInterface<1>, OneOpdInterface, NResultsInterface<1>, OneResultInterface],
-    attributes = (mutable: MutabilityAttr)
+    attributes = (
+        mutable: MutabilityAttr,
+        ref_pointer_kind_authority: MirPointerKindAuthorityAttr
+    )
 )]
 pub struct MirRefOp;
 
@@ -664,6 +684,15 @@ impl MirRefOp {
     /// Set the mutable attribute.
     pub fn set_mutable(&self, ctx: &mut Context, mutable: bool) {
         self.set_attr_mutable(ctx, MutabilityAttr(mutable));
+    }
+
+    /// Classify the Rust address-creation boundary represented by this op.
+    pub fn set_pointer_kind_authority(
+        &self,
+        ctx: &mut Context,
+        authority: MirPointerKindAuthorityAttr,
+    ) {
+        self.set_attr_ref_pointer_kind_authority(ctx, authority);
     }
 }
 
@@ -690,6 +719,61 @@ impl Verify for MirRefOp {
             return verify_err!(
                 op.loc(),
                 "MirRefOp result pointee type must match operand type"
+            );
+        }
+
+        let Some(mutable) = self.get_attr_mutable(ctx) else {
+            return verify_err!(op.loc(), "MirRefOp must have a mutable attribute");
+        };
+        if ptr_ty.is_mutable != mutable.0 {
+            return verify_err!(
+                op.loc(),
+                "MirRefOp mutable attribute must match its result pointer mutability"
+            );
+        }
+
+        let authority = self
+            .get_attr_ref_pointer_kind_authority(ctx)
+            .map(|authority| authority.clone());
+        let kind_is_authorized = match authority.as_ref() {
+            Some(MirPointerKindAuthorityAttr::Reborrow) => {
+                ptr_ty.kind == MirPointerKind::from_reference_mutability(mutable.0)
+            }
+            Some(MirPointerKindAuthorityAttr::RawAddress) => {
+                ptr_ty.kind == MirPointerKind::from_raw_mutability(mutable.0)
+            }
+            Some(MirPointerKindAuthorityAttr::StaticAddress) => match ptr_ty.kind {
+                MirPointerKind::SharedRef | MirPointerKind::RawConst => !mutable.0,
+                MirPointerKind::RawMut => mutable.0,
+                MirPointerKind::UniqueRef | MirPointerKind::Erased => false,
+            },
+            Some(authority) => {
+                return verify_err!(
+                    op.loc(),
+                    "MirRefOp cannot use pointer-kind authority {:?}",
+                    authority
+                );
+            }
+            None => {
+                return verify_err!(
+                    op.loc(),
+                    "MirRefOp requires Reborrow, RawAddress, or StaticAddress pointer-kind authority"
+                );
+            }
+        };
+        if !kind_is_authorized {
+            return verify_err!(
+                op.loc(),
+                "MirRefOp authority {:?} with mutable: {} cannot produce result kind {:?}",
+                authority,
+                mutable.0,
+                ptr_ty.kind
+            );
+        }
+        if ptr_ty.address_space != crate::types::address_space::GENERIC {
+            return verify_err!(
+                op.loc(),
+                "MirRefOp materializes stack storage and requires generic address space"
             );
         }
 
@@ -801,10 +885,35 @@ impl Verify for MirPtrOffsetOp {
             None => return verify_err!(op.loc(), "MirPtrOffsetOp result must be MirPtrType"),
         };
 
+        if is_opaque_fn_pointer_type(ctx, res_ty) {
+            return verify_err!(
+                op.loc(),
+                "MirPtrOffsetOp cannot produce the canonical function-pointer value carrier"
+            );
+        }
+
         if ptr_ty.pointee != res_ptr_ty.pointee {
             return verify_err!(
                 op.loc(),
                 "MirPtrOffsetOp result pointee type must match base pointee type"
+            );
+        }
+
+        if !ptr_ty.kind.can_retype_generically_to(res_ptr_ty.kind) {
+            return verify_err!(
+                op.loc(),
+                "MirPtrOffsetOp cannot change pointer kind from {:?} to {:?}",
+                ptr_ty.kind,
+                res_ptr_ty.kind
+            );
+        }
+        if ptr_ty.is_mutable != res_ptr_ty.is_mutable {
+            return verify_err!(op.loc(), "MirPtrOffsetOp must preserve pointer mutability");
+        }
+        if ptr_ty.address_space != res_ptr_ty.address_space {
+            return verify_err!(
+                op.loc(),
+                "MirPtrOffsetOp must preserve pointer address space"
             );
         }
 
@@ -916,6 +1025,12 @@ impl Verify for MirSharedAllocOp {
                 return verify_err!(
                     op.loc(),
                     "MirSharedAllocOp result must be in shared address space (3)"
+                );
+            }
+            if ptr_ty.kind != MirPointerKind::Erased {
+                return verify_err!(
+                    op.loc(),
+                    "MirSharedAllocOp creates storage and must return an Erased pointer kind"
                 );
             }
         } else {
@@ -1041,6 +1156,12 @@ impl Verify for MirGlobalAllocOp {
                     "MirGlobalAllocOp result must be in global (1) or constant (4) address space"
                 );
             }
+            if ptr_ty.kind != MirPointerKind::Erased {
+                return verify_err!(
+                    op.loc(),
+                    "MirGlobalAllocOp creates storage and must return an Erased pointer kind"
+                );
+            }
         } else {
             return verify_err!(op.loc(), "MirGlobalAllocOp result must be a pointer type");
         }
@@ -1161,6 +1282,12 @@ impl Verify for MirExternSharedOp {
                 return verify_err!(
                     op.loc(),
                     "MirExternSharedOp result must be in shared address space (3)"
+                );
+            }
+            if ptr_ty.kind != MirPointerKind::Erased {
+                return verify_err!(
+                    op.loc(),
+                    "MirExternSharedOp creates storage and must return an Erased pointer kind"
                 );
             }
         } else {

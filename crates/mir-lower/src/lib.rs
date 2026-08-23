@@ -136,6 +136,7 @@ use rustc_hash::FxHashMap;
 
 use pliron::{
     builtin::types::{IntegerType, Signedness},
+    common_traits::Verify,
     context::{Context, Ptr},
     irbuild::dialect_conversion::{
         DialectConversion, DialectConversionRewriter, OperandsInfo, apply_dialect_conversion,
@@ -368,6 +369,11 @@ pub fn lower_mir_to_llvm_with_options(
     module_op: Ptr<Operation>,
     options: LoweringOptions,
 ) -> Result<()> {
+    // Standalone users can enter here without cuda-oxide-codegen's preparation
+    // pipeline. Verify the complete typed MIR tree before any transform reads
+    // pointer-kind claims.
+    dialect_mir::verification::verify_pointer_kind_producers(ctx, module_op)?;
+    module_op.deref(ctx).verify(ctx)?;
     context::set_lowering_options(ctx, options);
     // WGMMA pointer-form MMA operations are only sound when their complete
     // asynchronous lifetime can be closed before LLVM sees pending accumulator
@@ -376,6 +382,11 @@ pub fn lower_mir_to_llvm_with_options(
     // unsupported pointer shapes retain the deferred pointer-group fallback.
     // Run this while MIR control flow and unsigned constants are still intact.
     wgmma_deferred_accumulator::fuse_deferred_accumulators(ctx, module_op)?;
+    // WGMMA fusion is the final MIR-producing transform in this entry point.
+    // Reverify immediately before dialect conversion erases pointer kinds so a
+    // future transform cannot bypass the provenance invariant.
+    dialect_mir::verification::verify_pointer_kind_producers(ctx, module_op)?;
+    module_op.deref(ctx).verify(ctx)?;
     // Dynamic shared-memory operations may live in device helpers. Compute
     // every kernel-to-helper requirement while the complete MIR call graph is
     // still available; function conversion removes that graph incrementally.

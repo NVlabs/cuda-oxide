@@ -136,6 +136,11 @@ mod kernels {
         f(x)
     }
 
+    #[inline(never)]
+    fn apply_once_noinline<F: FnOnce(u32) -> u32>(f: F, x: u32) -> u32 {
+        f(x)
+    }
+
     struct ClosureWrapper<F> {
         f: F,
         offset: u32,
@@ -205,7 +210,8 @@ mod kernels {
     //     }
     // }
 
-    /// Test: Closure with capture passed to generic function
+    /// An immutable capture implements `Fn` but is consumed through `FnOnce`;
+    /// the adapter's direct body call must synthesize an exact `&Closure`.
     #[kernel]
     pub fn test_closure_capture_fnonce(factor: u32, mut out: DisjointSlice<u32>) {
         let idx = thread::index_1d();
@@ -214,6 +220,44 @@ mod kernels {
             let scale = |x: u32| x * factor;
             let val = idx_raw as u32;
             *out_elem = apply_closure(scale, val);
+        }
+    }
+
+    /// A closure that mutates its capture implements `FnMut`, but the generic
+    /// helper consumes it through `FnOnce`. rustc inserts a ClosureOnce adapter
+    /// whose direct body call must synthesize an exact `&mut Closure` receiver.
+    #[kernel]
+    pub fn test_closure_fnmut_adapter(seed: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        let idx_raw = idx.get();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let mut state = seed + idx_raw as u32;
+            let bump = |delta: u32| {
+                state += delta;
+                state
+            };
+            *out_elem = apply_closure(bump, 3);
+        }
+    }
+
+    /// Control: consuming a non-Copy capture makes this a genuine `FnOnce`.
+    /// Its closure body receives the environment by value, so bypassing the
+    /// callable-trait dispatch must not synthesize any receiver borrow.
+    #[kernel]
+    pub fn test_genuine_fnonce_receiver(seed: u32, mut out: DisjointSlice<u32>) {
+        struct Token(u32);
+        impl Token {
+            fn into_value(self) -> u32 {
+                self.0
+            }
+        }
+
+        let idx = thread::index_1d();
+        let idx_raw = idx.get();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let token = Token(seed + idx_raw as u32);
+            let consume = move |delta: u32| token.into_value() + delta;
+            *out_elem = apply_once_noinline(consume, 5);
         }
     }
 
@@ -537,9 +581,67 @@ fn main() {
     }
 
     // =========================================================================
-    // Test 9: Wrapper method named call with closure generic
+    // Test 9: FnMut closure consumed through a FnOnce adapter
     // =========================================================================
-    println!("Test 9: Wrapper::call with closure generic");
+    println!("Test 9: FnMut closure through FnOnce adapter");
+    {
+        const N: usize = 8;
+        let seed: u32 = 11;
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_closure_fnmut_adapter(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(N as u32),
+                seed,
+                &mut out_dev,
+            )
+        }
+        .expect("Kernel launch failed");
+
+        let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
+        let expected: Vec<u32> = (0..N).map(|i| seed + i as u32 + 3).collect();
+
+        println!("  Output:   {:?}", out);
+        println!("  Expected: {:?}", expected);
+        assert_eq!(out, expected);
+        println!("  ✓ PASSED\n");
+    }
+
+    // =========================================================================
+    // Test 10: genuine by-value FnOnce receiver
+    // =========================================================================
+    println!("Test 10: genuine by-value FnOnce receiver");
+    {
+        const N: usize = 8;
+        let seed: u32 = 13;
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe {
+            module.test_genuine_fnonce_receiver(
+                (stream).as_ref(),
+                LaunchConfig::for_num_elems(N as u32),
+                seed,
+                &mut out_dev,
+            )
+        }
+        .expect("Kernel launch failed");
+
+        let out: Vec<u32> = out_dev.to_host_vec(&stream).unwrap();
+        let expected: Vec<u32> = (0..N).map(|i| seed + i as u32 + 5).collect();
+
+        println!("  Output:   {:?}", out);
+        println!("  Expected: {:?}", expected);
+        assert_eq!(out, expected);
+        println!("  ✓ PASSED\n");
+    }
+
+    // =========================================================================
+    // Test 11: Wrapper method named call with closure generic
+    // =========================================================================
+    println!("Test 11: Wrapper::call with closure generic");
     {
         const N: usize = 8;
         let factor: u32 = 6;
@@ -568,9 +670,9 @@ fn main() {
     }
 
     // =========================================================================
-    // Test 10: genuine closure called through a struct field projection
+    // Test 12: genuine closure called through a struct field projection
     // =========================================================================
-    println!("Test 10: closure via field projection");
+    println!("Test 12: closure via field projection");
     {
         const N: usize = 8;
         let factor: u32 = 5;
@@ -597,9 +699,9 @@ fn main() {
     }
 
     // =========================================================================
-    // Test 11: genuine closure called through a double reference
+    // Test 13: genuine closure called through a double reference
     // =========================================================================
-    println!("Test 11: closure via double reference");
+    println!("Test 13: closure via double reference");
     {
         const N: usize = 8;
         let factor: u32 = 7;

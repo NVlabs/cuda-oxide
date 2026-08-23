@@ -1104,7 +1104,7 @@ fn float_bit_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Result<usiz
 #[cfg(test)]
 mod tests {
     use crate::convert::ops::test_util::*;
-    use dialect_mir::attributes::MirCastKindAttr;
+    use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
     use dialect_mir::ops as mir;
     use dialect_mir::types::{
         EnumCarrierKind, EnumEncoding, EnumLayoutKind, EnumVariant, MirEnumType, MirPointerKind,
@@ -1140,7 +1140,14 @@ mod tests {
             vec![],
             0,
         );
-        mir::MirCastOp::new(cast_op).set_attr_cast_kind(ctx, kind);
+        let cast = mir::MirCastOp::new(cast_op);
+        cast.set_attr_cast_kind(ctx, kind.clone());
+        if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, dst_ty)
+            || (kind == MirCastKindAttr::Transmute
+                && !dialect_mir::types::pointer_kinds_in_type(ctx, dst_ty).is_empty())
+        {
+            cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::RustCast);
+        }
         cast_op.insert_at_back(block, ctx);
 
         let cast_result = cast_op.deref(ctx).get_result(0);
@@ -1336,17 +1343,17 @@ mod tests {
     fn pointer_kind_only_coercion_has_no_llvm_instruction() {
         let mut ctx = make_ctx();
         let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
-        let unique: TypeHandle =
-            MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::UniqueRef)
+        let raw_mut: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::RawMut)
                 .into();
-        let shared: TypeHandle =
-            MirPtrType::get_generic_with_kind(&mut ctx, pointee, false, MirPointerKind::SharedRef)
+        let raw_const: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, false, MirPointerKind::RawConst)
                 .into();
 
         let module = lower_single_cast(
             &mut ctx,
-            unique,
-            shared,
+            raw_mut,
+            raw_const,
             MirCastKindAttr::PointerCoercionMutToConst,
         );
         let body = kernel_blocks(&ctx, module);
@@ -1357,6 +1364,39 @@ mod tests {
         assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 0);
         assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 0);
         assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn lowering_rejects_pointer_kind_laundering_before_erasure() {
+        let mut ctx = make_ctx();
+        let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+        let erased: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, true).into();
+        let unique: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::UniqueRef)
+                .into();
+        let (module, block) = build_kernel(&mut ctx, vec![erased], vec![unique]);
+        let source = block.deref(&ctx).get_argument(0);
+        let cast_op = Operation::new(
+            &mut ctx,
+            mir::MirCastOp::get_concrete_op_info(),
+            vec![unique],
+            vec![source],
+            vec![],
+            0,
+        );
+        mir::MirCastOp::new(cast_op).set_attr_cast_kind(&ctx, MirCastKindAttr::PtrToPtr);
+        cast_op.insert_at_back(block, &ctx);
+        let cast_result = cast_op.deref(&ctx).get_result(0);
+        append_mir_return(&mut ctx, block, vec![cast_result]);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module)
+            .expect_err("lowering must verify pointer kinds before erasing them");
+        assert!(
+            error
+                .to_string()
+                .contains("without an explicit Rust pointer-kind authority"),
+            "unexpected diagnostic: {error}"
+        );
     }
 
     #[test]
@@ -1855,7 +1895,9 @@ mod tests {
         let mut ctx = make_ctx();
         let usize_ty = int_ty(&mut ctx, 64, Signedness::Unsigned);
         let pointee_ty = int_ty(&mut ctx, 32, Signedness::Signless);
-        let ptr_ty: TypeHandle = MirPtrType::get(&mut ctx, pointee_ty, false, 0).into();
+        let ptr_ty: TypeHandle =
+            MirPtrType::get_with_kind(&mut ctx, pointee_ty, false, 0, MirPointerKind::RawConst)
+                .into();
 
         let module_ptr = lower_single_cast(
             &mut ctx,
@@ -1883,8 +1925,14 @@ mod tests {
             let mut ctx = make_ctx();
             let usize_ty = int_ty(&mut ctx, 64, Signedness::Unsigned);
             let pointee_ty = int_ty(&mut ctx, 32, Signedness::Signless);
-            let ptr_ty: TypeHandle =
-                MirPtrType::get(&mut ctx, pointee_ty, false, address_space).into();
+            let ptr_ty: TypeHandle = MirPtrType::get_with_kind(
+                &mut ctx,
+                pointee_ty,
+                false,
+                address_space,
+                MirPointerKind::RawConst,
+            )
+            .into();
 
             let module_ptr = lower_single_cast(
                 &mut ctx,
@@ -2070,7 +2118,8 @@ mod tests {
         let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
         let arr_ty: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, f32_ty, 16).into();
         let src_ty: TypeHandle = MirPtrType::get_shared(&mut ctx, arr_ty, true).into();
-        let dst_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, f32_ty).into();
+        let dst_ty: TypeHandle =
+            dialect_mir::types::MirSliceType::get_with_mutability(&mut ctx, f32_ty, true).into();
 
         let module_ptr = lower_single_cast(
             &mut ctx,
@@ -2105,7 +2154,8 @@ mod tests {
         let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
         let arr_ty: TypeHandle = dialect_mir::types::MirArrayType::get(&mut ctx, f32_ty, 16).into();
         let src_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, arr_ty, true).into();
-        let dst_ty: TypeHandle = dialect_mir::types::MirSliceType::get(&mut ctx, f32_ty).into();
+        let dst_ty: TypeHandle =
+            dialect_mir::types::MirSliceType::get_with_mutability(&mut ctx, f32_ty, true).into();
 
         let module_ptr = lower_single_cast(
             &mut ctx,

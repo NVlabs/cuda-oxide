@@ -131,9 +131,9 @@ fn build_unary_call_kernel(module: &mut CodegenModule, callee: &str) {
         )
         .unwrap();
 
-        // The call carries its signature through the operation's own operand
-        // and result types; `MirCallOp` verifies only that a callee attribute
-        // is present.
+        // Intrinsic placeholders have a closed dialect schema. A frontend-named
+        // libdevice symbol has no `mir.func`, so retain an independent source
+        // signature and mark the explicit foreign ABI boundary.
         let call_op = Operation::new(
             ctx,
             MirCallOp::get_concrete_op_info(),
@@ -144,6 +144,10 @@ fn build_unary_call_kernel(module: &mut CodegenModule, callee: &str) {
         );
         let call = MirCallOp::new(call_op);
         call.set_attr_callee(ctx, StringAttr::new(callee.to_string()));
+        if !dialect_mir::rust_intrinsics::is_known_placeholder(callee) {
+            let signature = FunctionType::get(ctx, vec![f32_ty.into()], vec![f32_ty.into()]);
+            call.set_external_callee_signature(ctx, signature.into());
+        }
         call_op.insert_at_back(entry, ctx);
         let result = call_op.deref(ctx).get_result(0);
 

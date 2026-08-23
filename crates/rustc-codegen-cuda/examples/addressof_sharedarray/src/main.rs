@@ -173,9 +173,20 @@ mod kernels {
 
                 // The first static shared allocation has local shared offset
                 // zero, but its CUDA generic address must not be null.
+                // Exercise all three compiler-recognized public pointer
+                // boundaries: shared/unique references become const/mut raw
+                // pointers, while the raw receiver remains RawMut.
+                let borrowed_const = OUTPUT_NORM.as_ptr();
+                let borrowed_mut = OUTPUT_NORM.as_mut_ptr();
                 let raw = &raw mut OUTPUT_NORM;
                 let raw_address = raw.addr();
-                *out.get_unchecked_mut(1) = if raw.is_null() || raw_address == 0 {
+                *out.get_unchecked_mut(1) = if raw.is_null()
+                    || borrowed_const.is_null()
+                    || borrowed_mut.is_null()
+                    || raw_address == 0
+                    || borrowed_const.addr() != raw_address
+                    || borrowed_mut.addr() != raw_address
+                {
                     0.0
                 } else {
                     1.0

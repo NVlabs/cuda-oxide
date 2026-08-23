@@ -9,7 +9,7 @@
 
 //! Structural operations for cluster address mapping and remote shared reads.
 
-use dialect_mir::types::MirPtrType;
+use dialect_mir::types::{MirPointerKind, MirPtrType, address_space};
 use pliron::{
     builtin::{
         op_interfaces::{NOpdsInterface, NResultsInterface},
@@ -66,14 +66,24 @@ impl MapaSharedClusterOp {
 
     pub fn build(ctx: &mut Context, source: Value, rank: Value) -> Ptr<Operation> {
         let source_ty = source.get_type(ctx);
-        let (pointee, is_mutable) = {
+        let (pointee, is_mutable, pointer_kind) = {
             let source_ty_obj = source_ty.deref(ctx);
             let source_ptr = source_ty_obj
                 .downcast_ref::<MirPtrType>()
                 .expect("nvvm.mapa_shared_cluster source must be a MIR pointer");
-            (source_ptr.pointee, source_ptr.is_mutable())
+            (
+                source_ptr.pointee,
+                source_ptr.is_mutable(),
+                source_ptr.pointer_kind(),
+            )
         };
-        let result_ty = MirPtrType::get_cluster_shared(ctx, pointee, is_mutable);
+        let result_ty = MirPtrType::get_with_kind(
+            ctx,
+            pointee,
+            is_mutable,
+            address_space::CLUSTER_SHARED,
+            pointer_kind,
+        );
         Operation::new(
             ctx,
             Self::get_concrete_op_info(),
@@ -101,13 +111,17 @@ impl Verify for MapaSharedClusterOp {
                 "nvvm.mapa_shared_cluster result must be a MIR pointer"
             );
         };
-        if result_ptr.pointee != source_ptr.pointee
+        if !matches!(
+            source_ptr.pointer_kind(),
+            MirPointerKind::RawConst | MirPointerKind::RawMut
+        ) || result_ptr.pointee != source_ptr.pointee
             || result_ptr.is_mutable() != source_ptr.is_mutable()
             || !result_ptr.is_cluster_shared()
+            || result_ptr.pointer_kind() != source_ptr.pointer_kind()
         {
             return verify_err!(
                 op.loc(),
-                "nvvm.mapa_shared_cluster must preserve pointee and mutability and return addrspace(7)"
+                "nvvm.mapa_shared_cluster requires a raw source pointer and must preserve its pointee, mutability, and raw kind while returning addrspace(7)"
             );
         }
         Ok(())

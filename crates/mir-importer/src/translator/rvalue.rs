@@ -34,8 +34,8 @@ use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::{ValueMap, generic_pointer_kind_retype_allowed};
 use dialect_iket::{ops::IketSentinelTokenOp, types::IketRangeTokenType};
-use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::attributes::MirFP16Attr;
+use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
 use dialect_mir::ops::{
     MirAddOp, MirBitAndOp, MirBitOrOp, MirBitXorOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp,
     MirCheckedSubOp, MirCmpOp, MirConstantOp, MirConstructArrayOp, MirConstructEnumOp,
@@ -92,6 +92,7 @@ fn cast_to_expected_pointer_type_if_needed(
         ) {
             (Some(value_ptr), Some(expected_ptr)) => {
                 value_ptr.pointee == expected_ptr.pointee
+                    && value_ptr.is_mutable == expected_ptr.is_mutable
                     && generic_pointer_kind_retype_allowed(value_ptr.kind, expected_ptr.kind)
             }
             _ => match (
@@ -100,6 +101,7 @@ fn cast_to_expected_pointer_type_if_needed(
             ) {
                 (Some(value_slice), Some(expected_slice)) => {
                     value_slice.element_ty == expected_slice.element_ty
+                        && value_slice.is_mutable == expected_slice.is_mutable
                         && generic_pointer_kind_retype_allowed(
                             value_slice.kind,
                             expected_slice.kind,
@@ -148,6 +150,7 @@ fn cast_to_declared_rust_pointer_type_if_needed(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
+    authority: MirPointerKindAuthorityAttr,
 ) -> (Value, Option<Ptr<Operation>>) {
     let value_type = value.get_type(ctx);
     if value_type == expected_type {
@@ -188,7 +191,9 @@ fn cast_to_declared_rust_pointer_type_if_needed(
         0,
     );
     cast_op.deref_mut(ctx).set_loc(loc);
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    cast.set_pointer_kind_authority(ctx, authority);
 
     match prev_op {
         Some(prev) => cast_op.insert_after(ctx, prev),
@@ -198,6 +203,24 @@ fn cast_to_declared_rust_pointer_type_if_needed(
     (cast_op.deref(ctx).get_result(0), Some(cast_op))
 }
 
+/// Return the physical-storage form of a thin pointer type.
+///
+/// Allocation operations create addresses, not Rust borrows/raw-pointer
+/// values, so their results stay `Erased`. The translated Rust constant type
+/// is established by a separately marked boundary cast.
+fn erase_thin_pointer_kind(ctx: &mut Context, pointer_ty: TypeHandle) -> Option<TypeHandle> {
+    let (pointee, is_mutable, address_space) = {
+        let pointer_ty = pointer_ty.deref(ctx);
+        let pointer_ty = pointer_ty.downcast_ref::<dialect_mir::types::MirPtrType>()?;
+        (
+            pointer_ty.pointee,
+            pointer_ty.is_mutable,
+            pointer_ty.address_space,
+        )
+    };
+    Some(dialect_mir::types::MirPtrType::get(ctx, pointee, is_mutable, address_space).into())
+}
+
 /// Coerce a raw data pointer so it points to `element_type` in the generic
 /// address space.
 ///
@@ -205,32 +228,37 @@ fn cast_to_declared_rust_pointer_type_if_needed(
 /// pointer, but a reinterpret cast at the call site (e.g. `p as *mut (u64, u64)`
 /// feeding a `[(u64, u64)]` slice) can leave the data operand typed to the
 /// pre-cast pointee. The fat pointer's data slot must be a generic-address-space
-/// pointer to the slice element type (the same `get_generic` slot every other
-/// data-slot construction uses), so when the pointee differs, emit a `PtrToPtr`
-/// cast to that type. This physical carrier is intentionally `Erased`; the
-/// enclosing `MirSliceType` retains the Rust pointer/reference kind.
+/// pointer to the slice element type, so when the pointee differs, emit a
+/// `PtrToPtr` cast to that type. The data carrier retains its existing pointer
+/// kind; otherwise constructing the fat pointer could launder an Erased carrier
+/// back into a concrete slice kind.
 fn coerce_slice_data_pointee(
     ctx: &mut Context,
     value: Value,
     element_type: TypeHandle,
-    is_mutable: bool,
+    _is_mutable: bool,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> (Value, Option<Ptr<Operation>>) {
-    let pointee_matches = {
+    let (pointee_matches, source_mutability, source_kind) = {
         let value_type = value.get_type(ctx);
         let ty_ref = value_type.deref(ctx);
         match ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
-            Some(pt) => pt.pointee == element_type,
+            Some(pt) => (pt.pointee == element_type, pt.is_mutable, pt.kind),
             None => return (value, prev_op),
         }
     };
     if pointee_matches {
         return (value, prev_op);
     }
-    let target_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, element_type, is_mutable).into();
+    let target_ptr_ty: TypeHandle = dialect_mir::types::MirPtrType::get_generic_with_kind(
+        ctx,
+        element_type,
+        source_mutability,
+        source_kind,
+    )
+    .into();
     let cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
@@ -665,6 +693,12 @@ pub fn translate_rvalue(
             if let mir::CastKind::PointerCoercion(mir::PointerCoercion::ReifyFnPointer(_)) = kind {
                 return translate_reify_fn_pointer(ctx, body, operand, ty, block_ptr, prev_op, loc);
             }
+            if let mir::CastKind::PointerCoercion(mir::PointerCoercion::ClosureFnPointer(_)) = kind
+            {
+                return translate_closure_fn_pointer(
+                    ctx, body, operand, ty, block_ptr, prev_op, loc,
+                );
+            }
 
             let (operand_val, prev_op_after_operand) = translate_operand(
                 ctx,
@@ -721,7 +755,17 @@ pub fn translate_rvalue(
                 mir::CastKind::Subtype => MirCastKindAttr::Subtype,
             };
             let cast_op = MirCastOp::new(op);
-            cast_op.set_attr_cast_kind(ctx, cast_kind_attr);
+            cast_op.set_attr_cast_kind(ctx, cast_kind_attr.clone());
+            if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, result_type)
+                || (cast_kind_attr == MirCastKindAttr::Transmute
+                    && !dialect_mir::types::pointer_kinds_in_type(ctx, result_type).is_empty())
+            {
+                // This operation comes directly from a rustc MIR CastKind, so
+                // any concrete result category, including one nested in an
+                // aggregate transmute, is an explicit Rust semantic boundary
+                // rather than a generic representation adjustment.
+                cast_op.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::RustCast);
+            }
 
             let result = op.deref(ctx).get_result(0);
 
@@ -844,6 +888,7 @@ pub fn translate_rvalue(
                         block_ptr,
                         prev_op,
                         loc.clone(),
+                        MirPointerKindAuthorityAttr::Reborrow,
                     );
                     return Ok((None, result, last_inserted));
                 }
@@ -884,7 +929,9 @@ pub fn translate_rvalue(
                     0,
                 );
                 ref_op.deref_mut(ctx).set_loc(loc);
-                MirRefOp::new(ref_op).set_mutable(ctx, is_mutable);
+                let mir_ref = MirRefOp::new(ref_op);
+                mir_ref.set_mutable(ctx, is_mutable);
+                mir_ref.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
                 match last_inserted {
                     Some(p) => ref_op.insert_after(ctx, p),
                     None => ref_op.insert_at_front(block_ptr, ctx),
@@ -924,6 +971,7 @@ pub fn translate_rvalue(
                     block_ptr,
                     last_inserted,
                     loc.clone(),
+                    MirPointerKindAuthorityAttr::Reborrow,
                 );
 
                 return Ok((None, result_val, last_inserted));
@@ -973,7 +1021,9 @@ pub fn translate_rvalue(
                 0,
             );
             ref_op.deref_mut(ctx).set_loc(loc);
-            MirRefOp::new(ref_op).set_mutable(ctx, is_mutable);
+            let mir_ref = MirRefOp::new(ref_op);
+            mir_ref.set_mutable(ctx, is_mutable);
+            mir_ref.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
 
             let result_val = ref_op.deref(ctx).get_result(0);
             Ok((Some(ref_op), result_val, last_inserted))
@@ -1007,6 +1057,7 @@ pub fn translate_rvalue(
                     block_ptr,
                     prev_op,
                     loc.clone(),
+                    MirPointerKindAuthorityAttr::RawAddress,
                 );
                 return Ok((None, result, last_inserted));
             }
@@ -1040,6 +1091,7 @@ pub fn translate_rvalue(
                     block_ptr,
                     last_inserted,
                     loc.clone(),
+                    MirPointerKindAuthorityAttr::RawAddress,
                 );
 
                 return Ok((None, result_val, last_inserted));
@@ -1089,6 +1141,7 @@ pub fn translate_rvalue(
 
             let mir_ref_op = MirRefOp::new(ref_op);
             mir_ref_op.set_mutable(ctx, is_mutable);
+            mir_ref_op.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::RawAddress);
 
             let result_val = ref_op.deref(ctx).get_result(0);
 
@@ -1527,10 +1580,11 @@ pub fn translate_rvalue(
                             // addrspace(3); normalize them like the struct/array
                             // arms do.
                             let expected_ptr_ty: TypeHandle =
-                                dialect_mir::types::MirPtrType::get_generic(
+                                dialect_mir::types::MirPtrType::get_generic_with_kind(
                                     ctx,
                                     element_type,
                                     is_mutable,
+                                    pointer_kind,
                                 )
                                 .into();
                             let (data_val, current_prev_op) =
@@ -2023,10 +2077,16 @@ pub fn translate_operand(
                 // Extract element type, size, and alignment from SharedArray<T, N, ALIGN>
                 let (elem_ty, array_size, alignment) = extract_shared_array_info(ctx, &rust_ty)?;
 
-                // The constant's Rust type is authoritative for reference/raw-pointer kind.
-                // Preserve that kind directly on the shared-memory producer instead of
-                // relying on a later local-store normalization to recover it from Erased.
-                let ptr_ty = types::translate_type(ctx, &rust_ty)?;
+                // Allocation creates physical storage with Erased provenance.
+                // The Rust constant's exact reference/raw-pointer kind is
+                // established explicitly after the producer.
+                let declared_ptr_ty = types::translate_type(ctx, &rust_ty)?;
+                let storage_ptr_ty =
+                    erase_thin_pointer_kind(ctx, declared_ptr_ty).ok_or_else(|| {
+                        input_error_noloc!(TranslationErr::unsupported(
+                            "SharedArray constant did not translate to a thin pointer type"
+                        ))
+                    })?;
 
                 // Create a MirSharedAllocOp to represent the shared memory allocation
                 // This will be lowered to an LLVM global with addrspace(3)
@@ -2037,12 +2097,12 @@ pub fn translate_operand(
                 let op = Operation::new(
                     ctx,
                     MirSharedAllocOp::get_concrete_op_info(),
-                    vec![ptr_ty],
+                    vec![storage_ptr_ty],
                     vec![],
                     vec![],
                     0,
                 );
-                op.deref_mut(ctx).set_loc(loc);
+                op.deref_mut(ctx).set_loc(loc.clone());
 
                 let shared_alloc = MirSharedAllocOp::new(op);
 
@@ -2085,9 +2145,18 @@ pub fn translate_operand(
                     shared_alloc.get_operation().insert_at_front(block_ptr, ctx);
                 }
 
-                let val = shared_alloc.get_operation().deref(ctx).get_result(0);
+                let storage = shared_alloc.get_operation().deref(ctx).get_result(0);
+                let (value, last_op) = cast_to_declared_rust_pointer_type_if_needed(
+                    ctx,
+                    storage,
+                    declared_ptr_ty,
+                    block_ptr,
+                    Some(shared_alloc.get_operation()),
+                    loc.clone(),
+                    MirPointerKindAuthorityAttr::StaticAddress,
+                );
 
-                return Ok((val, Some(shared_alloc.get_operation())));
+                return Ok((value, last_op));
             }
 
             // Check if this is a pointer to Barrier (static barrier in shared memory)
@@ -2100,21 +2169,27 @@ pub fn translate_operand(
                 )
                 .into();
 
-                // Create a shared memory pointer type (addrspace 3)
-                // Preserve the Rust pointer/reference kind on the producer itself.
-                let ptr_ty = types::translate_type(ctx, &rust_ty)?;
+                // Keep the allocation itself Erased, then establish the Rust
+                // constant's declared pointer category at a visible boundary.
+                let declared_ptr_ty = types::translate_type(ctx, &rust_ty)?;
+                let storage_ptr_ty =
+                    erase_thin_pointer_kind(ctx, declared_ptr_ty).ok_or_else(|| {
+                        input_error_noloc!(TranslationErr::unsupported(
+                            "Barrier constant did not translate to a thin pointer type"
+                        ))
+                    })?;
 
                 // Create a MirSharedAllocOp for the barrier
                 use dialect_mir::ops::MirSharedAllocOp;
                 let op = Operation::new(
                     ctx,
                     MirSharedAllocOp::get_concrete_op_info(),
-                    vec![ptr_ty],
+                    vec![storage_ptr_ty],
                     vec![],
                     vec![],
                     0,
                 );
-                op.deref_mut(ctx).set_loc(loc);
+                op.deref_mut(ctx).set_loc(loc.clone());
 
                 let shared_alloc = MirSharedAllocOp::new(op);
 
@@ -2150,9 +2225,18 @@ pub fn translate_operand(
                     shared_alloc.get_operation().insert_at_front(block_ptr, ctx);
                 }
 
-                let val = shared_alloc.get_operation().deref(ctx).get_result(0);
+                let storage = shared_alloc.get_operation().deref(ctx).get_result(0);
+                let (value, last_op) = cast_to_declared_rust_pointer_type_if_needed(
+                    ctx,
+                    storage,
+                    declared_ptr_ty,
+                    block_ptr,
+                    Some(shared_alloc.get_operation()),
+                    loc.clone(),
+                    MirPointerKindAuthorityAttr::StaticAddress,
+                );
 
-                return Ok((val, Some(shared_alloc.get_operation())));
+                return Ok((value, last_op));
             }
 
             // Ordinary Rust `static` / `static mut` values in device code live in
@@ -2582,6 +2666,10 @@ pub fn translate_operand(
 
                     mir_ref
                         .set_attr_mutable(ctx, dialect_mir::attributes::MutabilityAttr(is_mutable));
+                    mir_ref.set_pointer_kind_authority(
+                        ctx,
+                        MirPointerKindAuthorityAttr::StaticAddress,
+                    );
 
                     if let Some(prev) = last_op {
                         mir_ref.get_operation().insert_after(ctx, prev);
@@ -2741,6 +2829,10 @@ pub fn translate_operand(
                     let mir_ref = MirRefOp::new(ref_op);
                     mir_ref
                         .set_attr_mutable(ctx, dialect_mir::attributes::MutabilityAttr(is_mutable));
+                    mir_ref.set_pointer_kind_authority(
+                        ctx,
+                        MirPointerKindAuthorityAttr::StaticAddress,
+                    );
 
                     if let Some(prev) = last_op {
                         mir_ref.get_operation().insert_after(ctx, prev);
@@ -2832,8 +2924,14 @@ pub fn translate_operand(
                     0,
                 );
                 cast_op.deref_mut(ctx).set_loc(loc);
-                MirCastOp::new(cast_op)
-                    .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+                let cast = MirCastOp::new(cast_op);
+                cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+                if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, const_ty_ptr) {
+                    cast.set_pointer_kind_authority(
+                        ctx,
+                        MirPointerKindAuthorityAttr::StaticAddress,
+                    );
+                }
 
                 cast_op.insert_after(ctx, const_op.get_operation());
 
@@ -3572,19 +3670,15 @@ fn translate_place_value_fallback(
                             .element_type()
                     };
 
-                    // Get address space from array pointer
-                    let address_space = {
-                        let arr_ptr_ty_ref = arr_ptr_ty.deref(ctx);
-                        arr_ptr_ty_ref
-                            .downcast_ref::<dialect_mir::types::MirPtrType>()
-                            .expect("Should be MirPtrType")
-                            .address_space
-                    };
-
-                    // Create element pointer type
-                    let elem_ptr_ty =
-                        dialect_mir::types::MirPtrType::get(ctx, element_ty, false, address_space)
-                            .into();
+                    // Projection keeps the slot address's machine mutability,
+                    // address space, and pointer kind (or explicitly erases
+                    // only the kind). A read does not require manufacturing
+                    // an immutable address type.
+                    let elem_ptr_ty = projected_pointer_type(
+                        ctx, arr_ptr_ty, element_ty,
+                        /* legacy requested mutability, ignored */ false,
+                    )
+                    .expect("array slot must be a MirPtrType");
 
                     // Create MirArrayElementAddrOp to get element pointer
                     use dialect_mir::ops::MirArrayElementAddrOp;
@@ -3720,7 +3814,7 @@ fn translate_place_value_fallback(
                     // Slot-backed path: GEP + load from the slot.
                     let mut current_prev = prev_op;
 
-                    let (element_ty, address_space) = {
+                    let (element_ty, arr_ptr_ty) = {
                         let arr_ptr_ty = arr_ptr.get_type(ctx);
                         let arr_ptr_ty_ref = arr_ptr_ty.deref(ctx);
                         let mir_ptr_ty = arr_ptr_ty_ref
@@ -3743,7 +3837,7 @@ fn translate_place_value_fallback(
                                 ))
                             })?
                             .element_type();
-                        (elem_ty, mir_ptr_ty.address_space)
+                        (elem_ty, arr_ptr_ty)
                     };
 
                     use dialect_mir::ops::MirConstantOp;
@@ -3771,9 +3865,11 @@ fn translate_place_value_fallback(
                     current_prev = Some(const_op_ptr);
                     let index_value = const_op_ptr.deref(ctx).get_result(0);
 
-                    let elem_ptr_ty =
-                        dialect_mir::types::MirPtrType::get(ctx, element_ty, false, address_space)
-                            .into();
+                    let elem_ptr_ty = projected_pointer_type(
+                        ctx, arr_ptr_ty, element_ty,
+                        /* legacy requested mutability, ignored */ false,
+                    )
+                    .expect("array slot must be a MirPtrType");
 
                     use dialect_mir::ops::MirArrayElementAddrOp;
                     let addr_op = Operation::new(
@@ -3920,7 +4016,19 @@ fn apply_deref_projection(
             // Slices are unsized — we can't load `[T]` into an SSA value.
             // Extract the data pointer (field 0 of the fat pointer {ptr, len}).
             // Subsequent Index/ConstantIndex projections will do ptr arithmetic + load.
-            let ptr_ty = dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, false).into();
+            let (pointer_kind, is_mutable) = ptr_value
+                .get_type(ctx)
+                .deref(ctx)
+                .downcast_ref::<dialect_mir::types::MirSliceType>()
+                .map(|slice| (slice.kind, slice.is_mutable))
+                .unwrap_or((MirPointerKind::Erased, false));
+            let ptr_ty = dialect_mir::types::MirPtrType::get_generic_with_kind(
+                ctx,
+                element_ty,
+                is_mutable,
+                pointer_kind,
+            )
+            .into();
 
             let extract_op = Operation::new(
                 ctx,
@@ -3968,8 +4076,18 @@ fn apply_field_addr_and_load(
     use dialect_mir::ops::MirFieldAddrOp;
 
     let field_type = types::translate_type(ctx, field_ty)?;
-    let field_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, field_type, false).into();
+    let field_ptr_ty = projected_pointer_type(
+        ctx,
+        aggregate_ptr.get_type(ctx),
+        field_type,
+        /* legacy requested mutability, ignored */ false,
+    )
+    .ok_or_else(|| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported("field-address base is not a MIR pointer".to_string())
+        )
+    })?;
 
     let addr_op = Operation::new(
         ctx,
@@ -4024,7 +4142,7 @@ fn apply_field_projection(
         vec![],
         0,
     );
-    op.deref_mut(ctx).set_loc(loc);
+    op.deref_mut(ctx).set_loc(loc.clone());
 
     let extract_op = MirExtractFieldOp::new(op);
     extract_op.set_attr_index(
@@ -4403,7 +4521,7 @@ fn emit_array_subslice_address(
 ) -> TranslationResult<(Value, Ptr<Operation>)> {
     use dialect_mir::ops::MirArrayElementAddrOp;
 
-    let (element_ty, array_len, addr_space) = {
+    let (element_ty, array_len) = {
         let ptr_ty = array_ptr.get_type(ctx);
         let ptr_ty = ptr_ty.deref(ctx);
         let Some(ptr_ty) = ptr_ty.downcast_ref::<dialect_mir::types::MirPtrType>() else {
@@ -4421,11 +4539,7 @@ fn emit_array_subslice_address(
                 )
             );
         };
-        (
-            array_ty.element_type(),
-            array_ty.size(),
-            ptr_ty.address_space,
-        )
+        (array_ty.element_type(), array_ty.size())
     };
 
     let Some(projected_len) = to.checked_sub(from) else {
@@ -4446,8 +4560,13 @@ fn emit_array_subslice_address(
     }
 
     let (from_value, from_op) = emit_usize_constant(ctx, from, block_ptr, prev_op, loc.clone());
-    let elem_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get(ctx, element_ty, is_mutable, addr_space).into();
+    let elem_ptr_ty = projected_pointer_type(
+        ctx,
+        array_ptr.get_type(ctx),
+        element_ty,
+        /* legacy requested mutability, ignored */ is_mutable,
+    )
+    .expect("array subslice base must be a MirPtrType");
     let addr_op = Operation::new(
         ctx,
         MirArrayElementAddrOp::get_concrete_op_info(),
@@ -4462,8 +4581,13 @@ fn emit_array_subslice_address(
 
     let projected_array_ty: TypeHandle =
         dialect_mir::types::MirArrayType::get(ctx, element_ty, projected_len).into();
-    let projected_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get(ctx, projected_array_ty, is_mutable, addr_space).into();
+    let projected_ptr_ty = projected_pointer_type(
+        ctx,
+        elem_ptr.get_type(ctx),
+        projected_array_ty,
+        /* legacy requested mutability, ignored */ is_mutable,
+    )
+    .expect("array subslice element address must be a MirPtrType");
     let cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
@@ -4500,12 +4624,12 @@ fn emit_slice_subslice_value(
     // Preserve the source pointer category; callers that explicitly form a
     // reborrow/raw address normalize the terminal result to their new Rust
     // type afterwards.
-    let pointer_kind = slice_value
+    let (pointer_kind, carrier_mutability) = slice_value
         .get_type(ctx)
         .deref(ctx)
         .downcast_ref::<dialect_mir::types::MirSliceType>()
-        .map(|slice| slice.pointer_kind())
-        .unwrap_or(MirPointerKind::Erased);
+        .map(|slice| (slice.pointer_kind(), slice.is_mutable()))
+        .unwrap_or((MirPointerKind::Erased, is_mutable));
 
     use dialect_mir::ops::MirConstructSliceOp;
 
@@ -4516,8 +4640,13 @@ fn emit_slice_subslice_value(
         );
     };
 
-    let data_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, is_mutable).into();
+    let data_ptr_ty: TypeHandle = dialect_mir::types::MirPtrType::get_generic_with_kind(
+        ctx,
+        element_ty,
+        carrier_mutability,
+        pointer_kind,
+    )
+    .into();
     let extract_ptr = Operation::new(
         ctx,
         MirExtractFieldOp::get_concrete_op_info(),
@@ -4578,7 +4707,12 @@ fn emit_slice_subslice_value(
     sub_op.insert_after(ctx, trim_op);
     let new_len = sub_op.deref(ctx).get_result(0);
 
-    let slice_ty = dialect_mir::types::MirSliceType::get_with_kind(ctx, element_ty, pointer_kind);
+    let slice_ty = dialect_mir::types::MirSliceType::get_with_mutability_and_kind(
+        ctx,
+        element_ty,
+        carrier_mutability,
+        pointer_kind,
+    );
     let construct = Operation::new(
         ctx,
         MirConstructSliceOp::get_concrete_op_info(),
@@ -4895,11 +5029,11 @@ fn translate_place_addr_from_slot(
                                 | mir::ProjectionElem::ConstantIndex {
                                     from_end: false, ..
                                 } => {
-                                    let data_ptr_ty: TypeHandle =
-                                        dialect_mir::types::MirPtrType::get_generic(
-                                            ctx, elem_ty, is_mutable,
-                                        )
-                                        .into();
+                                    let Some(data_ptr_ty) =
+                                        erased_slice_data_pointer_type(ctx, subslice, elem_ty)
+                                    else {
+                                        return Ok(None);
+                                    };
                                     let extract_ptr = Operation::new(
                                         ctx,
                                         MirExtractFieldOp::get_concrete_op_info(),
@@ -4928,9 +5062,11 @@ fn translate_place_addr_from_slot(
                         // Its pointee is the slice's element type: the
                         // struct itself for a fat struct reference, or the
                         // element for an ordinary `&[T]` / `DisjointSlice`.
-                        let data_ptr_ty: TypeHandle =
-                            dialect_mir::types::MirPtrType::get_generic(ctx, elem_ty, is_mutable)
-                                .into();
+                        let Some(data_ptr_ty) =
+                            erased_slice_data_pointer_type(ctx, fat_val, elem_ty)
+                        else {
+                            return Ok(None);
+                        };
                         let extract_ptr = Operation::new(
                             ctx,
                             MirExtractFieldOp::get_concrete_op_info(),
@@ -4973,13 +5109,13 @@ fn translate_place_addr_from_slot(
                             // type (see `translate_type`'s ADT arm), so the
                             // field-addr result is a pointer to the element
                             // and the dialect verifier agrees.
-                            let tail_ptr_ty: TypeHandle =
-                                dialect_mir::types::MirPtrType::get_generic(
-                                    ctx,
-                                    tail_elem_ty,
-                                    is_mutable,
-                                )
-                                .into();
+                            let tail_ptr_ty = projected_pointer_type(
+                                ctx,
+                                data_ptr.get_type(ctx),
+                                tail_elem_ty,
+                                /* legacy requested mutability, ignored */ is_mutable,
+                            )
+                            .expect("fat-pointer data extraction must yield a MirPtrType");
                             let tail_addr = Operation::new(
                                 ctx,
                                 MirFieldAddrOp::get_concrete_op_info(),
@@ -5009,7 +5145,16 @@ fn translate_place_addr_from_slot(
                             // reconstruction of the DST tail. A Rust kind is established only
                             // when the value crosses an `Rvalue::Ref`/`AddressOf` boundary,
                             // which retypes it to the declared kind.
-                            let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
+                            let tail_is_mutable = tail_ptr_ty
+                                .deref(ctx)
+                                .downcast_ref::<dialect_mir::types::MirPtrType>()
+                                .expect("slice-tail projection must produce a MirPtrType")
+                                .is_mutable;
+                            let slice_ty = dialect_mir::types::MirSliceType::get_with_mutability(
+                                ctx,
+                                tail_elem_ty,
+                                tail_is_mutable,
+                            );
                             use dialect_mir::ops::MirConstructSliceOp;
                             let construct = Operation::new(
                                 ctx,
@@ -5032,13 +5177,11 @@ fn translate_place_addr_from_slot(
                             // to its data pointer, then let the existing
                             // Index/ConstantIndex arms perform the element
                             // offset and return the real address.
-                            let indexed_data_ptr_ty: TypeHandle =
-                                dialect_mir::types::MirPtrType::get_generic(
-                                    ctx,
-                                    tail_elem_ty,
-                                    is_mutable,
-                                )
-                                .into();
+                            let Some(indexed_data_ptr_ty) =
+                                erased_slice_data_pointer_type(ctx, tail_slice, tail_elem_ty)
+                            else {
+                                return Ok(None);
+                            };
                             let indexed_extract = Operation::new(
                                 ctx,
                                 MirExtractFieldOp::get_concrete_op_info(),
@@ -5210,7 +5353,16 @@ fn translate_place_addr_from_slot(
                         // reconstruction of the DST tail. A Rust kind is established only
                         // when the value crosses an `Rvalue::Ref`/`AddressOf` boundary,
                         // which retypes it to the declared kind.
-                        let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
+                        let tail_is_mutable = tail_ptr_ty
+                            .deref(ctx)
+                            .downcast_ref::<dialect_mir::types::MirPtrType>()
+                            .expect("slice-tail projection must produce a MirPtrType")
+                            .is_mutable;
+                        let slice_ty = dialect_mir::types::MirSliceType::get_with_mutability(
+                            ctx,
+                            tail_elem_ty,
+                            tail_is_mutable,
+                        );
                         use dialect_mir::ops::MirConstructSliceOp;
                         let construct = Operation::new(
                             ctx,
@@ -5523,13 +5675,17 @@ fn indexed_element_ptr_type(
     ctx: &mut Context,
     current_ptr_ty: TypeHandle,
     pointee_kind: PointeeKind,
-    addr_space: u32,
-    is_mutable: bool,
+    _addr_space: u32,
+    _is_mutable: bool,
 ) -> TypeHandle {
     match pointee_kind {
-        PointeeKind::Array(element_ty) => {
-            dialect_mir::types::MirPtrType::get(ctx, element_ty, is_mutable, addr_space).into()
-        }
+        PointeeKind::Array(element_ty) => projected_pointer_type(
+            ctx,
+            current_ptr_ty,
+            element_ty,
+            /* legacy requested mutability, ignored */ false,
+        )
+        .expect("indexed array base must be a MirPtrType"),
         PointeeKind::Direct => current_ptr_ty,
     }
 }
@@ -5546,7 +5702,7 @@ fn emit_indexed_element_addr(
     current: Value,
     index_val: Value,
     pointee_kind: PointeeKind,
-    addr_space: u32,
+    _addr_space: u32,
     is_mutable: bool,
     block_ptr: Ptr<BasicBlock>,
     current_prev_op: Option<Ptr<Operation>>,
@@ -5557,7 +5713,8 @@ fn emit_indexed_element_addr(
     let addr_op = match pointee_kind {
         PointeeKind::Array(element_ty) => {
             let elem_ptr_ty =
-                dialect_mir::types::MirPtrType::get(ctx, element_ty, is_mutable, addr_space).into();
+                projected_pointer_type(ctx, current.get_type(ctx), element_ty, is_mutable)
+                    .expect("indexed array base must be a MirPtrType");
             Operation::new(
                 ctx,
                 MirArrayElementAddrOp::get_concrete_op_info(),
@@ -5630,16 +5787,28 @@ fn projected_pointer_type(
     ctx: &mut Context,
     base_ptr_ty: TypeHandle,
     pointee: TypeHandle,
-    is_mutable: bool,
+    _is_mutable: bool,
 ) -> Option<TypeHandle> {
-    let address_space = {
+    let (is_mutable, address_space, kind) = {
         let base_ptr_ty = base_ptr_ty.deref(ctx);
-        base_ptr_ty
-            .downcast_ref::<dialect_mir::types::MirPtrType>()?
-            .address_space
+        let base_ptr_ty = base_ptr_ty.downcast_ref::<dialect_mir::types::MirPtrType>()?;
+        (
+            base_ptr_ty.is_mutable,
+            base_ptr_ty.address_space,
+            base_ptr_ty.kind,
+        )
     };
 
-    Some(dialect_mir::types::MirPtrType::get(ctx, pointee, is_mutable, address_space).into())
+    Some(
+        dialect_mir::types::MirPtrType::get_with_kind(
+            ctx,
+            pointee,
+            is_mutable,
+            address_space,
+            kind,
+        )
+        .into(),
+    )
 }
 
 /// Build a `DisjointSlice` value from the fields of its MIR aggregate.
@@ -5696,8 +5865,13 @@ fn construct_disjoint_slice_aggregate(
     // as the fat-pointer arm does for `*mut [T]`: a value coming from shared
     // memory carries addrspace(3) and would not match the element pointer the
     // verifier expects.
-    let expected_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, element_type, true).into();
+    let expected_ptr_ty: TypeHandle = dialect_mir::types::MirPtrType::get_generic_with_kind(
+        ctx,
+        element_type,
+        true,
+        MirPointerKind::RawMut,
+    )
+    .into();
     let (data_val, current_prev_op) = cast_to_expected_pointer_type_if_needed(
         ctx,
         runtime_fields[0],
@@ -5807,6 +5981,45 @@ fn slice_like_element_type(ctx: &Context, ty: TypeHandle) -> Option<TypeHandle> 
         })
 }
 
+/// Return the projection-internal data-pointer type for a fat slice value.
+///
+/// Ordinary slices deliberately erase their Rust pointer kind while retaining
+/// the carrier's exact machine mutability. `DisjointSlice` instead has a fixed
+/// `RawMut` field contract. In both cases extraction is representation-only:
+/// it cannot invent writable evidence or a stronger Rust category.
+fn erased_slice_data_pointer_type(
+    ctx: &mut Context,
+    slice_value: Value,
+    element_ty: TypeHandle,
+) -> Option<TypeHandle> {
+    let slice_ty = slice_value.get_type(ctx);
+    let ordinary_mutability = slice_ty
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirSliceType>()
+        .map(|slice| slice.is_mutable);
+    if let Some(is_mutable) = ordinary_mutability {
+        return Some(
+            dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, is_mutable).into(),
+        );
+    }
+    if slice_ty
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirDisjointSliceType>()
+        .is_some()
+    {
+        return Some(
+            dialect_mir::types::MirPtrType::get_generic_with_kind(
+                ctx,
+                element_ty,
+                true,
+                MirPointerKind::RawMut,
+            )
+            .into(),
+        );
+    }
+    None
+}
+
 fn rust_ty_is_slice(ty: &rustc_public::ty::Ty) -> bool {
     matches!(
         ty.kind(),
@@ -5832,8 +6045,9 @@ fn normalize_slice_value_to_data_ptr(
         return (value, prev_op);
     };
 
-    let data_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, false).into();
+    let Some(data_ptr_ty) = erased_slice_data_pointer_type(ctx, value, element_ty) else {
+        return (value, prev_op);
+    };
     let extract_ptr = Operation::new(
         ctx,
         MirExtractFieldOp::get_concrete_op_info(),
@@ -6041,9 +6255,13 @@ pub fn translate_place_iterative(
                         // element type `T`, because the elements live inline after
                         // the sized prefix. Address the field as `*T`, not `*[T]`.
                         use dialect_mir::ops::{MirConstructSliceOp, MirFieldAddrOp};
-                        let tail_ptr_ty: TypeHandle =
-                            dialect_mir::types::MirPtrType::get_generic(ctx, tail_elem_ty, false)
-                                .into();
+                        let tail_ptr_ty = projected_pointer_type(
+                            ctx,
+                            current_value.get_type(ctx),
+                            tail_elem_ty,
+                            /* legacy requested mutability, ignored */ false,
+                        )
+                        .expect("slice-tail field base must be a MirPtrType");
                         let tail_addr = Operation::new(
                             ctx,
                             MirFieldAddrOp::get_concrete_op_info(),
@@ -6070,8 +6288,16 @@ pub fn translate_place_iterative(
                         // A following Index or ConstantIndex can scalarize this
                         // MirSliceType to field 0 and reuse the existing pointer-offset
                         // + load path.
-                        let tail_slice_ty =
-                            dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
+                        let tail_is_mutable = tail_ptr_ty
+                            .deref(ctx)
+                            .downcast_ref::<dialect_mir::types::MirPtrType>()
+                            .expect("slice-tail projection must produce a MirPtrType")
+                            .is_mutable;
+                        let tail_slice_ty = dialect_mir::types::MirSliceType::get_with_mutability(
+                            ctx,
+                            tail_elem_ty,
+                            tail_is_mutable,
+                        );
                         let construct_tail = Operation::new(
                             ctx,
                             MirConstructSliceOp::get_concrete_op_info(),
@@ -6106,9 +6332,13 @@ pub fn translate_place_iterative(
 
                         use dialect_mir::ops::MirFieldAddrOp;
                         let field_type = types::translate_type(ctx, field_ty)?;
-                        let field_ptr_ty: TypeHandle =
-                            dialect_mir::types::MirPtrType::get_generic(ctx, field_type, false)
-                                .into();
+                        let field_ptr_ty = projected_pointer_type(
+                            ctx,
+                            current_value.get_type(ctx),
+                            field_type,
+                            /* legacy requested mutability, ignored */ false,
+                        )
+                        .expect("nested DST field base must be a MirPtrType");
                         let field_addr = Operation::new(
                             ctx,
                             MirFieldAddrOp::get_concrete_op_info(),
@@ -6762,6 +6992,7 @@ fn translate_ptr_to_array_constant(
         block_ptr,
         Some(global_alloc.get_operation()),
         loc,
+        MirPointerKindAuthorityAttr::StaticAddress,
     );
     Ok((ptr_val, last_op))
 }
@@ -9862,8 +10093,11 @@ fn translate_constant_value_from_bytes(
                 0,
             );
             cast_op.deref_mut(ctx).set_loc(loc.clone());
-            MirCastOp::new(cast_op)
-                .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+            let cast = MirCastOp::new(cast_op);
+            cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+            if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, ty_ptr) {
+                cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::StaticAddress);
+            }
             cast_op.insert_after(ctx, const_op.get_operation());
 
             Ok((cast_op.deref(ctx).get_result(0), Some(cast_op)))
@@ -10470,7 +10704,6 @@ fn translate_reify_fn_pointer(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
-    use dialect_mir::ops::MirConstantOp;
     use rustc_public::mir::mono::Instance;
     use std::hash::{Hash, Hasher};
 
@@ -10521,6 +10754,69 @@ fn translate_reify_fn_pointer(
         h.finish() | 1
     };
 
+    materialize_function_pointer_token(ctx, dest_ty, token, block_ptr, prev_op, loc)
+}
+
+/// Lower a non-capturing `closure -> fn pointer` coercion.
+///
+/// Like named function items, a closure value is zero-sized and contains no
+/// code address to extract. Resolve rustc's `FnOnce` closure shim and use its
+/// mangled identity to create the same non-null comparison token used by
+/// `translate_reify_fn_pointer`.
+fn translate_closure_fn_pointer(
+    ctx: &mut Context,
+    body: &mir::Body,
+    operand: &mir::Operand,
+    dest_ty: &rustc_public::ty::Ty,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
+    use rustc_public::{
+        mir::mono::Instance,
+        ty::{ClosureKind, RigidTy, TyKind},
+    };
+    use std::hash::{Hash, Hasher};
+
+    let operand_ty = operand.ty(body.locals()).map_err(|error| {
+        input_error_noloc!(TranslationErr::unsupported(format!(
+            "ClosureFnPointer: cannot read operand type: {error:?}"
+        )))
+    })?;
+    let TyKind::RigidTy(RigidTy::Closure(closure_def, substs)) = operand_ty.kind() else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "ClosureFnPointer on a non-closure operand of type {operand_ty:?}"
+            ))
+        );
+    };
+    let mangled = Instance::resolve_closure(closure_def, &substs, ClosureKind::FnOnce)
+        .map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "ClosureFnPointer: cannot resolve closure shim: {error:?}"
+            )))
+        })?
+        .mangled_name();
+    let token = {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        mangled.hash(&mut hasher);
+        hasher.finish() | 1
+    };
+
+    materialize_function_pointer_token(ctx, dest_ty, token, block_ptr, prev_op, loc)
+}
+
+fn materialize_function_pointer_token(
+    ctx: &mut Context,
+    dest_ty: &rustc_public::ty::Ty,
+    token: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
+    use dialect_mir::ops::MirConstantOp;
+
     // Materialize the token and cast it to the fn-pointer type, the same
     // two-op shape used for provenance-carrying pointer constants.
     let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
@@ -10552,7 +10848,8 @@ fn translate_reify_fn_pointer(
         0,
     );
     cast_op.deref_mut(ctx).set_loc(loc);
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
 
     let result = cast_op.deref(ctx).get_result(0);
     Ok((Some(cast_op), result, Some(int_op)))
@@ -11621,8 +11918,13 @@ fn translate_static_array_as_slice(
         let array_mir_ty = types::translate_type(ctx, &static_ty)?;
 
         // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
-        let thin_array_ptr_ty: TypeHandle =
-            dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
+        let thin_array_ptr_ty: TypeHandle = dialect_mir::types::MirPtrType::get_generic_with_kind(
+            ctx,
+            array_mir_ty,
+            is_mutable,
+            pointer_kind,
+        )
+        .into();
 
         let (array_ptr, prev_after_array) = translate_static_global_pointer(
             ctx,
@@ -11647,8 +11949,13 @@ fn translate_static_array_as_slice(
             loc.clone(),
         )
     } else {
-        let data_ptr_ty: TypeHandle =
-            dialect_mir::types::MirPtrType::get_generic(ctx, elem_mir_ty, is_mutable).into();
+        let data_ptr_ty: TypeHandle = dialect_mir::types::MirPtrType::get_generic_with_kind(
+            ctx,
+            elem_mir_ty,
+            is_mutable,
+            pointer_kind,
+        )
+        .into();
 
         translate_static_global_pointer(
             ctx,
@@ -11961,7 +12268,11 @@ fn translate_thin_pointer_at_alloc_offset(
         0,
     );
     cast_op.deref_mut(ctx).set_loc(loc);
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+    if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, result_ptr_ty) {
+        cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::StaticAddress);
+    }
     cast_op.insert_after(ctx, const_op.get_operation());
     Ok((cast_op.deref(ctx).get_result(0), Some(cast_op)))
 }
@@ -13113,7 +13424,15 @@ fn retype_static_pointer_result(
         0,
     );
     cast_op.deref_mut(ctx).set_loc(loc);
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    if result_ptr_ty
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirPtrType>()
+        .is_some_and(|pointer| pointer.kind != MirPointerKind::Erased)
+    {
+        cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::StaticAddress);
+    }
     cast_op.insert_after(ctx, insert_after);
 
     (cast_op.deref(ctx).get_result(0), cast_op)
@@ -14820,6 +15139,24 @@ mod tests {
             last_op.is_none(),
             "generic normalization must not strengthen SharedRef into UniqueRef"
         );
+
+        let erased_read: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee_ty, false).into();
+        let erased_write: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee_ty, true).into();
+        let erased_block = BasicBlock::new(&mut ctx, None, vec![erased_read]);
+        let erased_value = erased_block.deref(&ctx).get_argument(0);
+        let (normalized, last_op) = cast_to_expected_pointer_type_if_needed(
+            &mut ctx,
+            erased_value,
+            erased_write,
+            erased_block,
+            None,
+            Location::Unknown,
+        );
+        assert_eq!(normalized.get_type(&ctx), erased_read);
+        assert!(
+            last_op.is_none(),
+            "generic normalization must not manufacture writable Erased evidence"
+        );
     }
 
     #[test]
@@ -14848,6 +15185,7 @@ mod tests {
             block,
             None,
             Location::Unknown,
+            MirPointerKindAuthorityAttr::Reborrow,
         );
 
         assert_eq!(reborrow.get_type(&ctx), unique_ref_ty);
@@ -14886,6 +15224,7 @@ mod tests {
             block,
             None,
             Location::Unknown,
+            MirPointerKindAuthorityAttr::Reborrow,
         );
 
         assert_eq!(

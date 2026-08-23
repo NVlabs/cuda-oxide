@@ -63,20 +63,21 @@ use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
 use crate::translator::rvalue;
 use crate::translator::values::{ValueMap, maybe_ptr_coerce};
+use dialect_mir::attributes::MirPointerKindAuthorityAttr;
 use dialect_mir::ops::{
     MirAssertOp, MirCondBranchOp, MirConstantOp, MirEqOp, MirGotoOp, MirNotOp, MirReturnOp,
     MirUnrollHintOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
-use pliron::builtin::types::{IntegerType, Signedness};
+use pliron::builtin::types::{FunctionType, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::identifier::Legaliser;
 use pliron::linked_list::ContainsLinkedList;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::r#type::Typed;
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::{input_err, input_error};
 use rustc_public::CrateDef;
 use rustc_public::mir;
@@ -1341,6 +1342,13 @@ fn translate_call(
     let raw_name = call_name.unwrap_or_else(|| "unknown_function".to_string());
     let legal_name = legaliser.legalise(&raw_name);
 
+    // Foreign items have no `mir.func` body to provide an independent symbol
+    // signature. Preserve the exact resolved rustc declaration on the call so
+    // final module verification can still reject pointer-kind laundering at
+    // this ABI boundary. This must be derived from `func`, not reconstructed
+    // from the already-created call operands or destination.
+    let external_callee_type = translate_foreign_callee_type(ctx, func)?;
+
     // Type the call result from the caller's destination place, not from the
     // callee's declared signature. The declared signature of a trait method
     // is written against the trait, so its return type can be an unresolved
@@ -1361,6 +1369,7 @@ fn translate_call(
         args,
         destination,
         return_type,
+        external_callee_type,
         &target_usize,
         block_ptr,
         prev_op,
@@ -1368,6 +1377,82 @@ fn translate_call(
         block_map,
         loc,
     )
+}
+
+/// Translate the exact signature of a resolved Rust foreign item.
+///
+/// Ordinary Rust callees are independently typed by their `mir.func` op and
+/// therefore return `None`. Foreign declarations have no MIR body, so this
+/// `FunctionType` is attached to the call with `AbiBoundary` authority and is
+/// checked again by the final dialect verifier.
+fn translate_foreign_callee_type(
+    ctx: &mut Context,
+    func: &mir::Operand,
+) -> TranslationResult<Option<TypeHandle>> {
+    use dialect_mir::types::MirTupleType;
+    use rustc_public::mir::mono::Instance;
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    let mir::Operand::Constant(constant) = func else {
+        return Ok(None);
+    };
+    if *constant.const_.kind() != ConstantKind::ZeroSized {
+        return Ok(None);
+    }
+    let TyKind::RigidTy(RigidTy::FnDef(fn_def, substs)) = constant.const_.ty().kind() else {
+        return Ok(None);
+    };
+    let Some(instance) = Instance::resolve(fn_def, &substs).ok() else {
+        return Ok(None);
+    };
+    if !instance.is_foreign_item() {
+        return Ok(None);
+    }
+
+    let fn_ty = instance.ty();
+    let Some(signature) = fn_ty.kind().fn_sig() else {
+        return input_err!(
+            pliron::location::Location::Unknown,
+            TranslationErr::unsupported(format!(
+                "resolved foreign item `{}` has no function signature",
+                instance.name()
+            ))
+        );
+    };
+    let signature = signature.skip_binder();
+    ensure_foreign_callee_is_not_variadic(&instance.name().to_string(), signature.c_variadic)?;
+    let mut arguments = Vec::with_capacity(signature.inputs().len());
+    for argument in signature.inputs() {
+        arguments.push(types::translate_type(ctx, argument)?);
+    }
+
+    let output = signature.output();
+    let output = types::translate_type(ctx, &output)?;
+    let is_unit = output
+        .deref(ctx)
+        .downcast_ref::<MirTupleType>()
+        .is_some_and(|tuple| tuple.get_types().is_empty());
+    let results = if is_unit { vec![] } else { vec![output] };
+
+    Ok(Some(FunctionType::get(ctx, arguments, results).into()))
+}
+
+/// The builtin source `FunctionType` and MIR call operation are fixed-arity.
+/// Refuse a C-variadic foreign declaration instead of recording only its fixed
+/// prefix and incorrectly presenting that incomplete type as the exact ABI.
+fn ensure_foreign_callee_is_not_variadic(
+    callee_name: &str,
+    c_variadic: bool,
+) -> TranslationResult<()> {
+    if c_variadic {
+        return input_err!(
+            pliron::location::Location::Unknown,
+            TranslationErr::unsupported(format!(
+                "resolved foreign item `{callee_name}` is C-variadic; variadic foreign calls are not supported"
+            ))
+        );
+    }
+    Ok(())
 }
 
 /// Handle `FnOnce::call_once`, `FnMut::call_mut`, or `Fn::call` when the
@@ -1550,11 +1635,9 @@ fn translate_closure_call(
     legaliser: &mut Legaliser,
 ) -> TranslationResult<Ptr<Operation>> {
     use dialect_mir::ops::{MirCallOp, MirExtractFieldOp};
-    use pliron::builtin::attributes::{IntegerAttr, StringAttr};
+    use pliron::builtin::attributes::StringAttr;
     use pliron::identifier::Identifier;
     use pliron::r#type::Typed;
-    use pliron::utils::apint::APInt;
-    use std::num::NonZeroUsize;
 
     // Same reasoning as the regular-call path: the trait-level signature of
     // `FnOnce::call_once` types its result as the projection
@@ -1562,15 +1645,22 @@ fn translate_closure_call(
     // carries the already-resolved concrete type, so use that.
     let return_type = types::translate_destination_type(ctx, body, destination, &loc)?;
 
-    // Extract the closure body's name from the closure type in args[0]. This
-    // avoids targeting a ClosureOnce adapter when instance resolution selected
-    // one, while remaining correct for calls that resolve directly to the body.
-    let closure_body_name = extract_closure_body_name(&args[0], body);
-
-    let raw_callee = closure_body_name
-        .or_else(|| call_name.as_ref().map(|s| s.to_string()))
-        .unwrap_or_else(|| "unknown_closure".to_string());
-    let callee = legaliser.legalise(&raw_callee).to_string();
+    // Resolve the body independently from the callable-trait method. Besides
+    // selecting the body rather than a ClosureOnce adapter, this gives us the
+    // body's actual first parameter. That parameter is authoritative for the
+    // receiver kind: `&Closure` is SharedRef, `&mut Closure` is UniqueRef, and
+    // an FnOnce body receives the closure by value.
+    let Some(closure_body) = extract_closure_body_target(&args[0], body) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "failed to resolve the closure body and receiver ABI for `{}`",
+                call_name.as_deref().unwrap_or("unknown closure")
+            ))
+        );
+    };
+    let callee = legaliser.legalise(&closure_body.name).to_string();
+    let expected_receiver_type = types::translate_type(ctx, &closure_body.receiver_ty)?;
 
     // Translate self argument (args[0])
     let (self_value, mut last_op) = rvalue::translate_operand(
@@ -1595,43 +1685,44 @@ fn translate_closure_call(
     )?;
     last_op = tuple_last_op;
 
-    // Determine whether bypassing a resolved adapter shim requires us to
-    // reproduce its receiver borrow. A ClosureOnce shim for an `Fn`/`FnMut`
-    // closure receives the closure by value but calls a body that expects a
-    // reference. A genuine by-value `FnOnce` closure resolves directly to its
-    // body and must stay by value. A receiver that MIR already passes by
-    // reference needs no extra borrow.
-    let receiver_needs_borrow = resolved_is_shim
-        && operand_type(&args[0], body).is_some_and(|ty| {
-            !matches!(
-                ty.kind(),
-                rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, _, _))
-            )
-        });
+    // Bypassing a ClosureOnce adapter is the one case where the importer must
+    // synthesize a receiver borrow. Derive both the result type and mutability
+    // from the body parameter instead of guessing from the adapter shape.
+    let receiver_borrow_mutability = match closure_body.receiver_ty.kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, _, mutability))
+            if self_value.get_type(ctx) != expected_receiver_type =>
+        {
+            Some(mutability)
+        }
+        _ => None,
+    };
 
-    let self_arg = if receiver_needs_borrow {
+    if receiver_borrow_mutability.is_some() && !resolved_is_shim {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "closure body expects a borrowed receiver but callable-trait resolution did not select an adapter shim"
+                    .to_string()
+            )
+        );
+    }
+
+    let self_arg = if let Some(mutability) = receiver_borrow_mutability {
         // Reproduce the adapter shim's borrow before calling the body directly.
-        let self_ty = self_value.get_type(ctx);
-        let ptr_ty = dialect_mir::types::MirPtrType::get(ctx, self_ty, true, 0);
+        let is_mutable = mutability == mir::Mutability::Mut;
 
         let ref_op = Operation::new(
             ctx,
             dialect_mir::ops::MirRefOp::get_concrete_op_info(),
-            vec![ptr_ty.into()],
+            vec![expected_receiver_type],
             vec![self_value],
             vec![],
             0,
         );
         ref_op.deref_mut(ctx).set_loc(loc.clone());
-
-        // Set mutable attribute (true for &mut)
-        let bool_type = IntegerType::get(ctx, 1, Signedness::Unsigned);
-        let mutable_attr =
-            IntegerAttr::new(bool_type, APInt::from_i64(1, NonZeroUsize::new(1).unwrap()));
-        ref_op
-            .deref_mut(ctx)
-            .attributes
-            .set(Identifier::try_from("mutable").unwrap(), mutable_attr);
+        let ref_op_wrapper = dialect_mir::ops::MirRefOp::new(ref_op);
+        ref_op_wrapper.set_mutable(ctx, is_mutable);
+        ref_op_wrapper.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
 
         // Insert after previous op
         if let Some(prev) = last_op {
@@ -1644,9 +1735,20 @@ fn translate_closure_call(
         // Use the reference as self arg
         ref_op.deref(ctx).get_result(0)
     } else {
-        // For call_mut/call: self is already a reference, use as-is
+        // For call_mut/call the MIR operand is already the body's exact
+        // reference type; for FnOnce the body receives the value unchanged.
         self_value
     };
+
+    if self_arg.get_type(ctx) != expected_receiver_type {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "closure call receiver type does not match the resolved closure body parameter"
+                    .to_string()
+            )
+        );
+    }
 
     // Build unpacked arguments, starting with the original or adapted receiver.
     let mut unpacked_args = vec![self_arg];
@@ -1976,7 +2078,12 @@ fn callable_trait_call_info(func: &mir::Operand) -> Option<CallableTraitCallInfo
     })
 }
 
-/// Extracts the closure body's mangled name from a closure operand.
+struct ClosureBodyTarget {
+    name: String,
+    receiver_ty: rustc_public::ty::Ty,
+}
+
+/// Resolves the closure body and its actual receiver parameter.
 ///
 /// When instance resolution selects an adapter shim for a call like:
 ///   `<{closure} as FnOnce<(u32,)>>::call_once(closure_ref, args_tuple)`
@@ -1988,7 +2095,10 @@ fn callable_trait_call_info(func: &mir::Operand) -> Option<CallableTraitCallInfo
 /// - A direct closure value (type is `Closure(def, substs)`)
 /// - A reference to a closure (type is `Ref(_, Closure(def, substs), _)`)
 /// - A mutable reference (same pattern)
-fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Option<String> {
+fn extract_closure_body_target(
+    closure_arg: &mir::Operand,
+    body: &mir::Body,
+) -> Option<ClosureBodyTarget> {
     let closure_ty = operand_type(closure_arg, body)?;
 
     // Unwrap references to get the actual closure type
@@ -2016,14 +2126,16 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
     // Create an FnDef from the closure's DefId
     let fn_def = FnDef(closure_def.def_id());
 
-    if let Ok(instance) = Instance::resolve(fn_def, &substs) {
-        return Some(instance.mangled_name());
-    }
+    let instance = Instance::resolve(fn_def, &substs).ok().or_else(|| {
+        // Fallback: try the old resolve_closure method.
+        Instance::resolve_closure(closure_def, &substs, rustc_public::ty::ClosureKind::FnOnce).ok()
+    })?;
+    let receiver_ty = instance.body()?.arg_locals().first()?.ty;
 
-    // Fallback: try the old resolve_closure method
-    Instance::resolve_closure(closure_def, &substs, rustc_public::ty::ClosureKind::FnOnce)
-        .ok()
-        .map(|instance| instance.mangled_name())
+    Some(ClosureBodyTarget {
+        name: instance.mangled_name(),
+        receiver_ty,
+    })
 }
 
 /// Read the const-generic `FACTOR` from a `__unroll_config::<FACTOR>()` callee
@@ -2705,6 +2817,7 @@ fn try_dispatch_intrinsic(
                 args,
                 destination,
                 return_type,
+                None,
                 target,
                 block_ptr,
                 prev_op,
@@ -3154,6 +3267,12 @@ fn try_dispatch_intrinsic(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreign_signature_rejects_c_variadic_before_claiming_an_exact_abi() {
+        assert!(ensure_foreign_callee_is_not_variadic("fixed", false).is_ok());
+        assert!(ensure_foreign_callee_is_not_variadic("variadic", true).is_err());
+    }
 
     /// A `SwitchInt` arm keeps its whole value at 128 bits, and narrower
     /// discriminants truncate exactly as the previous `u64` construction did.

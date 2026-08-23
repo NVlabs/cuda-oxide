@@ -251,10 +251,20 @@ impl MirPointerKind {
         self == Self::UniqueRef
     }
 
+    /// Whether a representation-only operation may retype this kind to
+    /// `target` without crossing a Rust semantic boundary.
+    ///
+    /// Generic operations may retain provenance or forget it. They may never
+    /// recover a concrete category from [`Self::Erased`] or switch between
+    /// distinct concrete categories.
+    pub fn can_retype_generically_to(self, target: Self) -> bool {
+        self == target || target == Self::Erased
+    }
+
     /// Required `MirPtrType::is_mutable` value for source-level kinds.
     /// `Erased` accepts either mutability because storage pointers may be
     /// mutable even when they do not represent a Rust `&mut`/`*mut` value.
-    fn expected_mutability(self) -> Option<bool> {
+    pub fn expected_mutability(self) -> Option<bool> {
         match self {
             Self::Erased => None,
             Self::SharedRef | Self::RawConst => Some(false),
@@ -455,24 +465,38 @@ impl Verify for MirPtrType {
 /// Represents a view into a contiguous sequence of elements. References and
 /// raw pointers to `[T]` share the same physical `{ptr, len}` layout, but their
 /// Rust pointer category remains distinct in the MIR type.
-/// Syntax: `mir.slice <type, kind: MirPointerKind>`
+/// Syntax: `mir.slice <type, mutable: bool, kind: MirPointerKind>`
 ///
 /// Bare `[T]` carriers and compiler-generated fat pointers use
 /// [`MirPointerKind::Erased`].
 ///
 /// # Verification
 /// * Element type must be valid.
-#[pliron_type(name = "mir.slice", format = "`<` $element_ty `,` `kind:` $kind `>`")]
+/// * Non-erased pointer kinds must agree with `is_mutable`.
+#[pliron_type(
+    name = "mir.slice",
+    format = "`<` $element_ty `,` `mutable:` $is_mutable `,` `kind:` $kind `>`"
+)]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirSliceType {
     pub element_ty: TypeHandle,
+    pub is_mutable: bool,
     pub kind: MirPointerKind,
 }
 
 impl MirSliceType {
-    /// Create a slice carrier with intentionally erased pointer provenance.
+    /// Create an immutable slice carrier with intentionally erased pointer provenance.
     pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
-        Self::get_with_kind(ctx, element_ty, MirPointerKind::Erased)
+        Self::get_with_mutability(ctx, element_ty, false)
+    }
+
+    /// Create a compiler/internal slice carrier with explicit machine mutability.
+    pub fn get_with_mutability(
+        ctx: &mut Context,
+        element_ty: TypeHandle,
+        is_mutable: bool,
+    ) -> TypedHandle<Self> {
+        Self::get_with_mutability_and_kind(ctx, element_ty, is_mutable, MirPointerKind::Erased)
     }
 
     /// Create a slice/fat-pointer retaining its Rust/source-level pointer kind.
@@ -481,7 +505,29 @@ impl MirSliceType {
         element_ty: TypeHandle,
         kind: MirPointerKind,
     ) -> TypedHandle<Self> {
-        Type::instantiate(MirSliceType { element_ty, kind }, ctx)
+        Self::get_with_mutability_and_kind(
+            ctx,
+            element_ty,
+            kind.expected_mutability().unwrap_or(false),
+            kind,
+        )
+    }
+
+    /// Create a slice/fat-pointer with explicit carrier mutability and kind.
+    pub fn get_with_mutability_and_kind(
+        ctx: &mut Context,
+        element_ty: TypeHandle,
+        is_mutable: bool,
+        kind: MirPointerKind,
+    ) -> TypedHandle<Self> {
+        Type::instantiate(
+            MirSliceType {
+                element_ty,
+                is_mutable,
+                kind,
+            },
+            ctx,
+        )
     }
 
     pub fn element_type(&self) -> TypeHandle {
@@ -491,10 +537,24 @@ impl MirSliceType {
     pub fn pointer_kind(&self) -> MirPointerKind {
         self.kind
     }
+
+    pub fn is_mutable(&self) -> bool {
+        self.is_mutable
+    }
 }
 
 impl Verify for MirSliceType {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+        if let Some(expected) = self.kind.expected_mutability()
+            && expected != self.is_mutable
+        {
+            return verify_err!(
+                Location::Unknown,
+                "MirSliceType pointer kind {:?} is inconsistent with mutable: {}",
+                self.kind,
+                self.is_mutable
+            );
+        }
         Ok(())
     }
 }
@@ -1983,6 +2043,120 @@ impl Verify for MirEnumType {
         }
         Ok(())
     }
+}
+
+/// A pointer carrier embedded directly or recursively in a MIR value type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MirPointerCarrier {
+    pub kind: MirPointerKind,
+    pub is_mutable: bool,
+}
+
+/// Recognize the dialect's canonical opaque function-pointer value carrier.
+///
+/// Function pointers intentionally use an immutable Erased pointer to a
+/// zero-sized `FnPtrTarget` marker. This exact shape is a capability: generic
+/// data-address producers must not be able to manufacture it merely because
+/// they are also allowed to return Erased pointers.
+pub fn is_opaque_fn_pointer_type(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty = ty.deref(ctx);
+    let Some(pointer) = ty.downcast_ref::<MirPtrType>() else {
+        return false;
+    };
+    if pointer.kind != MirPointerKind::Erased
+        || pointer.is_mutable
+        || pointer.address_space != address_space::GENERIC
+    {
+        return false;
+    }
+
+    let pointee = pointer.pointee.deref(ctx);
+    let Some(marker) = pointee.downcast_ref::<MirStructType>() else {
+        return false;
+    };
+    marker.name == "FnPtrTarget"
+        && marker.field_names.is_empty()
+        && marker.field_types.is_empty()
+        && marker.mem_to_decl.is_empty()
+        && marker.field_offsets.is_empty()
+        && marker.total_size == 0
+        && marker.abi_align == 0
+        && marker.abi_kind == StructAbiKind::Aggregate
+}
+
+/// Return every pointer carrier directly or recursively embedded in a MIR type.
+///
+/// Pointer pointees are deliberately not traversed: their values live in a
+/// different allocation and are not retyped when the pointer value itself is
+/// cast. `MirDisjointSliceType` contributes its fixed `RawMut` data-pointer
+/// carrier even though that kind is implicit in the type's spelling.
+pub fn pointer_carriers_in_type(ctx: &Context, ty: TypeHandle) -> Vec<MirPointerCarrier> {
+    fn visit(
+        ctx: &Context,
+        ty: TypeHandle,
+        visited: &mut Vec<TypeHandle>,
+        carriers: &mut Vec<MirPointerCarrier>,
+    ) {
+        if visited.contains(&ty) {
+            return;
+        }
+        visited.push(ty);
+
+        let ty_obj = ty.deref(ctx);
+        if let Some(pointer) = ty_obj.downcast_ref::<MirPtrType>() {
+            carriers.push(MirPointerCarrier {
+                kind: pointer.kind,
+                is_mutable: pointer.is_mutable,
+            });
+        } else if let Some(slice) = ty_obj.downcast_ref::<MirSliceType>() {
+            carriers.push(MirPointerCarrier {
+                kind: slice.kind,
+                is_mutable: slice.is_mutable,
+            });
+        } else if ty_obj.downcast_ref::<MirDisjointSliceType>().is_some() {
+            carriers.push(MirPointerCarrier {
+                kind: MirPointerKind::RawMut,
+                is_mutable: true,
+            });
+        } else if let Some(array) = ty_obj.downcast_ref::<MirArrayType>() {
+            visit(ctx, array.element_ty, visited, carriers);
+        } else if let Some(tuple) = ty_obj.downcast_ref::<MirTupleType>() {
+            for field in &tuple.types {
+                visit(ctx, *field, visited, carriers);
+            }
+        } else if let Some(struct_ty) = ty_obj.downcast_ref::<MirStructType>() {
+            for field in &struct_ty.field_types {
+                visit(ctx, *field, visited, carriers);
+            }
+        } else if let Some(union_ty) = ty_obj.downcast_ref::<MirUnionType>() {
+            for field in &union_ty.field_types {
+                visit(ctx, *field, visited, carriers);
+            }
+        } else if let Some(enum_ty) = ty_obj.downcast_ref::<MirEnumType>() {
+            for field in &enum_ty.all_field_types {
+                visit(ctx, *field, visited, carriers);
+            }
+        }
+    }
+
+    let mut carriers = Vec::new();
+    visit(ctx, ty, &mut Vec::new(), &mut carriers);
+    carriers
+}
+
+/// Return every pointer kind carried directly or inside a MIR aggregate type.
+pub fn pointer_kinds_in_type(ctx: &Context, ty: TypeHandle) -> Vec<MirPointerKind> {
+    pointer_carriers_in_type(ctx, ty)
+        .into_iter()
+        .map(|carrier| carrier.kind)
+        .collect()
+}
+
+/// Whether a MIR type carries any non-erased Rust pointer category.
+pub fn type_contains_concrete_pointer_kind(ctx: &Context, ty: TypeHandle) -> bool {
+    pointer_kinds_in_type(ctx, ty)
+        .into_iter()
+        .any(|kind| kind != MirPointerKind::Erased)
 }
 
 /// Register dialect types.
