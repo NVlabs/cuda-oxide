@@ -10,7 +10,7 @@ use mir::serialize::Serialize;
 use mir::syntax::{
     AggregateKind, BasicBlock, BasicBlockData, BinOp, Body, Callee, Function, IntTy, Literal,
     Local, LocalDecls, Mutability, Operand, Place, Program, ProjectionElem, Rvalue, Statement,
-    SwitchTargets, Terminator, TyId, TyKind, UnOp, VariantIdx,
+    StaticDecl, SwitchTargets, Terminator, TyId, TyKind, UnOp, VariantIdx,
 };
 use mir::tyctxt::TyCtxt;
 use rand::{Rng, RngCore, SeedableRng, seq::IteratorRandom};
@@ -107,6 +107,30 @@ impl GenerationCtx {
             }
         })
     }
+
+    fn choose_static_operand(&self, ty: TyId) -> Result<Operand> {
+        let candidates = self
+            .program
+            .statics
+            .iter_enumerated()
+            .filter_map(|(id, decl)| match ty.kind(&self.tcx) {
+                TyKind::Ref(pointee, Mutability::Not)
+                    if decl.mutability == Mutability::Not && decl.ty == *pointee =>
+                {
+                    Some(Operand::Static(id, ty))
+                }
+                TyKind::RawPtr(pointee, Mutability::Mut)
+                    if decl.mutability == Mutability::Mut && decl.ty == *pointee =>
+                {
+                    Some(Operand::StaticMut(id, ty))
+                }
+                _ => None,
+            });
+
+        candidates
+            .choose(&mut *self.rng.borrow_mut())
+            .ok_or(SelectionError::Exhausted)
+    }
 }
 
 // Rvalue
@@ -122,7 +146,14 @@ impl GenerationCtx {
             lhs.serialize_value(&self.tcx),
             lhs.ty(self.current_decls(), &self.tcx).serialize(&self.tcx)
         );
-        let operand = self.choose_operand(&[lhs.ty(self.current_decls(), &self.tcx)], lhs)?;
+        let ty = lhs.ty(self.current_decls(), &self.tcx);
+        let operand = self.make_choice([false, true].into_iter(), |use_static| {
+            if use_static {
+                self.choose_static_operand(ty)
+            } else {
+                self.choose_operand(&[ty], lhs)
+            }
+        })?;
         Ok(Rvalue::Use(operand))
     }
 
@@ -1156,13 +1187,46 @@ impl GenerationCtx {
         seed_tys(&mut tcx, &mut *rng.borrow_mut());
         let tcx = Rc::new(tcx);
         let ty_weights = TySelect::new(&tcx);
+        let mut program = Program::new(debug_dump);
+        let mut pt = PlaceGraph::new(tcx.clone());
+
+        let static_specs: Vec<(TyId, Mutability)> = tcx
+            .indices()
+            .filter_map(|ty| match ty.kind(&tcx) {
+                TyKind::Ref(pointee, Mutability::Not)
+                    if <dyn RngCore>::is_literalble(*pointee, &tcx) =>
+                {
+                    Some((*pointee, Mutability::Not))
+                }
+                TyKind::RawPtr(pointee, Mutability::Mut)
+                    if <dyn RngCore>::is_literalble(*pointee, &tcx) =>
+                {
+                    Some((*pointee, Mutability::Mut))
+                }
+                _ => None,
+            })
+            .collect();
+
+        for (ty, mutability) in static_specs {
+            let init = rng
+                .borrow_mut()
+                .gen_literal(ty, &tcx)
+                .expect("static pointee type is literalble");
+            let id = program.push_static(StaticDecl {
+                ty,
+                mutability,
+                init,
+            });
+            pt.allocate_static(id, ty, init);
+        }
+
         // TODO: don't zero-initialize current_function and current_bb
         Self {
             rng,
             tcx: tcx.clone(),
             ty_weights,
-            program: Program::new(debug_dump),
-            pt: PlaceGraph::new(tcx.clone()),
+            program,
+            pt,
             return_stack: vec![],
             cursor: Cursor {
                 function: Function::new(0),
@@ -1340,6 +1404,12 @@ impl GenerationCtx {
                                 pt.assign_literal(lhs, Some(*lit));
                             }));
                         }
+                        Operand::Static(id, _) | Operand::StaticMut(id, _) => {
+                            let static_place = self.pt.static_place(*id);
+                            actions.push(Box::new(move |pt| {
+                                pt.set_ref(lhs, static_place, None);
+                            }));
+                        }
                     },
                     agg @ Rvalue::Aggregate(agg_kind, ..) => {
                         if self.pt.ty(lhs).kind(&self.tcx).is_enum() {
@@ -1361,6 +1431,12 @@ impl GenerationCtx {
                                 Operand::Constant(lit) => {
                                     actions.push(Box::new(move |pt| {
                                         pt.assign_literal(target, Some(*lit));
+                                    }));
+                                }
+                                Operand::Static(id, _) | Operand::StaticMut(id, _) => {
+                                    let static_place = self.pt.static_place(*id);
+                                    actions.push(Box::new(move |pt| {
+                                        pt.set_ref(target, static_place, None);
                                     }));
                                 }
                             }

@@ -9,8 +9,8 @@ use bimap::BiHashMap;
 use index_vec::IndexVec;
 use mir::{
     syntax::{
-        Body, FieldIdx, Literal, Local, Mutability, Operand, Place, ProjectionElem, Rvalue, TyId,
-        TyKind, UintTy, VariantIdx,
+        Body, FieldIdx, Literal, Local, Mutability, Operand, Place, ProjectionElem, Rvalue, Static,
+        TyId, TyKind, UintTy, VariantIdx,
     },
     tyctxt::TyCtxt,
 };
@@ -87,6 +87,9 @@ impl PlaceOperand {
                 PlaceOperand::Move(index)
             }
             Operand::Constant(lit) => PlaceOperand::Constant(*lit),
+            Operand::Static(..) | Operand::StaticMut(..) => {
+                unreachable!("static operands are only generated as direct rvalue sources")
+            }
         }
     }
 }
@@ -98,6 +101,7 @@ pub struct PlaceGraph {
     frames: Vec<Frame>,
     index_candidates: HashMap<usize, SmallVec<[Local; 1]>>,
     pointer_tags: IndexVec<Tag, BTreeSet<PlaceIndex>>,
+    statics: IndexVec<Static, PlaceIndex>,
 
     places: Graph,
     memory: BasicMemory,
@@ -181,6 +185,7 @@ impl PlaceGraph {
             )],
             index_candidates: HashMap::new(),
             pointer_tags: IndexVec::new(),
+            statics: IndexVec::new(),
             places: StableGraph::default(),
             memory: BasicMemory::new(),
             tcx,
@@ -390,6 +395,23 @@ impl PlaceGraph {
         });
         self.current_frame_mut().add_local(local, pidx);
         pidx
+    }
+
+    pub fn allocate_static(&mut self, id: Static, ty: TyId, init: Literal) -> PlaceIndex {
+        let mut pidx = Default::default();
+        self.memory.allocate_with_builder(|builder| {
+            pidx = Self::add_place(&mut self.places, ty, &self.tcx, builder, None);
+        });
+        let inserted = self.statics.push(pidx);
+        assert_eq!(inserted, id);
+        self.mark_place_init(pidx);
+        self.assign_literal(pidx, Some(init));
+        self.update_complexity(pidx, 1);
+        pidx
+    }
+
+    pub fn static_place(&self, id: Static) -> PlaceIndex {
+        self.statics[id]
     }
 
     pub fn deallocate_local(&mut self, local: Local) {
@@ -1459,7 +1481,7 @@ impl HasComplexity for Operand {
     fn complexity(&self, pt: &PlaceGraph) -> usize {
         match self {
             Operand::Copy(place) | Operand::Move(place) => place.complexity(pt),
-            Operand::Constant(_) => 1,
+            Operand::Constant(_) | Operand::Static(..) | Operand::StaticMut(..) => 1,
         }
     }
 }
@@ -1498,8 +1520,8 @@ mod tests {
     use config::TyConfig;
     use mir::{
         syntax::{
-            BinOp, FieldIdx, Literal, Local, Mutability, Operand, Place, ProjectionElem, Rvalue,
-            TyId, TyKind, UintTy,
+            BinOp, FieldIdx, IntTy, Literal, Local, Mutability, Operand, Place, ProjectionElem,
+            Rvalue, Static, TyId, TyKind, UintTy,
         },
         tyctxt::TyCtxt,
     };
@@ -1768,6 +1790,34 @@ mod tests {
         let one_zero = pt.get_node(&one_zero).unwrap();
         assert_eq!(pt.places[one_zero].ty, TyCtxt::I32);
         assert_eq!(pt.places[local_pidx].alloc_id, pt.places[one_zero].alloc_id);
+    }
+
+    #[test]
+    fn static_allocation_is_persistent() {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        let t_ref = tcx.push(TyKind::Ref(TyCtxt::I32, Mutability::Not));
+        let mut pt = PlaceGraph::new(Rc::new(tcx));
+
+        let static_id = Static::new(0);
+        let static_place = pt.allocate_static(static_id, TyCtxt::I32, 7_i32.into());
+        assert!(pt.is_place_init(static_place));
+        assert!(matches!(
+            pt.known_val(static_place),
+            Some(&Literal::Int(7, IntTy::I32))
+        ));
+        assert!(pt.current_frame().get_by_index(static_place).is_none());
+        assert_eq!(pt.get_complexity(static_place), 1);
+
+        let reference = Local::new(1);
+        pt.allocate_local(reference, t_ref);
+        pt.mark_place_init(reference);
+        pt.set_ref(reference, static_place, None);
+
+        assert_eq!(pt.static_place(static_id), static_place);
+        assert_eq!(
+            pt.pointee(reference.to_place_index(&pt).unwrap()),
+            Some(static_place)
+        );
     }
 
     #[test]
