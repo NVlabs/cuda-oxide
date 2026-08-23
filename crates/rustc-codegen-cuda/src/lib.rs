@@ -846,6 +846,7 @@ fn write_device_artifact_object(
         &bundle_name,
         result,
         artifact,
+        functions,
     )?;
     if let Some(materialized) = materialized_artifact.as_ref() {
         emit_launch_bounds_spill_warnings(tcx, result, functions, &materialized.resource_usage);
@@ -978,10 +979,16 @@ fn materialize_artifact_for_embedding(
     bundle_name: &str,
     result: &device_codegen::DeviceCodegenResult,
     artifact: &device_codegen::DeviceCodegenArtifact,
+    functions: &[collector::CollectedFunction<'_>],
 ) -> Result<Option<MaterializedDeviceArtifact>, Box<dyn std::error::Error>> {
     let Some(request) = request else {
         return Ok(None);
     };
+    let expected_kernels = functions
+        .iter()
+        .filter(|function| function.is_kernel)
+        .map(|function| function.export_name.as_str())
+        .collect::<Vec<_>>();
     let debug_policy = match result.debug_kind {
         llvm_export::export::DebugKind::Off => cuda_artifact_finalizer::DebugPolicy::None,
         llvm_export::export::DebugKind::LineTables => {
@@ -994,6 +1001,7 @@ fn materialize_artifact_for_embedding(
             request,
             &artifact.bytes,
             bundle_name,
+            &expected_kernels,
             &result.target,
             result.allow_fma_contraction,
             debug_policy,
@@ -1002,6 +1010,7 @@ fn materialize_artifact_for_embedding(
             request,
             &artifact.bytes,
             &artifact.name,
+            &expected_kernels,
             &result.target,
             result.allow_fma_contraction,
             debug_policy,

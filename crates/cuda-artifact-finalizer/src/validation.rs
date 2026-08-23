@@ -9,6 +9,11 @@ const ELF64_SECTION_HEADER_LENGTH: u16 = 64;
 const ELF_VERSION_CURRENT: u32 = 1;
 const CUDA_ABI_RUNTIME_JIT_LINK: u8 = 7;
 const CUDA_12_TOOLKIT_VERSIONS: std::ops::RangeInclusive<u32> = 120..=129;
+const ELF_SECTION_TYPE_SYMTAB: u32 = 2;
+const ELF_SECTION_TYPE_DYNSYM: u32 = 11;
+const ELF_SYMBOL_TYPE_FUNCTION: u8 = 2;
+const CUDA_SYMBOL_OTHER_ENTRY: u8 = 0x10;
+const ELF64_SYMBOL_LENGTH: u64 = 24;
 
 /// Check that bytes are a complete 64-bit little-endian CUDA executable ELF.
 ///
@@ -148,6 +153,184 @@ pub fn is_valid_cubin(bytes: &[u8]) -> bool {
     }
 
     has_meaningful_contents
+}
+
+/// Collect kernel entry names from linked PTX.
+///
+/// This is intentionally a small structural lexer rather than a substring
+/// search: comments and quoted strings cannot satisfy the final-link guard.
+pub(crate) fn ptx_kernel_entries(bytes: &[u8]) -> Option<Vec<String>> {
+    let bytes = bytes.strip_suffix(b"\0").unwrap_or(bytes);
+    if bytes.contains(&0) {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    let tokens = ptx_tokens(text)?;
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        if tokens[index] == ".entry" {
+            let name = tokens.get(index + 1)?;
+            if name.is_empty() {
+                return None;
+            }
+            entries.push((*name).to_string());
+            index += 2;
+        } else {
+            index += 1;
+        }
+    }
+    entries.sort();
+    entries.dedup();
+    Some(entries)
+}
+
+fn ptx_tokens(text: &str) -> Option<Vec<&str>> {
+    let bytes = text.as_bytes();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b if b.is_ascii_whitespace() => index += 1,
+            b'/' if bytes.get(index + 1) == Some(&b'/') => {
+                index += 2;
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+            }
+            b'/' if bytes.get(index + 1) == Some(&b'*') => {
+                index += 2;
+                let mut closed = false;
+                while index + 1 < bytes.len() {
+                    if bytes[index] == b'*' && bytes[index + 1] == b'/' {
+                        index += 2;
+                        closed = true;
+                        break;
+                    }
+                    index += 1;
+                }
+                if !closed {
+                    return None;
+                }
+            }
+            b'"' => {
+                index += 1;
+                let mut escaped = false;
+                let mut closed = false;
+                while index < bytes.len() {
+                    let byte = bytes[index];
+                    index += 1;
+                    if escaped {
+                        escaped = false;
+                    } else if byte == b'\\' {
+                        escaped = true;
+                    } else if byte == b'"' {
+                        closed = true;
+                        break;
+                    }
+                }
+                if !closed {
+                    return None;
+                }
+            }
+            b'(' | b')' | b'{' | b'}' | b',' | b';' => index += 1,
+            _ => {
+                let start = index;
+                while index < bytes.len() {
+                    match bytes[index] {
+                        b if b.is_ascii_whitespace() => break,
+                        b'(' | b')' | b'{' | b'}' | b',' | b';' | b'"' => break,
+                        b'/' if matches!(bytes.get(index + 1), Some(b'/') | Some(b'*')) => {
+                            break;
+                        }
+                        _ => index += 1,
+                    }
+                }
+                if start == index {
+                    return None;
+                }
+                tokens.push(&text[start..index]);
+            }
+        }
+    }
+    Some(tokens)
+}
+
+/// Collect CUDA kernel entry symbols from a linked cubin.
+///
+/// nvdisasm represents kernel entries as defined `STT_FUNC` symbols carrying
+/// `STO_CUDA_ENTRY` in `st_other`. Walking `.symtab`/`.dynsym` therefore
+/// distinguishes real entries from device functions and incidental strings.
+pub(crate) fn cubin_kernel_entries(bytes: &[u8]) -> Option<Vec<String>> {
+    if !is_valid_cubin(bytes) {
+        return None;
+    }
+    let section_offset = usize::try_from(read_u64(bytes, 40)?).ok()?;
+    let section_entry_size = usize::from(read_u16(bytes, 58)?);
+    let section_count = usize::from(read_u16(bytes, 60)?);
+    if section_count == 0 || section_entry_size != usize::from(ELF64_SECTION_HEADER_LENGTH) {
+        return None;
+    }
+
+    let mut entries = Vec::new();
+    let mut found_symbol_table = false;
+    for section_index in 0..section_count {
+        let header = section_offset.checked_add(section_index.checked_mul(section_entry_size)?)?;
+        let section_type = read_u32(bytes, header + 4)?;
+        if !matches!(
+            section_type,
+            ELF_SECTION_TYPE_SYMTAB | ELF_SECTION_TYPE_DYNSYM
+        ) {
+            continue;
+        }
+        found_symbol_table = true;
+        let symbols_offset = usize::try_from(read_u64(bytes, header + 24)?).ok()?;
+        let symbols_size = usize::try_from(read_u64(bytes, header + 32)?).ok()?;
+        let string_section_index = usize::try_from(read_u32(bytes, header + 40)?).ok()?;
+        let symbol_entry_size = read_u64(bytes, header + 56)?;
+        if symbol_entry_size < ELF64_SYMBOL_LENGTH
+            || symbols_size % usize::try_from(symbol_entry_size).ok()? != 0
+            || string_section_index >= section_count
+        {
+            return None;
+        }
+        let strings_header =
+            section_offset.checked_add(string_section_index.checked_mul(section_entry_size)?)?;
+        let strings_offset = usize::try_from(read_u64(bytes, strings_header + 24)?).ok()?;
+        let strings_size = usize::try_from(read_u64(bytes, strings_header + 32)?).ok()?;
+        let strings = bytes.get(strings_offset..strings_offset.checked_add(strings_size)?)?;
+        let symbol_entry_size = usize::try_from(symbol_entry_size).ok()?;
+        let symbols = bytes.get(symbols_offset..symbols_offset.checked_add(symbols_size)?)?;
+        for symbol in symbols.chunks_exact(symbol_entry_size) {
+            let name_offset = usize::try_from(read_u32(symbol, 0)?).ok()?;
+            let info = *symbol.get(4)?;
+            let other = *symbol.get(5)?;
+            let section_index = read_u16(symbol, 6)?;
+            if info & 0x0f != ELF_SYMBOL_TYPE_FUNCTION
+                || other & CUDA_SYMBOL_OTHER_ENTRY == 0
+                || section_index == 0
+                || name_offset == 0
+            {
+                continue;
+            }
+            let name = read_c_string(strings, name_offset)?;
+            if !name.is_empty() {
+                entries.push(name.to_string());
+            }
+        }
+    }
+    if !found_symbol_table {
+        return None;
+    }
+    entries.sort();
+    entries.dedup();
+    Some(entries)
+}
+
+fn read_c_string(bytes: &[u8], offset: usize) -> Option<&str> {
+    let tail = bytes.get(offset..)?;
+    let length = tail.iter().position(|&byte| byte == 0)?;
+    std::str::from_utf8(&tail[..length]).ok()
 }
 
 fn has_supported_cuda_elf_version(abi_version: u8, file_version: Option<u32>) -> bool {
@@ -301,5 +484,94 @@ mod tests {
                 "ABI version {abi_version}, file version {file_version}"
             );
         }
+    }
+
+    fn cubin_with_kernel_symbols(symbols: &[(&str, bool)]) -> Vec<u8> {
+        const SECTION_COUNT: usize = 4;
+        let section_table_length = SECTION_COUNT * usize::from(ELF64_SECTION_HEADER_LENGTH);
+        let strings = {
+            let mut strings = vec![0_u8];
+            for (name, _) in symbols {
+                strings.extend_from_slice(name.as_bytes());
+                strings.push(0);
+            }
+            strings
+        };
+        let symbol_table_length = (symbols.len() + 1) * ELF64_SYMBOL_LENGTH as usize;
+        let strings_offset = ELF64_HEADER_LENGTH + section_table_length;
+        let symbols_offset = strings_offset + strings.len();
+        let text_offset = symbols_offset + symbol_table_length;
+        let mut bytes = vec![0_u8; text_offset + 4];
+        bytes[..4].copy_from_slice(b"\x7fELF");
+        bytes[4] = 2;
+        bytes[5] = 1;
+        bytes[6] = 1;
+        bytes[16..18].copy_from_slice(&2_u16.to_le_bytes());
+        bytes[18..20].copy_from_slice(&190_u16.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[40..48].copy_from_slice(&(ELF64_HEADER_LENGTH as u64).to_le_bytes());
+        bytes[52..54].copy_from_slice(&(ELF64_HEADER_LENGTH as u16).to_le_bytes());
+        bytes[58..60].copy_from_slice(&ELF64_SECTION_HEADER_LENGTH.to_le_bytes());
+        bytes[60..62].copy_from_slice(&(SECTION_COUNT as u16).to_le_bytes());
+
+        let strtab = ELF64_HEADER_LENGTH + usize::from(ELF64_SECTION_HEADER_LENGTH);
+        bytes[strtab + 4..strtab + 8].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[strtab + 24..strtab + 32].copy_from_slice(&(strings_offset as u64).to_le_bytes());
+        bytes[strtab + 32..strtab + 40].copy_from_slice(&(strings.len() as u64).to_le_bytes());
+
+        let symtab = strtab + usize::from(ELF64_SECTION_HEADER_LENGTH);
+        bytes[symtab + 4..symtab + 8].copy_from_slice(&ELF_SECTION_TYPE_SYMTAB.to_le_bytes());
+        bytes[symtab + 24..symtab + 32].copy_from_slice(&(symbols_offset as u64).to_le_bytes());
+        bytes[symtab + 32..symtab + 40]
+            .copy_from_slice(&(symbol_table_length as u64).to_le_bytes());
+        bytes[symtab + 40..symtab + 44].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[symtab + 56..symtab + 64].copy_from_slice(&ELF64_SYMBOL_LENGTH.to_le_bytes());
+
+        let text = symtab + usize::from(ELF64_SECTION_HEADER_LENGTH);
+        bytes[text + 4..text + 8].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[text + 24..text + 32].copy_from_slice(&(text_offset as u64).to_le_bytes());
+        bytes[text + 32..text + 40].copy_from_slice(&4_u64.to_le_bytes());
+        bytes[text_offset..text_offset + 4].copy_from_slice(b"CUDA");
+        bytes[strings_offset..strings_offset + strings.len()].copy_from_slice(&strings);
+
+        let mut name_offset = 1_u32;
+        for (index, (name, is_kernel)) in symbols.iter().enumerate() {
+            let symbol = symbols_offset + (index + 1) * ELF64_SYMBOL_LENGTH as usize;
+            bytes[symbol..symbol + 4].copy_from_slice(&name_offset.to_le_bytes());
+            bytes[symbol + 4] = 0x12;
+            bytes[symbol + 5] = if *is_kernel {
+                CUDA_SYMBOL_OTHER_ENTRY
+            } else {
+                0
+            };
+            bytes[symbol + 6..symbol + 8].copy_from_slice(&3_u16.to_le_bytes());
+            name_offset += u32::try_from(name.len() + 1).unwrap();
+        }
+        bytes
+    }
+
+    #[test]
+    fn ptx_entry_inventory_ignores_comments_and_strings() {
+        let ptx = br#"
+.version 8.9
+// .entry fake_comment() {}
+.const .b8 text[] = {0}; // ".entry fake_string"
+.visible .entry kernel_a() { ret; }
+.entry
+kernel_b() { ret; }
+"#;
+        assert_eq!(
+            ptx_kernel_entries(ptx).unwrap(),
+            vec!["kernel_a".to_string(), "kernel_b".to_string()]
+        );
+        assert!(ptx_kernel_entries(b".entry kernel() {}\0").is_some());
+        assert!(ptx_kernel_entries(b".entry kernel() {}\0garbage").is_none());
+    }
+
+    #[test]
+    fn cubin_entry_inventory_uses_cuda_entry_symbol_flag() {
+        let cubin = cubin_with_kernel_symbols(&[("kernel_a", true), ("helper", false)]);
+        assert!(is_valid_cubin(&cubin));
+        assert_eq!(cubin_kernel_entries(&cubin).unwrap(), vec!["kernel_a"]);
     }
 }

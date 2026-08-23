@@ -15,6 +15,10 @@ use cuda_core::{CudaContext, CudaModule, DriverError};
 use std::sync::Arc;
 use thiserror::Error;
 
+// ArtifactEntryKind::Kernel wire tag. cuda-core re-exports OwnedArtifactBundle
+// but not the enum itself, so deferred loading reads the stable encoded tag.
+const ARTIFACT_ENTRY_KIND_KERNEL: u16 = 1;
+
 /// Errors while discovering, building, or loading an embedded CUDA module.
 #[derive(Debug, Error)]
 pub enum EmbeddedModuleError {
@@ -155,6 +159,12 @@ fn load_bundle(
     ctx: &Arc<CudaContext>,
     bundle: &OwnedArtifactBundle,
 ) -> Result<Arc<CudaModule>, EmbeddedModuleError> {
+    let expected_kernels = bundle
+        .entries
+        .iter()
+        .filter(|entry| entry.kind.to_u16() == ARTIFACT_ENTRY_KIND_KERNEL)
+        .map(|entry| entry.symbol.as_str())
+        .collect::<Vec<_>>();
     if let Some(cubin) = bundle.payload(ArtifactPayloadKind::Cubin) {
         return Ok(ctx.load_module_from_image(cubin)?);
     }
@@ -167,18 +177,24 @@ fn load_bundle(
         let emitted = target_arch_for_bundle(bundle)?;
         let execution = ltoir::execution_arch_for_context(ctx)?;
         let image = match ltoir::execution_route(&emitted, &execution)? {
-            ltoir::ExecutionRoute::Cubin => ltoir::build_cubin_from_nvvm_ir_with_compile_options(
-                nvvm_ir,
-                &bundle.name,
-                &emitted.sm(),
-                bundle.compile_options,
-            )?,
-            ltoir::ExecutionRoute::PtxBridge => ltoir::build_ptx_from_nvvm_ir_with_compile_options(
-                nvvm_ir,
-                &bundle.name,
-                &emitted.sm(),
-                bundle.compile_options,
-            )?,
+            ltoir::ExecutionRoute::Cubin => {
+                ltoir::build_cubin_from_nvvm_ir_with_compile_options_and_expected_kernels(
+                    nvvm_ir,
+                    &bundle.name,
+                    &expected_kernels,
+                    &emitted.sm(),
+                    bundle.compile_options,
+                )?
+            }
+            ltoir::ExecutionRoute::PtxBridge => {
+                ltoir::build_ptx_from_nvvm_ir_with_compile_options_and_expected_kernels(
+                    nvvm_ir,
+                    &bundle.name,
+                    &expected_kernels,
+                    &emitted.sm(),
+                    bundle.compile_options,
+                )?
+            }
         };
         return Ok(ctx.load_module_from_image(&image)?);
     }
@@ -187,18 +203,24 @@ fn load_bundle(
         let emitted = target_arch_for_bundle(bundle)?;
         let execution = ltoir::execution_arch_for_context(ctx)?;
         let image = match ltoir::execution_route(&emitted, &execution)? {
-            ltoir::ExecutionRoute::Cubin => ltoir::link_ltoir_to_cubin_with_compile_options(
-                ltoir,
-                &bundle.name,
-                &emitted.sm(),
-                bundle.compile_options,
-            )?,
-            ltoir::ExecutionRoute::PtxBridge => ltoir::link_ltoir_to_ptx_with_compile_options(
-                ltoir,
-                &bundle.name,
-                &emitted.sm(),
-                bundle.compile_options,
-            )?,
+            ltoir::ExecutionRoute::Cubin => {
+                ltoir::link_ltoir_to_cubin_with_compile_options_and_expected_kernels(
+                    ltoir,
+                    &bundle.name,
+                    &expected_kernels,
+                    &emitted.sm(),
+                    bundle.compile_options,
+                )?
+            }
+            ltoir::ExecutionRoute::PtxBridge => {
+                ltoir::link_ltoir_to_ptx_with_compile_options_and_expected_kernels(
+                    ltoir,
+                    &bundle.name,
+                    &expected_kernels,
+                    &emitted.sm(),
+                    bundle.compile_options,
+                )?
+            }
         };
         return Ok(ctx.load_module_from_image(&image)?);
     }

@@ -130,6 +130,18 @@ pub enum FinalizerError {
     #[error("nvJitLink returned an empty PTX artifact")]
     EmptyPtx,
 
+    /// A kernel root cannot be represented safely as an nvJitLink option.
+    #[error("expected CUDA kernel name is empty or contains an interior NUL byte: {name:?}")]
+    InvalidExpectedKernelName { name: String },
+
+    /// The linked image could not provide a structural kernel-entry inventory.
+    #[error("could not inspect linked {output} kernel entry inventory")]
+    LinkedKernelInventoryUnavailable { output: &'static str },
+
+    /// nvJitLink succeeded but one or more required kernel entry points vanished.
+    #[error("nvJitLink output is missing expected CUDA kernels: {missing:?}")]
+    MissingExpectedKernels { missing: Vec<String> },
+
     /// A pinned CUDA compilation tool changed around an operation. Its output can
     /// no longer be attributed to the provenance used by Cargo or a cache key.
     #[error(
@@ -195,12 +207,24 @@ impl Finalizer {
         nvvm_ir: &[u8],
         options: &FinalizationOptions,
     ) -> Result<Vec<u8>, FinalizerError> {
+        self.materialize_nvvm_ir_with_expected_kernels(module_name, nvvm_ir, &[], options)
+    }
+
+    /// Compile NVVM IR while rooting and verifying every expected kernel.
+    pub fn materialize_nvvm_ir_with_expected_kernels(
+        &self,
+        module_name: &str,
+        nvvm_ir: &[u8],
+        expected_kernels: &[&str],
+        options: &FinalizationOptions,
+    ) -> Result<Vec<u8>, FinalizerError> {
         let ltoir = self
             .compiler
             .compile_nvvm_ir_to_ltoir(module_name, nvvm_ir, options)?;
         let ltoir_name = format!("{module_name}.ltoir");
-        self.linker.link_ltoir(
+        self.linker.link_ltoir_with_expected_kernels(
             &[NamedInput::new(&ltoir_name, &ltoir)],
+            expected_kernels,
             options,
             FinalizerOutput::Cubin,
         )
@@ -218,12 +242,29 @@ impl Finalizer {
         nvvm_ir: &[u8],
         options: &FinalizationOptions,
     ) -> Result<LinkReport, FinalizerError> {
+        self.materialize_nvvm_ir_with_report_and_expected_kernels(
+            module_name,
+            nvvm_ir,
+            &[],
+            options,
+        )
+    }
+
+    /// Compile NVVM IR with diagnostics while rooting and verifying kernels.
+    pub fn materialize_nvvm_ir_with_report_and_expected_kernels(
+        &self,
+        module_name: &str,
+        nvvm_ir: &[u8],
+        expected_kernels: &[&str],
+        options: &FinalizationOptions,
+    ) -> Result<LinkReport, FinalizerError> {
         let ltoir = self
             .compiler
             .compile_nvvm_ir_to_ltoir(module_name, nvvm_ir, options)?;
         let ltoir_name = format!("{module_name}.ltoir");
-        self.linker.link_ltoir_with_report(
+        self.linker.link_ltoir_with_report_and_expected_kernels(
             &[NamedInput::new(&ltoir_name, &ltoir)],
+            expected_kernels,
             options,
             FinalizerOutput::Cubin,
         )
@@ -236,7 +277,19 @@ impl Finalizer {
         options: &FinalizationOptions,
         output: FinalizerOutput,
     ) -> Result<Vec<u8>, FinalizerError> {
-        self.linker.link_ltoir(inputs, options, output)
+        self.link_ltoir_with_expected_kernels(inputs, &[], options, output)
+    }
+
+    /// Link ordered LTOIR modules while rooting and verifying expected kernels.
+    pub fn link_ltoir_with_expected_kernels(
+        &self,
+        inputs: &[NamedInput<'_>],
+        expected_kernels: &[&str],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Result<Vec<u8>, FinalizerError> {
+        self.linker
+            .link_ltoir_with_expected_kernels(inputs, expected_kernels, options, output)
     }
 
     /// Link ordered LTOIR modules while collecting ptxas resource diagnostics.
@@ -251,7 +304,23 @@ impl Finalizer {
         options: &FinalizationOptions,
         output: FinalizerOutput,
     ) -> Result<LinkReport, FinalizerError> {
-        self.linker.link_ltoir_with_report(inputs, options, output)
+        self.link_ltoir_with_report_and_expected_kernels(inputs, &[], options, output)
+    }
+
+    /// Link LTOIR with diagnostics while rooting and verifying expected kernels.
+    pub fn link_ltoir_with_report_and_expected_kernels(
+        &self,
+        inputs: &[NamedInput<'_>],
+        expected_kernels: &[&str],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Result<LinkReport, FinalizerError> {
+        self.linker.link_ltoir_with_report_and_expected_kernels(
+            inputs,
+            expected_kernels,
+            options,
+            output,
+        )
     }
 
     /// Compiler component, including exact libdevice bytes and provenance.
@@ -292,10 +361,31 @@ impl Finalizer {
         options: &FinalizationOptions,
         output: FinalizerOutput,
     ) -> Option<[u8; 32]> {
-        nvvm_ir_artifact_digest_with_provenance(
+        self.nvvm_ir_artifact_digest_with_expected_kernels(
             module_name,
             ltoir_module_name,
             nvvm_ir,
+            &[],
+            options,
+            output,
+        )
+    }
+
+    /// Digest NVVM IR finalization including the expected-kernel root set.
+    pub fn nvvm_ir_artifact_digest_with_expected_kernels(
+        &self,
+        module_name: &str,
+        ltoir_module_name: &str,
+        nvvm_ir: &[u8],
+        expected_kernels: &[&str],
+        options: &FinalizationOptions,
+        output: FinalizerOutput,
+    ) -> Option<[u8; 32]> {
+        nvvm_ir_artifact_digest_with_provenance_and_expected_kernels(
+            module_name,
+            ltoir_module_name,
+            nvvm_ir,
+            expected_kernels,
             options,
             output,
             self.provenance(),
@@ -315,6 +405,27 @@ pub fn nvvm_ir_artifact_digest_with_provenance(
     output: FinalizerOutput,
     provenance: ToolProvenance,
 ) -> Option<[u8; 32]> {
+    nvvm_ir_artifact_digest_with_provenance_and_expected_kernels(
+        module_name,
+        ltoir_module_name,
+        nvvm_ir,
+        &[],
+        options,
+        output,
+        provenance,
+    )
+}
+
+/// Digest a complete finalization plan including expected kernel roots.
+pub fn nvvm_ir_artifact_digest_with_provenance_and_expected_kernels(
+    module_name: &str,
+    ltoir_module_name: &str,
+    nvvm_ir: &[u8],
+    expected_kernels: &[&str],
+    options: &FinalizationOptions,
+    output: FinalizerOutput,
+    provenance: ToolProvenance,
+) -> Option<[u8; 32]> {
     let compiler_digest = nvvm::nvvm_ir_artifact_digest_parts(
         module_name,
         nvvm_ir,
@@ -324,6 +435,7 @@ pub fn nvvm_ir_artifact_digest_with_provenance(
     );
     let linker_digest = link::ltoir_artifact_digest_parts(
         &[NamedInput::new(ltoir_module_name, &compiler_digest)],
+        expected_kernels,
         options,
         output,
         &provenance.nvjitlink_sha256?,
@@ -345,7 +457,24 @@ pub fn ltoir_artifact_digest_with_provenance(
     output: FinalizerOutput,
     nvjitlink_sha256: &[u8; 32],
 ) -> [u8; 32] {
-    link::ltoir_artifact_digest_parts(inputs, options, output, nvjitlink_sha256)
+    ltoir_artifact_digest_with_provenance_and_expected_kernels(
+        inputs,
+        &[],
+        options,
+        output,
+        nvjitlink_sha256,
+    )
+}
+
+/// Digest an ordered LTOIR link including the expected-kernel root set.
+pub fn ltoir_artifact_digest_with_provenance_and_expected_kernels(
+    inputs: &[NamedInput<'_>],
+    expected_kernels: &[&str],
+    options: &FinalizationOptions,
+    output: FinalizerOutput,
+    nvjitlink_sha256: &[u8; 32],
+) -> [u8; 32] {
+    link::ltoir_artifact_digest_parts(inputs, expected_kernels, options, output, nvjitlink_sha256)
 }
 
 fn validate_name(name: &str) -> Result<(), FinalizerError> {
@@ -362,23 +491,23 @@ fn validate_name(name: &str) -> Result<(), FinalizerError> {
 mod live_tests {
     use super::*;
 
-    /// `@llvm.used` keeps the kernel alive through LTO, exactly as cuda-oxide's
-    /// NVVM exporter emits it for real kernels. Without it nvJitLink's link-time
-    /// optimizer dead-strips the annotation-marked kernel as unreachable and
-    /// links an empty module: the pipeline still succeeds, so every assertion
-    /// below passed while nothing was being compiled. Measured on CUDA 13.3
-    /// before this line existed, the linked PTX was 202 bytes with zero
-    /// functions and the cubin had no entry points.
+    /// Legacy-dialect NVVM IR with the kernel retained through libNVVM.
+    ///
+    /// cuda-oxide's real LLVM exporter roots externally consumed function
+    /// definitions in `@llvm.used`, so this fixture mirrors the production
+    /// contract up to the LTOIR boundary. The finalizer then adds
+    /// `-kernels-used=kernel` at nvJitLink and independently inventories the
+    /// linked PTX/cubin to prove the expected entry survived the final link.
     const LEGACY_NVVM_IR: &[u8] = br#"
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
-
-@llvm.used = appending global [1 x i8*] [i8* bitcast (void ()* @kernel to i8*)], section "llvm.metadata"
 
 define void @kernel() {
 entry:
   ret void
 }
+
+@llvm.used = appending global [1 x i8*] [i8* bitcast (void ()* @kernel to i8*)], section "llvm.metadata"
 
 !nvvm.annotations = !{!0}
 !nvvmir.version = !{!1}
@@ -408,34 +537,32 @@ entry:
             assert!(!ltoir.is_empty());
             let input = [NamedInput::new("kernel.ltoir", &ltoir)];
             let cubin = finalizer
-                .link_ltoir(&input, &options, FinalizerOutput::Cubin)
+                .link_ltoir_with_expected_kernels(
+                    &input,
+                    &["kernel"],
+                    &options,
+                    FinalizerOutput::Cubin,
+                )
                 .unwrap();
             assert!(is_valid_cubin(&cubin));
-            // A cubin whose kernel was stripped is still a well-formed ELF, so
-            // `is_valid_cubin` alone cannot tell the two apart. Require the
-            // kernel's name to survive into the image.
-            assert!(
-                cubin.windows(b"kernel".len()).any(|part| part == b"kernel"),
-                "cubin has no `kernel` symbol ({} bytes): the kernel was \
-                 dead-stripped and this test is validating an empty module",
-                cubin.len()
-            );
+            let cubin_entries = crate::validation::cubin_kernel_entries(&cubin).unwrap();
+            assert_eq!(cubin_entries, vec!["kernel"]);
             let ptx = finalizer
-                .link_ltoir(&input, &options, FinalizerOutput::Ptx)
+                .link_ltoir_with_expected_kernels(
+                    &input,
+                    &["kernel"],
+                    &options,
+                    FinalizerOutput::Ptx,
+                )
                 .unwrap();
             assert!(
                 ptx.windows(b".version".len())
                     .any(|part| part == b".version")
             );
             // `.version` is in the header of even an empty module, so it proves
-            // only that something was emitted. The entry point is what proves
-            // the kernel made it through libNVVM and nvJitLink.
-            let ptx_text = String::from_utf8_lossy(&ptx);
-            assert!(
-                ptx_text.contains(".entry kernel"),
-                "linked PTX has no `.entry kernel` ({} bytes):\n{ptx_text}",
-                ptx.len()
-            );
+            // only that something was emitted. Inventory the entry explicitly.
+            let ptx_entries = crate::validation::ptx_kernel_entries(&ptx).unwrap();
+            assert_eq!(ptx_entries, vec!["kernel"]);
         }
     }
 
@@ -515,7 +642,12 @@ entry:
         let input = [NamedInput::new("spill.ltoir", &ltoir)];
 
         let report = finalizer
-            .link_ltoir_with_report(&input, &options, FinalizerOutput::Cubin)
+            .link_ltoir_with_report_and_expected_kernels(
+                &input,
+                &["spill_kernel"],
+                &options,
+                FinalizerOutput::Cubin,
+            )
             .unwrap();
         assert!(is_valid_cubin(&report.image));
 
