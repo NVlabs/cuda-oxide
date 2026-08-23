@@ -1541,6 +1541,9 @@ mod kernels {
 
             // TMA → MMA+epilogue: "tile coords are ready in TILE_INFO"
             static mut TILE_READY: Barrier = Barrier::UNINIT;
+            // The producer must not overwrite TILE_INFO until every reader warp
+            // has copied the current tile coordinates/has_work flag.
+            static mut TILE_INFO_FREE: Barrier = Barrier::UNINIT;
 
             const A_TILE_BYTES: u32 = 128 * 64 * 2;
             const B_TILE_BYTES: u32 = 128 * 64 * 2;
@@ -1573,6 +1576,9 @@ mod kernels {
                 mbarrier_init(&raw mut ACCUM_EMPTY0, 128);
                 mbarrier_init(&raw mut ACCUM_EMPTY1, 128);
                 mbarrier_init(&raw mut TILE_READY, 1);
+                // One synchronized leader per reader warp acknowledges that all
+                // lanes have copied the mailbox before the producer reuses it.
+                mbarrier_init(&raw mut TILE_INFO_FREE, 5);
                 fence_proxy_async_shared_cta();
             }
             thread::sync_threads();
@@ -1616,10 +1622,21 @@ mod kernels {
                 // parity = (global_k >> 1) & 1. If we reset per tile, parity would
                 // collide with the previous tile's last iteration.
                 let mut global_k: u32 = 0;
+                let mut tile_seq: u32 = 0;
+                let mut tile_info_free_parity: u32 = 0;
 
                 loop {
                     if is_lane0 {
                         let tile_id = counter.fetch_add(1, AtomicOrdering::Relaxed);
+                        // tile_seq counts prior publishes: the first one has no
+                        // readers to wait for, every later one does.
+                        if tile_seq > 0 {
+                            while !mbarrier_try_wait_parity(
+                                &raw const TILE_INFO_FREE,
+                                tile_info_free_parity,
+                            ) {}
+                            tile_info_free_parity ^= 1;
+                        }
                         if tile_id < total_tiles {
                             *(&raw mut TILE_INFO as *mut u32).add(0) = tile_id / tiles_n;
                             *(&raw mut TILE_INFO as *mut u32).add(1) = tile_id % tiles_n;
@@ -1628,8 +1645,13 @@ mod kernels {
                             *(&raw mut TILE_INFO as *mut u32).add(2) = 0;
                         }
                         mbarrier_arrive(&raw const TILE_READY);
+                        tile_seq += 1;
                     }
 
+                    // Lanes 1-31 read the mailbox lane 0 just wrote, and lane 0
+                    // can stall above waiting for reader acks; without this sync
+                    // they race ahead and can read the previous tile's has_work.
+                    warp::sync_mask(u32::MAX);
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
                     if has_work == 0 {
                         break;
@@ -1650,6 +1672,10 @@ mod kernels {
                         } else {
                             while !mbarrier_try_wait_parity(&raw const MMA_BAR1, mma_parity) {}
                         }
+                        // All lanes wait, then sync before lane 0 issues the
+                        // loads that let MMA re-arm this barrier (same
+                        // no-stranding rule as the MMA warp's K-loop).
+                        warp::sync_mask(u32::MAX);
 
                         if is_lane0 {
                             let k_base = (k_idx * 64) as i32;
@@ -1725,6 +1751,10 @@ mod kernels {
                     tile_parity ^= 1;
 
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
+                    warp::sync_mask(u32::MAX);
+                    if is_lane0 {
+                        mbarrier_arrive(&raw const TILE_INFO_FREE);
+                    }
                     if has_work == 0 {
                         break;
                     }
@@ -1733,6 +1763,10 @@ mod kernels {
                     let tmem_stage_offset = accum_stage * ACCUM_STAGE_COLS;
 
                     // First 2 tiles fill fresh stages; after that, wait for epilogue to drain
+                    // All lanes may wait here: the next ACCUM_EMPTY phase needs
+                    // an ACCUM_FULL commit from a later tile, which sits behind
+                    // this warp's tile-top sync, so the barrier cannot advance
+                    // past a lane that is still waiting on it.
                     if tile_iter >= NUM_ACCUM_STAGES {
                         let empty_parity = ((tile_iter - NUM_ACCUM_STAGES) / NUM_ACCUM_STAGES) & 1;
                         if accum_stage == 0 {
@@ -1755,6 +1789,13 @@ mod kernels {
                         } else {
                             while !mbarrier_try_wait_parity(&raw const TMA_BAR1, tma_parity) {}
                         }
+                        // All lanes wait, then sync before lane 0 consumes the
+                        // stage. The commit below is what lets the producer
+                        // re-arm this barrier, so ordering it after the sync
+                        // means the barrier can never advance past a lane that
+                        // is still waiting on it -- no lane can strand one
+                        // parity short of a stopped barrier.
+                        warp::sync_mask(u32::MAX);
 
                         if is_lane0 {
                             let smem_a_base = if stage == 0 {
@@ -1825,6 +1866,7 @@ mod kernels {
             // All 128 threads arrive on ACCUM_EMPTY to signal MMA that TMEM is free.
             // ════════════════════════════════════════════════════════════════════
             if warp_id < 4 {
+                let is_lane0 = lane_id == 0;
                 let mut epi_tile_iter: u32 = 0;
                 let mut tile_parity: u32 = 0;
 
@@ -1840,13 +1882,16 @@ mod kernels {
                     tile_parity ^= 1;
 
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
-                    if has_work == 0 {
-                        break;
-                    }
-
                     // Save tile coords to local regs (TILE_INFO may be overwritten by TMA later)
                     let tile_m = *(&raw const TILE_INFO as *const u32).add(0);
                     let tile_n = *(&raw const TILE_INFO as *const u32).add(1);
+                    warp::sync_mask(u32::MAX);
+                    if is_lane0 {
+                        mbarrier_arrive(&raw const TILE_INFO_FREE);
+                    }
+                    if has_work == 0 {
+                        break;
+                    }
 
                     let accum_stage = epi_tile_iter % NUM_ACCUM_STAGES;
                     let tmem_stage_offset = accum_stage * ACCUM_STAGE_COLS;
@@ -1957,6 +2002,7 @@ mod kernels {
                 mbarrier_inval(&raw mut ACCUM_EMPTY0);
                 mbarrier_inval(&raw mut ACCUM_EMPTY1);
                 mbarrier_inval(&raw mut TILE_READY);
+                mbarrier_inval(&raw mut TILE_INFO_FREE);
             }
         }
     }
@@ -2144,6 +2190,9 @@ mod kernels {
                     } else {
                         while !mbarrier_try_wait_parity(&raw const MMA_BAR1, mma_parity) {}
                     }
+                    // All lanes wait, then sync before lane 0 issues the loads
+                    // that let MMA re-arm this barrier (no-stranding rule).
+                    warp::sync_mask(u32::MAX);
 
                     if is_lane0 {
                         let k_base = (k_idx * 64) as i32;
@@ -2270,6 +2319,10 @@ mod kernels {
                             } else {
                                 while !mbarrier_try_wait_parity(&raw const MMA_BAR1, mma_parity) {}
                             }
+                            // All lanes wait, then sync before lane 0 issues the
+                            // loads that let MMA re-arm this barrier
+                            // (no-stranding rule).
+                            warp::sync_mask(u32::MAX);
 
                             if is_lane0 {
                                 let k_base = (k_idx * 64) as i32;
@@ -2352,6 +2405,10 @@ mod kernels {
                     let accum_stage = tile_iter % NUM_ACCUM_STAGES;
                     let tmem_stage_offset = accum_stage * ACCUM_STAGE_COLS;
 
+                    // All lanes may wait here: the next ACCUM_EMPTY phase needs
+                    // an ACCUM_FULL commit from a later tile, which sits behind
+                    // this warp's tile-top sync, so the barrier cannot advance
+                    // past a lane that is still waiting on it.
                     if tile_iter >= NUM_ACCUM_STAGES {
                         let empty_parity = ((tile_iter - NUM_ACCUM_STAGES) / NUM_ACCUM_STAGES) & 1;
                         if accum_stage == 0 {
@@ -2373,6 +2430,13 @@ mod kernels {
                         } else {
                             while !mbarrier_try_wait_parity(&raw const TMA_BAR1, tma_parity) {}
                         }
+                        // All lanes wait, then sync before lane 0 consumes the
+                        // stage. The commit below is what lets the producer
+                        // re-arm this barrier, so ordering it after the sync
+                        // means the barrier can never advance past a lane that
+                        // is still waiting on it -- no lane can strand one
+                        // parity short of a stopped barrier.
+                        warp::sync_mask(u32::MAX);
 
                         if is_lane0 {
                             let smem_a_base = if stage == 0 {
@@ -2648,6 +2712,9 @@ mod kernels {
             static mut ACCUM_EMPTY1: Barrier = Barrier::UNINIT;
 
             static mut TILE_READY: Barrier = Barrier::UNINIT;
+            // The producer must not overwrite TILE_INFO until every reader warp
+            // has copied the current tile coordinates/has_work flag.
+            static mut TILE_INFO_FREE: Barrier = Barrier::UNINIT;
 
             // CLC: 16-byte response buffer + mbarrier
             static mut CLC_RESPONSE: SharedArray<u64, 2, 16> = SharedArray::UNINIT;
@@ -2689,6 +2756,9 @@ mod kernels {
                 mbarrier_init(&raw mut ACCUM_EMPTY0, 128);
                 mbarrier_init(&raw mut ACCUM_EMPTY1, 128);
                 mbarrier_init(&raw mut TILE_READY, 1);
+                // One synchronized leader per reader warp acknowledges that all
+                // lanes have copied the mailbox before the producer reuses it.
+                mbarrier_init(&raw mut TILE_INFO_FREE, 5);
                 mbarrier_init(&raw mut CLC_BAR, 1);
                 mbarrier_init(&raw mut CLC_READY, CLUSTER_SIZE);
                 // MCAST_BARs: all 4 cluster CTAs must arrive before rank 0 can reuse B buffer
@@ -2753,6 +2823,7 @@ mod kernels {
                 let is_rank0 = my_rank == 0;
                 let mut global_k: u32 = 0;
                 let mut clc_iter: u32 = 0;
+                let mut tile_info_free_parity: u32 = 0;
 
                 // ── First tile: use our own blockIdx (hardware-assigned) ──
                 let first_ctaid = thread::blockIdx_x();
@@ -2779,6 +2850,9 @@ mod kernels {
                     } else {
                         while !mbarrier_try_wait_parity(&raw const MMA_BAR1, mma_parity) {}
                     }
+                    // All lanes wait, then sync before lane 0 issues the loads
+                    // that let MMA re-arm this barrier (no-stranding rule).
+                    warp::sync_mask(u32::MAX);
 
                     // Arm the local completion barrier and issue the per-CTA A
                     // copy before advertising that this CTA is ready for B multicast.
@@ -2904,6 +2978,10 @@ mod kernels {
 
                         if is_canceled == 0 {
                             if is_lane0 {
+                                while !mbarrier_try_wait_parity(
+                                    &raw const TILE_INFO_FREE,
+                                    tile_info_free_parity,
+                                ) {}
                                 *(&raw mut TILE_INFO as *mut u32).add(2) = 0;
                                 mbarrier_arrive(&raw const TILE_READY);
                             }
@@ -2914,6 +2992,11 @@ mod kernels {
                         let tile_n = my_ctaid / tiles_m;
 
                         if is_lane0 {
+                            while !mbarrier_try_wait_parity(
+                                &raw const TILE_INFO_FREE,
+                                tile_info_free_parity,
+                            ) {}
+                            tile_info_free_parity ^= 1;
                             *(&raw mut TILE_INFO as *mut u32).add(0) = tile_m;
                             *(&raw mut TILE_INFO as *mut u32).add(1) = tile_n;
                             *(&raw mut TILE_INFO as *mut u32).add(2) = 1;
@@ -2934,6 +3017,10 @@ mod kernels {
                             } else {
                                 while !mbarrier_try_wait_parity(&raw const MMA_BAR1, mma_parity) {}
                             }
+                            // All lanes wait, then sync before lane 0 issues the
+                            // loads that let MMA re-arm this barrier
+                            // (no-stranding rule).
+                            warp::sync_mask(u32::MAX);
 
                             // Arm the local barrier and start A before advertising
                             // readiness for the cluster-wide B multicast.
@@ -3032,6 +3119,10 @@ mod kernels {
                     tile_parity ^= 1;
 
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
+                    warp::sync_mask(u32::MAX);
+                    if is_lane0 {
+                        mbarrier_arrive(&raw const TILE_INFO_FREE);
+                    }
                     if has_work == 0 {
                         break;
                     }
@@ -3039,6 +3130,10 @@ mod kernels {
                     let accum_stage = tile_iter % NUM_ACCUM_STAGES;
                     let tmem_stage_offset = accum_stage * ACCUM_STAGE_COLS;
 
+                    // All lanes may wait here: the next ACCUM_EMPTY phase needs
+                    // an ACCUM_FULL commit from a later tile, which sits behind
+                    // this warp's tile-top sync, so the barrier cannot advance
+                    // past a lane that is still waiting on it.
                     if tile_iter >= NUM_ACCUM_STAGES {
                         let empty_parity = ((tile_iter - NUM_ACCUM_STAGES) / NUM_ACCUM_STAGES) & 1;
                         if accum_stage == 0 {
@@ -3060,6 +3155,13 @@ mod kernels {
                         } else {
                             while !mbarrier_try_wait_parity(&raw const TMA_BAR1, tma_parity) {}
                         }
+                        // All lanes wait, then sync before lane 0 consumes the
+                        // stage. The commit below is what lets the producer
+                        // re-arm this barrier, so ordering it after the sync
+                        // means the barrier can never advance past a lane that
+                        // is still waiting on it -- no lane can strand one
+                        // parity short of a stopped barrier.
+                        warp::sync_mask(u32::MAX);
 
                         if is_lane0 {
                             let smem_a_base = if stage == 0 {
@@ -3127,6 +3229,7 @@ mod kernels {
             // Epilogue warps (0-3): identical to Phase 4A
             // ════════════════════════════════════════════════════════════════════
             if warp_id < 4 {
+                let is_lane0 = lane_id == 0;
                 let mut epi_tile_iter: u32 = 0;
                 let mut tile_parity: u32 = 0;
 
@@ -3142,12 +3245,15 @@ mod kernels {
                     tile_parity ^= 1;
 
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
+                    let tile_m = *(&raw const TILE_INFO as *const u32).add(0);
+                    let tile_n = *(&raw const TILE_INFO as *const u32).add(1);
+                    warp::sync_mask(u32::MAX);
+                    if is_lane0 {
+                        mbarrier_arrive(&raw const TILE_INFO_FREE);
+                    }
                     if has_work == 0 {
                         break;
                     }
-
-                    let tile_m = *(&raw const TILE_INFO as *const u32).add(0);
-                    let tile_n = *(&raw const TILE_INFO as *const u32).add(1);
 
                     let accum_stage = epi_tile_iter % NUM_ACCUM_STAGES;
                     let tmem_stage_offset = accum_stage * ACCUM_STAGE_COLS;
@@ -3255,6 +3361,7 @@ mod kernels {
                 mbarrier_inval(&raw mut ACCUM_EMPTY0);
                 mbarrier_inval(&raw mut ACCUM_EMPTY1);
                 mbarrier_inval(&raw mut TILE_READY);
+                mbarrier_inval(&raw mut TILE_INFO_FREE);
                 mbarrier_inval(&raw mut CLC_BAR);
                 mbarrier_inval(&raw mut CLC_READY);
                 mbarrier_inval(&raw mut MCAST_BAR0);
@@ -3334,6 +3441,9 @@ mod kernels {
             static mut ACCUM_EMPTY0: Barrier = Barrier::UNINIT;
             static mut ACCUM_EMPTY1: Barrier = Barrier::UNINIT;
             static mut TILE_READY: Barrier = Barrier::UNINIT;
+            // The producer must not overwrite TILE_INFO until every reader warp
+            // has copied the current tile coordinates/has_work flag.
+            static mut TILE_INFO_FREE: Barrier = Barrier::UNINIT;
 
             static mut CLC_RESPONSE: SharedArray<u64, 2, 16> = SharedArray::UNINIT;
             static mut CLC_BAR: Barrier = Barrier::UNINIT;
@@ -3381,6 +3491,9 @@ mod kernels {
                 mbarrier_init(&raw mut ACCUM_EMPTY0, 256);
                 mbarrier_init(&raw mut ACCUM_EMPTY1, 256);
                 mbarrier_init(&raw mut TILE_READY, 1);
+                // One synchronized leader per reader warp acknowledges that all
+                // lanes have copied the mailbox before the producer reuses it.
+                mbarrier_init(&raw mut TILE_INFO_FREE, 5);
                 mbarrier_init(&raw mut CLC_BAR, 1);
                 fence_proxy_async_shared_cta();
             }
@@ -3416,6 +3529,7 @@ mod kernels {
                 let is_lane0 = lane_id == 0;
                 let mut tile_seq: u32 = 0;
                 let mut clc_iter: u32 = 0;
+                let mut tile_info_free_parity: u32 = 0;
 
                 // BUG FIX: CLC assigns consecutive blockIdx values to CTAs in a cluster.
                 // For a cluster of size 2: CTA pair (0,1) has blockIdx (0,1), pair (2,3) has
@@ -3513,6 +3627,9 @@ mod kernels {
                     // This is an MMA barrier wait (not TMA) — safe for both CTAs because
                     // tcgen05_commit_multicast_cg2 multicasts to both CTAs' MMA barriers.
                     while !mbarrier_try_wait_parity(mma_bar_const, mma_parity) {}
+                    // All lanes wait, then sync before lane 0 issues the loads
+                    // that let MMA re-arm this barrier (no-stranding rule).
+                    warp::sync_mask(u32::MAX);
 
                     // BARRIER ALIASING PROTOCOL (cta_group::2):
                     // PEER_BIT_MASK clears bit 24 of the barrier address, redirecting both
@@ -3570,6 +3687,10 @@ mod kernels {
 
                     if is_canceled == 0 {
                         if is_lane0 {
+                            while !mbarrier_try_wait_parity(
+                                &raw const TILE_INFO_FREE,
+                                tile_info_free_parity,
+                            ) {}
                             *(&raw mut TILE_INFO as *mut u32).add(2) = 0;
                             mbarrier_arrive(&raw const TILE_READY);
                         }
@@ -3596,6 +3717,11 @@ mod kernels {
                     let tile_n = n_start + in_group % band_w;
 
                     if is_lane0 {
+                        while !mbarrier_try_wait_parity(
+                            &raw const TILE_INFO_FREE,
+                            tile_info_free_parity,
+                        ) {}
+                        tile_info_free_parity ^= 1;
                         *(&raw mut TILE_INFO as *mut u32).add(0) = tile_m;
                         *(&raw mut TILE_INFO as *mut u32).add(1) = tile_n;
                         *(&raw mut TILE_INFO as *mut u32).add(2) = 1;
@@ -3649,6 +3775,10 @@ mod kernels {
                         };
 
                         while !mbarrier_try_wait_parity(mma_bar_const, mma_parity) {}
+                        // All lanes wait, then sync before lane 0 issues the
+                        // loads that let MMA re-arm this barrier
+                        // (no-stranding rule).
+                        warp::sync_mask(u32::MAX);
 
                         if is_lane0 {
                             if elect_one_cta {
@@ -3697,6 +3827,10 @@ mod kernels {
                     tile_parity ^= 1;
 
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
+                    warp::sync_mask(u32::MAX);
+                    if is_lane0 {
+                        mbarrier_arrive(&raw const TILE_INFO_FREE);
+                    }
                     if has_work == 0 {
                         break;
                     }
@@ -3704,6 +3838,10 @@ mod kernels {
                     let accum_stage = tile_iter % NUM_ACCUM_STAGES;
                     let tmem_stage_offset = accum_stage * ACCUM_STAGE_COLS;
 
+                    // All leader-warp lanes may wait here: the next ACCUM_EMPTY
+                    // phase needs an ACCUM_FULL commit from a later tile, which
+                    // sits behind this warp's tile-top sync, so the barrier
+                    // cannot advance past a lane that is still waiting on it.
                     if elect_one_cta && tile_iter >= NUM_ACCUM_STAGES {
                         let empty_parity = ((tile_iter - NUM_ACCUM_STAGES) / NUM_ACCUM_STAGES) & 1;
                         if accum_stage == 0 {
@@ -3762,11 +3900,17 @@ mod kernels {
                         // LEADER-ONLY TMA WAIT + MMA:
                         // Because TMA completions are aliased to the leader's barrier, only
                         // the leader can (and should) wait on tma_bar_const. The follower's
-                        // TMA barrier is never signaled. The follower's MMA warp simply loops
-                        // through the K iterations without doing work — pair-UMMA is issued
-                        // by the leader and operates on both CTAs' SMEM simultaneously.
+                        // TMA barrier is never signaled -- pair-UMMA is issued by the leader
+                        // and operates on both CTAs' SMEM simultaneously.
                         if elect_one_cta {
                             while !mbarrier_try_wait_parity(tma_bar_const, tma_parity) {}
+                            // All lanes of the leader warp wait, then sync before
+                            // lane 0 issues the MMAs whose commit re-arms this
+                            // barrier: the barrier can then never advance past a
+                            // lane still waiting on it, so no lane can strand one
+                            // parity short (the seed-0 hang in the B200 mbarrier
+                            // perturbation sweep).
+                            warp::sync_mask(u32::MAX);
 
                             if is_lane0 {
                                 let mut j: u32 = 0;
@@ -3827,6 +3971,7 @@ mod kernels {
             }
 
             if warp_id < 4 {
+                let is_lane0 = lane_id == 0;
                 let mut epi_tile_iter: u32 = 0;
                 let mut tile_parity: u32 = 0;
 
@@ -3849,12 +3994,15 @@ mod kernels {
                     tile_parity ^= 1;
 
                     let has_work = *(&raw const TILE_INFO as *const u32).add(2);
+                    let tile_m = *(&raw const TILE_INFO as *const u32).add(0);
+                    let tile_n = *(&raw const TILE_INFO as *const u32).add(1);
+                    warp::sync_mask(u32::MAX);
+                    if is_lane0 {
+                        mbarrier_arrive(&raw const TILE_INFO_FREE);
+                    }
                     if has_work == 0 {
                         break;
                     }
-
-                    let tile_m = *(&raw const TILE_INFO as *const u32).add(0);
-                    let tile_n = *(&raw const TILE_INFO as *const u32).add(1);
 
                     let accum_stage = epi_tile_iter % NUM_ACCUM_STAGES;
                     let tmem_stage_offset = accum_stage * ACCUM_STAGE_COLS;
@@ -3976,6 +4124,7 @@ mod kernels {
                 mbarrier_inval(&raw mut ACCUM_EMPTY0);
                 mbarrier_inval(&raw mut ACCUM_EMPTY1);
                 mbarrier_inval(&raw mut TILE_READY);
+                mbarrier_inval(&raw mut TILE_INFO_FREE);
                 mbarrier_inval(&raw mut CLC_BAR);
             }
         }
@@ -4052,6 +4201,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(phase) = phase_filter.as_deref() {
         match phase {
+            "4a-correctness" => {
+                run_correctness_test_persistent(&stream, &module, 4096, 4096, 4096)?;
+            }
+            "4a" => {
+                run_correctness_test_persistent(&stream, &module, 4096, 4096, 4096)?;
+                for (m, n, k) in sizes {
+                    run_benchmark_persistent(&stream, &module, m, n, k)?;
+                }
+            }
             "4b-correctness" => {
                 run_correctness_test_clc(&stream, &module, 4096, 4096, 4096)?;
             }
@@ -4070,9 +4228,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     run_benchmark_clc_multicast(&stream, &module, m, n, k)?;
                 }
             }
+            "4d-correctness" => {
+                run_correctness_test_clc_multicast_4_stage_pipeline(
+                    &stream, &module, 4096, 4096, 4096,
+                )?;
+            }
+            "4d" => {
+                run_correctness_test_clc_multicast_4_stage_pipeline(
+                    &stream, &module, 4096, 4096, 4096,
+                )?;
+                for (m, n, k) in sizes {
+                    run_benchmark_clc_multicast_4_stage_pipeline(&stream, &module, m, n, k)?;
+                }
+            }
             _ => {
                 return Err(format!(
-                    "unknown GEMM_SOL_PHASE={phase:?}; expected 4b, 4b-correctness, 4c, or 4c-correctness"
+                    "unknown GEMM_SOL_PHASE={phase:?}; expected 4a, 4a-correctness, 4b, \
+                     4b-correctness, 4c, 4c-correctness, 4d, or 4d-correctness"
                 )
                 .into());
             }
