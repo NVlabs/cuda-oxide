@@ -347,6 +347,31 @@ def commands(script):
                 yield tokens
 
 
+def invoked_recipes(script):
+    """Just recipes this script runs, as `just <name>...`.
+
+    A workflow step that runs `just check-guards` executes every guard in that
+    recipe. Reading only the literal `bash scripts/...` lines would report all of
+    them as absent from CI -- a false failure, and the wrong verdict. The
+    Justfile is the authoritative list in that case, so the walk follows it
+    rather than re-deriving one.
+    """
+    found = set()
+    for tokens in commands(script):
+        while tokens and (ASSIGNMENT.match(tokens[0]) or tokens[0] in {"-", "@"}):
+            tokens = tokens[1:]
+        while tokens and tokens[0] in WRAPPERS:
+            tokens = tokens[1:]
+        if not tokens or os.path.basename(tokens[0]) != "just":
+            continue
+        for token in tokens[1:]:
+            if token.startswith("-"):
+                continue
+            if re.fullmatch(r"[a-zA-Z0-9_-]+", token):
+                found.add(token)
+    return found
+
+
 def invoked_scripts(script):
     """Guard basenames this script executes, as opposed to merely mentions."""
     found = set()
@@ -545,8 +570,9 @@ def reachable_workflow_set(documents):
         reachable |= discovered
 
 
-def workflow_coverage(documents):
+def workflow_coverage(documents, recipes=None):
     """Guard -> "workflow:job" for every guard a pull request actually executes."""
+    recipes = recipes or {}
     found = {}
     for name in sorted(reachable_workflow_set(documents)):
         for job_name, job in (documents[name].get("jobs") or {}).items():
@@ -560,9 +586,14 @@ def workflow_coverage(documents):
                 if statically_false(step.get("if")) or not enforcing(step):
                     continue
                 script = step.get("run")
-                if isinstance(script, str):
-                    for guard in invoked_scripts(script):
-                        found.setdefault(guard, f"{name}:{job_name}")
+                if not isinstance(script, str):
+                    continue
+                for guard in invoked_scripts(script):
+                    found.setdefault(guard, f"{name}:{job_name}")
+                for recipe in invoked_recipes(script):
+                    reached = recipes_reachable_from(recipes, [recipe])
+                    for guard in recipe_guards(recipes, reached):
+                        found.setdefault(guard, f"{name}:{job_name} (just {recipe})")
     return found
 
 
@@ -599,6 +630,35 @@ def parse_recipes(text):
     return recipes
 
 
+def recipes_reachable_from(recipes, entries):
+    """Recipes `just <entry>` runs, following dependencies."""
+    reachable, frontier = set(), list(entries)
+    while frontier:
+        name = frontier.pop()
+        if name in reachable or name not in recipes:
+            continue
+        reachable.add(name)
+        frontier.extend(recipes[name][0])
+    return reachable
+
+
+def recipe_guards(recipes, names):
+    """Guard -> recipe, for the enforcing lines of the named recipes."""
+    found = {}
+    for name in sorted(names):
+        if name not in recipes:
+            continue
+        for line in recipes[name][1]:
+            # `@` only silences the echo; `-` makes just ignore a failure, which
+            # is the Justfile's `continue-on-error` and does not enforce.
+            stripped = line.lstrip("@")
+            if stripped.startswith("-"):
+                continue
+            for guard in invoked_scripts(stripped):
+                found.setdefault(guard, name)
+    return found
+
+
 def justfile_coverage(text, entry_recipe, guard_recipe):
     """Guard -> recipe, for recipes `just <entry_recipe>` actually reaches."""
     recipes = parse_recipes(text)
@@ -608,29 +668,13 @@ def justfile_coverage(text, entry_recipe, guard_recipe):
                 f"parse self-test failed: no `{required}:` recipe in the Justfile; "
                 "it was renamed, so fix this script"
             )
-    reachable, frontier = set(), [entry_recipe]
-    while frontier:
-        name = frontier.pop()
-        if name in reachable or name not in recipes:
-            continue
-        reachable.add(name)
-        frontier.extend(recipes[name][0])
+    reachable = recipes_reachable_from(recipes, [entry_recipe])
     if guard_recipe not in reachable:
         sys.exit(
             f"error: `{guard_recipe}` is not reachable from `{entry_recipe}`, so "
             f"`just {entry_recipe}` does not run any guard in it"
         )
-    found = {}
-    for name in sorted(reachable):
-        for line in recipes[name][1]:
-            # `@` only silences the echo; `-` makes just ignore a failure, which
-            # is the Justfile's `continue-on-error` and does not enforce.
-            stripped = line.lstrip("@")
-            if stripped.startswith("-"):
-                continue
-            for guard in invoked_scripts(stripped):
-                found.setdefault(guard, name)
-    return found, reachable
+    return recipe_guards(recipes, reachable), reachable
 
 
 def self_test():
@@ -689,6 +733,25 @@ jobs:
     for label, body in ignored.items():
         if "check-probe.sh" in workflow_coverage(workflow(body)):
             sys.exit(f"self-test failed: {label} was counted as coverage")
+
+    # A step that runs `just <recipe>` executes every guard that recipe reaches.
+    # Reading only literal `bash scripts/...` lines would report all of them as
+    # absent from CI, which is a false failure and the wrong verdict.
+    indirect_recipes = parse_recipes(
+        "check: check-guards\n\ncheck-guards: inner\n    true\n\ninner:\n"
+        "    bash scripts/check-probe.sh\n"
+    )
+    indirect_workflow = workflow(live.replace("bash scripts/check-probe.sh", "just check-guards"))
+    if "check-probe.sh" not in workflow_coverage(indirect_workflow, indirect_recipes):
+        sys.exit("self-test failed: a guard run through `just <recipe>` was not counted")
+    if "check-probe.sh" in workflow_coverage(indirect_workflow, {}):
+        sys.exit("self-test failed: `just <recipe>` credited a guard with no Justfile")
+    # A `-` prefixed line inside the recipe `just` runs still does not enforce.
+    guarded = parse_recipes(
+        "check: check-guards\n\ncheck-guards:\n    -bash scripts/check-probe.sh\n"
+    )
+    if "check-probe.sh" in workflow_coverage(indirect_workflow, guarded):
+        sys.exit("self-test failed: `just` credited a `-` prefixed recipe line")
 
     # A guard only inside a reusable workflow: ignored when nothing calls it,
     # counted when a reachable job does.
@@ -775,6 +838,9 @@ if len(documents) < 5:
         f"{workflows_dir}; the scan broke, so a clean result means nothing"
     )
 oracle_verdict = oracle_check(workflows_dir, documents)
+with open(justfile_path, encoding="utf-8") as handle:
+    justfile_text = handle.read()
+justfile_recipes = parse_recipes(justfile_text)
 reachable_workflows = reachable_workflow_set(documents)
 if not reachable_workflows:
     sys.exit(
@@ -782,10 +848,8 @@ if not reachable_workflows:
         "`on:` moved or the YAML 1.1 boolean-key case is no longer handled; fix "
         "this script rather than trusting an empty reachable set."
     )
-in_ci = workflow_coverage(documents)
+in_ci = workflow_coverage(documents, justfile_recipes)
 
-with open(justfile_path, encoding="utf-8") as handle:
-    justfile_text = handle.read()
 in_just, reachable_recipes = justfile_coverage(justfile_text, entry_recipe, guard_recipe)
 
 on_disk = sorted(
