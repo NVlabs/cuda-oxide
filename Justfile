@@ -232,9 +232,11 @@ check-guards:
     bash scripts/check-toolchain-parity.sh
     bash scripts/check-cli-doc-coverage.sh
     bash scripts/check-book-api-names.sh
+    bash scripts/check-book-catalog-stamp.sh
     bash scripts/check-reserved-prefixes.sh
     bash scripts/check-device-only-build.sh
     bash scripts/check-test-matrix-coverage.sh
+    bash scripts/check-guard-coverage.sh
     cargo deny --locked check
     cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
     cargo deny --manifest-path crates/cuda-macros/tests/device-only/Cargo.toml --locked check

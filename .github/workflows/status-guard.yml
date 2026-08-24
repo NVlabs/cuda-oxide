@@ -112,6 +112,23 @@ jobs:
       - name: Verify every device call the book shows resolves
         run: bash scripts/check-book-api-names.sh
 
+  # Every guard here is wired twice: a step in this file, and a line in the
+  # Justfile's `check-guards` recipe, which the Justfile calls a full local
+  # mirror of this workflow. Only CI enforces itself, so the Justfile line is
+  # the one that goes missing -- #1106 added check-book-catalog-stamp.sh here
+  # and not there, and nothing failed. This step compares the two lists.
+  guard-coverage:
+    name: guard coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads the Justfile and this directory: no cargo, no build, no network.
+      - name: Verify every guard runs in CI and in `just check-guards`
+        run: bash scripts/check-guard-coverage.sh
+
   # The dialect-nvvm book page prints the catalog SHA-256 and states its own
   # freshness rule: if the stamp no longer matches, every count on the page
   # predates the catalog being read. Nothing enforced that rule, so the page
