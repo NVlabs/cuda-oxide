@@ -40,11 +40,11 @@
 //! | ptr → integer                                  | genericize named-space pointers, `ptrtoint` |
 //! | integer → ptr                                  | `inttoptr`                                  |
 //! | slice-shaped struct → slice-shaped struct     | fieldwise SSA; `addrspacecast` data as needed |
-//! | other struct → struct                          | `alloca` + `store` + `load`                 |
+//! | other struct → struct                          | guarded `alloca` + `store` + `load`         |
 //! | ptr → ptr (diff addrspace)                     | `addrspacecast`                             |
-//! | struct → integer, equal size                   | `alloca` + `store` + `load`                 |
+//! | struct → integer, equal size                   | guarded `alloca` + `store` + `load`         |
 //! | struct → integer, mismatched size              | cuda-oxide error (see issue #21)            |
-//! | array ↔ anything, equal size                   | `alloca` + `store` + `load`                 |
+//! | array ↔ anything, equal size                   | guarded `alloca` + `store` + `load`         |
 //! | array ↔ anything, mismatched size              | cuda-oxide error (see issue #125)           |
 //! | otherwise                                      | `bitcast`                                   |
 //!
@@ -567,6 +567,42 @@ fn try_emit_slice_fat_pointer_cast(
     ))
 }
 
+/// Lower a semantic pointer cast through the aggregate memory fallback.
+///
+/// Pointer-cast fallbacks must not expose the physical bytes of a shared-memory
+/// (`addrspace(3)`) pointer. Those bytes are target-mode dependent and represent
+/// a shared-local offset rather than Rust's generic pointer address. Canonical
+/// slice fat pointers are handled earlier in SSA; every remaining memory
+/// fallback containing an AS3 pointer is rejected here.
+fn emit_pointer_cast_via_memory(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    val: pliron::value::Value,
+    val_ty: pliron::r#type::TypeHandle,
+    llvm_ty: pliron::r#type::TypeHandle,
+) -> Result<Ptr<Operation>> {
+    let shared = llvm_export::types::address_space::SHARED;
+    let involves_shared_pointer = llvm_type_contains_pointer_in_address_space(ctx, val_ty, shared)
+        || llvm_type_contains_pointer_in_address_space(ctx, llvm_ty, shared);
+
+    if involves_shared_pointer {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "Pointer cast from {} to {} would round-trip shared-memory (addrspace(3)) pointer \
+             bytes through memory. Aggregate pointer casts containing shared-memory pointers \
+             are intentionally unsupported: the pointer's physical width is target-mode \
+             dependent (64-bit PTX/legacy, 32-bit modern NVVM), and raw shared-local offsets \
+             must never become Rust-visible bytes. Cast the pointer as a scalar instead; it \
+             converts through its 64-bit generic address.",
+            val_ty.disp(ctx),
+            llvm_ty.disp(ctx)
+        );
+    }
+
+    emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
+}
+
 /// Emit a pointer-compatible cast, handling the struct↔ptr patterns that arise
 /// because our type system represents fat pointers (slices) as `{ ptr, i64 }` structs.
 ///
@@ -583,7 +619,7 @@ fn try_emit_slice_fat_pointer_cast(
 fn emit_pointer_cast(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
-    _op: Ptr<Operation>,
+    op: Ptr<Operation>,
     val: pliron::value::Value,
     val_ty: pliron::r#type::TypeHandle,
     llvm_ty: pliron::r#type::TypeHandle,
@@ -621,7 +657,7 @@ fn emit_pointer_cast(
         if let Some(cast) = try_emit_slice_fat_pointer_cast(ctx, rewriter, val, val_ty, llvm_ty)? {
             Ok(cast)
         } else {
-            emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
+            emit_pointer_cast_via_memory(ctx, rewriter, op, val, val_ty, llvm_ty)
         }
     } else if let (Some(s), Some(d)) = (src_as, dst_as) {
         if s != d {
@@ -639,7 +675,7 @@ fn emit_pointer_cast(
         // `[u8; 4]` → `u32` Transmute, `u32::to_ne_bytes` the reverse).
         // LLVM's `bitcast` is only defined between non-aggregate
         // first-class types, so an aggregate must go through memory.
-        emit_transmute_via_memory(ctx, rewriter, val, val_ty, llvm_ty)
+        emit_pointer_cast_via_memory(ctx, rewriter, op, val, val_ty, llvm_ty)
     } else {
         Ok(llvm::BitcastOp::new(ctx, val, llvm_ty).get_operation())
     }
@@ -1209,6 +1245,28 @@ mod tests {
             name.into(),
             vec!["data".into(), "len".into()],
             vec![data, metadata],
+            vec![0, 1],
+            vec![0, 8],
+            16,
+            8,
+        )
+        .into()
+    }
+
+    fn pointer_pair_struct(
+        ctx: &mut Context,
+        name: &str,
+        first_address_space: u32,
+        second_address_space: u32,
+    ) -> TypeHandle {
+        let element = int_ty(ctx, 32, Signedness::Unsigned);
+        let first: TypeHandle = MirPtrType::get(ctx, element, true, first_address_space).into();
+        let second: TypeHandle = MirPtrType::get(ctx, element, true, second_address_space).into();
+        MirStructType::get_with_full_layout(
+            ctx,
+            name.into(),
+            vec!["data".into(), "metadata".into()],
+            vec![first, second],
             vec![0, 1],
             vec![0, 8],
             16,
@@ -1907,6 +1965,47 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_pointer_cast_memory_fallback_rejects_shared_pointer_bytes() {
+        for shared_is_source in [true, false] {
+            let mut ctx = make_ctx();
+            let shared = llvm_export::types::address_space::SHARED;
+            let generic = llvm_export::types::address_space::GENERIC;
+
+            // `{ ptr, ptr }` is deliberately not the canonical slice shape
+            // `{ ptr, integer }`, so this reaches the generic struct-to-struct
+            // memory fallback rather than the SSA slice legalization.
+            let shared_pair = pointer_pair_struct(&mut ctx, "SharedPointerPair", shared, generic);
+            let generic_pair =
+                pointer_pair_struct(&mut ctx, "GenericPointerPair", generic, generic);
+            let (source, destination) = if shared_is_source {
+                (shared_pair, generic_pair)
+            } else {
+                (generic_pair, shared_pair)
+            };
+
+            let module =
+                build_single_cast(&mut ctx, source, destination, MirCastKindAttr::PtrToPtr);
+            let error = crate::lower_mir_to_llvm(&mut ctx, module).expect_err(
+                "a pointer cast that would memory-round-trip shared-pointer bytes must fail",
+            );
+            let diagnostic = error.to_string();
+
+            assert!(
+                diagnostic.contains("Pointer cast from"),
+                "unexpected diagnostic: {error}"
+            );
+            assert!(
+                diagnostic.contains("addrspace(3)"),
+                "unexpected diagnostic: {error}"
+            );
+            assert!(
+                diagnostic.contains("64-bit generic address"),
+                "unexpected diagnostic: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn slice_fat_pointer_cast_with_shared_data_rebuilds_in_ssa() {
         for shared_is_source in [true, false] {
             let mut ctx = make_ctx();
@@ -1980,6 +2079,38 @@ mod tests {
         assert_eq!(count_ops::<llvm::AllocaOp>(&ctx, &body), 0);
         assert_eq!(count_ops::<llvm::StoreOp>(&ctx, &body), 0);
         assert_eq!(count_ops::<llvm::LoadOp>(&ctx, &body), 0);
+    }
+
+    #[test]
+    fn array_pointer_cast_memory_fallback_rejects_shared_pointer_bytes() {
+        let mut ctx = make_ctx();
+        let pointee = int_ty(&mut ctx, 32, Signedness::Unsigned);
+        let shared_pointer: TypeHandle = MirPtrType::get(
+            &mut ctx,
+            pointee,
+            false,
+            llvm_export::types::address_space::SHARED,
+        )
+        .into();
+        let generic_pointer: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, false).into();
+        let shared_array: TypeHandle =
+            dialect_mir::types::MirArrayType::get(&mut ctx, shared_pointer, 1).into();
+        let generic_array: TypeHandle =
+            dialect_mir::types::MirArrayType::get(&mut ctx, generic_pointer, 1).into();
+
+        let module = build_single_cast(
+            &mut ctx,
+            shared_array,
+            generic_array,
+            MirCastKindAttr::PtrToPtr,
+        );
+        let error = crate::lower_mir_to_llvm(&mut ctx, module).expect_err(
+            "the array pointer-cast fallback must reject shared-pointer physical bytes",
+        );
+        assert!(
+            error.to_string().contains("addrspace(3)"),
+            "unexpected diagnostic: {error}"
+        );
     }
 
     #[test]
