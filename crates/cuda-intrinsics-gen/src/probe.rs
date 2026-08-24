@@ -381,6 +381,7 @@ fn target_minimum_ptx_isa(target: &str) -> Option<u16> {
     let capability: u16 = digits.parse().ok()?;
     match (capability, suffix) {
         (100 | 101 | 120, Some('f')) => Some(88),
+        (90, Some('a')) => Some(80),
         (70, _) => Some(60),
         (72, _) => Some(61),
         (75, _) => Some(63),
@@ -1837,12 +1838,67 @@ mod tests {
 
     #[test]
     fn derived_target_uses_default_when_it_meets_the_floor() {
+        assert_eq!(derived_ptx_feature("sm_90a", 78).unwrap(), (None, 80));
         assert_eq!(derived_ptx_feature("sm_100a", 86).unwrap(), (None, 86));
         assert_eq!(derived_ptx_feature("sm_100f", 86).unwrap(), (None, 88));
         assert_eq!(derived_ptx_feature("sm_103f", 86).unwrap(), (None, 88));
         assert_eq!(derived_ptx_feature("sm_110a", 86).unwrap(), (None, 90));
         assert_eq!(derived_ptx_feature("sm_120a", 86).unwrap(), (None, 87));
         assert_eq!(derived_ptx_feature("sm_121f", 87).unwrap(), (None, 88));
+    }
+
+    /// Every target whose PTX ISA floor `target_minimum_ptx_isa` records.
+    const RECORDED_FLOOR_TARGETS: &[&str] = &[
+        "sm_70", "sm_72", "sm_75", "sm_80", "sm_86", "sm_87", "sm_88", "sm_89", "sm_90", "sm_90a",
+        "sm_100", "sm_100a", "sm_100f", "sm_101", "sm_101a", "sm_101f", "sm_103", "sm_103a",
+        "sm_103f", "sm_110", "sm_110a", "sm_110f", "sm_120", "sm_120a", "sm_120f", "sm_121",
+        "sm_121a", "sm_121f",
+    ];
+
+    fn emitted_ptx_isa(ptx: &str) -> Option<u16> {
+        let (major, minor) = ptx
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(".version "))?
+            .trim()
+            .split_once('.')?;
+        Some(major.parse::<u16>().ok()? * 10 + minor.parse::<u16>().ok()?)
+    }
+
+    /// The recorded floors are a hand-written copy of what the pinned backend
+    /// already knows. Derive them from that backend so the copy cannot drift.
+    #[cfg(unix)]
+    #[test]
+    fn recorded_floors_match_the_pinned_backend_defaults() {
+        let llc = rust_toolchain_llc().unwrap();
+        let directory = candidate_tool_test_dir();
+        let module = directory.0.join("floor.ll");
+        fs::write(
+            &module,
+            "target triple = \"nvptx64-nvidia-cuda\"\n\ndefine void @probe() {\nentry:\n  ret void\n}\n",
+        )
+        .unwrap();
+
+        for target in RECORDED_FLOOR_TARGETS {
+            let output = directory.0.join(format!("{target}.ptx"));
+            let status = Command::new(&llc)
+                .arg("-mtriple=nvptx64-nvidia-cuda")
+                .arg(format!("-mcpu={target}"))
+                .arg("-filetype=asm")
+                .arg(&module)
+                .arg("-o")
+                .arg(&output)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{target}: pinned backend refused it");
+
+            let emitted = emitted_ptx_isa(&fs::read_to_string(&output).unwrap())
+                .unwrap_or_else(|| panic!("{target}: emitted PTX carries no .version"));
+            assert_eq!(
+                target_minimum_ptx_isa(target),
+                Some(emitted),
+                "{target}: recorded floor disagrees with the pinned backend default"
+            );
+        }
     }
 
     #[test]

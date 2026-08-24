@@ -1851,6 +1851,7 @@ pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Opt
 fn target_minimum_ptx_isa(capability: u32, suffix: Option<char>) -> Option<u32> {
     match (capability, suffix) {
         (100 | 101 | 120, Some('f')) => Some(88),
+        (90, Some('a')) => Some(80),
         (capability, _) => match capability {
             70 => Some(60),
             72 => Some(61),
@@ -4968,6 +4969,7 @@ mod tests {
                 "{target}"
             );
         }
+        assert_eq!(target_minimum_ptx_isa(90, Some('a')), Some(80));
         assert_eq!(target_minimum_ptx_isa(100, Some('a')), Some(86));
         assert_eq!(target_minimum_ptx_isa(100, Some('f')), Some(88));
         assert_eq!(target_minimum_ptx_isa(120, Some('a')), Some(87));
