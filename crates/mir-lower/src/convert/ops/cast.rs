@@ -59,7 +59,7 @@ use crate::convert::types::{
 use crate::helpers;
 use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::ops::MirCastOp;
-use dialect_mir::types::{MirArrayType, MirPtrType, address_space};
+use dialect_mir::types::{MirArrayType, MirPtrType};
 use llvm_export::op_interfaces::{CastOpInterface, CastOpWithNNegInterface};
 use llvm_export::ops as llvm;
 use llvm_export::types::{FuncType, PointerType, PointerTypeExt};
@@ -495,8 +495,7 @@ fn slice_fat_pointer_fields(
 /// The data-pointer half carries address-space semantics and is converted with
 /// `addrspacecast` when the source and destination spaces differ. The integer
 /// metadata half is copied unchanged. No aggregate bytes are materialized in
-/// memory, so an addrspace(3) pointer is never exposed as its target-dependent
-/// physical representation.
+/// memory, so the pointer's address-space semantics remain explicit in SSA.
 fn try_emit_slice_fat_pointer_cast(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -528,13 +527,6 @@ fn try_emit_slice_fat_pointer_cast(
         .downcast_ref::<PointerType>()
         .expect("slice fat-pointer data field must be a pointer")
         .address_space();
-
-    // Cluster-shared pointers have distinct lowering semantics and are intentionally
-    // outside this legalization. Preserve the existing aggregate fallback for AS7.
-    if src_data_as == address_space::CLUSTER_SHARED || dst_data_as == address_space::CLUSTER_SHARED
-    {
-        return Ok(None);
-    }
 
     let extract_data = llvm::ExtractValueOp::new(ctx, val, vec![0])
         .map_err(|e| pliron::input_error_noloc!("slice pointer cast data extraction: {e}"))?;
@@ -1983,7 +1975,7 @@ mod tests {
     }
 
     #[test]
-    fn cluster_shared_slice_fat_pointer_cast_keeps_existing_fallback() {
+    fn cluster_shared_slice_fat_pointer_cast_rebuilds_in_ssa() {
         for cluster_shared_is_source in [true, false] {
             let mut ctx = make_ctx();
             let cluster_shared = dialect_mir::types::address_space::CLUSTER_SHARED;
@@ -2006,9 +1998,37 @@ mod tests {
                 lower_single_cast(&mut ctx, source, destination, MirCastKindAttr::PtrToPtr);
             let body = kernel_blocks(&ctx, module);
 
+            assert_eq!(
+                count_ops::<llvm::AllocaOp>(&ctx, &body),
+                0,
+                "cluster-shared slice fat-pointer casts must stay in SSA"
+            );
+            assert_eq!(
+                count_ops::<llvm::StoreOp>(&ctx, &body),
+                0,
+                "cluster-shared slice fat-pointer casts must not expose aggregate bytes"
+            );
+            assert_eq!(
+                count_ops::<llvm::LoadOp>(&ctx, &body),
+                0,
+                "cluster-shared slice fat-pointer casts must not reload aggregate bytes"
+            );
             assert!(
-                count_ops::<llvm::AllocaOp>(&ctx, &body) > 0,
-                "cluster-shared slice-shaped casts must keep the existing aggregate fallback"
+                count_ops::<llvm::ExtractValueOp>(&ctx, &body) >= 2,
+                "cluster-shared slice fat-pointer casts must extract data and metadata"
+            );
+            assert!(
+                count_ops::<llvm::InsertValueOp>(&ctx, &body) >= 2,
+                "cluster-shared slice fat-pointer casts must rebuild data and metadata"
+            );
+
+            let casts = find_all::<llvm::AddrSpaceCastOp>(&ctx, &body);
+            assert!(
+                casts.iter().any(|cast| {
+                    let result = cast.get_operation().deref(&ctx).get_result(0);
+                    pointer_addrspace(&ctx, result.get_type(&ctx)) == destination_space
+                }),
+                "cluster-shared slice data pointer must be addrspacecast into the destination space"
             );
         }
     }

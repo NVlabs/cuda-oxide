@@ -6,9 +6,10 @@
 # cluster-shared address space end to end. If the mapped pointer decays to a
 # generic pointer, an ordinary Rust deref compiles to a CTA-local access and
 # the remote read/write silently targets the wrong shared memory. Assert the
-# LLVM IR loads and stores through `ptr addrspace(7)` and that the two
-# plain-deref kernels emit `ld.shared::cluster` / `st.shared::cluster`, so a
-# regression to generic accesses cannot pass compile-only CI.
+# LLVM IR loads and stores through `ptr addrspace(7)` and that the plain-deref
+# kernels, including the AS7 slice-fat-pointer regression, emit
+# `ld.shared::cluster` / `st.shared::cluster`, so a regression to generic
+# accesses cannot pass compile-only CI.
 
 set -euo pipefail
 
@@ -70,5 +71,10 @@ require_entry_shape test_dsmem_ring_exchange \
     "cluster-shared remote load" 'ld\.shared::cluster\.'
 require_entry_shape test_dsmem_mapped_store \
     "cluster-shared remote store" 'st\.shared::cluster\.'
+
+# Rebuilding and reinterpreting an AS7 slice fat pointer must preserve the
+# cluster-shared data-pointer semantics through the eventual dereference.
+require_entry_shape test_dsmem_slice_fat_pointer_cast \
+    "cluster-shared load after AS7 slice fat-pointer cast" 'ld\.shared::cluster\.'
 
 echo "cluster code shape: PASS"

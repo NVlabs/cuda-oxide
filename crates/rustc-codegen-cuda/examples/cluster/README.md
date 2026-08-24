@@ -12,6 +12,7 @@ Demonstrates Thread Block Clusters, a Hopper feature that enables direct shared 
 4. **test_dsmem_ring_exchange**: Distributed shared memory read through `map_shared_rank` + dereference
 5. **test_dsmem_reduction**: All-to-one reduction using `dsmem_read_u32`
 6. **test_dsmem_mapped_store**: Distributed shared memory write through `map_shared_rank_mut` + dereference
+7. **test_dsmem_slice_fat_pointer_cast**: Cluster-shared `addrspace(7)` slice fat-pointer cast followed by ordinary remote dereference
 
 ## Key Concepts Demonstrated
 
@@ -110,6 +111,25 @@ let neighbor_value =
 
 Both approaches require the target CTA to remain live and require cluster synchronization appropriate to the data dependency.
 
+### AS7 Slice Fat-Pointer Casts
+
+`map_shared_rank` also provides the reachable source for cluster-shared slice fat pointers. The mapped `addrspace(7)` data pointer can be widened into a slice, reinterpreted as another slice element type, and then dereferenced normally:
+
+```rust
+let neighbor_ptr =
+    cluster::map_shared_rank(addr_of!(SHMEM) as *const u32, neighbor_rank);
+
+let remote_slice = core::ptr::slice_from_raw_parts(neighbor_ptr, 2);
+let recast_slice = cast_cluster_slice_elements(remote_slice);
+let recast_len = unsafe { (&*recast_slice).len() };
+let recast_data = recast_slice as *const i32;
+
+let first = unsafe { recast_data.read() };
+let second = unsafe { recast_data.add(1).read() };
+```
+
+The compiler keeps the slice cast in SSA: it preserves the integer metadata and converts only the data-pointer field with `addrspacecast` when needed. The resulting remote loads must still lower to `ld.shared::cluster`, rather than decaying to generic or CTA-local shared-memory accesses.
+
 ## Build and Run
 
 ```bash
@@ -157,7 +177,15 @@ Results (each block observes the write from its previous rank):
   Block 3: got 3002, expected 3002 ✓
 ✓ DSMEM mapped remote store PASSED
 
-🎉 All cluster + DSMEM tests PASSED!
+=== Test 6: DSMEM AS7 Slice Fat-Pointer Cast (cluster launch) ===
+Results (sum of neighbor pair, preserved slice length):
+  Block 0: sum=8021, expected=8021, len=2 ✓
+  Block 1: sum=8041, expected=8041, len=2 ✓
+  Block 2: sum=8061, expected=8061, len=2 ✓
+  Block 3: sum=8001, expected=8001, len=2 ✓
+✓ DSMEM AS7 slice fat-pointer cast PASSED
+
+All cluster + DSMEM tests PASSED!
 ```
 
 ### On Pre-Hopper (sm_80 and earlier):
@@ -240,6 +268,12 @@ A mutable mapped pointer similarly selects a cluster-shared store:
 ```ptx
 mapa.shared::cluster.u64 %rd_mapped, %rd_local_shmem, %r_neighbor_rank;
 st.shared::cluster.u32 [%rd_mapped], %r_value;
+```
+
+A remote dereference after the AS7 slice fat-pointer cast must keep the same cluster-shared access form:
+
+```ptx
+ld.shared::cluster.u32 %r_result, [%rd_mapped];
 ```
 
 ## Potential Errors

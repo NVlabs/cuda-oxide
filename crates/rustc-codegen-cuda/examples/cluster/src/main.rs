@@ -15,7 +15,7 @@
 //! Uses unified compilation: single `cargo oxide run cluster`
 
 use core::ptr::{addr_of, addr_of_mut};
-use cuda_device::{DisjointSlice, SharedArray, cluster, cluster_launch, kernel, thread};
+use cuda_device::{DisjointSlice, SharedArray, cluster, cluster_launch, device, kernel, thread};
 use cuda_host::cuda_module;
 
 // ============================================================================
@@ -24,6 +24,16 @@ use cuda_host::cuda_module;
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    /// Reinterpret a slice fat pointer while preserving its data-pointer address space.
+    ///
+    /// Keeping this in a separate non-inlined device function gives the cast a distinct
+    /// device-function boundary so the semantic fat-pointer cast is exercised independently.
+    #[inline(never)]
+    #[device]
+    fn cast_cluster_slice_elements(pointer: *const [u32]) -> *const [i32] {
+        pointer as *const [i32]
+    }
 
     /// Keeps the generated cluster-grid helper path in the compiled module.
     #[kernel]
@@ -250,6 +260,60 @@ mod kernels {
             }
         }
 
+        cluster::cluster_sync();
+    }
+
+    // ============================================================================
+    // Test 6: Distributed Shared Memory (AS7 Slice Fat-Pointer Cast)
+    // ============================================================================
+
+    /// Test a slice fat-pointer cast whose data pointer is cluster-shared (`addrspace(7)`).
+    ///
+    /// The mapped pointer is widened into a two-element slice, reinterpreted from
+    /// `[u32]` to `[i32]`, and then read through the recast data pointer. The cast
+    /// must preserve both the AS7 data-pointer semantics and the slice length.
+    #[kernel]
+    #[cluster_launch(4, 1, 1)]
+    pub fn test_dsmem_slice_fat_pointer_cast(mut output: DisjointSlice<u32>) {
+        static mut SHMEM: SharedArray<u32, 2> = SharedArray::UNINIT;
+
+        let tid = thread::threadIdx_x();
+        let my_rank = cluster::block_rank();
+        let cluster_size = cluster::cluster_size();
+
+        if tid == 0 {
+            let base = addr_of_mut!(SHMEM) as *mut u32;
+            unsafe {
+                base.write(4000 + my_rank * 10);
+                base.add(1).write(4001 + my_rank * 10);
+            }
+        }
+        thread::sync_threads();
+        cluster::cluster_sync();
+
+        if tid == 0 {
+            let neighbor_rank = (my_rank + 1) % cluster_size;
+            let neighbor_ptr =
+                unsafe { cluster::map_shared_rank(addr_of!(SHMEM) as *const u32, neighbor_rank) };
+
+            let remote_slice = core::ptr::slice_from_raw_parts(neighbor_ptr, 2);
+            let recast_slice = cast_cluster_slice_elements(remote_slice);
+            let recast_len = unsafe { (&*recast_slice).len() };
+            let recast_data = recast_slice as *const i32;
+
+            let first = unsafe { recast_data.read() } as u32;
+            let second = unsafe { recast_data.add(1).read() } as u32;
+
+            let base = (my_rank as usize) * 2;
+            if base + 1 < output.len() {
+                unsafe {
+                    *output.get_unchecked_mut(base) = first + second;
+                    *output.get_unchecked_mut(base + 1) = recast_len as u32;
+                }
+            }
+        }
+
+        // Keep every target CTA alive until all remote reads have completed.
         cluster::cluster_sync();
     }
 }
@@ -606,6 +670,80 @@ fn main() {
     }
 
     // ====================================================================
+    // Test 6: DSMEM AS7 slice fat-pointer cast
+    // ====================================================================
+
+    println!("=== Test 6: DSMEM AS7 Slice Fat-Pointer Cast (cluster launch) ===\n");
+
+    let slice_cast_pass = if dsmem_context_error {
+        println!("⚠ Skipped - CUDA context corrupted by previous DSMEM error\n");
+        false
+    } else {
+        let mut slice_output =
+            DeviceBuffer::<u32>::zeroed(&stream, (cluster_size as usize) * 2).unwrap();
+
+        println!("Launching test_dsmem_slice_fat_pointer_cast via cuLaunchKernelEx");
+        println!("  Grid: 4x1x1, Block: 32, Cluster: 4x1x1");
+        println!("  Each block reads a two-element AS7 slice from its next rank after a fat-pointer cast\n");
+
+        let slice_result = unsafe {
+            module.test_dsmem_slice_fat_pointer_cast(
+                (stream).as_ref(),
+                LaunchConfig {
+                    grid_dim: (cluster_size, 1, 1),
+                    block_dim: (32, 1, 1),
+                    shared_mem_bytes: 0,
+                },
+                &mut slice_output,
+            )
+        };
+
+        match slice_result {
+            Ok(_) => match stream.synchronize() {
+                Ok(()) => {
+                    let results: Vec<u32> = slice_output.to_host_vec(&stream).unwrap();
+                    println!("Results (sum of neighbor pair, preserved slice length):");
+                    for rank in 0..cluster_size as usize {
+                        let neighbor_rank = (rank as u32 + 1) % cluster_size;
+                        let expected_sum = 8001 + neighbor_rank * 20;
+                        let got_sum = results[rank * 2];
+                        let got_len = results[rank * 2 + 1];
+                        let status = if got_sum == expected_sum && got_len == 2 {
+                            "✓"
+                        } else {
+                            "?"
+                        };
+                        println!(
+                            "  Block {}: sum={}, expected={}, len={} {}",
+                            rank, got_sum, expected_sum, got_len, status
+                        );
+                    }
+
+                    (0..cluster_size as usize).all(|rank| {
+                        let neighbor_rank = (rank as u32 + 1) % cluster_size;
+                        results[rank * 2] == 8001 + neighbor_rank * 20
+                            && results[rank * 2 + 1] == 2
+                    })
+                }
+                Err(e) => {
+                    println!("⚠ DSMEM slice-cast synchronize failed: {:?}", e);
+                    false
+                }
+            },
+            Err(e) => {
+                println!("⚠ Cluster launch failed: {:?}", e);
+                false
+            }
+        }
+    };
+
+    if slice_cast_pass {
+        println!("✓ DSMEM AS7 slice fat-pointer cast PASSED\n");
+    } else if !dsmem_context_error {
+        println!("⚠ DSMEM AS7 slice fat-pointer cast failed\n");
+    }
+
+    // ====================================================================
     // Summary
     // ====================================================================
 
@@ -615,7 +753,8 @@ fn main() {
     println!("  .explicitcluster");
     println!("  .reqnctapercluster 4, 1, 1\n");
 
-    let all_pass = ct_pass && sync_pass && ring_pass && reduce_pass && store_pass;
+    let all_pass =
+        ct_pass && sync_pass && ring_pass && reduce_pass && store_pass && slice_cast_pass;
     if all_pass {
         println!("All cluster + DSMEM tests PASSED!");
     } else {
@@ -640,6 +779,10 @@ fn main() {
         println!(
             "  Test 5 (DSMEM mapped store):     {}",
             if store_pass { "PASS" } else { "FAIL" }
+        );
+        println!(
+            "  Test 6 (AS7 slice fat-pointer):  {}",
+            if slice_cast_pass { "PASS" } else { "FAIL" }
         );
         std::process::exit(1);
     }
