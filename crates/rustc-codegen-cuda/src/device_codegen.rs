@@ -228,11 +228,7 @@ fn rustc_ty_to_device_extern_type<'tcx>(
                 // Rust's `*mut ()` is its common spelling for a void pointer.
                 E::Integer(8)
             } else {
-                rustc_ty_to_device_extern_type(
-                    tcx,
-                    *pointee,
-                    DeviceExternTypePosition::Pointee,
-                )?
+                rustc_ty_to_device_extern_type(tcx, *pointee, DeviceExternTypePosition::Pointee)?
             };
             Ok(E::pointer_to(pointee, 0))
         }
@@ -240,11 +236,8 @@ fn rustc_ty_to_device_extern_type<'tcx>(
             let len = len.try_to_target_usize(tcx).ok_or_else(|| {
                 format!("device-extern array length for `{ty}` is not a concrete constant")
             })?;
-            let element = rustc_ty_to_device_extern_type(
-                tcx,
-                *element,
-                DeviceExternTypePosition::Pointee,
-            )?;
+            let element =
+                rustc_ty_to_device_extern_type(tcx, *element, DeviceExternTypePosition::Pointee)?;
             Ok(E::Array {
                 element: Box::new(element),
                 len,
