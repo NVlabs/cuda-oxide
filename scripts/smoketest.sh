@@ -792,6 +792,37 @@ run_cargo() {
     for noinline in "${NOINLINE_MIR_EXAMPLES[@]}"; do
         [[ "${ex}" == "${noinline}" ]] && EXTRA_RUSTFLAGS="-Zinline-mir=no"
     done
+    # Rust `char` must remain plain i32 in both NVVM dialects. A runtime
+    # round-trip cannot distinguish it from an incorrect zeroext i32 ABI.
+    if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "device_ffi_test" ]]; then
+        local shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
+        local arch
+        for arch in sm_90 sm_100; do
+            local -a char_abi_args=("build" "${ex}" "--emit-nvvm-ir" "--arch=${arch}")
+            if [[ ${VERBOSE} -eq 1 ]]; then
+                invoke_cargo_oxide "${char_abi_args[@]}" 2>&1 | tee -a "${log}"
+                CARGO_EC=${PIPESTATUS[0]}
+            else
+                invoke_cargo_oxide "${char_abi_args[@]}" >>"${log}" 2>&1
+                CARGO_EC=$?
+            fi
+            if [[ ${CARGO_EC} -ne 0 ]]; then
+                return
+            fi
+            local target_file="crates/rustc-codegen-cuda/examples/${ex}/${ex}.target"
+            if ! grep -qx "${arch}" "${target_file}"; then
+                printf '%s expected target %s in %s\n' "${ex}" "${arch}" "${target_file}" >>"${log}"
+                CARGO_EC=1
+                return
+            fi
+            if ! bash "${shape_check}" >>"${log}" 2>&1; then
+                printf '%s failed its char ABI shape assertions for %s\n' "${ex}" "${arch}" >>"${log}"
+                CARGO_EC=1
+                return
+            fi
+        done
+        return
+    fi
     # This exact-target batch must pass both compiler routes. The second build
     # may replace the first artifact, so preserve both exit codes in one gate.
     if [[ "${cat}" == "blackwell-compile" ]]; then

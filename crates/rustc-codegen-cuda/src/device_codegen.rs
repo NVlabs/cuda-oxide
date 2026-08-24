@@ -265,9 +265,9 @@ fn rustc_ty_to_device_extern_type<'tcx>(
                 Ok(E::ZeroExtInteger(1))
             }
         }
-        TyKind::Char => Err(
-            "Rust `char` is not supported in device extern signatures; use `u32` in a C-compatible wrapper".to_string(),
-        ),
+        // `char` is already a 32-bit Unicode scalar, so it uses a plain i32
+        // slot without a signext/zeroext attribute in every position.
+        TyKind::Char => unsigned_integer(32),
         TyKind::Never => Err("never-returning device externs are not yet supported".to_string()),
         _ => Err(format!(
             "unsupported device-extern ABI type `{ty}`; use scalar C types or raw pointers to supported scalar/array pointees"
