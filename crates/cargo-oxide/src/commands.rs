@@ -438,7 +438,7 @@ pub fn resolve_context() -> Context {
 pub fn resolve_passive_context() -> Context {
     if let Some(workspace_root) = backend::find_workspace_root() {
         let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");
-        let examples_dir = codegen_crate.join("examples");
+        let examples_dir = workspace_root.join(FMT_EXAMPLES_DIR);
         let config = load_oxide_config_lenient(&workspace_root);
         let backend_so = backend::backend_so_candidate(&workspace_root, config.backend.as_deref());
         return Context {
@@ -4021,16 +4021,6 @@ pub fn codegen_debug(
 // Fmt command
 // =============================================================================
 
-/// Format (or check formatting of) every scope the `fmt` CI gate checks.
-///
-/// `.github/workflows/fmt.yml` checks four: the root workspace, the codegen
-/// backend crate, the cuda-macros device-only fixture, and every `Cargo.toml`
-/// under `examples/`, nested ones included. This mirrors that set on purpose --
-/// the reason CONTRIBUTING tells contributors to prefer this command over a
-/// bare `cargo fmt` is so the gate cannot fail on code they had no way to
-/// format, which only holds while the two cover the same ground.
-///
-/// In `check` mode, reports which files need formatting without modifying them.
 /// Directories `cargo oxide fmt` formats in their own right, relative to the
 /// workspace root, with the label each is announced under.
 ///
@@ -4060,6 +4050,16 @@ pub(crate) const FIXED_FMT_SCOPES: &[(&str, &str)] = &[
 /// with it.
 pub(crate) const FMT_EXAMPLES_DIR: &str = "crates/rustc-codegen-cuda/examples";
 
+/// Format (or check formatting of) every scope the `fmt` CI gate checks.
+///
+/// `.github/workflows/fmt.yml` checks four: the root workspace, the codegen
+/// backend crate, the cuda-macros device-only fixture, and every `Cargo.toml`
+/// under `examples/`, nested ones included. This mirrors that set on purpose --
+/// the reason CONTRIBUTING tells contributors to prefer this command over a
+/// bare `cargo fmt` is so the gate cannot fail on code they had no way to
+/// format, which only holds while the two cover the same ground.
+///
+/// In `check` mode, reports which files need formatting without modifying them.
 pub fn format_all(ctx: &Context, check: bool) {
     let mode = if check { "Checking" } else { "Formatting" };
     let mut failed = false;
