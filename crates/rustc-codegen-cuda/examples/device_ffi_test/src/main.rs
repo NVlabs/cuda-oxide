@@ -672,7 +672,11 @@ fn test_char_ffi_runner(
         println!("    ✓ PASSED ('q' -> 'Q', 'Z' unchanged, pointer -> 'λ')");
         *passed += 1;
     } else {
-        println!("    ✗ FAILED (got {:?}, expected {:?})", &actual[..3], expected);
+        println!(
+            "    ✗ FAILED (got {:?}, expected {:?})",
+            &actual[..3],
+            expected
+        );
         *failed += 1;
     }
 }
