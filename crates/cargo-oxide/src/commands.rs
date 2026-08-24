@@ -2592,6 +2592,58 @@ const COMPUTE_SANITIZER_FALLBACK_PATHS: &[&str] = &[
     "/usr/bin/compute-sanitizer",
 ];
 
+/// Fallback locations probed for `nvcc`, in the same idiom and for the same
+/// reason as the list above. `nvcc` ships in the toolkit's `bin/` beside
+/// `compute-sanitizer` and `cuda-gdb`, so it has to be found the same way.
+const NVCC_FALLBACK_PATHS: &[&str] = &[
+    "/usr/local/cuda/bin/nvcc",
+    "/opt/cuda/bin/nvcc",
+    "/usr/bin/nvcc",
+];
+
+/// Fallback locations probed for `cuda-gdb`. Shared by `debug`
+/// (`codegen_debug`) and `doctor` so both use the same discovery order by
+/// construction -- doctor exists to predict whether `debug` will work, so the
+/// two answering differently is the bug this list prevents.
+const CUDA_GDB_FALLBACK_PATHS: &[&str] = &[
+    "/usr/local/cuda/bin/cuda-gdb",
+    "/opt/cuda/bin/cuda-gdb",
+    "/usr/bin/cuda-gdb",
+];
+
+/// Every CUDA toolkit executable `doctor` probes, with its fallbacks.
+///
+/// One table so a fourth tool cannot be added with a different discovery rule.
+/// Before this existed, `compute-sanitizer` resolved through the toolkit root
+/// while `nvcc` and `cuda-gdb` used a bare PATH lookup, so doctor reported the
+/// toolkit missing on an install where it had already found `cuda.h`, libNVVM,
+/// nvJitLink and libdevice under that same root.
+const DOCTOR_TOOLKIT_TOOLS: [(&str, &[&str]); 3] = [
+    ("nvcc", NVCC_FALLBACK_PATHS),
+    ("cuda-gdb", CUDA_GDB_FALLBACK_PATHS),
+    ("compute-sanitizer", COMPUTE_SANITIZER_FALLBACK_PATHS),
+];
+
+/// Resolve one of [`DOCTOR_TOOLKIT_TOOLS`] the way the command that uses it
+/// does: PATH first, then the configured toolkit root, then the standard
+/// install roots.
+/// The standard install roots to try for `name`, or none if the table does not
+/// know it. Split out so the pairing can be checked without a filesystem or an
+/// ambient environment, neither of which a test can control here: the PATH
+/// probe inside `find_cuda_toolkit_executable` shells out to `which` and has no
+/// injection point.
+fn toolkit_tool_fallbacks(name: &str) -> &'static [&'static str] {
+    DOCTOR_TOOLKIT_TOOLS
+        .iter()
+        .find(|(tool, _)| *tool == name)
+        .map(|(_, paths)| *paths)
+        .unwrap_or(&[])
+}
+
+fn doctor_toolkit_tool(ctx: &Context, name: &str) -> Option<PathBuf> {
+    find_cuda_toolkit_executable(ctx, name, toolkit_tool_fallbacks(name))
+}
+
 fn run_compute_sanitizer(
     ctx: &Context,
     example_dir: &Path,
@@ -3867,24 +3919,16 @@ pub fn codegen_debug(
         reject_interop_output_mode(false, &materialization);
     }
 
-    let cuda_gdb = find_cuda_toolkit_executable(
-        ctx,
-        "cuda-gdb",
-        &[
-            "/usr/local/cuda/bin/cuda-gdb",
-            "/opt/cuda/bin/cuda-gdb",
-            "/usr/bin/cuda-gdb",
-        ],
-    )
-    .unwrap_or_else(|| {
-        eprintln!("Error: cuda-gdb not found!");
-        eprintln!();
-        eprintln!("Make sure CUDA toolkit is installed and cuda-gdb is in your PATH");
-        eprintln!("or configured CUDA toolkit root:");
-        eprintln!("  export PATH=\"/usr/local/cuda/bin:$PATH\"");
-        eprintln!("  export CUDA_TOOLKIT_PATH=/usr/local/cuda");
-        std::process::exit(1);
-    });
+    let cuda_gdb = find_cuda_toolkit_executable(ctx, "cuda-gdb", CUDA_GDB_FALLBACK_PATHS)
+        .unwrap_or_else(|| {
+            eprintln!("Error: cuda-gdb not found!");
+            eprintln!();
+            eprintln!("Make sure CUDA toolkit is installed and cuda-gdb is in your PATH");
+            eprintln!("or configured CUDA toolkit root:");
+            eprintln!("  export PATH=\"/usr/local/cuda/bin:$PATH\"");
+            eprintln!("  export CUDA_TOOLKIT_PATH=/usr/local/cuda");
+            std::process::exit(1);
+        });
 
     let cgdb_path = if use_cgdb {
         Some(find_executable("cgdb", &[]).unwrap_or_else(|| {
@@ -4505,19 +4549,34 @@ pub fn doctor(ctx: &Context) {
         }
     }
 
-    // 5. CUDA toolkit
+    // 5. CUDA toolkit -- same discovery order as `cuda.h`, libNVVM, libdevice
+    // and `compute-sanitizer` below. `nvcc` lives in the toolkit's `bin/`, so
+    // probing PATH alone reported the toolkit missing on exactly the install
+    // this project documents: CUDA_HOME set, toolkit not on PATH.
     print!("CUDA toolkit (nvcc)... ");
-    match Command::new("nvcc").arg("--version").output() {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = version.lines().find(|l| l.contains("release")) {
-                println!("✓ {}", line.trim());
-            } else {
-                println!("✓ (version unknown)");
+    match doctor_toolkit_tool(ctx, "nvcc") {
+        Some(path) => match Command::new(&path).arg("--version").output() {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout);
+                if let Some(line) = version.lines().find(|l| l.contains("release")) {
+                    println!("✓ {} ({})", line.trim(), path.display());
+                } else {
+                    println!("✓ {}", path.display());
+                }
             }
-        }
-        _ => {
+            _ => println!("✓ {}", path.display()),
+        },
+        None => {
+            let toolkit = cuda_toolkit_root(|key| {
+                std::env::var(key)
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .or_else(|| project_config_env(ctx, key).map(str::to_owned))
+            });
             println!("✗ nvcc not found");
+            eprintln!("  Probed PATH, {toolkit}/bin/nvcc, and the standard install roots.");
+            eprintln!("  Set CUDA_TOOLKIT_PATH or CUDA_HOME to a CUDA Toolkit install root;");
+            eprintln!("  when neither is set, /usr/local/cuda is used.");
             ok = false;
         }
     }
@@ -4738,25 +4797,28 @@ pub fn doctor(ctx: &Context) {
         }
     }
 
-    // 9. cuda-gdb (optional)
+    // 9. cuda-gdb (optional) -- same discovery order as `debug`, which is the
+    // command this line is predicting. Probing PATH alone made doctor report a
+    // cuda-gdb missing that `cargo oxide debug` would have found.
     print!("cuda-gdb (optional)... ");
-    match Command::new("cuda-gdb").arg("--version").output() {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = version.lines().next() {
-                println!("✓ {}", line.trim());
-            } else {
-                println!("✓");
+    match doctor_toolkit_tool(ctx, "cuda-gdb") {
+        Some(path) => match Command::new(&path).arg("--version").output() {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout);
+                if let Some(line) = version.lines().next() {
+                    println!("✓ {} ({})", line.trim(), path.display());
+                } else {
+                    println!("✓ {}", path.display());
+                }
             }
-        }
-        _ => {
-            println!("- not found (only needed for `cargo oxide debug`)");
-        }
+            _ => println!("✓ {}", path.display()),
+        },
+        None => println!("- not found (only needed for `cargo oxide debug`)"),
     }
 
     // 10. compute-sanitizer (optional) — same discovery order as `sanitize`
     print!("compute-sanitizer (optional)... ");
-    match find_cuda_toolkit_executable(ctx, "compute-sanitizer", COMPUTE_SANITIZER_FALLBACK_PATHS) {
+    match doctor_toolkit_tool(ctx, "compute-sanitizer") {
         Some(path) => match Command::new(&path).arg("--version").output() {
             Ok(output) if output.status.success() => {
                 let version = String::from_utf8_lossy(&output.stdout);
@@ -8327,6 +8389,167 @@ path = "src/other.rs"
             ..OxideConfig::default()
         });
         (ctx, tool)
+    }
+
+    /// Every table entry pairs a tool with its own fallback list. Pure, so it
+    /// covers all three tools on every host: pairing `nvcc` with
+    /// `CUDA_GDB_FALLBACK_PATHS` is a one-token slip that no filesystem test
+    /// using a fabricated name could see.
+    #[test]
+    fn each_toolkit_tool_is_paired_with_its_own_fallback_paths() {
+        assert_eq!(DOCTOR_TOOLKIT_TOOLS.len(), 3);
+        for (name, fallbacks) in DOCTOR_TOOLKIT_TOOLS {
+            assert!(!fallbacks.is_empty(), "{name} has no fallback paths");
+            for path in fallbacks {
+                assert_eq!(
+                    Path::new(path).file_name().and_then(|n| n.to_str()),
+                    Some(name),
+                    "{name} lists a fallback for a different tool: {path}"
+                );
+            }
+        }
+    }
+
+    /// The lookup itself: each tool gets its own list, and an unknown name gets
+    /// none rather than another tool's. Pure, so it holds on every host.
+    #[test]
+    fn the_fallback_lookup_returns_each_tools_own_list() {
+        assert_eq!(toolkit_tool_fallbacks("nvcc"), NVCC_FALLBACK_PATHS);
+        assert_eq!(toolkit_tool_fallbacks("cuda-gdb"), CUDA_GDB_FALLBACK_PATHS);
+        assert_eq!(
+            toolkit_tool_fallbacks("compute-sanitizer"),
+            COMPUTE_SANITIZER_FALLBACK_PATHS
+        );
+        assert!(toolkit_tool_fallbacks("ptxas").is_empty());
+    }
+
+    /// Every call site names a tool the table knows. `doctor_toolkit_tool`
+    /// falls back to an empty list for an unknown name, so a typo would
+    /// silently drop the standard install roots rather than fail.
+    #[test]
+    fn every_doctor_toolkit_tool_call_names_a_tool_in_the_table() {
+        let source = include_str!("commands.rs");
+        let mut calls = 0;
+        for (index, _) in source.match_indices("doctor_toolkit_tool(ctx, \"") {
+            let rest = &source[index + "doctor_toolkit_tool(ctx, \"".len()..];
+            let name = &rest[..rest.find('"').expect("a closing quote")];
+            assert!(
+                DOCTOR_TOOLKIT_TOOLS.iter().any(|(tool, _)| *tool == name),
+                "{name} is probed but absent from DOCTOR_TOOLKIT_TOOLS, so it \
+                 would silently lose its fallback paths"
+            );
+            calls += 1;
+        }
+        assert_eq!(
+            calls,
+            DOCTOR_TOOLKIT_TOOLS.len(),
+            "every table entry is probed once"
+        );
+    }
+
+    /// Unaffected control: the configured toolkit root is preferred over the
+    /// standard install roots, so pointing `CUDA_TOOLKIT_PATH` at a toolkit does
+    /// not start picking up `/usr/local/cuda`. Discovery order is unchanged by
+    /// this fix; only which function `doctor` calls changed.
+    ///
+    /// PATH precedence is deliberately *not* asserted here. `find_executable`
+    /// shells out to `which`, so testing it would mean mutating the process
+    /// `PATH` -- `unsafe` in edition 2024 and racy across the test threads. The
+    /// end-to-end evidence in the pull request covers that case against the real
+    /// binary instead, which is the stronger check anyway.
+    #[test]
+    fn the_configured_root_is_preferred_over_the_standard_install_roots() {
+        let root = unique_temp_dir("cargo_oxide_doctor_order");
+        let name = "cuda-oxide-test-doctor-order";
+        let under_toolkit = root.join("bin").join(name);
+        std::fs::create_dir_all(under_toolkit.parent().unwrap()).unwrap();
+        std::fs::write(&under_toolkit, b"fake tool").unwrap();
+        let fallback = root.join("fallback").join(name);
+        std::fs::create_dir_all(fallback.parent().unwrap()).unwrap();
+        std::fs::write(&fallback, b"fake tool").unwrap();
+        let ctx = test_context(OxideConfig {
+            env: vec![(
+                "CUDA_TOOLKIT_PATH".to_string(),
+                root.to_string_lossy().into_owned(),
+            )],
+            ..OxideConfig::default()
+        });
+
+        let fallback_arg = fallback.to_string_lossy().into_owned();
+        assert_eq!(
+            find_cuda_toolkit_executable_with_env(&ctx, name, &[&fallback_arg], |_| None),
+            Some(under_toolkit),
+            "the configured toolkit root must win over a fallback path"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Negative: absent from PATH, from the configured root, and from the
+    /// fallbacks is still `None` -- the fix must not invent a path.
+    #[test]
+    fn a_missing_tool_is_still_missing() {
+        let root = unique_temp_dir("cargo_oxide_doctor_absent");
+        std::fs::create_dir_all(&root).unwrap();
+        let ctx = test_context(OxideConfig {
+            env: vec![(
+                "CUDA_TOOLKIT_PATH".to_string(),
+                root.to_string_lossy().into_owned(),
+            )],
+            ..OxideConfig::default()
+        });
+        assert_eq!(
+            find_cuda_toolkit_executable_with_env(
+                &ctx,
+                "cuda-oxide-test-absent-tool",
+                &["/nonexistent/bin/cuda-oxide-test-absent-tool"],
+                |_| None,
+            ),
+            None
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The invariant a table alone cannot hold: no CUDA toolkit executable may
+    /// be probed with a bare `Command::new`, which is how `nvcc` and `cuda-gdb`
+    /// came to disagree with the commands they predict. Read out of the source
+    /// rather than from `DOCTOR_TOOLKIT_TOOLS`, so a tool left out of the table
+    /// is still caught.
+    #[test]
+    fn no_toolkit_executable_is_probed_by_bare_path() {
+        let source = include_str!("commands.rs");
+        for tool in [
+            "nvcc",
+            "cuda-gdb",
+            "compute-sanitizer",
+            "ptxas",
+            "nvlink",
+            "fatbinary",
+            "nvdisasm",
+            "cuobjdump",
+        ] {
+            let bare = format!("Command::new(\"{tool}\")");
+            assert!(
+                !source.contains(&bare),
+                "{tool} is probed with {bare}, bypassing the toolkit root; \
+                 route it through doctor_toolkit_tool / find_cuda_toolkit_executable"
+            );
+        }
+    }
+
+    /// `doctor` predicts whether `debug` will work, so both must consult one
+    /// list. A second inline copy is how they drifted apart.
+    #[test]
+    fn doctor_and_debug_share_one_cuda_gdb_fallback_list() {
+        let source = include_str!("commands.rs");
+        assert!(
+            source.matches("CUDA_GDB_FALLBACK_PATHS").count() >= 3,
+            "the shared list is not referenced by both call sites"
+        );
+        assert_eq!(
+            source.matches("\"/usr/local/cuda/bin/cuda-gdb\"").count(),
+            1,
+            "a second inline cuda-gdb path list has appeared"
+        );
     }
 
     #[test]
