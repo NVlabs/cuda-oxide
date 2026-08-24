@@ -4977,6 +4977,104 @@ mod tests {
         assert_eq!(target_minimum_ptx_isa(121, Some('a')), Some(88));
     }
 
+    /// Every target whose PTX ISA floor `target_minimum_ptx_isa` records.
+    const RECORDED_FLOOR_TARGETS: &[(u32, Option<char>)] = &[
+        (70, None),
+        (72, None),
+        (75, None),
+        (80, None),
+        (86, None),
+        (87, None),
+        (88, None),
+        (89, None),
+        (90, None),
+        (90, Some('a')),
+        (100, None),
+        (100, Some('a')),
+        (100, Some('f')),
+        (101, None),
+        (101, Some('a')),
+        (101, Some('f')),
+        (103, None),
+        (103, Some('a')),
+        (103, Some('f')),
+        (110, None),
+        (110, Some('a')),
+        (110, Some('f')),
+        (120, None),
+        (120, Some('a')),
+        (120, Some('f')),
+        (121, None),
+        (121, Some('a')),
+        (121, Some('f')),
+    ];
+
+    fn emitted_ptx_isa(ptx: &str) -> Option<u32> {
+        let (major, minor) = ptx
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(".version "))?
+            .trim()
+            .split_once('.')?;
+        Some(major.parse::<u32>().ok()? * 10 + minor.parse::<u32>().ok()?)
+    }
+
+    /// The recorded floors describe what the backend already knows, so derive
+    /// them from it. LLVM 21 refuses several of these targets outright
+    /// ([`validate_target_for_llvm_major`]), so only the LLVM 22 backend this
+    /// crate pins can stand in for the table.
+    #[cfg(unix)]
+    #[test]
+    fn recorded_floors_match_the_backend_defaults() {
+        use crate::llvm_tools::LlvmToolchain;
+        use crate::options::BackendOptions;
+        use std::process::Command;
+
+        let Some(toolchain) = LlvmToolchain::resolve(&BackendOptions::default()) else {
+            return;
+        };
+        if toolchain.llc_major != Some(22) {
+            return;
+        }
+
+        let directory =
+            std::env::temp_dir().join(format!("cuda-oxide-floor-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let module = directory.join("floor.ll");
+        std::fs::write(
+            &module,
+            "target triple = \"nvptx64-nvidia-cuda\"\n\ndefine void @probe() {\nentry:\n  ret void\n}\n",
+        )
+        .unwrap();
+
+        for (capability, suffix) in RECORDED_FLOOR_TARGETS {
+            let target = match suffix {
+                Some(suffix) => format!("sm_{capability}{suffix}"),
+                None => format!("sm_{capability}"),
+            };
+            let output = directory.join(format!("{target}.ptx"));
+            let status = Command::new(&toolchain.llc_path)
+                .arg("-mtriple=nvptx64-nvidia-cuda")
+                .arg(format!("-mcpu={target}"))
+                .arg("-filetype=asm")
+                .arg(&module)
+                .arg("-o")
+                .arg(&output)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{target}: backend refused it");
+
+            let emitted = emitted_ptx_isa(&std::fs::read_to_string(&output).unwrap())
+                .unwrap_or_else(|| panic!("{target}: emitted PTX carries no .version"));
+            assert_eq!(
+                target_minimum_ptx_isa(*capability, *suffix),
+                Some(emitted),
+                "{target}: recorded floor disagrees with the backend default"
+            );
+        }
+
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
     #[test]
     fn test_arch_satisfies_sm100_only_features() {
         // tcgen05 and explicit cta_group TMA are datacenter-Blackwell only:
