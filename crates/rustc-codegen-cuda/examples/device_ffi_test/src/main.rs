@@ -42,7 +42,9 @@ unsafe extern "C" {
     fn simple_add(a: f32, b: f32) -> f32;
     // Rust `char` is a 32-bit Unicode scalar, so it lowers to a plain i32
     // parameter slot with no extension attribute -- the C side declares it
-    // `unsigned int`.
+    // `unsigned int`. `improper_ctypes` still flags `char` (no C equivalent);
+    // the u32 mapping above is the supported ABI, so allow it here.
+    #[allow(improper_ctypes)]
     fn char_to_upper(c: char) -> char;
     fn clamp_value(val: f32, min_val: f32, max_val: f32) -> f32;
     fn smem_write_aligned_128(offset: i32, value: f32);
@@ -708,7 +710,7 @@ fn test_char_ffi_runner(
     println!("--- Test: test_char_ffi ---");
 
     let stream = ctx.default_stream();
-    let mut d_output = stream.alloc_zeros::<u32>(2).unwrap();
+    let d_output = DeviceBuffer::<u32>::zeroed(&stream, 2).unwrap();
 
     let config = LaunchConfig {
         grid_dim: (1, 1, 1),
