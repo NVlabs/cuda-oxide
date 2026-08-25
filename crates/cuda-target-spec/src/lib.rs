@@ -24,6 +24,28 @@ pub struct CudaArch {
 }
 
 impl CudaArch {
+    /// Construct a CUDA architecture from its numeric and suffix components.
+    ///
+    /// This enforces the same capability-width and suffix grammar as
+    /// [`FromStr`]: capabilities have at least two digits, and the only
+    /// architecture-family suffixes are `a` and `f`.
+    pub fn new(capability: u32, suffix: Option<char>) -> Result<Self, CudaArchParseError> {
+        let target = render_parts("sm_", capability, suffix);
+        if capability < 10 {
+            return Err(CudaArchParseError::new(
+                &target,
+                "compute capability must contain at least two digits",
+            ));
+        }
+        if !matches!(suffix, None | Some('a' | 'f')) {
+            return Err(CudaArchParseError::new(
+                &target,
+                "the only supported architecture suffixes are `a` and `f`",
+            ));
+        }
+        Ok(Self { capability, suffix })
+    }
+
     /// Numeric CUDA capability (`86`, `90`, `100`, `120`, ...).
     pub fn capability(&self) -> u32 {
         self.capability
@@ -52,10 +74,14 @@ impl CudaArch {
         self.render("compute_")
     }
     fn render(&self, prefix: &str) -> String {
-        match self.suffix {
-            Some(suffix) => format!("{prefix}{}{suffix}", self.capability),
-            None => format!("{prefix}{}", self.capability),
-        }
+        render_parts(prefix, self.capability, self.suffix)
+    }
+}
+
+fn render_parts(prefix: &str, capability: u32, suffix: Option<char>) -> String {
+    match suffix {
+        Some(suffix) => format!("{prefix}{capability}{suffix}"),
+        None => format!("{prefix}{capability}"),
     }
 }
 
@@ -67,12 +93,6 @@ impl FromStr for CudaArch {
             .or_else(|| target.strip_prefix("compute_"))
             .ok_or_else(|| CudaArchParseError::new(target, "expected `sm_XX` or `compute_XX`"))?;
         let digit_count = rest.chars().take_while(|c| c.is_ascii_digit()).count();
-        if digit_count < 2 {
-            return Err(CudaArchParseError::new(
-                target,
-                "compute capability must contain at least two digits",
-            ));
-        }
         let (digits, suffix_text) = rest.split_at(digit_count);
         let suffix = match suffix_text {
             "" => None,
@@ -88,7 +108,7 @@ impl FromStr for CudaArch {
         let capability = digits.parse::<u32>().map_err(|_| {
             CudaArchParseError::new(target, "compute capability is not a valid integer")
         })?;
-        Ok(Self { capability, suffix })
+        Self::new(capability, suffix)
     }
 }
 
@@ -313,6 +333,24 @@ pub fn recorded_ptx_floor(arch: &CudaArch) -> Result<u16, UnsupportedTargetError
 /// Discrete PTX ISA feature spellings supported by the pinned LLVM backend.
 pub const PTX_ISA_SPELLINGS: &[u16] = &[62, 65, 70, 71, 73, 78, 80, 86, 87, 88, 90];
 
+/// Render one supported PTX ISA spelling as an LLVM `-mattr` feature.
+pub fn spelling_feature(spelling: u16) -> Option<&'static str> {
+    match spelling {
+        62 => Some("+ptx62"),
+        65 => Some("+ptx65"),
+        70 => Some("+ptx70"),
+        71 => Some("+ptx71"),
+        73 => Some("+ptx73"),
+        78 => Some("+ptx78"),
+        80 => Some("+ptx80"),
+        86 => Some("+ptx86"),
+        87 => Some("+ptx87"),
+        88 => Some("+ptx88"),
+        90 => Some("+ptx90"),
+        _ => None,
+    }
+}
+
 /// Return the smallest supported PTX feature spelling at least `floor`.
 ///
 /// Returns `None` when the requested floor is newer than every supported
@@ -351,6 +389,28 @@ mod tests {
         ] {
             assert!(input.parse::<CudaArch>().is_err(), "{input}");
         }
+    }
+
+    #[test]
+    fn construction_from_parts_and_text_agree() {
+        for entry in RECORDED_PTX_FLOORS {
+            let from_parts = CudaArch::new(entry.capability, entry.suffix).unwrap();
+            let reparsed = from_parts.sm().parse::<CudaArch>();
+            assert_eq!(reparsed, Ok(from_parts));
+        }
+        assert!(CudaArch::new(5, None).is_err());
+        assert!("sm_5".parse::<CudaArch>().is_err());
+        assert!(CudaArch::new(90, Some('x')).is_err());
+        assert!("sm_90x".parse::<CudaArch>().is_err());
+    }
+
+    #[test]
+    fn every_ptx_spelling_has_one_canonical_feature() {
+        for spelling in PTX_ISA_SPELLINGS {
+            let expected = format!("+ptx{spelling}");
+            assert_eq!(spelling_feature(*spelling), Some(expected.as_str()));
+        }
+        assert_eq!(spelling_feature(74), None);
     }
 
     #[cfg(unix)]
