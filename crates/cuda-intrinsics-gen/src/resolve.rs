@@ -74,6 +74,7 @@ use crate::model::{
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::{read_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, bail, ensure};
+use cuda_target_spec::{CudaArch, recorded_ptx_floor};
 use ptx_parse::ParseError;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -29226,10 +29227,12 @@ fn target_matrix_ptx_floor(
 
 fn f8f6f4_llvm_ptx_floor(hardware: CatalogHardwareAlternative) -> Result<u16> {
     match hardware {
-        CatalogHardwareAlternative::ExactArchitecture { sm: 120 } => Ok(87),
-        CatalogHardwareAlternative::FamilyTarget { sm: 120 }
+        CatalogHardwareAlternative::ExactArchitecture { sm: 120 }
+        | CatalogHardwareAlternative::FamilyTarget { sm: 120 }
         | CatalogHardwareAlternative::ExactArchitecture { sm: 121 }
-        | CatalogHardwareAlternative::FamilyTarget { sm: 121 } => Ok(88),
+        | CatalogHardwareAlternative::FamilyTarget { sm: 121 } => {
+            recorded_stage_ptx_floor(hardware, 87)
+        }
         _ => bail!(
             "{} is not a reviewed f8f6f4 MMA target",
             describe_stage_hardware(hardware)
@@ -29238,22 +29241,30 @@ fn f8f6f4_llvm_ptx_floor(hardware: CatalogHardwareAlternative) -> Result<u16> {
 }
 
 fn blackwell_ldmatrix_llvm_ptx_floor(hardware: CatalogHardwareAlternative) -> Result<u16> {
-    let floor = match hardware {
-        CatalogHardwareAlternative::ExactArchitecture { sm: 100 } => 86,
-        CatalogHardwareAlternative::ExactArchitecture { sm: 103 }
-        | CatalogHardwareAlternative::ExactArchitecture { sm: 121 }
+    match hardware {
+        CatalogHardwareAlternative::ExactArchitecture {
+            sm: 100 | 103 | 110 | 120 | 121,
+        }
         | CatalogHardwareAlternative::FamilyTarget {
             sm: 100 | 103 | 120 | 121,
-        } => 88,
-        CatalogHardwareAlternative::ExactArchitecture { sm: 110 }
-        | CatalogHardwareAlternative::FamilyTarget { sm: 110 } => 90,
-        CatalogHardwareAlternative::ExactArchitecture { sm: 120 } => 87,
+        }
+        | CatalogHardwareAlternative::FamilyTarget { sm: 110 } => {
+            recorded_stage_ptx_floor(hardware, 86)
+        }
         _ => bail!(
             "{} is not a reviewed Blackwell ldmatrix target",
             describe_stage_hardware(hardware)
         ),
-    };
-    Ok(floor)
+    }
+}
+
+fn recorded_stage_ptx_floor(
+    hardware: CatalogHardwareAlternative,
+    instruction_floor: u16,
+) -> Result<u16> {
+    let target = describe_stage_hardware(hardware);
+    let arch = target.parse::<CudaArch>()?;
+    Ok(instruction_floor.max(recorded_ptx_floor(&arch)?))
 }
 
 fn successful_stage(
@@ -29274,22 +29285,19 @@ fn is_normalized_stage_target(target: &str) -> bool {
 }
 
 fn parse_stage_hardware(target: &str) -> Option<CatalogHardwareAlternative> {
-    let value = target
-        .strip_prefix("sm_")
-        .or_else(|| target.strip_prefix("compute_"))?;
-    let suffix = value
-        .chars()
-        .last()
-        .filter(|suffix| matches!(suffix, 'a' | 'f'));
-    let digits = suffix.map_or(value, |suffix| &value[..value.len() - suffix.len_utf8()]);
-    if !matches!(digits.len(), 2 | 3) || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    let arch = target.parse::<CudaArch>().ok()?;
+    let canonical = if target.starts_with("sm_") {
+        arch.sm()
+    } else if target.starts_with("compute_") {
+        arch.compute()
+    } else {
+        return None;
+    };
+    if canonical != target || !matches!(arch.capability().to_string().len(), 2 | 3) {
         return None;
     }
-    let sm: u16 = digits.parse().ok()?;
-    if sm == 0 || sm.to_string() != digits {
-        return None;
-    }
-    Some(match suffix {
+    let sm = u16::try_from(arch.capability()).ok()?;
+    Some(match arch.suffix() {
         None => CatalogHardwareAlternative::MinimumSm { sm },
         Some('a') => CatalogHardwareAlternative::ExactArchitecture { sm },
         Some('f') => CatalogHardwareAlternative::FamilyTarget { sm },
@@ -40152,6 +40160,58 @@ scope = "system"
                 alternatives: vec![CatalogHardwareAlternative::FamilyTarget { sm: 120 }],
             }
         );
+    }
+
+    #[test]
+    fn stage_hardware_shared_parser_preserves_canonical_evidence_language() {
+        for (target, expected) in [
+            ("sm_75", CatalogHardwareAlternative::MinimumSm { sm: 75 }),
+            (
+                "sm_120a",
+                CatalogHardwareAlternative::ExactArchitecture { sm: 120 },
+            ),
+            (
+                "compute_120f",
+                CatalogHardwareAlternative::FamilyTarget { sm: 120 },
+            ),
+        ] {
+            assert_eq!(parse_stage_hardware(target), Some(expected), "{target}");
+        }
+        for target in ["sm_090", "sm_1000"] {
+            assert_eq!(parse_stage_hardware(target), None, "{target}");
+        }
+    }
+
+    #[test]
+    fn reviewed_target_floors_equal_shared_backend_derivation() {
+        for (target, floor) in [
+            ("sm_120a", 87),
+            ("sm_120f", 88),
+            ("sm_121a", 88),
+            ("sm_121f", 88),
+        ] {
+            let hardware = parse_stage_hardware(target).unwrap();
+            assert_eq!(f8f6f4_llvm_ptx_floor(hardware).unwrap(), floor, "{target}");
+        }
+        for (target, floor) in [
+            ("sm_100a", 86),
+            ("sm_100f", 88),
+            ("sm_103a", 88),
+            ("sm_103f", 88),
+            ("sm_110a", 90),
+            ("sm_110f", 90),
+            ("sm_120a", 87),
+            ("sm_120f", 88),
+            ("sm_121a", 88),
+            ("sm_121f", 88),
+        ] {
+            let hardware = parse_stage_hardware(target).unwrap();
+            assert_eq!(
+                blackwell_ldmatrix_llvm_ptx_floor(hardware).unwrap(),
+                floor,
+                "{target}"
+            );
+        }
     }
 
     fn selector(name: &str, value: &str) -> TargetSelectorBinding {
