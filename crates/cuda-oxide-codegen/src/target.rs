@@ -1869,14 +1869,20 @@ pub fn required_ptx_feature(
 
 /// Reject targets that the supported LLVM 21 backend silently mishandles.
 ///
-/// LLVM 21 accepts `-mcpu=sm_88` / `sm_110*` but only prints a warning and
+/// A recorded floor of PTX 9.0 identifies the targets LLVM 21 cannot emit
+/// reliably: it accepts their `-mcpu` spellings but only prints a warning and
 /// emits PTX 6.0, which ptxas then rejects. LLVM 22 is the first backend in
-/// cuda-oxide's supported toolchain set that emits valid PTX for these PTX 9.0
-/// target spellings. An unknown version is rejected because it cannot prove
-/// that the backend knows the processor.
+/// cuda-oxide's supported toolchain set that emits valid PTX for them. An
+/// unknown backend version is rejected because it cannot prove support, while
+/// unknown targets remain the responsibility of the normal target validators.
 pub fn validate_target_for_llvm_major(target: &str, llc_major: Option<u32>) -> Result<(), String> {
-    let capability = arch_compute_capability(target);
-    if matches!(capability, Some(88 | 110)) && llc_major.is_none_or(|major| major < 22) {
+    let requires_llvm_22 = target.starts_with("sm_")
+        && target
+            .parse::<CudaArch>()
+            .ok()
+            .and_then(|arch| recorded_ptx_floor(&arch).ok())
+            .is_some_and(|floor| floor >= 90);
+    if requires_llvm_22 && llc_major.is_none_or(|major| major < 22) {
         let backend = llc_major.map_or_else(
             || "an LLVM backend with an unknown version".to_string(),
             |major| format!("LLVM {major}"),
@@ -1915,6 +1921,7 @@ fn arch_major(arch: &str) -> Option<u32> {
 }
 
 /// Extract the numeric compute capability from an `sm_…` target.
+#[cfg(test)]
 fn arch_compute_capability(arch: &str) -> Option<u32> {
     arch_compute_capability_and_suffix(arch).map(|(capability, _)| capability)
 }
@@ -5009,6 +5016,12 @@ mod tests {
             assert!(
                 validate_target_for_llvm_major(target, Some(21)).is_ok(),
                 "{target}"
+            );
+        }
+        for target in ["sm_999a", "not-a-target", "compute_88"] {
+            assert!(
+                validate_target_for_llvm_major(target, Some(21)).is_ok(),
+                "unknown or non-sm target {target} must remain owned by other validators"
             );
         }
         for (target, floor) in [
