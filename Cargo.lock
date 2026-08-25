@@ -450,6 +450,7 @@ dependencies = [
 name = "cuda-oxide-codegen"
 version = "0.1.0"
 dependencies = [
+ "cuda-target-spec",
  "dialect-iket",
  "dialect-mir",
  "dialect-nvvm",

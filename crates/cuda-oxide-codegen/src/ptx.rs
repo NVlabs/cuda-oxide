@@ -531,7 +531,9 @@ fn generate_ptx_impl(
     llc_cmd
         .arg("-march=nvptx64")
         .arg(format!("-mcpu={}", target));
-    if let Some(feature) = required_ptx_feature(&target, requirements.ptx_isa) {
+    if let Some(feature) =
+        required_ptx_feature(&target, requirements.ptx_isa).map_err(PipelineError::PtxGeneration)?
+    {
         llc_cmd.arg(format!("-mattr={feature}"));
     }
     // Full-debug (`-G`-style): run llc at -O0 so its own mem2reg/SROA does not
@@ -773,7 +775,7 @@ mod tests {
         );
         assert_eq!(merged.ptx_isa, PtxIsaRequirement::Ptx73);
         assert_eq!(
-            required_ptx_feature("sm_80", merged.ptx_isa),
+            required_ptx_feature("sm_80", merged.ptx_isa).unwrap(),
             Some("+ptx73")
         );
     }

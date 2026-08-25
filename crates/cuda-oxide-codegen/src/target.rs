@@ -18,6 +18,7 @@ use crate::generated_intrinsic_targets::{
     GeneratedHardwareAlternative, GeneratedHardwareTarget, GeneratedTargetContract,
     GeneratedTargetRequirement,
 };
+use cuda_target_spec::{PTX_ISA_SPELLINGS, recorded_ptx_floor, spelling_at_least};
 use libnvvm_sys::CudaArch;
 use std::path::Path;
 
@@ -901,6 +902,52 @@ pub enum PtxIsaRequirement {
     Ptx90,
 }
 
+impl PtxIsaRequirement {
+    fn from_spelling(spelling: u16) -> Option<Self> {
+        Some(match spelling {
+            62 => Self::Ptx62,
+            65 => Self::Ptx65,
+            70 => Self::Ptx70,
+            71 => Self::Ptx71,
+            73 => Self::Ptx73,
+            78 => Self::Ptx78,
+            80 => Self::Ptx80,
+            86 => Self::Ptx86,
+            87 => Self::Ptx87,
+            88 => Self::Ptx88,
+            90 => Self::Ptx90,
+            _ => return None,
+        })
+    }
+
+    fn spelling(self) -> Option<u16> {
+        match self {
+            Self::Default => None,
+            requirement => PTX_ISA_SPELLINGS
+                .iter()
+                .copied()
+                .find(|spelling| Self::from_spelling(*spelling) == Some(requirement)),
+        }
+    }
+
+    fn feature(self) -> Option<&'static str> {
+        match self.spelling()? {
+            62 => Some("+ptx62"),
+            65 => Some("+ptx65"),
+            70 => Some("+ptx70"),
+            71 => Some("+ptx71"),
+            73 => Some("+ptx73"),
+            78 => Some("+ptx78"),
+            80 => Some("+ptx80"),
+            86 => Some("+ptx86"),
+            87 => Some("+ptx87"),
+            88 => Some("+ptx88"),
+            90 => Some("+ptx90"),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModuleRequirements {
     pub features: DetectedFeatures,
@@ -992,25 +1039,16 @@ fn ptx_isa_requirement_for_floor(
     id: &str,
     marker: &str,
 ) -> Result<PtxIsaRequirement, String> {
-    match encoded {
-        0..=60 => Ok(PtxIsaRequirement::Default),
-        61..=62 => Ok(PtxIsaRequirement::Ptx62),
-        63..=65 => Ok(PtxIsaRequirement::Ptx65),
-        66..=70 => Ok(PtxIsaRequirement::Ptx70),
-        71 => Ok(PtxIsaRequirement::Ptx71),
-        72..=73 => Ok(PtxIsaRequirement::Ptx73),
-        74..=78 => Ok(PtxIsaRequirement::Ptx78),
-        79..=80 => Ok(PtxIsaRequirement::Ptx80),
-        81..=86 => Ok(PtxIsaRequirement::Ptx86),
-        87 => Ok(PtxIsaRequirement::Ptx87),
-        88 => Ok(PtxIsaRequirement::Ptx88),
-        89..=90 => Ok(PtxIsaRequirement::Ptx90),
-        _ => Err(format!(
+    if encoded <= 60 {
+        return Ok(PtxIsaRequirement::Default);
+    }
+    spelling_at_least(encoded)
+        .and_then(PtxIsaRequirement::from_spelling)
+        .ok_or_else(|| format!(
             "generated intrinsic `{id}` (`{marker}`) requires PTX {}.{}, newer than cuda-oxide can request",
             encoded / 10,
             encoded % 10
-        )),
-    }
+        ))
 }
 
 pub(crate) fn merge_generated_module_requirements(
@@ -1809,66 +1847,24 @@ pub(crate) fn resolve_ptx_target_with_generated(
 /// LLVM GPU CPUs select a default PTX ISA independently from the hardware
 /// feature floor. Raise that ISA only when the selected CPU's default is too
 /// old; never force a newer target back to an older PTX version.
-pub fn required_ptx_feature(target: &str, requirement: PtxIsaRequirement) -> Option<&'static str> {
-    let (capability, suffix) = arch_compute_capability_and_suffix(target)?;
-    let minimum = target_minimum_ptx_isa(capability, suffix)?;
-    let requested = match requirement {
-        PtxIsaRequirement::Default => return None,
-        PtxIsaRequirement::Ptx62 => 62,
-        PtxIsaRequirement::Ptx65 => 65,
-        PtxIsaRequirement::Ptx70 => 70,
-        PtxIsaRequirement::Ptx71 => 71,
-        PtxIsaRequirement::Ptx73 => 73,
-        PtxIsaRequirement::Ptx78 => 78,
-        PtxIsaRequirement::Ptx80 => 80,
-        PtxIsaRequirement::Ptx86 => 86,
-        PtxIsaRequirement::Ptx87 => 87,
-        PtxIsaRequirement::Ptx88 => 88,
-        PtxIsaRequirement::Ptx90 => 90,
+pub fn required_ptx_feature(
+    target: &str,
+    requirement: PtxIsaRequirement,
+) -> Result<Option<&'static str>, String> {
+    let Some(requested) = requirement.spelling() else {
+        return Ok(None);
     };
+    if !target.starts_with("sm_") {
+        return Err(format!("invalid CUDA target `{target}`: expected `sm_XX`"));
+    }
+    let arch = target
+        .parse::<CudaArch>()
+        .map_err(|error| error.to_string())?;
+    let minimum = recorded_ptx_floor(&arch).map_err(|error| error.to_string())?;
     if requested <= minimum {
-        return None;
+        return Ok(None);
     }
-    match requirement {
-        PtxIsaRequirement::Default => None,
-        PtxIsaRequirement::Ptx62 => Some("+ptx62"),
-        PtxIsaRequirement::Ptx65 => Some("+ptx65"),
-        PtxIsaRequirement::Ptx70 => Some("+ptx70"),
-        PtxIsaRequirement::Ptx71 => Some("+ptx71"),
-        PtxIsaRequirement::Ptx73 => Some("+ptx73"),
-        PtxIsaRequirement::Ptx78 => Some("+ptx78"),
-        PtxIsaRequirement::Ptx80 => Some("+ptx80"),
-        PtxIsaRequirement::Ptx86 => Some("+ptx86"),
-        PtxIsaRequirement::Ptx87 => Some("+ptx87"),
-        PtxIsaRequirement::Ptx88 => Some("+ptx88"),
-        PtxIsaRequirement::Ptx90 => Some("+ptx90"),
-    }
-}
-
-/// Minimum PTX ISA accepted by LLVM for each concrete target. Passing an
-/// older `+ptxNN` feature does not merely do nothing: LLVM aborts because that
-/// ISA cannot name the selected processor.
-fn target_minimum_ptx_isa(capability: u32, suffix: Option<char>) -> Option<u32> {
-    match (capability, suffix) {
-        (100 | 101 | 120, Some('f')) => Some(88),
-        (90, Some('a')) => Some(80),
-        (capability, _) => match capability {
-            70 => Some(60),
-            72 => Some(61),
-            75 => Some(63),
-            80 => Some(70),
-            86 => Some(71),
-            87 => Some(74),
-            88 => Some(90),
-            89 | 90 => Some(78),
-            100 | 101 => Some(86),
-            103 => Some(88),
-            110 => Some(90),
-            120 => Some(87),
-            121 => Some(88),
-            _ => None,
-        },
-    }
+    Ok(requirement.feature())
 }
 
 /// Reject targets that the supported LLVM 21 backend silently mishandles.
@@ -2141,7 +2137,7 @@ mod tests {
                 generated_ptx_isa_requirement_for_target(&generated, target).unwrap(),
                 requirement
             );
-            assert_eq!(required_ptx_feature(target, requirement), None);
+            assert_eq!(required_ptx_feature(target, requirement).unwrap(), None);
         }
         assert_eq!(
             generated_requirement_ptx_floor("sm_103a", TCGEN_F16.requirement),
@@ -2172,7 +2168,7 @@ mod tests {
             PtxIsaRequirement::Ptx86
         );
         assert_eq!(
-            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx86),
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx86).unwrap(),
             None
         );
         for (target, requirement) in [
@@ -2183,7 +2179,7 @@ mod tests {
                 generated_ptx_isa_requirement_for_target(&generated, target).unwrap(),
                 requirement
             );
-            assert_eq!(required_ptx_feature(target, requirement), None);
+            assert_eq!(required_ptx_feature(target, requirement).unwrap(), None);
         }
         assert!(!generated_target_satisfied("sm_103a", &generated));
         assert!(!generated_target_satisfied("sm_100f", &generated));
@@ -2323,14 +2319,32 @@ mod tests {
         );
         for target in ["sm_70", "sm_80", "sm_86"] {
             assert_eq!(
-                required_ptx_feature(target, PtxIsaRequirement::Ptx73),
+                required_ptx_feature(target, PtxIsaRequirement::Ptx73).unwrap(),
                 Some("+ptx73"),
                 "{target}"
             );
         }
         assert_eq!(
-            required_ptx_feature("sm_87", PtxIsaRequirement::Ptx73),
+            required_ptx_feature("sm_87", PtxIsaRequirement::Ptx73).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn every_shared_ptx_spelling_round_trips() {
+        for spelling in PTX_ISA_SPELLINGS {
+            let requirement = PtxIsaRequirement::from_spelling(*spelling).unwrap();
+            assert_eq!(requirement.spelling(), Some(*spelling));
+        }
+    }
+
+    #[test]
+    fn unrecorded_target_fails_closed_for_explicit_ptx() {
+        let error = required_ptx_feature("sm_89a", PtxIsaRequirement::Ptx80).unwrap_err();
+        assert!(error.contains("no recorded PTX ISA floor"));
+        assert_eq!(
+            required_ptx_feature("sm_999a", PtxIsaRequirement::Default),
+            Ok(None)
         );
     }
 
@@ -2480,19 +2494,19 @@ mod tests {
         );
         assert!(PtxIsaRequirement::Ptx86 < PtxIsaRequirement::Ptx87);
         assert_eq!(
-            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx87),
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx87).unwrap(),
             Some("+ptx87")
         );
         assert_eq!(
-            required_ptx_feature("sm_120a", PtxIsaRequirement::Ptx87),
+            required_ptx_feature("sm_120a", PtxIsaRequirement::Ptx87).unwrap(),
             None
         );
         assert_eq!(
-            required_ptx_feature("sm_100f", PtxIsaRequirement::Ptx87),
+            required_ptx_feature("sm_100f", PtxIsaRequirement::Ptx87).unwrap(),
             None
         );
         assert_eq!(
-            required_ptx_feature("sm_120f", PtxIsaRequirement::Ptx87),
+            required_ptx_feature("sm_120f", PtxIsaRequirement::Ptx87).unwrap(),
             None
         );
         assert_eq!(
@@ -2516,11 +2530,11 @@ mod tests {
             PtxIsaRequirement::Ptx88
         );
         assert_eq!(
-            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx88),
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx88).unwrap(),
             Some("+ptx88")
         );
         assert_eq!(
-            required_ptx_feature("sm_103a", PtxIsaRequirement::Ptx88),
+            required_ptx_feature("sm_103a", PtxIsaRequirement::Ptx88).unwrap(),
             None
         );
         assert_eq!(
@@ -2528,11 +2542,11 @@ mod tests {
             PtxIsaRequirement::Ptx90
         );
         assert_eq!(
-            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx90),
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx90).unwrap(),
             Some("+ptx90")
         );
         assert_eq!(
-            required_ptx_feature("sm_110a", PtxIsaRequirement::Ptx90),
+            required_ptx_feature("sm_110a", PtxIsaRequirement::Ptx90).unwrap(),
             None
         );
         validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx87, Some(21)).unwrap();
@@ -3017,7 +3031,7 @@ mod tests {
             );
         }
         assert_eq!(
-            required_ptx_feature("sm_70", PtxIsaRequirement::Ptx62),
+            required_ptx_feature("sm_70", PtxIsaRequirement::Ptx62).unwrap(),
             Some("+ptx62")
         );
         assert_eq!(
@@ -3538,10 +3552,13 @@ mod tests {
         );
         assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
         assert_eq!(
-            required_ptx_feature("sm_75", requirements.ptx_isa),
+            required_ptx_feature("sm_75", requirements.ptx_isa).unwrap(),
             Some("+ptx70")
         );
-        assert_eq!(required_ptx_feature("sm_80", requirements.ptx_isa), None);
+        assert_eq!(
+            required_ptx_feature("sm_80", requirements.ptx_isa).unwrap(),
+            None
+        );
 
         let sm_75: CudaArch = "sm_75".parse().unwrap();
         let sm_80: CudaArch = "sm_80".parse().unwrap();
@@ -3689,7 +3706,7 @@ mod tests {
         let m8_requirements = detect_module_requirements_in_llvm_text(m8_xor);
         assert_eq!(select_target(m8_requirements.features).unwrap(), "sm_75");
         assert_eq!(
-            required_ptx_feature("sm_75", m8_requirements.ptx_isa),
+            required_ptx_feature("sm_75", m8_requirements.ptx_isa).unwrap(),
             Some("+ptx70")
         );
 
@@ -3700,7 +3717,7 @@ mod tests {
         let and_requirements = detect_module_requirements_in_llvm_text(m16_and);
         assert_eq!(select_target(and_requirements.features).unwrap(), "sm_80");
         assert_eq!(
-            required_ptx_feature("sm_80", and_requirements.ptx_isa),
+            required_ptx_feature("sm_80", and_requirements.ptx_isa).unwrap(),
             Some("+ptx71")
         );
         let sm_75: CudaArch = "sm_75".parse().unwrap();
@@ -3841,10 +3858,13 @@ mod tests {
                 .expect("auto-resolve");
         assert_eq!(target, "sm_75");
         assert_eq!(
-            required_ptx_feature("sm_75", requirements.ptx_isa),
+            required_ptx_feature("sm_75", requirements.ptx_isa).unwrap(),
             Some("+ptx65")
         );
-        assert_eq!(required_ptx_feature("sm_80", requirements.ptx_isa), None);
+        assert_eq!(
+            required_ptx_feature("sm_80", requirements.ptx_isa).unwrap(),
+            None
+        );
 
         let sm_70: CudaArch = "sm_70".parse().unwrap();
         let sm_75: CudaArch = "sm_75".parse().unwrap();
@@ -3988,10 +4008,13 @@ mod tests {
         );
         assert_eq!(select_target(requirements.features).unwrap(), "sm_75");
         assert_eq!(
-            required_ptx_feature("sm_75", requirements.ptx_isa),
+            required_ptx_feature("sm_75", requirements.ptx_isa).unwrap(),
             Some("+ptx65")
         );
-        assert_eq!(required_ptx_feature("sm_80", requirements.ptx_isa), None);
+        assert_eq!(
+            required_ptx_feature("sm_80", requirements.ptx_isa).unwrap(),
+            None
+        );
 
         let sm_72: CudaArch = "sm_72".parse().unwrap();
         let sm_75: CudaArch = "sm_75".parse().unwrap();
@@ -4237,24 +4260,24 @@ mod tests {
 
         for target in ["sm_75", "sm_80", "sm_86", "sm_87"] {
             assert_eq!(
-                required_ptx_feature(target, PtxIsaRequirement::Ptx78),
+                required_ptx_feature(target, PtxIsaRequirement::Ptx78).unwrap(),
                 Some("+ptx78"),
                 "{target} needs an explicit PTX 7.8 floor"
             );
         }
         assert_eq!(
-            required_ptx_feature("sm_90", PtxIsaRequirement::Ptx78),
+            required_ptx_feature("sm_90", PtxIsaRequirement::Ptx78).unwrap(),
             None
         );
         for target in ["sm_88", "sm_89"] {
             assert_eq!(
-                required_ptx_feature(target, PtxIsaRequirement::Ptx78),
+                required_ptx_feature(target, PtxIsaRequirement::Ptx78).unwrap(),
                 None,
                 "{target} already requires PTX 7.8 or newer"
             );
         }
         assert_eq!(
-            required_ptx_feature("sm_75", PtxIsaRequirement::Default),
+            required_ptx_feature("sm_75", PtxIsaRequirement::Default).unwrap(),
             None
         );
     }
@@ -4326,15 +4349,15 @@ mod tests {
         );
 
         assert_eq!(
-            required_ptx_feature("sm_75", PtxIsaRequirement::Ptx65),
+            required_ptx_feature("sm_75", PtxIsaRequirement::Ptx65).unwrap(),
             Some("+ptx65")
         );
         assert_eq!(
-            required_ptx_feature("sm_80", PtxIsaRequirement::Ptx65),
+            required_ptx_feature("sm_80", PtxIsaRequirement::Ptx65).unwrap(),
             None
         );
         assert_eq!(
-            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx86),
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx86).unwrap(),
             None
         );
 
@@ -4416,15 +4439,15 @@ mod tests {
         );
 
         assert_eq!(
-            required_ptx_feature("sm_90", PtxIsaRequirement::Ptx80),
+            required_ptx_feature("sm_90", PtxIsaRequirement::Ptx80).unwrap(),
             Some("+ptx80")
         );
         assert_eq!(
-            required_ptx_feature("sm_90a", PtxIsaRequirement::Ptx86),
+            required_ptx_feature("sm_90a", PtxIsaRequirement::Ptx86).unwrap(),
             Some("+ptx86")
         );
         assert_eq!(
-            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx80),
+            required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx80).unwrap(),
             None
         );
     }
@@ -4485,16 +4508,16 @@ mod tests {
             );
         }
         assert_eq!(
-            required_ptx_feature("sm_80", PtxIsaRequirement::Ptx70),
+            required_ptx_feature("sm_80", PtxIsaRequirement::Ptx70).unwrap(),
             None
         );
         assert_eq!(
-            required_ptx_feature("sm_80", PtxIsaRequirement::Ptx71),
+            required_ptx_feature("sm_80", PtxIsaRequirement::Ptx71).unwrap(),
             Some("+ptx71")
         );
         for target in ["sm_86", "sm_87", "sm_88", "sm_89"] {
             assert_eq!(
-                required_ptx_feature(target, PtxIsaRequirement::Ptx71),
+                required_ptx_feature(target, PtxIsaRequirement::Ptx71).unwrap(),
                 None,
                 "{target} cannot be downgraded below its minimum PTX ISA"
             );
@@ -4969,110 +4992,16 @@ mod tests {
                 "{target}"
             );
         }
-        assert_eq!(target_minimum_ptx_isa(90, Some('a')), Some(80));
-        assert_eq!(target_minimum_ptx_isa(100, Some('a')), Some(86));
-        assert_eq!(target_minimum_ptx_isa(100, Some('f')), Some(88));
-        assert_eq!(target_minimum_ptx_isa(120, Some('a')), Some(87));
-        assert_eq!(target_minimum_ptx_isa(120, Some('f')), Some(88));
-        assert_eq!(target_minimum_ptx_isa(121, Some('a')), Some(88));
-    }
-
-    /// Every target whose PTX ISA floor `target_minimum_ptx_isa` records.
-    const RECORDED_FLOOR_TARGETS: &[(u32, Option<char>)] = &[
-        (70, None),
-        (72, None),
-        (75, None),
-        (80, None),
-        (86, None),
-        (87, None),
-        (88, None),
-        (89, None),
-        (90, None),
-        (90, Some('a')),
-        (100, None),
-        (100, Some('a')),
-        (100, Some('f')),
-        (101, None),
-        (101, Some('a')),
-        (101, Some('f')),
-        (103, None),
-        (103, Some('a')),
-        (103, Some('f')),
-        (110, None),
-        (110, Some('a')),
-        (110, Some('f')),
-        (120, None),
-        (120, Some('a')),
-        (120, Some('f')),
-        (121, None),
-        (121, Some('a')),
-        (121, Some('f')),
-    ];
-
-    fn emitted_ptx_isa(ptx: &str) -> Option<u32> {
-        let (major, minor) = ptx
-            .lines()
-            .find_map(|line| line.trim().strip_prefix(".version "))?
-            .trim()
-            .split_once('.')?;
-        Some(major.parse::<u32>().ok()? * 10 + minor.parse::<u32>().ok()?)
-    }
-
-    /// The recorded floors describe what the backend already knows, so derive
-    /// them from it. LLVM 21 refuses several of these targets outright
-    /// ([`validate_target_for_llvm_major`]), so only the LLVM 22 backend this
-    /// crate pins can stand in for the table.
-    #[cfg(unix)]
-    #[test]
-    fn recorded_floors_match_the_backend_defaults() {
-        use crate::llvm_tools::LlvmToolchain;
-        use crate::options::BackendOptions;
-        use std::process::Command;
-
-        let Some(toolchain) = LlvmToolchain::resolve(&BackendOptions::default()) else {
-            return;
-        };
-        if toolchain.llc_major != Some(22) {
-            return;
+        for (target, floor) in [
+            ("sm_90a", 80),
+            ("sm_100a", 86),
+            ("sm_100f", 88),
+            ("sm_120a", 87),
+            ("sm_120f", 88),
+            ("sm_121a", 88),
+        ] {
+            assert_eq!(recorded_ptx_floor(&target.parse().unwrap()), Ok(floor));
         }
-
-        let directory =
-            std::env::temp_dir().join(format!("cuda-oxide-floor-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let module = directory.join("floor.ll");
-        std::fs::write(
-            &module,
-            "target triple = \"nvptx64-nvidia-cuda\"\n\ndefine void @probe() {\nentry:\n  ret void\n}\n",
-        )
-        .unwrap();
-
-        for (capability, suffix) in RECORDED_FLOOR_TARGETS {
-            let target = match suffix {
-                Some(suffix) => format!("sm_{capability}{suffix}"),
-                None => format!("sm_{capability}"),
-            };
-            let output = directory.join(format!("{target}.ptx"));
-            let status = Command::new(&toolchain.llc_path)
-                .arg("-mtriple=nvptx64-nvidia-cuda")
-                .arg(format!("-mcpu={target}"))
-                .arg("-filetype=asm")
-                .arg(&module)
-                .arg("-o")
-                .arg(&output)
-                .status()
-                .unwrap();
-            assert!(status.success(), "{target}: backend refused it");
-
-            let emitted = emitted_ptx_isa(&std::fs::read_to_string(&output).unwrap())
-                .unwrap_or_else(|| panic!("{target}: emitted PTX carries no .version"));
-            assert_eq!(
-                target_minimum_ptx_isa(*capability, *suffix),
-                Some(emitted),
-                "{target}: recorded floor disagrees with the backend default"
-            );
-        }
-
-        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
