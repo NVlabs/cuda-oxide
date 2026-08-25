@@ -425,6 +425,7 @@ name = "cuda-intrinsics-gen"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cuda-target-spec",
  "ptx-parse",
  "serde",
  "serde_json",

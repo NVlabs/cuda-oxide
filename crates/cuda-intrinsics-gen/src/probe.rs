@@ -15,11 +15,13 @@ use crate::render::render_probe;
 use crate::resolve::{resolve, resolve_candidate};
 use crate::util::{pretty_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, ensure};
+use cuda_target_spec::{CudaArch, recorded_ptx_floor, spelling_at_least};
 use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProbeMode {
@@ -355,47 +357,25 @@ impl<'a> ProbeRunner<'a> {
 
 fn derived_ptx_feature(gpu_target: &str, instruction_floor: u16) -> Result<(Option<String>, u16)> {
     ensure!(
-        gpu_target.strip_prefix("sm_").is_some_and(|value| value
-            .trim_end_matches(['a', 'f'])
-            .bytes()
-            .all(|byte| byte.is_ascii_digit())),
+        gpu_target.starts_with("sm_"),
         "unsupported catalog GPU target {gpu_target:?}"
     );
-    let target_floor = target_minimum_ptx_isa(gpu_target).with_context(|| {
+    let arch = CudaArch::from_str(gpu_target).context("parse derived catalog GPU target")?;
+    let target_floor = recorded_ptx_floor(&arch).with_context(|| {
         format!(
             "derived target {gpu_target} has no recorded PTX ISA floor; cannot derive the PTX configuration production uses"
         )
     })?;
-    let effective_floor = instruction_floor.max(target_floor);
-    let feature = (instruction_floor > target_floor).then(|| format!("+ptx{instruction_floor}"));
-    Ok((feature, effective_floor))
-}
-
-fn target_minimum_ptx_isa(target: &str) -> Option<u16> {
-    let value = target.strip_prefix("sm_")?;
-    let suffix = value
-        .chars()
-        .last()
-        .filter(|suffix| matches!(suffix, 'a' | 'f'));
-    let digits = suffix.map_or(value, |_| &value[..value.len() - 1]);
-    let capability: u16 = digits.parse().ok()?;
-    match (capability, suffix) {
-        (100 | 101 | 120, Some('f')) => Some(88),
-        (90, Some('a')) => Some(80),
-        (70, _) => Some(60),
-        (72, _) => Some(61),
-        (75, _) => Some(63),
-        (80, _) => Some(70),
-        (86, _) => Some(71),
-        (87, _) => Some(74),
-        (88, _) => Some(90),
-        (89 | 90, _) => Some(78),
-        (100 | 101, _) => Some(86),
-        (103, _) => Some(88),
-        (110, _) => Some(90),
-        (120, _) => Some(87),
-        (121, _) => Some(88),
-        _ => None,
+    if instruction_floor <= 60 {
+        return Ok((None, target_floor));
+    }
+    let spelling = spelling_at_least(instruction_floor).with_context(|| {
+        format!("instruction PTX floor {instruction_floor} has no supported llc feature spelling")
+    })?;
+    if spelling <= target_floor {
+        Ok((None, target_floor))
+    } else {
+        Ok((Some(format!("+ptx{spelling}")), spelling))
     }
 }
 
@@ -1847,60 +1827,6 @@ mod tests {
         assert_eq!(derived_ptx_feature("sm_121f", 87).unwrap(), (None, 88));
     }
 
-    /// Every target whose PTX ISA floor `target_minimum_ptx_isa` records.
-    const RECORDED_FLOOR_TARGETS: &[&str] = &[
-        "sm_70", "sm_72", "sm_75", "sm_80", "sm_86", "sm_87", "sm_88", "sm_89", "sm_90", "sm_90a",
-        "sm_100", "sm_100a", "sm_100f", "sm_101", "sm_101a", "sm_101f", "sm_103", "sm_103a",
-        "sm_103f", "sm_110", "sm_110a", "sm_110f", "sm_120", "sm_120a", "sm_120f", "sm_121",
-        "sm_121a", "sm_121f",
-    ];
-
-    fn emitted_ptx_isa(ptx: &str) -> Option<u16> {
-        let (major, minor) = ptx
-            .lines()
-            .find_map(|line| line.trim().strip_prefix(".version "))?
-            .trim()
-            .split_once('.')?;
-        Some(major.parse::<u16>().ok()? * 10 + minor.parse::<u16>().ok()?)
-    }
-
-    /// The recorded floors are a hand-written copy of what the pinned backend
-    /// already knows. Derive them from that backend so the copy cannot drift.
-    #[cfg(unix)]
-    #[test]
-    fn recorded_floors_match_the_pinned_backend_defaults() {
-        let llc = rust_toolchain_llc().unwrap();
-        let directory = candidate_tool_test_dir();
-        let module = directory.0.join("floor.ll");
-        fs::write(
-            &module,
-            "target triple = \"nvptx64-nvidia-cuda\"\n\ndefine void @probe() {\nentry:\n  ret void\n}\n",
-        )
-        .unwrap();
-
-        for target in RECORDED_FLOOR_TARGETS {
-            let output = directory.0.join(format!("{target}.ptx"));
-            let status = Command::new(&llc)
-                .arg("-mtriple=nvptx64-nvidia-cuda")
-                .arg(format!("-mcpu={target}"))
-                .arg("-filetype=asm")
-                .arg(&module)
-                .arg("-o")
-                .arg(&output)
-                .status()
-                .unwrap();
-            assert!(status.success(), "{target}: pinned backend refused it");
-
-            let emitted = emitted_ptx_isa(&fs::read_to_string(&output).unwrap())
-                .unwrap_or_else(|| panic!("{target}: emitted PTX carries no .version"));
-            assert_eq!(
-                target_minimum_ptx_isa(target),
-                Some(emitted),
-                "{target}: recorded floor disagrees with the pinned backend default"
-            );
-        }
-    }
-
     #[test]
     fn derived_target_rejects_canonical_unknown_architecture() {
         let error = derived_ptx_feature("sm_999a", 90).unwrap_err();
@@ -1916,6 +1842,22 @@ mod tests {
         assert_eq!(
             derived_ptx_feature("sm_80", 88).unwrap(),
             (Some("+ptx88".into()), 88)
+        );
+    }
+
+    #[test]
+    fn derived_target_rounds_like_production() {
+        assert_eq!(
+            derived_ptx_feature("sm_80", 74).unwrap(),
+            (Some("+ptx78".into()), 78)
+        );
+        assert_eq!(
+            derived_ptx_feature("sm_87", 74).unwrap(),
+            (Some("+ptx78".into()), 78)
+        );
+        assert_eq!(
+            derived_ptx_feature("sm_75", 63).unwrap(),
+            (Some("+ptx65".into()), 65)
         );
     }
     use crate::model::{
