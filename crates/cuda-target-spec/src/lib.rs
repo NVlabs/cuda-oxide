@@ -12,6 +12,11 @@
 use std::fmt;
 use std::str::FromStr;
 
+/// A validated CUDA compute capability, independent of its textual prefix.
+///
+/// libNVVM takes `compute_XX`, while cubin-producing tools take `sm_XX`.
+/// Keeping one parsed value prevents those consumers from accidentally
+/// targeting different devices.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CudaArch {
     capability: u32,
@@ -19,18 +24,30 @@ pub struct CudaArch {
 }
 
 impl CudaArch {
+    /// Numeric CUDA capability (`86`, `90`, `100`, `120`, ...).
     pub fn capability(&self) -> u32 {
         self.capability
     }
+
+    /// Optional architecture-family suffix (`a` or `f`).
+    ///
+    /// Targets such as `sm_90a` enable architecture-specific instructions and
+    /// cannot be forwarded to a different compute capability.
     pub fn suffix(&self) -> Option<char> {
         self.suffix
     }
+
+    /// Whether libNVVM selects its legacy LLVM 7 input dialect.
     pub fn uses_legacy_llvm(&self) -> bool {
         self.capability < 100
     }
+
+    /// Render the target for cubin-producing tools such as nvJitLink.
     pub fn sm(&self) -> String {
         self.render("sm_")
     }
+
+    /// Render the target for libNVVM.
     pub fn compute(&self) -> String {
         self.render("compute_")
     }
@@ -81,6 +98,7 @@ impl fmt::Display for CudaArch {
     }
 }
 
+/// A malformed CUDA architecture string.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CudaArchParseError {
     target: String,
@@ -101,13 +119,24 @@ impl fmt::Display for CudaArchParseError {
 }
 impl std::error::Error for CudaArchParseError {}
 
+/// One exact CUDA target and its pinned LLVM 22 default PTX ISA.
+///
+/// The suffix is part of the key; consumers must not infer fallback entries
+/// for other suffixes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TargetPtxFloor {
+    /// Numeric CUDA compute capability.
     pub capability: u32,
+    /// Exact optional architecture-family suffix.
     pub suffix: Option<char>,
+    /// PTX ISA encoded as `major * 10 + minor`.
     pub floor: u16,
 }
 
+/// Exact target floors recorded from the pinned LLVM 22 NVPTX backend.
+///
+/// These entries describe backend defaults, not backend-independent CUDA
+/// facts. There are no wildcard or suffix-fallback entries.
 pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
     TargetPtxFloor {
         capability: 70,
@@ -251,6 +280,7 @@ pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
     },
 ];
 
+/// A CUDA target without an exact recorded LLVM 22 PTX floor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnsupportedTargetError {
     target: String,
@@ -266,6 +296,10 @@ impl fmt::Display for UnsupportedTargetError {
 }
 impl std::error::Error for UnsupportedTargetError {}
 
+/// Return the pinned LLVM 22 default PTX floor for an exact target.
+///
+/// Suffixed targets require their own entry; this lookup never falls back to
+/// the unsuffixed capability or another architecture-family suffix.
 pub fn recorded_ptx_floor(arch: &CudaArch) -> Result<u16, UnsupportedTargetError> {
     RECORDED_PTX_FLOORS
         .iter()
@@ -276,7 +310,13 @@ pub fn recorded_ptx_floor(arch: &CudaArch) -> Result<u16, UnsupportedTargetError
         })
 }
 
+/// Discrete PTX ISA feature spellings supported by the pinned LLVM backend.
 pub const PTX_ISA_SPELLINGS: &[u16] = &[62, 65, 70, 71, 73, 78, 80, 86, 87, 88, 90];
+
+/// Return the smallest supported PTX feature spelling at least `floor`.
+///
+/// Returns `None` when the requested floor is newer than every supported
+/// spelling.
 pub fn spelling_at_least(floor: u16) -> Option<u16> {
     PTX_ISA_SPELLINGS
         .iter()
@@ -474,6 +514,9 @@ mod tests {
             let output = directory.0.join("sm_103a.ptx");
             let reject = lower(&llc, &module, "sm_103a", Some("+ptx86"), &output);
             assert!(!reject.status.success());
+            assert!(
+                String::from_utf8_lossy(&reject.stderr).contains("Minimum required PTX version")
+            );
             let pass = lower(&llc, &module, "sm_103a", Some("+ptx88"), &output);
             assert!(
                 pass.status.success(),
