@@ -18,6 +18,8 @@ use crate::generated_intrinsic_targets::{
     GeneratedHardwareAlternative, GeneratedHardwareTarget, GeneratedTargetContract,
     GeneratedTargetRequirement,
 };
+#[cfg(test)]
+use cuda_target_spec::RECORDED_PTX_FLOORS;
 use cuda_target_spec::{PTX_ISA_SPELLINGS, recorded_ptx_floor, spelling_at_least};
 use libnvvm_sys::CudaArch;
 use std::path::Path;
@@ -1341,12 +1343,7 @@ pub(crate) fn select_target_with_generated(
     // This is the reviewed set accepted by `is_known_cuda_target`. Family and
     // architecture spellings are included because a generated requirement may
     // need to intersect with an existing text-detected feature.
-    for candidate in [
-        "sm_70", "sm_72", "sm_75", "sm_80", "sm_86", "sm_87", "sm_88", "sm_89", "sm_90", "sm_100",
-        "sm_101", "sm_103", "sm_110", "sm_120", "sm_121", "sm_90a", "sm_100a", "sm_101a",
-        "sm_103a", "sm_110a", "sm_120a", "sm_121a", "sm_100f", "sm_101f", "sm_103f", "sm_110f",
-        "sm_120f", "sm_121f",
-    ] {
+    for candidate in KNOWN_CUDA_TARGET_CANDIDATES {
         push_candidate(candidate.to_string());
     }
 
@@ -1375,6 +1372,13 @@ pub(crate) fn select_target_with_generated(
         "detected CUDA features {features:?} and generated intrinsics [{generated_ids}] do not share a compatible GPU architecture"
     ))
 }
+
+const KNOWN_CUDA_TARGET_CANDIDATES: &[&str] = &[
+    "sm_70", "sm_72", "sm_75", "sm_80", "sm_86", "sm_87", "sm_88", "sm_89", "sm_90", "sm_100",
+    "sm_101", "sm_103", "sm_110", "sm_120", "sm_121", "sm_90a", "sm_100a", "sm_101a", "sm_103a",
+    "sm_110a", "sm_120a", "sm_121a", "sm_100f", "sm_101f", "sm_103f", "sm_110f", "sm_120f",
+    "sm_121f",
+];
 
 pub(crate) fn generated_target_satisfied(
     arch: &str,
@@ -1753,17 +1757,13 @@ fn is_known_blackwell_capability(capability: u32) -> bool {
 }
 
 fn is_known_cuda_target(capability: u32, suffix: Option<char>) -> bool {
-    let known_capability = matches!(
-        capability,
-        70 | 72 | 75 | 80 | 86 | 87 | 88 | 89 | 90 | 100 | 101 | 103 | 110 | 120 | 121
-    );
-    known_capability
-        && match suffix {
-            None => true,
-            Some('a') => capability == 90 || is_known_blackwell_capability(capability),
-            Some('f') => is_known_blackwell_capability(capability),
-            _ => false,
-        }
+    let target = match suffix {
+        Some(suffix) => format!("sm_{capability}{suffix}"),
+        None => format!("sm_{capability}"),
+    };
+    target
+        .parse::<CudaArch>()
+        .is_ok_and(|arch| recorded_ptx_floor(&arch).is_ok())
 }
 
 pub fn validate_target_features(
@@ -1851,9 +1851,6 @@ pub fn required_ptx_feature(
     target: &str,
     requirement: PtxIsaRequirement,
 ) -> Result<Option<&'static str>, String> {
-    let Some(requested) = requirement.spelling() else {
-        return Ok(None);
-    };
     if !target.starts_with("sm_") {
         return Err(format!("invalid CUDA target `{target}`: expected `sm_XX`"));
     }
@@ -1861,6 +1858,9 @@ pub fn required_ptx_feature(
         .parse::<CudaArch>()
         .map_err(|error| error.to_string())?;
     let minimum = recorded_ptx_floor(&arch).map_err(|error| error.to_string())?;
+    let Some(requested) = requirement.spelling() else {
+        return Ok(None);
+    };
     if requested <= minimum {
         return Ok(None);
     }
@@ -2335,17 +2335,36 @@ mod tests {
         for spelling in PTX_ISA_SPELLINGS {
             let requirement = PtxIsaRequirement::from_spelling(*spelling).unwrap();
             assert_eq!(requirement.spelling(), Some(*spelling));
+            assert!(requirement.feature().is_some());
         }
+    }
+
+    #[test]
+    fn selection_candidates_cover_exactly_the_recorded_target_set() {
+        let candidates = KNOWN_CUDA_TARGET_CANDIDATES
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        let recorded = RECORDED_PTX_FLOORS
+            .iter()
+            .map(|entry| match entry.suffix {
+                Some(suffix) => format!("sm_{}{suffix}", entry.capability),
+                None => format!("sm_{}", entry.capability),
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            candidates,
+            recorded.iter().map(String::as_str).collect(),
+            "selection preference list and shared recorded-floor keys drifted"
+        );
     }
 
     #[test]
     fn unrecorded_target_fails_closed_for_explicit_ptx() {
         let error = required_ptx_feature("sm_89a", PtxIsaRequirement::Ptx80).unwrap_err();
         assert!(error.contains("no recorded PTX ISA floor"));
-        assert_eq!(
-            required_ptx_feature("sm_999a", PtxIsaRequirement::Default),
-            Ok(None)
-        );
+        let error = required_ptx_feature("sm_999a", PtxIsaRequirement::Default).unwrap_err();
+        assert!(error.contains("no recorded PTX ISA floor"));
     }
 
     #[test]
