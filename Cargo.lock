@@ -1093,6 +1093,7 @@ version = "0.1.0"
 name = "ptx-schedule"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "dialect-ptx",
  "oxide-artifacts",
  "ptx-parse",

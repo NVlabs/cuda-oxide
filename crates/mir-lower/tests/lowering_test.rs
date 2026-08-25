@@ -3418,6 +3418,168 @@ fn test_bool_phi_cmp_lowers_to_unsigned_i1_icmp() -> Result<(), anyhow::Error> {
 }
 
 // =============================================================================
+// Scalar math lowering tests
+// =============================================================================
+
+#[test]
+fn test_ex2_approx_f16_uses_exact_pure_i16_inline_ptx_on_both_backends() -> Result<(), anyhow::Error>
+{
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::r#type::Typed;
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let mut ctx = make_test_ctx();
+        let i16_ty = IntegerType::get(&ctx, 16, Signedness::Unsigned);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i16_ty.into()]);
+        let operand = entry.deref(&ctx).get_argument(0);
+        nvvm::ScalarMathOp::build(
+            &mut ctx,
+            operand,
+            nvvm::ScalarMathFormatAttr::F16,
+            nvvm::ScalarMathOperationAttr::Ex2,
+            nvvm::ScalarMathPrecisionAttr::Approx,
+            nvvm::ScalarMathSubnormalAttr::Preserve,
+        )
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm_with_options(
+            &mut ctx,
+            module_ptr,
+            mir_lower::LoweringOptions {
+                intrinsic_backend: backend,
+                ..Default::default()
+            },
+        )
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let inline_asm = lowered_kernel_body(&ctx, module_ptr)
+            .into_iter()
+            .filter_map(|op| Operation::get_op::<llvm::InlineAsmOp>(op, &ctx))
+            .collect::<Vec<_>>();
+        assert_eq!(inline_asm.len(), 1);
+        let inline_asm = &inline_asm[0];
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("ex2.approx.f16 $0, $1;")
+        );
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_constraints(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .as_deref(),
+            Some("=h,h")
+        );
+        assert_eq!(llvm::asm_kind(&ctx, inline_asm), llvm::AsmKind::Pure);
+        assert_eq!(
+            inline_asm
+                .get_attr_inline_asm_convergent(&ctx)
+                .map(|value| bool::from((*value).clone())),
+            Some(false)
+        );
+
+        let op = inline_asm.get_operation().deref(&ctx);
+        assert_eq!(op.get_num_operands(), 1);
+        assert_eq!(op.get_num_results(), 1);
+        for ty in [
+            op.get_operand(0).get_type(&ctx),
+            op.get_result(0).get_type(&ctx),
+        ] {
+            let ty = ty.deref(&ctx);
+            let integer = ty
+                .downcast_ref::<IntegerType>()
+                .expect("f16 values use an i16 transport type");
+            assert_eq!(integer.width(), 16);
+        }
+
+        let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+        let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+            .expect("ex2.approx.f16 module exports to LLVM IR");
+        assert!(
+            ir.contains("call i16 asm \"ex2.approx.f16 $0, $1;\", \"=h,h\"(i16"),
+            "{ir}"
+        );
+        assert!(!ir.contains("asm sideeffect"), "{ir}");
+        assert!(!ir.contains("~{memory}"), "{ir}");
+    }
+    Ok(())
+}
+
+#[test]
+fn test_ex2_approx_f16_lowering_rejects_wrong_type_and_format() {
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let mut wrong_type_ctx = make_test_ctx();
+        let f32_ty = FP32Type::get(&wrong_type_ctx);
+        let (module_ptr, entry) = build_test_kernel(&mut wrong_type_ctx, vec![f32_ty.into()]);
+        let operand = entry.deref(&wrong_type_ctx).get_argument(0);
+        nvvm::ScalarMathOp::build(
+            &mut wrong_type_ctx,
+            operand,
+            nvvm::ScalarMathFormatAttr::F16,
+            nvvm::ScalarMathOperationAttr::Ex2,
+            nvvm::ScalarMathPrecisionAttr::Approx,
+            nvvm::ScalarMathSubnormalAttr::Preserve,
+        )
+        .insert_at_back(entry, &wrong_type_ctx);
+        append_return(&mut wrong_type_ctx, entry);
+        let error = mir_lower::lower_mir_to_llvm_with_options(
+            &mut wrong_type_ctx,
+            module_ptr,
+            mir_lower::LoweringOptions {
+                intrinsic_backend: backend,
+                ..Default::default()
+            },
+        )
+        .expect_err("an f16 operation with an f32 operand must fail closed")
+        .to_string();
+        assert!(
+            error.contains("types must match the selected format"),
+            "{error}"
+        );
+
+        let mut wrong_format_ctx = make_test_ctx();
+        let i16_ty = IntegerType::get(&wrong_format_ctx, 16, Signedness::Unsigned);
+        let (module_ptr, entry) = build_test_kernel(&mut wrong_format_ctx, vec![i16_ty.into()]);
+        let operand = entry.deref(&wrong_format_ctx).get_argument(0);
+        nvvm::ScalarMathOp::build(
+            &mut wrong_format_ctx,
+            operand,
+            nvvm::ScalarMathFormatAttr::F16,
+            nvvm::ScalarMathOperationAttr::Ex2,
+            nvvm::ScalarMathPrecisionAttr::Approx,
+            nvvm::ScalarMathSubnormalAttr::Ftz,
+        )
+        .insert_at_back(entry, &wrong_format_ctx);
+        append_return(&mut wrong_format_ctx, entry);
+        let error = mir_lower::lower_mir_to_llvm_with_options(
+            &mut wrong_format_ctx,
+            module_ptr,
+            mir_lower::LoweringOptions {
+                intrinsic_backend: backend,
+                ..Default::default()
+            },
+        )
+        .expect_err("unadmitted ex2.approx.ftz.f16 must fail closed")
+        .to_string();
+        assert!(
+            error.contains("variant has no generated lowering recipe"),
+            "{error}"
+        );
+    }
+}
+
+// =============================================================================
 // Integer dot product (dp4a / dp2a) lowering tests
 // =============================================================================
 

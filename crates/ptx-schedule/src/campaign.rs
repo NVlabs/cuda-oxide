@@ -102,6 +102,42 @@ impl RunKind {
     fn is_finding(&self) -> bool {
         self.finding_label().is_some()
     }
+
+    /// What this outcome means when it is the *baseline* run.
+    ///
+    /// The campaign and its callers have to agree on this, and the
+    /// distinction that matters is not pass/not-pass. An example that declares
+    /// it cannot run on this device has not failed: `scripts/smoketest.sh`
+    /// reports that decline as `PASS (skipped)`, and #665 exists because
+    /// reporting it as anything else made an arch-gated example
+    /// indistinguishable from a broken one.
+    ///
+    /// The match is exhaustive on purpose, so a new [`RunKind`] cannot join a
+    /// class by default.
+    pub fn baseline_verdict(&self) -> BaselineVerdict {
+        match self {
+            Self::Pass => BaselineVerdict::Usable,
+            Self::Skipped => BaselineVerdict::Declined,
+            Self::Hang
+            | Self::Crash
+            | Self::Mismatch
+            | Self::OutputChanged
+            | Self::GpuWedged
+            | Self::HarnessError => BaselineVerdict::Broken,
+        }
+    }
+}
+
+/// Whether a baseline outcome lets a campaign proceed, and if not, why.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BaselineVerdict {
+    /// The baseline passed; schedule variants are meaningful.
+    Usable,
+    /// The example declared it cannot run here. Not a failure.
+    Declined,
+    /// The baseline did not complete, so nothing could be concluded from a
+    /// variant that behaved the same way.
+    Broken,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -243,7 +279,7 @@ pub fn run_campaign(options: &CampaignOptions) -> Result<CampaignSummary, Campai
     println!("schedule-fuzz: baseline {}", executable.display());
     let baseline = run_binary(&executable, &example_dir, options.timeout);
     println!("schedule-fuzz: baseline {:?}", baseline.kind);
-    if !matches!(baseline.kind, RunKind::Pass) {
+    if baseline.kind.baseline_verdict() != BaselineVerdict::Usable {
         let summary = CampaignSummary {
             example: options.example.clone(),
             ptx: ptx_path.clone(),
@@ -253,10 +289,16 @@ pub fn run_campaign(options: &CampaignOptions) -> Result<CampaignSummary, Campai
             baseline,
             seeds: Vec::new(),
         };
-        println!(
-            "schedule-fuzz: BASELINE FAILURE: {:?}; no schedule variants were run",
-            summary.baseline.kind
-        );
+        match summary.baseline.kind.baseline_verdict() {
+            BaselineVerdict::Declined => println!(
+                "schedule-fuzz: BASELINE DECLINED: the example opted out on this \
+                 device; no schedule variants were run"
+            ),
+            _ => println!(
+                "schedule-fuzz: BASELINE FAILURE: {:?}; no schedule variants were run",
+                summary.baseline.kind
+            ),
+        }
         fs::write(
             output_dir.join("summary.json"),
             serde_json::to_vec_pretty(&summary)?,
@@ -730,24 +772,36 @@ fn run_binary(executable: &Path, cwd: &Path, timeout: Duration) -> RunResult {
         Ok(status) => (status.code(), status.success(), stderr),
         Err(error) => (None, false, error.to_string()),
     };
-    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
-    let kind = if timed_out {
-        RunKind::Hang
-    } else if has_skip_marker(&combined) {
-        RunKind::Skipped
-    } else if has_mismatch_marker(&combined) {
-        RunKind::Mismatch
-    } else if success {
-        RunKind::Pass
-    } else {
-        RunKind::Crash
-    };
+    // Both marker predicates below fold case themselves, so this is the raw
+    // combined stream rather than a lowercased copy.
+    let combined = format!("{stdout}\n{stderr}");
+    let kind = classify_process_result(timed_out, success, &combined);
     RunResult {
         kind,
         exit_code,
         timed_out,
         stdout,
         stderr,
+    }
+}
+
+/// Classify stronger failures before a graceful skip. This is the same order
+/// as `scripts/smoketest.sh`:
+///
+/// ```text
+/// timeout -> nonzero exit -> mismatch -> skip -> pass
+/// ```
+fn classify_process_result(timed_out: bool, success: bool, output: &str) -> RunKind {
+    if timed_out {
+        RunKind::Hang
+    } else if !success {
+        RunKind::Crash
+    } else if has_mismatch_marker(output) {
+        RunKind::Mismatch
+    } else if has_skip_marker(output) {
+        RunKind::Skipped
+    } else {
+        RunKind::Pass
     }
 }
 
@@ -852,13 +906,38 @@ fn rebuild_artifact_section(
     Ok(section)
 }
 
+/// Both spellings an example uses to decline a run.
+///
+/// The convention belongs to `scripts/smoketest.sh`, whose `verdict_standard`
+/// greps `^[[:space:]]*(skipping:|pass \(skipped\))` case-insensitively and
+/// whose own comment names the second form: "`PASS (skipped): ...` form below
+/// sm_75". `generated_ldmatrix` prints exactly that when the device is under
+/// sm_75.
+///
+/// Only the first form used to be accepted here. An example that declined with
+/// the second one therefore exited 0 with no mismatch marker, so `run_binary`
+/// called it [`RunKind::Pass`], the baseline gate let the campaign through, and
+/// every seed "passed" a kernel that never ran -- a clean report from a
+/// campaign that measured nothing.
+const SKIP_MARKERS: [&str; 2] = ["skipping:", "pass (skipped)"];
+
+/// Case is folded here rather than by the caller.
+///
+/// This matches the smoketest's `grep -i` rule and lets callers pass the raw
+/// process output. For example, `Skipping:` and `PASS (skipped):` both match.
 fn has_skip_marker(output: &str) -> bool {
-    output
-        .lines()
-        .any(|line| line.trim_start().starts_with("skipping:"))
+    output.lines().any(|line| {
+        let line = line.trim_start().as_bytes();
+        SKIP_MARKERS.iter().any(|marker| {
+            let marker = marker.as_bytes();
+            line.len() >= marker.len() && line[..marker.len()].eq_ignore_ascii_case(marker)
+        })
+    })
 }
 
+/// Case is folded here too, so `MISMATCH` and `Mismatch` mean the same thing.
 fn has_mismatch_marker(output: &str) -> bool {
+    let output = output.to_ascii_lowercase();
     [
         "mismatch",
         "max error too large",
@@ -883,11 +962,116 @@ fn has_mismatch_marker(output: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The markers must match the way the smoketest's `grep -i` does, without
+    /// the caller having lowercased anything first. Every spelling here is one
+    /// an example or a harness actually prints.
+    #[test]
+    fn the_marker_predicates_fold_case_themselves() {
+        for declined in [
+            "Skipping: cluster launch requires sm_90",
+            "SKIPPING: needs two devices",
+            "PASS (skipped): ldmatrix.m8n8.x4.b16 requires sm_75+",
+            "  Pass (Skipped): no peer access",
+        ] {
+            assert!(has_skip_marker(declined), "{declined}");
+        }
+        for failed in [
+            "MISMATCH at index 3",
+            "Mismatch: host and device disagree",
+            "Max Error Too Large",
+            "DEADLOCK detected",
+            "Validation Failed",
+        ] {
+            assert!(has_mismatch_marker(failed), "{failed}");
+        }
+        // Folding case must not widen what counts as a marker.
+        for ran in [
+            "pass",
+            "PASS",
+            "pass: 1024 elements verified",
+            "SUCCESS",
+            "no skipping: here",
+        ] {
+            assert!(!has_skip_marker(ran), "{ran}");
+        }
+        for ran in ["all checks passed", "PASS", "1024 elements verified"] {
+            assert!(!has_mismatch_marker(ran), "{ran}");
+        }
+    }
+
+    #[test]
+    fn failures_take_priority_over_skip_markers() {
+        assert!(matches!(
+            classify_process_result(true, true, "Skipping: slow device"),
+            RunKind::Hang
+        ));
+        assert!(matches!(
+            classify_process_result(false, false, "Skipping: after an error"),
+            RunKind::Crash
+        ));
+        assert!(matches!(
+            classify_process_result(false, true, "Skipping: maybe\nMISMATCH at index 3"),
+            RunKind::Mismatch
+        ));
+        assert!(matches!(
+            classify_process_result(false, true, "Skipping: needs sm_90"),
+            RunKind::Skipped
+        ));
+        assert!(matches!(
+            classify_process_result(false, true, "PASS"),
+            RunKind::Pass
+        ));
+    }
+
     #[test]
     fn seed_ranges_are_half_open() {
         assert_eq!(parse_seed_range("3..8").unwrap(), (3, 8));
         assert!(parse_seed_range("8..8").is_err());
         assert!(parse_seed_range("8").is_err());
+    }
+
+    /// The baseline classes, pinned exhaustively. A decline must not be
+    /// lumped in with a failure: an arch-gated example on a device below its
+    /// floor is not a broken example, and #665 is the precedent for keeping
+    /// those apart.
+    #[test]
+    fn only_a_declined_baseline_sits_between_usable_and_broken() {
+        assert_eq!(RunKind::Pass.baseline_verdict(), BaselineVerdict::Usable);
+        assert_eq!(
+            RunKind::Skipped.baseline_verdict(),
+            BaselineVerdict::Declined
+        );
+        for broken in [
+            RunKind::Hang,
+            RunKind::Crash,
+            RunKind::Mismatch,
+            RunKind::OutputChanged,
+            RunKind::GpuWedged,
+            RunKind::HarnessError,
+        ] {
+            assert_eq!(
+                broken.baseline_verdict(),
+                BaselineVerdict::Broken,
+                "{broken:?}"
+            );
+        }
+    }
+
+    /// A finding is about a *variant*; as a baseline the same outcome means the
+    /// campaign has no ground truth to compare against, so it is broken, not a
+    /// finding to report.
+    #[test]
+    fn a_finding_as_the_baseline_is_a_broken_baseline() {
+        for kind in [
+            RunKind::Hang,
+            RunKind::Crash,
+            RunKind::Mismatch,
+            RunKind::OutputChanged,
+            RunKind::GpuWedged,
+        ] {
+            assert!(kind.is_finding(), "{kind:?}");
+            assert_eq!(kind.baseline_verdict(), BaselineVerdict::Broken, "{kind:?}");
+        }
     }
 
     #[test]

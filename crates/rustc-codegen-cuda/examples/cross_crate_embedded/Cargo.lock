@@ -182,6 +182,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuda-target-spec"
+version = "0.1.0"
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -299,6 +303,7 @@ dependencies = [
 name = "libnvvm-sys"
 version = "0.2.1"
 dependencies = [
+ "cuda-target-spec",
  "libloading",
  "thiserror",
 ]

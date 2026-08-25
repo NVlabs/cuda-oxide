@@ -40,6 +40,12 @@ unsafe extern "C" {
     fn warp_reduce_sum(val: f32) -> f32;
     fn warp_ballot(predicate: i32) -> u32;
     fn simple_add(a: f32, b: f32) -> f32;
+    // `char` is a plain 32-bit device-extern slot. Rust still warns because C
+    // has no native `char` equivalent, so acknowledge that contract here.
+    #[allow(improper_ctypes)]
+    fn char_to_upper(c: char) -> char;
+    #[allow(improper_ctypes)]
+    fn char_store(output: *mut char, c: char);
     fn clamp_value(val: f32, min_val: f32, max_val: f32) -> f32;
     fn smem_write_aligned_128(offset: i32, value: f32);
     fn smem_read_aligned_128(offset: i32) -> f32;
@@ -88,6 +94,21 @@ mod kernels {
         if tid.is_multiple_of(32) {
             unsafe {
                 *output.add((tid / 32) as usize) = sum;
+            }
+        }
+    }
+
+    /// Round-trip a `char` through an external CUDA `unsigned int` function.
+    #[kernel]
+    pub fn test_char_ffi(output: *mut u32) {
+        let tid = cuda_device::thread::threadIdx_x();
+        if tid == 0 {
+            let upper = unsafe { char_to_upper('q') };
+            let unchanged = unsafe { char_to_upper('Z') };
+            unsafe {
+                *output = upper as u32;
+                *output.add(1) = unchanged as u32;
+                char_store(output.add(2).cast::<char>(), 'λ');
             }
         }
     }
@@ -526,6 +547,7 @@ fn main() {
     let mut tests_failed = 0;
 
     test_simple_device_funcs_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
+    test_char_ffi_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
     test_cub_warp_reduce_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
     test_mixed_attrs_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
     test_smem_alignment_cross_module_runner(&ctx, &module, &mut tests_passed, &mut tests_failed);
@@ -613,6 +635,48 @@ fn test_simple_device_funcs_runner(
         *passed += 1;
     } else {
         println!("    ✗ FAILED ({} errors)", errors);
+        *failed += 1;
+    }
+}
+
+/// Test: `char` across a `#[device]` extern boundary.
+fn test_char_ffi_runner(
+    ctx: &Arc<CudaContext>,
+    module: &kernels::LoadedModule,
+    passed: &mut i32,
+    failed: &mut i32,
+) {
+    println!("--- Test: test_char_ffi ---");
+
+    let stream = ctx.default_stream();
+    let d_output = DeviceBuffer::<u32>::zeroed(&stream, 3).unwrap();
+    let config = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (1, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    // SAFETY: the launch writes exactly three 32-bit values into d_output.
+    unsafe {
+        module.test_char_ffi(
+            (stream).as_ref(),
+            config,
+            d_output.cu_deviceptr() as *mut u32,
+        )
+    }
+    .expect("Kernel launch failed");
+
+    let actual = d_output.to_host_vec(&stream).unwrap();
+    let expected = [u32::from('Q'), u32::from('Z'), u32::from('λ')];
+    if actual[..3] == expected {
+        println!("    ✓ PASSED ('q' -> 'Q', 'Z' unchanged, pointer -> 'λ')");
+        *passed += 1;
+    } else {
+        println!(
+            "    ✗ FAILED (got {:?}, expected {:?})",
+            &actual[..3],
+            expected
+        );
         *failed += 1;
     }
 }

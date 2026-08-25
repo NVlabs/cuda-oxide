@@ -314,6 +314,12 @@ fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
     if head.starts_with("membar.") || head.starts_with("fence.") {
         return Some(SiteKind::Fence);
     }
+    // `redux.` needs its own entry: it is a warp-wide register reduction with
+    // the same participation contract as the rest of this list, and the `red.`
+    // arm above does not reach it -- that prefix carries the dot, so
+    // `redux.sync.add.s32` matches neither. Without an entry a `redux.sync`
+    // instruction is not a site of any kind, so the analyzer walks past the
+    // warp collective it exists to perturb.
     if [
         "activemask",
         "match.any",
@@ -321,6 +327,7 @@ fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
         "vote.",
         "elect.",
         "shfl.",
+        "redux.",
     ]
     .iter()
     .any(|prefix| head.starts_with(prefix))
@@ -523,6 +530,119 @@ L_loop:
         );
         assert!(first.ptx.contains("nanosleep.u32"));
         assert!(first.ptx.starts_with("// ptx_schedule: seed=42"));
+    }
+
+    /// Every warp-level collective PTX has, one instruction each, plus the
+    /// `red.*` memory reduction whose prefix looks like `redux`'s but is not.
+    ///
+    /// `bar.warp.sync` is deliberately absent: the barrier arm above claims it,
+    /// and that is the right kind for it.
+    const WARP_COLLECTIVES: &str = r#".version 8.9
+.target sm_100a
+.address_size 64
+
+.visible .entry collectives(
+    .param .u64 data
+)
+{
+    .reg .pred %p0;
+    .reg .b32 %r0;
+    .reg .f32 %f0;
+    red.global.add.u32 [%rd1], %r0;
+    activemask.b32 %r0;
+    match.any.sync.b32 %r0, %r0, 31;
+    match.all.sync.b32 %r0|%p0, %r0, 31;
+    vote.sync.ballot.b32 %r0, %p0, 31;
+    elect.sync %r0|%p0, 31;
+    shfl.sync.idx.b32 %r0, %r0, 0, 31;
+    redux.sync.add.s32 %r0, %r0, 31;
+    redux.sync.min.u32 %r0, %r0, 31;
+    redux.sync.and.b32 %r0, %r0, 31;
+    redux.sync.min.f32 %f0, %f0, 31;
+    redux.sync.max.abs.NaN.f32 %f0, %f0, 31;
+    ret;
+}
+"#;
+
+    #[test]
+    fn every_warp_collective_is_a_site() {
+        let analysis = analyze_ptx(WARP_COLLECTIVES).unwrap();
+        let by_head: Vec<(&str, SiteKind)> = analysis
+            .sites()
+            .iter()
+            .map(|site| (site.head.as_str(), site.kind))
+            .collect();
+
+        // One site per instruction in the fixture: an unclassified opcode is
+        // not a site at all, which is how the eight `redux.sync` forms used to
+        // vanish from a schedule campaign without a word.
+        assert_eq!(by_head.len(), 12, "{by_head:?}");
+
+        for (head, kind) in &by_head {
+            let expected = if head.starts_with("red.") {
+                SiteKind::Reduction
+            } else {
+                SiteKind::WarpCollective
+            };
+            assert_eq!(*kind, expected, "{head} classified as {kind:?}");
+        }
+    }
+
+    /// `red.` is tested before the warp-collective list and `redux` starts with
+    /// those three letters, so the two must not be confused in either
+    /// direction: the memory reduction stays `Reduction`, and every register
+    /// reduction is a `WarpCollective`.
+    #[test]
+    fn redux_is_a_warp_collective_and_red_is_still_a_reduction() {
+        let analysis = analyze_ptx(WARP_COLLECTIVES).unwrap();
+        let kinds: Vec<_> = analysis.sites().iter().map(|site| site.kind).collect();
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|kind| **kind == SiteKind::Reduction)
+                .count(),
+            1
+        );
+        assert_eq!(
+            analysis
+                .sites()
+                .iter()
+                .filter(|site| site.head.starts_with("redux."))
+                .count(),
+            5
+        );
+        assert!(
+            analysis
+                .sites()
+                .iter()
+                .filter(|site| site.head.starts_with("redux."))
+                .all(|site| site.kind == SiteKind::WarpCollective)
+        );
+    }
+
+    /// A perturbation campaign has to be able to reach a `redux.sync`, which is
+    /// the whole point of classifying it.
+    #[test]
+    fn a_redux_site_can_be_perturbed() {
+        let rewrite = perturb_ptx(
+            WARP_COLLECTIVES,
+            &InjectionOptions {
+                seed: 7,
+                intensity: 1.0,
+                focus: Some("redux.sync".to_string()),
+                ..InjectionOptions::default()
+            },
+        )
+        .unwrap();
+        let redux_injected = rewrite
+            .report
+            .decisions
+            .iter()
+            .filter(|decision| decision.site.head.starts_with("redux."))
+            .filter(|decision| decision.before_ns > 0 || decision.after_ns > 0)
+            .count();
+        assert!(redux_injected > 0, "{:?}", rewrite.report.decisions);
+        assert!(rewrite.ptx.contains("nanosleep.u32"));
     }
 
     #[test]

@@ -610,6 +610,31 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FuzzScheduleDisposition {
+    Success,
+    Declined,
+    BrokenBaseline,
+    Findings(usize),
+}
+
+fn fuzz_schedule_disposition(
+    baseline: ptx_schedule::campaign::BaselineVerdict,
+    finding_count: usize,
+    fail_on_finding: bool,
+) -> FuzzScheduleDisposition {
+    use ptx_schedule::campaign::BaselineVerdict;
+
+    match baseline {
+        BaselineVerdict::Declined => FuzzScheduleDisposition::Declined,
+        BaselineVerdict::Broken => FuzzScheduleDisposition::BrokenBaseline,
+        BaselineVerdict::Usable if fail_on_finding && finding_count > 0 => {
+            FuzzScheduleDisposition::Findings(finding_count)
+        }
+        BaselineVerdict::Usable => FuzzScheduleDisposition::Success,
+    }
+}
+
 fn main() {
     // Handle both invocation methods:
     // 1. Cargo subcommand: `cargo oxide run vecadd` → argv = ["cargo-oxide", "oxide", "run", "vecadd"]
@@ -838,22 +863,29 @@ fn main() {
                 compare_output,
             };
             match ptx_schedule::campaign::run_campaign(&options) {
-                Ok(summary)
-                    if !matches!(summary.baseline.kind, ptx_schedule::campaign::RunKind::Pass) =>
-                {
-                    eprintln!(
-                        "Error: baseline example did not pass; no schedule variants were run"
-                    );
-                    std::process::exit(1);
-                }
-                Ok(summary) if fail_on_finding && summary.finding_count() > 0 => {
-                    eprintln!(
-                        "Error: {} schedule-sensitive finding(s) detected",
-                        summary.finding_count()
-                    );
-                    std::process::exit(1);
-                }
-                Ok(_) => {}
+                Ok(summary) => match fuzz_schedule_disposition(
+                    summary.baseline.kind.baseline_verdict(),
+                    summary.finding_count(),
+                    fail_on_finding,
+                ) {
+                    // A decline is not a finding. It stays successful even
+                    // with --fail-on-finding and never runs schedule variants.
+                    FuzzScheduleDisposition::Declined => eprintln!(
+                        "Note: the example declined to run on this device; no schedule variants were run"
+                    ),
+                    FuzzScheduleDisposition::BrokenBaseline => {
+                        eprintln!(
+                            "Error: baseline example did not pass ({:?}); no schedule variants were run",
+                            summary.baseline.kind
+                        );
+                        std::process::exit(1);
+                    }
+                    FuzzScheduleDisposition::Findings(count) => {
+                        eprintln!("Error: {count} schedule-sensitive finding(s) detected");
+                        std::process::exit(1);
+                    }
+                    FuzzScheduleDisposition::Success => {}
+                },
                 Err(error) => {
                     eprintln!("Error: {error}");
                     std::process::exit(1);
@@ -1098,6 +1130,30 @@ mod tests {
 
     fn strings(args: &[&str]) -> Vec<String> {
         args.iter().map(|arg| (*arg).to_string()).collect()
+    }
+
+    #[test]
+    fn schedule_cli_exit_policy_keeps_declines_distinct_from_findings() {
+        use ptx_schedule::campaign::BaselineVerdict;
+
+        for fail_on_finding in [false, true] {
+            assert_eq!(
+                fuzz_schedule_disposition(BaselineVerdict::Declined, 0, fail_on_finding),
+                FuzzScheduleDisposition::Declined
+            );
+            assert_eq!(
+                fuzz_schedule_disposition(BaselineVerdict::Broken, 0, fail_on_finding),
+                FuzzScheduleDisposition::BrokenBaseline
+            );
+        }
+        assert_eq!(
+            fuzz_schedule_disposition(BaselineVerdict::Usable, 2, false),
+            FuzzScheduleDisposition::Success
+        );
+        assert_eq!(
+            fuzz_schedule_disposition(BaselineVerdict::Usable, 2, true),
+            FuzzScheduleDisposition::Findings(2)
+        );
     }
 
     #[test]

@@ -176,7 +176,24 @@ extern "C" __device__ float warp_reduce_sum(float val) {
 | `warp_reduce_sum`    | Warp-level sum          |
 | `warp_ballot`        | Warp ballot             |
 | `simple_add`         | Simple a + b            |
+| `char_to_upper`      | ASCII uppercase, `char` |
 | `clamp_value`        | Clamp to range          |
+
+### `char` in a `#[device]` extern
+
+Rust `char` is a 32-bit Unicode scalar value. It therefore lowers to a plain
+`i32` device-extern parameter, result, or pointer pointee with no `signext` or
+`zeroext` attribute, matching CUDA C++ `unsigned int`:
+
+```text
+.ll:   declare i32 @char_to_upper(i32)      call i32 @char_to_upper(i32 113)
+.ptx:  .extern .func (.param .b32 ...) char_to_upper (.param .b32 ...)
+```
+
+The CUDA function must return a valid Unicode scalar: values above `0x10FFFF`
+and surrogates in `0xD800..=0xDFFF` violate Rust's `char` validity contract.
+Rust's `improper_ctypes` lint also warns because C has no native equivalent;
+callers that deliberately use this mapping may allow that lint on the extern.
 
 ### From `extern-libs/cccl_wrappers.cu` (CUB)
 

@@ -44,14 +44,19 @@ the same version ceiling as the CFG. Rename plans also fail closed on
 vector-element uses of a renamed register (`v.x` lexes as one word) and on
 rename targets that would capture a label or callable name.
 
-## First consumers
+## Consumers
 
-The first in-tree consumers of the native CFG are IKET PTX instrumentation
-(`dialect-iket`), which needs verified block boundaries and successor edges to
-place probes, and the Tile-to-SIMT interop epic (#96), which splices SIMT
-regions into externally produced PTX. Longer term the raised dialect is the
-substrate for a direct-to-PTX emission path that bypasses textual `.ll`
-round-trips entirely.
+`ptx-schedule` is the in-tree consumer of the native CFG today, and the only
+crate that depends on this one. `analyze_ptx` takes `ControlFlow::analyze`'s
+blocks and successor edges to find back-edges, which is what lets a schedule
+campaign perturb a spin loop whatever its label, predicate or branch spelling.
+
+Two more are planned and do not depend on this crate yet: IKET PTX
+instrumentation (`dialect-iket`), which needs verified block boundaries and
+successor edges to place probes, and the Tile-to-SIMT interop epic (#96), which
+splices SIMT regions into externally produced PTX. Longer term the raised
+dialect is the substrate for a direct-to-PTX emission path that bypasses
+textual `.ll` round-trips entirely.
 
 ## Transform conventions
 

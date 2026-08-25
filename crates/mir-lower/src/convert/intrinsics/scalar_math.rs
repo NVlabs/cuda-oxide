@@ -12,7 +12,7 @@ use llvm_export::{
     types as llvm_types,
 };
 use pliron::{
-    builtin::types::{FP32Type, FP64Type},
+    builtin::types::{FP32Type, FP64Type, IntegerType, Signedness},
     context::{Context, Ptr},
     irbuild::{
         dialect_conversion::DialectConversionRewriter, inserter::Inserter, rewriter::Rewriter,
@@ -20,14 +20,17 @@ use pliron::{
     op::Op,
     operation::Operation,
     result::Result,
+    r#type::Typed,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn convert_generated_scalar_math(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     intrinsic_name: &str,
     ptx_mnemonic: &str,
+    is_f16: bool,
     is_f64: bool,
     llvm_inline_ptx: bool,
 ) -> Result<()> {
@@ -38,11 +41,31 @@ pub(crate) fn convert_generated_scalar_math(
         );
     }
 
-    let result_ty = if is_f64 {
+    let result_ty = if is_f16 {
+        IntegerType::get(ctx, 16, Signedness::Unsigned).into()
+    } else if is_f64 {
         FP64Type::get(ctx).into()
     } else {
         FP32Type::get(ctx).into()
     };
+    let type_matches = |ty: pliron::r#type::TypeHandle| {
+        if is_f16 {
+            ty.deref(ctx)
+                .downcast_ref::<IntegerType>()
+                .is_some_and(|integer| integer.width() == 16)
+        } else if is_f64 {
+            ty.deref(ctx).downcast_ref::<FP64Type>().is_some()
+        } else {
+            ty.deref(ctx).downcast_ref::<FP32Type>().is_some()
+        }
+    };
+    if !type_matches(operands[0].get_type(ctx))
+        || !type_matches(op.deref(ctx).get_result(0).get_type(ctx))
+    {
+        return pliron::input_err_noloc!(
+            "generated scalar math operand and result types must match the selected format"
+        );
+    }
     let backend = context::lowering_options(ctx).intrinsic_backend;
     let lowered = match backend {
         IntrinsicBackend::LlvmNvptx if !llvm_inline_ptx => {
@@ -58,7 +81,13 @@ pub(crate) fn convert_generated_scalar_math(
             call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, operands)?
         }
         IntrinsicBackend::LlvmNvptx | IntrinsicBackend::LibNvvm => {
-            let constraint = if is_f64 { "=d,d" } else { "=f,f" };
+            let constraint = if is_f16 {
+                "=h,h"
+            } else if is_f64 {
+                "=d,d"
+            } else {
+                "=f,f"
+            };
             let inline_asm = llvm::InlineAsmOp::build(
                 ctx,
                 result_ty,

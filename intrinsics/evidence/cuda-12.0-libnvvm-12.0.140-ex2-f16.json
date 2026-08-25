@@ -1,0 +1,112 @@
+{
+  "schema": 6,
+  "backend_profile": "cuda-12.0-libnvvm-12.0.140-ex2-f16",
+  "backend_kind": "lib_nvvm",
+  "llvm_revision": "not-applicable-libnvvm-ir-2.0",
+  "backend_version": "CUDA compilation tools, release 12.0, V12.0.140; based on NVVM 7.0.1",
+  "backend_sha256": "91aa5019c144d0049bd482b9fd897f73a39f4ac56dbc1e8b4d59b259cfc50860",
+  "artifact_path": "/usr/lib/x86_64-linux-gnu/libnvvm.so.4.0.0",
+  "build_id_prefix": "dee22a",
+  "nvvm_ir_version": "2.0",
+  "debug_ir_version": "3.2",
+  "defaults": {
+    "target_triple": "nvptx64-nvidia-cuda",
+    "gpu_target": "compute_75",
+    "ptx_feature": "PTX ISA 8.0 emitted by CUDA 12.0",
+    "status": "validated",
+    "runtime_validation": "unexecuted"
+  },
+  "fixtures": [
+    {
+      "id": "ex2_f16_compute75_cuda120",
+      "coverage_count": 1,
+      "stages": [
+        {
+          "targets": [
+            "compute_75",
+            "ptx80"
+          ],
+          "representation": "production legacy NVVM IR containing one retained ex2.approx.f16 inline-PTX call",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 12.0 libNVVM verified and compiled the 6,524-byte production NVVM IR module for compute_75. With -gen-lto it emitted 3,880-byte LTOIR; its PTX mode emitted 4,523-byte PTX 8.0 retaining ex2.approx.f16 exactly once. The originating build observed IR/LTOIR/PTX SHA-256 values 08c7c2f7a6bf6c0c4dc8dbccaf088061befb053ec2987e9663844195b874a649, 1894a0a1fe26304d2e36794350800dd9aad909a5c0d068ef996355a0dbf30ccb, and d04240dc1acd4bcb4d6b2a8ae7ecdee9de30092be444dd64b7fd3e02641f70f9. Those intermediate hashes are build-context dependent because Rust crate-disambiguator text appears in helper symbols; independent rebuilds reproduce the sizes, target, PTX ISA, instruction, and the exact final cubin, whose hash is the reproducible artifact identity."
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx80"
+          ],
+          "representation": "libNVVM-emitted PTX retaining ex2.approx.f16",
+          "stage": "ptx_assembly",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 12.0 ptxas assembled the 4,523-byte PTX into a 4,264-byte sm_75 cubin with SHA-256 4fd44330c1bae0181ae46648955f541615143f43bfe067243a53d48e7b872bfe.",
+          "tool_path": "/usr/bin/ptxas",
+          "tool_version": "Cuda compilation tools, release 12.0, V12.0.140; build cuda_12.0.r12.0/compiler.32267302_0",
+          "tool_sha256": "332c1b822fcab8d86db02236973deac3661cd4b122e0e54158ae38fd7f6d1def"
+        },
+        {
+          "targets": [
+            "sm_75",
+            "ptx80"
+          ],
+          "representation": "the retained ex2.approx.f16 LTOIR linked to an sm_75 cubin",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "cuda-oxide's cubin materializer used CUDA 12.0 nvJitLink's versioned 12.0 API to link the 3,880-byte LTOIR into a 4,264-byte sm_75 cubin with SHA-256 4fd44330c1bae0181ae46648955f541615143f43bfe067243a53d48e7b872bfe. cuobjdump disassembly contains MUFU.EX2.F16.",
+          "tool_path": "/usr/lib/x86_64-linux-gnu/libnvJitLink.so.12.0.140",
+          "tool_version": "CUDA 12.0 nvJitLink V12.0.140",
+          "tool_sha256": "b6c94451e08cf91fb6d9ffc5c10cc7de6f936996733ad56e220a607bb08580f9"
+        }
+      ]
+    }
+  ],
+  "matrices": [
+    {
+      "axes": [
+        {
+          "name": "id",
+          "values": [
+            "ex2_approx_f16"
+          ]
+        }
+      ],
+      "product_count": 1,
+      "fixtures": [
+        "ex2_f16_compute75_cuda120"
+      ],
+      "template": {
+        "id": "${id}",
+        "source_record": "int_nvvm_ex2_approx",
+        "llvm_symbol": "llvm.nvvm.ex2.approx",
+        "facts": {
+          "llvm_arguments": [
+            "anonymous_14"
+          ],
+          "llvm_results": [
+            "anyfloat"
+          ]
+        },
+        "expected_ptx": {
+          "mnemonic": "ex2",
+          "modifiers": [
+            "approx",
+            "f16"
+          ],
+          "operands": [
+            {
+              "kind": "register"
+            },
+            {
+              "kind": "register"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

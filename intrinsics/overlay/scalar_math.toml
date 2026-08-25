@@ -287,3 +287,11 @@ format = "f32"
 operation = "tanh"
 precision = "approx"
 subnormal = "preserve"
+
+[[scalar_math.variant]]
+abi_id = "i1016"
+libnvvm_evidence_profile = "cuda-12.0-libnvvm-12.0.140-ex2-f16"
+format = "f16"
+operation = "ex2"
+precision = "approx"
+subnormal = "preserve"

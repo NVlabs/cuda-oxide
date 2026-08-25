@@ -19157,6 +19157,9 @@ struct ScalarMathRecipe {
     operation_key: String,
     source: ScalarMathRecipeSource,
     rust_type: &'static str,
+    dialect_type: &'static str,
+    minimum_ptx: &'static str,
+    minimum_sm: &'static str,
     properties: Vec<&'static str>,
     ptx_modifiers: Vec<String>,
     ptx_isa_section: &'static str,
@@ -19173,6 +19176,7 @@ struct ScalarMathRecipe {
 
 fn scalar_math_format_name(format: ScalarMathFormat) -> &'static str {
     match format {
+        ScalarMathFormat::F16 => "f16",
         ScalarMathFormat::F32 => "f32",
         ScalarMathFormat::F64 => "f64",
     }
@@ -19202,7 +19206,7 @@ fn scalar_math_precision_name(precision: ScalarMathPrecision) -> &'static str {
 }
 
 fn canonical_scalar_math_variants() -> Vec<ScalarMathVariant> {
-    use ScalarMathFormat::{F32, F64};
+    use ScalarMathFormat::{F16, F32, F64};
     use ScalarMathOperation::{Cos, Ex2, Lg2, Rcp, Rsqrt, Sin, Sqrt, Tanh};
     use ScalarMathPrecision::{Approx, Rm, Rn, Rp, Rz};
     use ScalarMathSubnormal::{Ftz, Preserve};
@@ -19263,6 +19267,9 @@ fn canonical_scalar_math_variants() -> Vec<ScalarMathVariant> {
         // Table 29) and no rounded variants. Hardware floor is sm_75; the
         // family contract gates it at the attested sm_80 evidence floor.
         (F32, Tanh, Approx, Preserve),
+        // ex2.approx.f16 starts at PTX 7.0 / sm_75. LLVM 22 rejects the
+        // .ftz.f16 spelling; .ftz.bf16 is a separate PTX 7.8 / sm_90 variant.
+        (F16, Ex2, Approx, Preserve),
     ]
 }
 
@@ -19275,6 +19282,7 @@ fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
     let precision_name = scalar_math_precision_name(precision);
     let format_name = scalar_math_format_name(format);
     let source_format = match format {
+        ScalarMathFormat::F16 => "f16",
         ScalarMathFormat::F32 => "f",
         ScalarMathFormat::F64 => "d",
     };
@@ -19331,46 +19339,58 @@ fn scalar_math_recipe(variant: ScalarMathVariant) -> Option<ScalarMathRecipe> {
             | ScalarMathOperation::Tanh
     );
 
-    let (ptx_isa_section, ptx_isa_url) = match operation {
-        ScalarMathOperation::Sin => (
+    let (ptx_isa_section, ptx_isa_url) = match (operation, format) {
+        (ScalarMathOperation::Ex2, ScalarMathFormat::F16) => (
+            "9.7.4.10 Half Precision Floating Point Instructions: ex2",
+            "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-ex2",
+        ),
+        (ScalarMathOperation::Sin, _) => (
             "9.7.3.10 Floating Point Instructions: sin",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sin",
         ),
-        ScalarMathOperation::Cos => (
+        (ScalarMathOperation::Cos, _) => (
             "9.7.3.11 Floating Point Instructions: cos",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-cos",
         ),
-        ScalarMathOperation::Lg2 => (
+        (ScalarMathOperation::Lg2, _) => (
             "9.7.3.12 Floating Point Instructions: lg2",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-lg2",
         ),
-        ScalarMathOperation::Rcp => (
+        (ScalarMathOperation::Rcp, _) => (
             "9.7.3.7 Floating Point Instructions: rcp",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-rcp",
         ),
-        ScalarMathOperation::Rsqrt => (
+        (ScalarMathOperation::Rsqrt, _) => (
             "9.7.3.14 Floating Point Instructions: rsqrt",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-rsqrt",
         ),
-        ScalarMathOperation::Sqrt => (
+        (ScalarMathOperation::Sqrt, _) => (
             "9.7.3.9 Floating Point Instructions: sqrt",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-sqrt",
         ),
-        ScalarMathOperation::Ex2 => (
+        (ScalarMathOperation::Ex2, _) => (
             "9.7.3.13 Floating Point Instructions: ex2",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-ex2",
         ),
-        ScalarMathOperation::Tanh => (
+        (ScalarMathOperation::Tanh, _) => (
             "9.7.3.15 Floating Point Instructions: tanh",
             "https://docs.nvidia.com/cuda/parallel-thread-execution/#floating-point-instructions-tanh",
         ),
     };
 
+    let (rust_type, dialect_type, minimum_ptx, minimum_sm) = match format {
+        ScalarMathFormat::F16 => ("u16", "i16", "7.0", "sm_75"),
+        ScalarMathFormat::F32 => ("f32", "f32", "7.0", "sm_80"),
+        ScalarMathFormat::F64 => ("f64", "f64", "7.0", "sm_80"),
+    };
     Some(ScalarMathRecipe {
         id,
         operation_key: format!("scalar.math.{operation_name}.{modifier_symbol}.{format_name}"),
         source,
-        rust_type: format_name,
+        rust_type,
+        dialect_type,
+        minimum_ptx,
+        minimum_sm,
         properties: vec!["IntrNoMem"],
         ptx_modifiers,
         ptx_isa_section,
@@ -19399,7 +19419,7 @@ fn expand_scalar_math_admission(admission: &ScalarMathAdmission) -> Result<Vec<O
         .collect::<Vec<_>>();
     ensure!(
         actual == expected,
-        "compact scalar-math admission must list the canonical 40 variants"
+        "compact scalar-math admission must list the canonical 41 variants"
     );
 
     admission
@@ -19415,7 +19435,21 @@ fn expand_scalar_math_admission(admission: &ScalarMathAdmission) -> Result<Vec<O
             );
             let recipe = scalar_math_recipe(identity)
                 .context("scalar math is outside the closed recipe set")?;
-            scalar_math_overlay_record(recipe, admission, identity, &variant.abi_id)
+            let libnvvm_evidence_profile = variant
+                .libnvvm_evidence_profile
+                .as_ref()
+                .unwrap_or(&admission.libnvvm_evidence_profile);
+            ensure!(
+                !libnvvm_evidence_profile.trim().is_empty(),
+                "scalar-math libNVVM evidence profile must not be empty"
+            );
+            scalar_math_overlay_record(
+                recipe,
+                admission,
+                identity,
+                &variant.abi_id,
+                libnvvm_evidence_profile,
+            )
         })
         .collect()
 }
@@ -19425,6 +19459,7 @@ fn scalar_math_overlay_record(
     admission: &ScalarMathAdmission,
     variant: ScalarMathVariant,
     abi_id: &str,
+    libnvvm_evidence_profile: &str,
 ) -> Result<OverlayIntrinsic> {
     let (format, operation, precision, subnormal) = variant;
     let ptx_operands = vec![OperandPattern::Register; 2]; // 1 result + 1 operand
@@ -19490,8 +19525,8 @@ fn scalar_math_overlay_record(
         compatibility_rust_paths: vec![format!("cuda_device::float::{}", recipe.id)],
         dialect_op_type: "ScalarMathOp".into(),
         dialect_op_name: "nvvm.scalar_math".into(),
-        dialect_operands: vec![recipe.rust_type.into()],
-        dialect_results: vec![recipe.rust_type.into()],
+        dialect_operands: vec![recipe.dialect_type.into()],
+        dialect_results: vec![recipe.dialect_type.into()],
         llvm_symbol,
         resolved_llvm_symbol,
         llvm_arguments,
@@ -19500,8 +19535,8 @@ fn scalar_math_overlay_record(
         memory: "none".into(),
         convergent: false,
         execution_scope: "thread".into(),
-        minimum_ptx: "7.0".into(),
-        minimum_sm: Some("sm_80".into()),
+        minimum_ptx: recipe.minimum_ptx.into(),
+        minimum_sm: Some(recipe.minimum_sm.into()),
         ptx_result: recipe.rust_type.into(),
         targets: "all".into(),
         ptx_isa_version: "9.3".into(),
@@ -19511,28 +19546,27 @@ fn scalar_math_overlay_record(
         backend_lowerings: [
             (
                 IntrinsicBackend::LlvmNvptx,
-                &admission.llvm_evidence_profile,
+                admission.llvm_evidence_profile.as_str(),
             ),
-            (
-                IntrinsicBackend::LibNvvm,
-                &admission.libnvvm_evidence_profile,
-            ),
+            (IntrinsicBackend::LibNvvm, libnvvm_evidence_profile),
         ]
         .into_iter()
-        .map(|(backend, evidence_profile)| OverlayBackendLowering {
-            backend,
-            mechanism: match backend {
-                IntrinsicBackend::LlvmNvptx if recipe.force_inline_ptx => {
-                    BackendLoweringMechanism::InlinePtx
-                }
-                IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
-                IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
+        .map(
+            |(backend, evidence_profile): (IntrinsicBackend, &str)| OverlayBackendLowering {
+                backend,
+                mechanism: match backend {
+                    IntrinsicBackend::LlvmNvptx if recipe.force_inline_ptx => {
+                        BackendLoweringMechanism::InlinePtx
+                    }
+                    IntrinsicBackend::LlvmNvptx => BackendLoweringMechanism::TypedNvvm,
+                    IntrinsicBackend::LibNvvm => BackendLoweringMechanism::InlinePtx,
+                },
+                evidence_profile: evidence_profile.to_owned(),
+                targets: None,
+                minimum_ptx: Some(recipe.minimum_ptx.into()),
+                minimum_sm: Some(recipe.minimum_sm.into()),
             },
-            evidence_profile: evidence_profile.clone(),
-            targets: None,
-            minimum_ptx: Some("7.0".into()),
-            minimum_sm: Some("sm_80".into()),
-        })
+        )
         .collect(),
         packed_atomic: None,
         redux: None,
@@ -19682,8 +19716,8 @@ fn validate_scalar_math_policy(
             && policy.compatibility_rust_paths == [format!("cuda_device::float::{}", recipe.id)]
             && policy.dialect_op_type == "ScalarMathOp"
             && policy.dialect_op_name == "nvvm.scalar_math"
-            && policy.dialect_operands == signature
-            && policy.dialect_results == [recipe.rust_type]
+            && policy.dialect_operands == [recipe.dialect_type]
+            && policy.dialect_results == [recipe.dialect_type]
             && policy.lowering == "generated_scalar_math",
         "{} changed its scalar-math API, carrier, or lowering",
         policy.id
@@ -19693,8 +19727,8 @@ fn validate_scalar_math_policy(
             && policy.memory == "none"
             && !policy.convergent
             && policy.execution_scope == "thread"
-            && policy.minimum_ptx == "7.0"
-            && policy.minimum_sm.as_deref() == Some("sm_80")
+            && policy.minimum_ptx == recipe.minimum_ptx
+            && policy.minimum_sm.as_deref() == Some(recipe.minimum_sm)
             && policy.ptx_result == recipe.rust_type
             && policy.targets == "all"
             && policy.ptx_isa_version == "9.3"
@@ -19719,25 +19753,34 @@ fn validate_scalar_math_policy(
         BackendLoweringMechanism::TypedNvvm
     };
     let expected_backends = [
-        (IntrinsicBackend::LlvmNvptx, llvm_mechanism),
+        (
+            IntrinsicBackend::LlvmNvptx,
+            llvm_mechanism,
+            recipe.minimum_sm,
+        ),
         (
             IntrinsicBackend::LibNvvm,
             BackendLoweringMechanism::InlinePtx,
+            recipe.minimum_sm,
         ),
     ];
     ensure!(
         policy.backend_lowerings.len() == 2
-            && expected_backends.into_iter().all(|(backend, mechanism)| {
-                policy.backend_lowerings.iter().any(|lowering| {
-                    lowering.backend == backend
-                        && lowering.mechanism == mechanism
-                        && lowering.minimum_ptx.as_deref() == Some("7.0")
-                        && lowering.minimum_sm.as_deref() == Some("sm_80")
-                        && !lowering.evidence_profile.trim().is_empty()
-                })
-            }),
-        "{} has the wrong reviewed scalar-math backend routes",
-        policy.id
+            && expected_backends
+                .into_iter()
+                .all(|(backend, mechanism, minimum_sm)| {
+                    policy.backend_lowerings.iter().any(|lowering| {
+                        lowering.backend == backend
+                            && lowering.mechanism == mechanism
+                            && lowering.minimum_ptx.as_deref() == Some(recipe.minimum_ptx)
+                            && lowering.minimum_sm.as_deref() == Some(minimum_sm)
+                            && !lowering.evidence_profile.trim().is_empty()
+                    })
+                }),
+        "{} has the wrong reviewed scalar-math backend routes (expected {} / {})",
+        policy.id,
+        recipe.minimum_ptx,
+        recipe.minimum_sm
     );
     if let Some(direct) = declaration.and_then(|declaration| declaration.selections.first()) {
         validate_selected_target_predicates(policy, direct)?;
@@ -31480,7 +31523,7 @@ mod tests {
             read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
         assert_eq!(overlay.schema, OVERLAY_SCHEMA);
         assert_eq!(overlay.shards.len(), 64);
-        assert_eq!(overlay.intrinsics.len(), 1015);
+        assert_eq!(overlay.intrinsics.len(), 1016);
         assert_eq!(
             overlay
                 .intrinsics
@@ -41651,6 +41694,7 @@ scope = "system"
                 .map(
                     |(index, variant)| crate::model::ScalarMathAdmissionVariant {
                         abi_id: format!("i{:04}", 782 + index),
+                        libnvvm_evidence_profile: (index == 40).then(|| "libnvvm-ex2-f16".into()),
                         format: variant.0,
                         operation: variant.1,
                         precision: variant.2,
@@ -41661,12 +41705,24 @@ scope = "system"
         };
 
         let records = expand_scalar_math_admission(&admission).unwrap();
-        assert_eq!(records.len(), 40);
+        assert_eq!(records.len(), 41);
         assert_eq!(records.first().unwrap().abi_id, "i0782");
-        assert_eq!(records.last().unwrap().abi_id, "i0821");
+        assert_eq!(records.last().unwrap().abi_id, "i0822");
+        assert!(
+            records
+                .iter()
+                .all(|record| record.backend_lowerings.len() == 2)
+        );
+        assert_eq!(
+            records.last().unwrap().backend_lowerings[1].evidence_profile,
+            "libnvvm-ex2-f16"
+        );
+        assert!(records[..40].iter().all(|record| {
+            record.backend_lowerings[1].evidence_profile == "libnvvm-scalar-math"
+        }));
 
         let mut non_contiguous_abi = admission.clone();
-        non_contiguous_abi.variants[39].abi_id = "i9999".into();
+        non_contiguous_abi.variants[40].abi_id = "i9999".into();
         let records = expand_scalar_math_admission(&non_contiguous_abi).unwrap();
         assert_eq!(records.last().unwrap().abi_id, "i9999");
 
@@ -41676,8 +41732,40 @@ scope = "system"
             expand_scalar_math_admission(&reordered)
                 .unwrap_err()
                 .to_string()
-                .contains("canonical 40 variants")
+                .contains("canonical 41 variants")
         );
+    }
+
+    #[test]
+    fn checked_in_scalar_math_overlay_pins_the_current_libnvvm_override_set() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (overlay, _) =
+            read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
+        let scalar_math = overlay
+            .intrinsics
+            .iter()
+            .filter(|record| record.family == "scalar_math")
+            .collect::<Vec<_>>();
+        assert_eq!(scalar_math.len(), 41);
+        assert!(
+            scalar_math
+                .iter()
+                .all(|record| record.backend_lowerings.len() == 2)
+        );
+
+        let family_profile = "cuda-13.3-libnvvm-13.3.33-scalar-math";
+        let overrides = scalar_math
+            .iter()
+            .filter_map(|record| {
+                let libnvvm = record
+                    .backend_lowerings
+                    .iter()
+                    .find(|route| route.backend == IntrinsicBackend::LibNvvm)
+                    .unwrap();
+                (libnvvm.evidence_profile != family_profile).then_some(record.id.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(overrides, ["ex2_approx_f16"]);
     }
 
     #[test]

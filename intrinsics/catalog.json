@@ -11,9 +11,10 @@
   },
   "inputs": {
     "imported_sha256": "7fc84823d448f56192e265a6c057ea72155c84df2b6575b0235199d445db6a2f",
-    "overlay_sha256": "d3c17b80372635c8a8eb6b26abcdbacf59755c7a2d880abc2cc925cecf2fc538",
-    "abi_ledger_sha256": "47c1f9c8fce67ea775bd51f2fd3312288eb1c039ce65523c548e36052f284a6d",
+    "overlay_sha256": "44b1091c7dbe49e318dfa96c5ca76eee3a8c29658794d6476630ac5f5928070a",
+    "abi_ledger_sha256": "598477ba5afa075a76df9e1fd907885e6251649b061cdc1f1f578b7b0d951678",
     "evidence_sha256": [
+      "cuda-12.0-libnvvm-12.0.140-ex2-f16.json:8c823a62ac24cc3bff9f6f2d0dbc848f04e9280fffa7a251d0732e9f6a221b6e",
       "cuda-12.9-libnvvm-12.9.86-f32x2.json:bc5bb505677989affa9ac1044da772b4eb349700dc65e16f09fffffa1f5c493e",
       "cuda-13.3-libnvvm-13.3.33-blackwell-ldmatrix.json:806155f5468d672b6bd969b72d9821155cc6a1c4422eb210ca0fc0a78eb295fb",
       "cuda-13.3-libnvvm-13.3.33-clc.json:0a3e049a8b606276302acf6d2f3dd1d41b632b04dd72799a7def8ebbec414752",
@@ -42,7 +43,7 @@
       "cuda-13.3-libnvvm-13.3.33-register-mma.json:05f89b4d37b319d35a88eee6bd9c321fce8c913adae0ca91b394708d1fd22b2a",
       "cuda-13.3-libnvvm-13.3.33-scalar-arithmetic.json:ac4ab5a239da0433d9e35f82ec1efbf81e28f3d05e2dcb49ad1eb92964408467",
       "cuda-13.3-libnvvm-13.3.33-scalar-conversion.json:33f4342cf5a356fd94eabd446db52bd1f309ac2c489440e93a1a42d680692824",
-      "cuda-13.3-libnvvm-13.3.33-scalar-math.json:f01be5038cd12ce26e9648e8fc39ec51c07f47fa5f00125862792a87497ac7d6",
+      "cuda-13.3-libnvvm-13.3.33-scalar-math.json:e0626504b4f7cfe6ddb97bdcc4e2fe8a5f63ae74f743c9388fd73b5efd421986",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-int8-m16n8k64.json:74b5dec9a9db352ea7eb1ee0b1470ba5a56f84f0ed55bf034a60fc29790b6d95",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-int8.json:ff0fd4a21e609d10993df1ce96a20e959dfbf2c9da0d397579957b18d2ad8a3f",
       "cuda-13.3-libnvvm-13.3.33-sparse-mma-ordered-f8f6f4-f16.json:a28dc4abd510e7c721fdcc1844f4d6f3c30b007ca0e6df77a51cbb2248d168c6",
@@ -102,7 +103,7 @@
       "rust-llvm-22.1.2-1cb4e383-register-mma.json:6d81f18c407b60773dcc03a1e1a07d6dc69bd2320d135f03a0bf0059ac84c855",
       "rust-llvm-22.1.2-1cb4e383-scalar-arithmetic.json:44c174ea51470fd62868ca068d35569e81f4f220acfa9197870bf1b79abd256d",
       "rust-llvm-22.1.2-1cb4e383-scalar-conversion.json:3cc174b49ebb8ed6d29b894e0fc152c323520cba9bbcc4bd25849f5279d1e6a8",
-      "rust-llvm-22.1.2-1cb4e383-scalar-math.json:26efaaf5e2cb02e19a14a8595c2cf5a670f920dc166a59900cdaedfceb112500",
+      "rust-llvm-22.1.2-1cb4e383-scalar-math.json:8d0dade4ffbf29c43f08991fcfbab3a22d966be7a820aac2c98dad4d504958ad",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-int8-m16n8k64.json:16782300af2c019cef7219a6ed98fc562eb72c0aae2aa074d4c76605c5e49175",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-int8.json:b5d4277d5de3e04e4af46801c0b88e560a2c231a549f2bbe131a1e14a6d31811",
       "rust-llvm-22.1.2-1cb4e383-sparse-mma-ordered-f8f6f4-f16.json:ca85f6972d39b9bec169cee54436ccaf55d90c956ee59e2b68188b3144499ef0",
@@ -55429,6 +55430,241 @@
         ]
       },
       "summary": "Reads PTX environment register 2."
+    },
+    {
+      "id": "ex2_approx_f16",
+      "operation_key": "scalar.math.ex2.approx.f16",
+      "family": "scalar_math",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_ex2_approx"
+      },
+      "selections": [],
+      "rust": {
+        "abi_id": "i1016",
+        "module": "float",
+        "name": "ex2_approx_f16",
+        "arguments": [
+          "u16"
+        ],
+        "result": "u16",
+        "safe": true,
+        "must_use": true,
+        "safe_allowlist_reason": "Scalar math has no caller obligations.",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1016",
+        "public_path": "cuda_intrinsics::float::ex2_approx_f16",
+        "compatibility_paths": [
+          "cuda_device::float::ex2_approx_f16"
+        ]
+      },
+      "dialect": {
+        "op_type": "ScalarMathOp",
+        "op_name": "nvvm.scalar_math",
+        "operands": [
+          "i16"
+        ],
+        "results": [
+          "i16"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.ex2.approx",
+        "resolved_symbol": "llvm.nvvm.ex2.approx.f16",
+        "arguments": [
+          "anonymous_14"
+        ],
+        "results": [
+          "anyfloat"
+        ],
+        "properties": [
+          "IntrNoMem"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": true,
+        "memory": "none",
+        "convergent": false,
+        "execution_scope": "thread"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 75
+            }
+          ]
+        },
+        "ptx_result": "u16",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.4.10 Half Precision Floating Point Instructions: ex2",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#half-precision-floating-point-instructions-ex2"
+      },
+      "backend": {
+        "profile": "rust-llvm-22.1.2-1cb4e383",
+        "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+        "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_75",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-22.1.2-1cb4e383",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 22.1.2-rust-1.96.0-nightly",
+          "sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_75",
+                "ptx70"
+              ],
+              "representation": "llvm.nvvm.ex2.approx.f16 lowered at the documented hardware and PTX floor",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned llc selected ex2.approx.f16 for sm_75 with +ptx70; PTX SHA-256 21a1d2fe684434a6c71b2454ff0a26463002def6ab7c09e00252a70d9770b7df. The same probe fails selection at sm_70 or +ptx65. llvm.nvvm.ex2.approx.ftz.f16 and llvm.nvvm.ex2.approx.bf16 fail selection; llvm.nvvm.ex2.approx.ftz.bf16 selects at sm_90 with +ptx78.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx70"
+              ],
+              "representation": "single ex2.approx.f16 instruction assembled at its admission floor",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas assembled the 640-byte sm_75/PTX 7.0 output into a 1,464-byte cubin with SHA-256 cbb5dbdfabb866accc3b6dd469ada00f0296aaca7012e3ae14c9b9396da5a887.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "Cuda compilation tools, release 13.3, V13.3.33; build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.0-libnvvm-12.0.140-ex2-f16",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 75
+                }
+              ]
+            }
+          },
+          "version": "CUDA compilation tools, release 12.0, V12.0.140; based on NVVM 7.0.1",
+          "sha256": "91aa5019c144d0049bd482b9fd897f73a39f4ac56dbc1e8b4d59b259cfc50860",
+          "artifact_path": "/usr/lib/x86_64-linux-gnu/libnvvm.so.4.0.0",
+          "build_id_prefix": "dee22a",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "compute_75",
+                "ptx80"
+              ],
+              "representation": "production legacy NVVM IR containing one retained ex2.approx.f16 inline-PTX call",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.0 libNVVM verified and compiled the 6,524-byte production NVVM IR module for compute_75. With -gen-lto it emitted 3,880-byte LTOIR; its PTX mode emitted 4,523-byte PTX 8.0 retaining ex2.approx.f16 exactly once. The originating build observed IR/LTOIR/PTX SHA-256 values 08c7c2f7a6bf6c0c4dc8dbccaf088061befb053ec2987e9663844195b874a649, 1894a0a1fe26304d2e36794350800dd9aad909a5c0d068ef996355a0dbf30ccb, and d04240dc1acd4bcb4d6b2a8ae7ecdee9de30092be444dd64b7fd3e02641f70f9. Those intermediate hashes are build-context dependent because Rust crate-disambiguator text appears in helper symbols; independent rebuilds reproduce the sizes, target, PTX ISA, instruction, and the exact final cubin, whose hash is the reproducible artifact identity.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx80"
+              ],
+              "representation": "libNVVM-emitted PTX retaining ex2.approx.f16",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.0 ptxas assembled the 4,523-byte PTX into a 4,264-byte sm_75 cubin with SHA-256 4fd44330c1bae0181ae46648955f541615143f43bfe067243a53d48e7b872bfe.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/bin/ptxas",
+              "tool_version": "Cuda compilation tools, release 12.0, V12.0.140; build cuda_12.0.r12.0/compiler.32267302_0",
+              "tool_sha256": "332c1b822fcab8d86db02236973deac3661cd4b122e0e54158ae38fd7f6d1def"
+            },
+            {
+              "targets": [
+                "sm_75",
+                "ptx80"
+              ],
+              "representation": "the retained ex2.approx.f16 LTOIR linked to an sm_75 cubin",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "cuda-oxide's cubin materializer used CUDA 12.0 nvJitLink's versioned 12.0 API to link the 3,880-byte LTOIR into a 4,264-byte sm_75 cubin with SHA-256 4fd44330c1bae0181ae46648955f541615143f43bfe067243a53d48e7b872bfe. cuobjdump disassembly contains MUFU.EX2.F16.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/lib/x86_64-linux-gnu/libnvJitLink.so.12.0.140",
+              "tool_version": "CUDA 12.0 nvJitLink V12.0.140",
+              "tool_sha256": "b6c94451e08cf91fb6d9ffc5c10cc7de6f936996733ad56e220a607bb08580f9"
+            }
+          ]
+        }
+      ],
+      "scalar_math": {
+        "format": "f16",
+        "operation": "ex2",
+        "precision": "approx",
+        "subnormal": "preserve",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_scalar_math",
+      "expected_ptx": {
+        "mnemonic": "ex2",
+        "modifiers": [
+          "approx",
+          "f16"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Computes unary ex2 with approx precision."
     },
     {
       "id": "ex2_approx_f32",
