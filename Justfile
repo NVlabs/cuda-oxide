@@ -58,7 +58,7 @@ clippy-fix:
 # Run unit tests for every package CI covers that needs no CUDA
 test:
     cargo test --all-targets \
-        -p cuda-intrinsics-gen -p cuda-intrinsics -p llvm-export \
+        -p cuda-intrinsics-gen -p cuda-target-spec -p cuda-intrinsics -p llvm-export \
         -p dialect-mir -p dialect-nvvm -p mir-importer -p mir-lower \
         -p mir-transforms -p nvvm-transforms -p reserved-oxide-symbols \
         -p cuda-device -p libnvvm-sys -p nvjitlink-sys \

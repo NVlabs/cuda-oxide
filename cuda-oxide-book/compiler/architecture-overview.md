@@ -152,6 +152,7 @@ cuda-oxide is split into focused crates. Here is every one and its role:
 | `ptx-schedule`       | PTX schedule-perturbation fuzzing (nanosleep injection campaigns)                      |
 | `cuda-oxide-codegen` | Experimental rustc-independent PTX backend                                             |
 | `libnvvm-sys`        | `dlopen` bindings to libNVVM (used by `cuda-host::ltoir`)                              |
+| `cuda-target-spec`   | Shared CUDA target parsing and recorded LLVM PTX-floor policy                         |
 | `nvjitlink-sys`      | `dlopen` bindings to nvJitLink (used by `cuda-host::ltoir`)                             |
 | `reserved-oxide-symbols` | Workspace-private `cuda_oxide_*` symbol-name contract                              |
 | `fuzzer`             | Differential codegen fuzzer support (rustlantis adapter)                               |

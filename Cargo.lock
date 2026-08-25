@@ -467,6 +467,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuda-target-spec"
+version = "0.1.0"
+
+[[package]]
 name = "dialect-iket"
 version = "0.1.0"
 dependencies = [
@@ -815,6 +819,7 @@ dependencies = [
 name = "libnvvm-sys"
 version = "0.2.1"
 dependencies = [
+ "cuda-target-spec",
  "libloading",
  "thiserror",
 ]

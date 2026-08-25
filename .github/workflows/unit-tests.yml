@@ -51,6 +51,7 @@ jobs:
           # nanosleep injection plus run classification. Pure Rust, no CUDA.
           - package: ptx-schedule
           - package: cuda-intrinsics-gen
+          - package: cuda-target-spec
           - package: cuda-intrinsics
           - package: llvm-export
           - package: dialect-mir

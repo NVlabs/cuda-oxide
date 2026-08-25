@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     # Core crates
+    "crates/cuda-target-spec",
     "crates/cuda-intrinsics",
     "crates/cuda-intrinsics-gen",
     "crates/ptx-parse",
@@ -59,6 +60,7 @@ pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "8447aa426e2
 ] }
 
 # Internal crates
+cuda-target-spec = { path = "crates/cuda-target-spec" }
 llvm-export = { path = "crates/llvm-export" }
 dialect-mir = { path = "crates/dialect-mir" }
 dialect-iket = { path = "crates/dialect-iket" }

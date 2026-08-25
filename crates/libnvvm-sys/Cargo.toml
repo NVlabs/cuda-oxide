@@ -9,5 +9,6 @@ description = "Runtime (dlopen) bindings to NVIDIA libNVVM (ships with the CUDA 
 readme = "README.md"
 
 [dependencies]
+cuda-target-spec = { workspace = true }
 libloading = { workspace = true }
 thiserror = { workspace = true }
