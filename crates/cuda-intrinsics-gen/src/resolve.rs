@@ -29262,8 +29262,12 @@ fn recorded_stage_ptx_floor(
     hardware: CatalogHardwareAlternative,
     instruction_floor: u16,
 ) -> Result<u16> {
-    let target = describe_stage_hardware(hardware);
-    let arch = target.parse::<CudaArch>()?;
+    let (sm, suffix) = match hardware {
+        CatalogHardwareAlternative::MinimumSm { sm } => (sm, None),
+        CatalogHardwareAlternative::ExactArchitecture { sm } => (sm, Some('a')),
+        CatalogHardwareAlternative::FamilyTarget { sm } => (sm, Some('f')),
+    };
+    let arch = CudaArch::new(u32::from(sm), suffix)?;
     Ok(instruction_floor.max(recorded_ptx_floor(&arch)?))
 }
 

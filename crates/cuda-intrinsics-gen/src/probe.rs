@@ -15,7 +15,7 @@ use crate::render::render_probe;
 use crate::resolve::{resolve, resolve_candidate};
 use crate::util::{pretty_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, ensure};
-use cuda_target_spec::{CudaArch, recorded_ptx_floor, spelling_at_least};
+use cuda_target_spec::{CudaArch, recorded_ptx_floor, spelling_at_least, spelling_feature};
 use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -375,7 +375,12 @@ fn derived_ptx_feature(gpu_target: &str, instruction_floor: u16) -> Result<(Opti
     if spelling <= target_floor {
         Ok((None, target_floor))
     } else {
-        Ok((Some(format!("+ptx{spelling}")), spelling))
+        let feature = spelling_feature(spelling).with_context(|| {
+            format!(
+                "instruction PTX floor {instruction_floor} has no supported llc feature spelling"
+            )
+        })?;
+        Ok((Some(feature.to_string()), spelling))
     }
 }
 

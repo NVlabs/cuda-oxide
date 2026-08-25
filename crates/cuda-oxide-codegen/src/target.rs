@@ -933,20 +933,7 @@ impl PtxIsaRequirement {
     }
 
     fn feature(self) -> Option<&'static str> {
-        match self.spelling()? {
-            62 => Some("+ptx62"),
-            65 => Some("+ptx65"),
-            70 => Some("+ptx70"),
-            71 => Some("+ptx71"),
-            73 => Some("+ptx73"),
-            78 => Some("+ptx78"),
-            80 => Some("+ptx80"),
-            86 => Some("+ptx86"),
-            87 => Some("+ptx87"),
-            88 => Some("+ptx88"),
-            90 => Some("+ptx90"),
-            _ => None,
-        }
+        self.spelling().and_then(cuda_target_spec::spelling_feature)
     }
 }
 
@@ -1757,13 +1744,7 @@ fn is_known_blackwell_capability(capability: u32) -> bool {
 }
 
 fn is_known_cuda_target(capability: u32, suffix: Option<char>) -> bool {
-    let target = match suffix {
-        Some(suffix) => format!("sm_{capability}{suffix}"),
-        None => format!("sm_{capability}"),
-    };
-    target
-        .parse::<CudaArch>()
-        .is_ok_and(|arch| recorded_ptx_floor(&arch).is_ok())
+    CudaArch::new(capability, suffix).is_ok_and(|arch| recorded_ptx_floor(&arch).is_ok())
 }
 
 pub fn validate_target_features(
