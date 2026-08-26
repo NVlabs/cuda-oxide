@@ -18,8 +18,7 @@ use crate::generated_intrinsic_targets::{
     GeneratedHardwareAlternative, GeneratedHardwareTarget, GeneratedTargetContract,
     GeneratedTargetRequirement,
 };
-use cuda_target_spec::{PtxSpelling, RECORDED_PTX_FLOORS, recorded_ptx_floor};
-use libnvvm_sys::CudaArch;
+use cuda_target_spec::{CudaArch, PtxSpelling, RECORDED_PTX_FLOORS, recorded_ptx_floor};
 use std::path::Path;
 
 fn contains_wgmma_features(contents: &str) -> bool {
