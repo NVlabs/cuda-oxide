@@ -15,7 +15,7 @@ use crate::render::render_probe;
 use crate::resolve::{resolve, resolve_candidate};
 use crate::util::{pretty_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, ensure};
-use cuda_target_spec::{CudaArch, recorded_ptx_floor, spelling_at_least, spelling_feature};
+use cuda_target_spec::{CudaArch, feature_beyond_floor, recorded_ptx_floor, spelling_at_least};
 use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
@@ -372,15 +372,15 @@ fn derived_ptx_feature(gpu_target: &str, instruction_floor: u16) -> Result<(Opti
     let spelling = spelling_at_least(instruction_floor).with_context(|| {
         format!("instruction PTX floor {instruction_floor} has no supported llc feature spelling")
     })?;
-    if spelling <= target_floor {
-        Ok((None, target_floor))
-    } else {
-        let feature = spelling_feature(spelling).with_context(|| {
-            format!(
+    match feature_beyond_floor(spelling, target_floor) {
+        Some(feature) => Ok((Some(feature.to_string()), spelling)),
+        None => {
+            ensure!(
+                spelling <= target_floor,
                 "instruction PTX floor {instruction_floor} has no supported llc feature spelling"
-            )
-        })?;
-        Ok((Some(feature.to_string()), spelling))
+            );
+            Ok((None, target_floor))
+        }
     }
 }
 

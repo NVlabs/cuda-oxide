@@ -351,6 +351,18 @@ pub fn spelling_feature(spelling: u16) -> Option<&'static str> {
     }
 }
 
+/// Render a supported PTX feature only when it is newer than a recorded floor.
+///
+/// This is total over the supported spelling vocabulary; callers are expected
+/// to pass spellings drawn from [`PTX_ISA_SPELLINGS`].
+pub fn feature_beyond_floor(spelling: u16, recorded_floor: u16) -> Option<&'static str> {
+    if spelling <= recorded_floor {
+        None
+    } else {
+        spelling_feature(spelling)
+    }
+}
+
 /// Return the smallest supported PTX feature spelling at least `floor`.
 ///
 /// Returns `None` when the requested floor is newer than every supported
@@ -411,6 +423,14 @@ mod tests {
             assert_eq!(spelling_feature(*spelling), Some(expected.as_str()));
         }
         assert_eq!(spelling_feature(74), None);
+    }
+
+    #[test]
+    fn feature_beyond_floor_only_renders_supported_newer_spellings() {
+        assert_eq!(feature_beyond_floor(78, 73), Some("+ptx78"));
+        assert_eq!(feature_beyond_floor(73, 73), None);
+        assert_eq!(feature_beyond_floor(70, 73), None);
+        assert_eq!(feature_beyond_floor(74, 73), None);
     }
 
     #[cfg(unix)]

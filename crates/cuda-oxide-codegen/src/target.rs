@@ -20,7 +20,9 @@ use crate::generated_intrinsic_targets::{
 };
 #[cfg(test)]
 use cuda_target_spec::RECORDED_PTX_FLOORS;
-use cuda_target_spec::{PTX_ISA_SPELLINGS, recorded_ptx_floor, spelling_at_least};
+use cuda_target_spec::{
+    PTX_ISA_SPELLINGS, feature_beyond_floor, recorded_ptx_floor, spelling_at_least,
+};
 use libnvvm_sys::CudaArch;
 use std::path::Path;
 
@@ -931,10 +933,6 @@ impl PtxIsaRequirement {
                 .find(|spelling| Self::from_spelling(*spelling) == Some(requirement)),
         }
     }
-
-    fn feature(self) -> Option<&'static str> {
-        self.spelling().and_then(cuda_target_spec::spelling_feature)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1839,13 +1837,9 @@ pub fn required_ptx_feature(
     requirement: PtxIsaRequirement,
 ) -> Result<Option<&'static str>, String> {
     let minimum = recorded_ptx_floor(target).map_err(|error| error.to_string())?;
-    let Some(requested) = requirement.spelling() else {
-        return Ok(None);
-    };
-    if requested <= minimum {
-        return Ok(None);
-    }
-    Ok(requirement.feature())
+    Ok(requirement
+        .spelling()
+        .and_then(|spelling| feature_beyond_floor(spelling, minimum)))
 }
 
 /// Reject targets that the supported LLVM 21 backend silently mishandles.
@@ -2355,8 +2349,17 @@ mod tests {
         for spelling in PTX_ISA_SPELLINGS {
             let requirement = PtxIsaRequirement::from_spelling(*spelling).unwrap();
             assert_eq!(requirement.spelling(), Some(*spelling));
-            assert!(requirement.feature().is_some());
         }
+    }
+
+    #[test]
+    fn ptx_requirement_order_matches_shared_spelling_order() {
+        let requirements = PTX_ISA_SPELLINGS
+            .iter()
+            .map(|spelling| PtxIsaRequirement::from_spelling(*spelling).unwrap())
+            .collect::<Vec<_>>();
+        assert!(PtxIsaRequirement::Default < requirements[0]);
+        assert!(requirements.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]
