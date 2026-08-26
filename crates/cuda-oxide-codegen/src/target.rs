@@ -20,9 +20,7 @@ use crate::generated_intrinsic_targets::{
 };
 #[cfg(test)]
 use cuda_target_spec::RECORDED_PTX_FLOORS;
-use cuda_target_spec::{
-    PTX_ISA_SPELLINGS, feature_beyond_floor, recorded_ptx_floor, spelling_at_least,
-};
+use cuda_target_spec::{PtxSpelling, recorded_ptx_floor};
 use libnvvm_sys::CudaArch;
 use std::path::Path;
 
@@ -891,47 +889,21 @@ impl std::ops::BitOr for DetectedFeatures {
 /// For example, a module may need sm_80 because it uses `cp.async` and still
 /// need PTX 7.8 because it also uses `movmatrix`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PtxIsaRequirement {
-    Default,
-    Ptx62,
-    Ptx65,
-    Ptx70,
-    Ptx71,
-    Ptx73,
-    Ptx78,
-    Ptx80,
-    Ptx86,
-    Ptx87,
-    Ptx88,
-    Ptx90,
-}
+pub struct PtxIsaRequirement(Option<PtxSpelling>);
 
 impl PtxIsaRequirement {
-    fn from_spelling(spelling: u16) -> Option<Self> {
-        Some(match spelling {
-            62 => Self::Ptx62,
-            65 => Self::Ptx65,
-            70 => Self::Ptx70,
-            71 => Self::Ptx71,
-            73 => Self::Ptx73,
-            78 => Self::Ptx78,
-            80 => Self::Ptx80,
-            86 => Self::Ptx86,
-            87 => Self::Ptx87,
-            88 => Self::Ptx88,
-            90 => Self::Ptx90,
-            _ => return None,
-        })
+    #[allow(non_upper_case_globals)]
+    pub const Default: Self = Self(None);
+
+    pub(crate) const fn new(spelling: u16) -> Self {
+        match PtxSpelling::from_spelling(spelling) {
+            Some(spelling) => Self(Some(spelling)),
+            None => panic!("unsupported PTX ISA spelling"),
+        }
     }
 
-    fn spelling(self) -> Option<u16> {
-        match self {
-            Self::Default => None,
-            requirement => PTX_ISA_SPELLINGS
-                .iter()
-                .copied()
-                .find(|spelling| Self::from_spelling(*spelling) == Some(requirement)),
-        }
+    fn spelling(self) -> Option<PtxSpelling> {
+        self.0
     }
 }
 
@@ -1030,8 +1002,8 @@ fn ptx_isa_requirement_for_floor(
     if encoded <= 60 {
         return Ok(PtxIsaRequirement::Default);
     }
-    spelling_at_least(encoded)
-        .and_then(PtxIsaRequirement::from_spelling)
+    PtxSpelling::round_up(encoded)
+        .map(|spelling| PtxIsaRequirement(Some(spelling)))
         .ok_or_else(|| format!(
             "generated intrinsic `{id}` (`{marker}`) requires PTX {}.{}, newer than cuda-oxide can request",
             encoded / 10,
@@ -1064,7 +1036,7 @@ fn validate_sm101_ptx_pair(arch: &CudaArch, requirement: PtxIsaRequirement) -> R
     let (capability, suffix) = (arch.capability(), arch.suffix());
     if capability == 101
         && matches!(suffix, Some('a' | 'f'))
-        && requirement >= PtxIsaRequirement::Ptx90
+        && requirement >= PtxIsaRequirement::new(90)
     {
         return Err(format!(
             "CUDA target {} cannot be combined with PTX 9.0 or newer; LLVM renamed the sm_101 target to sm_110 at that PTX level",
@@ -1160,13 +1132,13 @@ pub fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
 fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements {
     let mut ptx_isa = PtxIsaRequirement::Default;
     if contains_packed_f16_atomic_features(contents) {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx62);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(62));
     }
     if contains_ldmatrix_features(contents)
         || contains_mma_m8n8k16_int8_features(contents)
         || contains_mma_m8n8k32_int4_features(contents)
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx65);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(65));
     }
     if contains_mbarrier_features(contents)
         || contents.contains("redux.sync")
@@ -1178,16 +1150,16 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_b1_xor_mma_features(contents)
         || contains_mma_m8n8k4_f64_features(contents)
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx70);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(70));
     }
     if contains_mbarrier_ptx71_features(contents) {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx71);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(71));
     }
     if contains_b1_and_mma_features(contents) {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx71);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(71));
     }
     if contains_dynamic_stack_features(contents) {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx73);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(73));
     }
     if contains_movmatrix_features(contents)
         || contains_stmatrix_features(contents)
@@ -1196,7 +1168,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_mbarrier_ptx78_features(contents)
         || contains_packed_bf16_atomic_features(contents)
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx78);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(78));
     }
     if contains_cp_async_bulk_features(contents)
         || contains_wgmma_features(contents)
@@ -1206,7 +1178,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contents.contains("fence.mbarrier_init")
         || contents.contains("fence.proxy.async")
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx80);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(80));
     }
     if contains_blackwell_matrix_features(contents)
         || contains_tma_cta_group_features(contents)
@@ -1219,7 +1191,7 @@ fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements
         || contains_redux_f32_features(contents)
         || contains_f32x2_features(contents)
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx86);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(86));
     }
 
     ModuleRequirements {
@@ -1839,7 +1811,8 @@ pub fn required_ptx_feature(
     let minimum = recorded_ptx_floor(target).map_err(|error| error.to_string())?;
     Ok(requirement
         .spelling()
-        .and_then(|spelling| feature_beyond_floor(spelling, minimum)))
+        .filter(|spelling| spelling.get() > minimum)
+        .map(PtxSpelling::feature))
 }
 
 /// Reject targets that the supported LLVM 21 backend silently mishandles.
@@ -1872,7 +1845,7 @@ pub(crate) fn validate_ptx_isa_for_llvm_major(
     requirement: PtxIsaRequirement,
     llc_major: Option<u32>,
 ) -> Result<(), String> {
-    if requirement >= PtxIsaRequirement::Ptx90 && llc_major.is_none_or(|major| major < 22) {
+    if requirement >= PtxIsaRequirement::new(90) && llc_major.is_none_or(|major| major < 22) {
         let backend = llc_major.map_or_else(
             || "an LLVM backend with an unknown version".to_string(),
             |major| format!("LLVM {major}"),
@@ -2104,7 +2077,7 @@ mod tests {
 
         assert_eq!(
             generated_ptx_isa_requirement(&generated).unwrap(),
-            PtxIsaRequirement::Ptx86
+            PtxIsaRequirement::new(86)
         );
         for target in ["sm_100a", "sm_101a", "sm_103a", "sm_110a"] {
             assert!(
@@ -2113,10 +2086,10 @@ mod tests {
             );
         }
         for (target, requirement) in [
-            ("sm_100a", PtxIsaRequirement::Ptx86),
-            ("sm_101a", PtxIsaRequirement::Ptx86),
-            ("sm_103a", PtxIsaRequirement::Ptx88),
-            ("sm_110a", PtxIsaRequirement::Ptx90),
+            ("sm_100a", PtxIsaRequirement::new(86)),
+            ("sm_101a", PtxIsaRequirement::new(86)),
+            ("sm_103a", PtxIsaRequirement::new(88)),
+            ("sm_110a", PtxIsaRequirement::new(90)),
         ] {
             assert_eq!(
                 generated_ptx_isa_requirement_for_target(&generated, &target.parse().unwrap())
@@ -2158,20 +2131,20 @@ mod tests {
         let generated = GeneratedModuleRequirements::from_targets(vec![&TCGEN_I8]);
         assert_eq!(
             generated_ptx_isa_requirement(&generated).unwrap(),
-            PtxIsaRequirement::Ptx86
+            PtxIsaRequirement::new(86)
         );
         assert_eq!(
             generated_ptx_isa_requirement_for_target(&generated, &"sm_100a".parse().unwrap())
                 .unwrap(),
-            PtxIsaRequirement::Ptx86
+            PtxIsaRequirement::new(86)
         );
         assert_eq!(
-            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::Ptx86).unwrap(),
+            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(86)).unwrap(),
             None
         );
         for (target, requirement) in [
-            ("sm_101a", PtxIsaRequirement::Ptx86),
-            ("sm_110a", PtxIsaRequirement::Ptx90),
+            ("sm_101a", PtxIsaRequirement::new(86)),
+            ("sm_110a", PtxIsaRequirement::new(90)),
         ] {
             assert_eq!(
                 generated_ptx_isa_requirement_for_target(&generated, &target.parse().unwrap())
@@ -2209,7 +2182,7 @@ mod tests {
             let f16 = GeneratedModuleRequirements::from_targets(vec![&TCGEN_F16]);
             let text = ModuleRequirements {
                 features: DetectedFeatures::Basic,
-                ptx_isa: PtxIsaRequirement::Ptx90,
+                ptx_isa: PtxIsaRequirement::new(90),
             };
             let error = merge_generated_module_requirements_for_target(
                 text,
@@ -2240,7 +2213,7 @@ mod tests {
                     .contains(DetectedFeatures::DynamicStack),
                 "{llvm}"
             );
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx73, "{llvm}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(73), "{llvm}");
         }
 
         for near_match in [
@@ -2321,45 +2294,27 @@ mod tests {
     fn ptx73_feature_is_requested_only_when_the_target_default_is_older() {
         assert_eq!(
             ptx_isa_requirement_for_floor(72, "test", "test").unwrap(),
-            PtxIsaRequirement::Ptx73
+            PtxIsaRequirement::new(73)
         );
         assert_eq!(
             ptx_isa_requirement_for_floor(73, "test", "test").unwrap(),
-            PtxIsaRequirement::Ptx73
+            PtxIsaRequirement::new(73)
         );
         assert_eq!(
             ptx_isa_requirement_for_floor(74, "test", "test").unwrap(),
-            PtxIsaRequirement::Ptx78
+            PtxIsaRequirement::new(78)
         );
         for target in ["sm_70", "sm_80", "sm_86"] {
             assert_eq!(
-                required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::Ptx73).unwrap(),
+                required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::new(73)).unwrap(),
                 Some("+ptx73"),
                 "{target}"
             );
         }
         assert_eq!(
-            required_ptx_feature(&"sm_87".parse().unwrap(), PtxIsaRequirement::Ptx73).unwrap(),
+            required_ptx_feature(&"sm_87".parse().unwrap(), PtxIsaRequirement::new(73)).unwrap(),
             None
         );
-    }
-
-    #[test]
-    fn every_shared_ptx_spelling_round_trips() {
-        for spelling in PTX_ISA_SPELLINGS {
-            let requirement = PtxIsaRequirement::from_spelling(*spelling).unwrap();
-            assert_eq!(requirement.spelling(), Some(*spelling));
-        }
-    }
-
-    #[test]
-    fn ptx_requirement_order_matches_shared_spelling_order() {
-        let requirements = PTX_ISA_SPELLINGS
-            .iter()
-            .map(|spelling| PtxIsaRequirement::from_spelling(*spelling).unwrap())
-            .collect::<Vec<_>>();
-        assert!(PtxIsaRequirement::Default < requirements[0]);
-        assert!(requirements.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]
@@ -2384,8 +2339,8 @@ mod tests {
 
     #[test]
     fn unrecorded_target_fails_closed_for_explicit_ptx() {
-        let error =
-            required_ptx_feature(&"sm_89a".parse().unwrap(), PtxIsaRequirement::Ptx80).unwrap_err();
+        let error = required_ptx_feature(&"sm_89a".parse().unwrap(), PtxIsaRequirement::new(80))
+            .unwrap_err();
         assert!(error.contains("no recorded PTX ISA floor"));
         let error = required_ptx_feature(&"sm_999a".parse().unwrap(), PtxIsaRequirement::Default)
             .unwrap_err();
@@ -2502,7 +2457,7 @@ mod tests {
             )
             .unwrap()
             .ptx_isa,
-            PtxIsaRequirement::Ptx86
+            PtxIsaRequirement::new(86)
         );
         assert_eq!(
             merge_generated_module_requirements_for_target(
@@ -2512,7 +2467,7 @@ mod tests {
             )
             .unwrap()
             .ptx_isa,
-            PtxIsaRequirement::Ptx90
+            PtxIsaRequirement::new(90)
         );
 
         let error = crate::export::resolve_nvvm_target_with_generated(
@@ -2554,23 +2509,23 @@ mod tests {
 
         assert_eq!(
             generated_ptx_isa_requirement(&generated).unwrap(),
-            PtxIsaRequirement::Ptx87
+            PtxIsaRequirement::new(87)
         );
-        assert!(PtxIsaRequirement::Ptx86 < PtxIsaRequirement::Ptx87);
+        assert!(PtxIsaRequirement::new(86) < PtxIsaRequirement::new(87));
         assert_eq!(
-            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::Ptx87).unwrap(),
+            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(87)).unwrap(),
             Some("+ptx87")
         );
         assert_eq!(
-            required_ptx_feature(&"sm_120a".parse().unwrap(), PtxIsaRequirement::Ptx87).unwrap(),
+            required_ptx_feature(&"sm_120a".parse().unwrap(), PtxIsaRequirement::new(87)).unwrap(),
             None
         );
         assert_eq!(
-            required_ptx_feature(&"sm_100f".parse().unwrap(), PtxIsaRequirement::Ptx87).unwrap(),
+            required_ptx_feature(&"sm_100f".parse().unwrap(), PtxIsaRequirement::new(87)).unwrap(),
             None
         );
         assert_eq!(
-            required_ptx_feature(&"sm_120f".parse().unwrap(), PtxIsaRequirement::Ptx87).unwrap(),
+            required_ptx_feature(&"sm_120f".parse().unwrap(), PtxIsaRequirement::new(87)).unwrap(),
             None
         );
         assert_eq!(
@@ -2596,35 +2551,35 @@ mod tests {
         let generated = GeneratedModuleRequirements::from_targets(vec![&PTX88]);
         assert_eq!(
             generated_ptx_isa_requirement(&generated).unwrap(),
-            PtxIsaRequirement::Ptx88
+            PtxIsaRequirement::new(88)
         );
         assert_eq!(
-            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::Ptx88).unwrap(),
+            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(88)).unwrap(),
             Some("+ptx88")
         );
         assert_eq!(
-            required_ptx_feature(&"sm_103a".parse().unwrap(), PtxIsaRequirement::Ptx88).unwrap(),
+            required_ptx_feature(&"sm_103a".parse().unwrap(), PtxIsaRequirement::new(88)).unwrap(),
             None
         );
         assert_eq!(
             ptx_isa_requirement_for_floor(89, "test", "test").unwrap(),
-            PtxIsaRequirement::Ptx90
+            PtxIsaRequirement::new(90)
         );
         assert_eq!(
-            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::Ptx90).unwrap(),
+            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(90)).unwrap(),
             Some("+ptx90")
         );
         assert_eq!(
-            required_ptx_feature(&"sm_110a".parse().unwrap(), PtxIsaRequirement::Ptx90).unwrap(),
+            required_ptx_feature(&"sm_110a".parse().unwrap(), PtxIsaRequirement::new(90)).unwrap(),
             None
         );
-        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx87, Some(21)).unwrap();
-        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, None).unwrap();
-        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, Some(21)).unwrap();
-        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, Some(22)).unwrap();
-        assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, None).is_err());
-        assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, Some(21)).is_err());
-        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, Some(22)).unwrap();
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(87), Some(21)).unwrap();
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(88), None).unwrap();
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(88), Some(21)).unwrap();
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(88), Some(22)).unwrap();
+        assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(90), None).is_err());
+        assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(90), Some(21)).is_err());
+        validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(90), Some(22)).unwrap();
 
         let generated = GeneratedModuleRequirements::from_targets(vec![&PTX91_FUTURE]);
         let error = generated_ptx_isa_requirement(&generated).unwrap_err();
@@ -2648,7 +2603,7 @@ mod tests {
             generated_ptx_isa_requirement(&generated).unwrap(),
             detected.ptx_isa
         );
-        assert_eq!(detected.ptx_isa, PtxIsaRequirement::Ptx70);
+        assert_eq!(detected.ptx_isa, PtxIsaRequirement::new(70));
         assert!(detected.features.contains(DetectedFeatures::Sm80));
         for arch in ["sm_75", "sm_80", "sm_90"] {
             assert_eq!(
@@ -2671,7 +2626,7 @@ mod tests {
         assert!(generated_target_satisfied(&"sm_70".parse().unwrap(), &llvm));
         assert_eq!(
             generated_ptx_isa_requirement(&llvm).unwrap(),
-            PtxIsaRequirement::Ptx62
+            PtxIsaRequirement::new(62)
         );
 
         let libnvvm = GeneratedModuleRequirements::from_targets(vec![f16])
@@ -2728,13 +2683,13 @@ mod tests {
 
             assert_eq!(
                 generated_ptx_isa_requirement(&llvm).unwrap(),
-                PtxIsaRequirement::Ptx86,
+                PtxIsaRequirement::new(86),
                 "{}",
                 target.id
             );
             assert_eq!(
                 generated_ptx_isa_requirement(&libnvvm).unwrap(),
-                PtxIsaRequirement::Ptx86,
+                PtxIsaRequirement::new(86),
                 "{}",
                 target.id
             );
@@ -2791,7 +2746,7 @@ mod tests {
                     GeneratedModuleRequirements::from_targets(vec![target]).for_backend(backend);
                 assert_eq!(
                     generated_ptx_isa_requirement(&generated).unwrap(),
-                    PtxIsaRequirement::Ptx70,
+                    PtxIsaRequirement::new(70),
                     "{marker} {backend:?}"
                 );
                 assert!(
@@ -2830,7 +2785,7 @@ mod tests {
                     GeneratedModuleRequirements::from_targets(vec![target]).for_backend(backend);
                 assert_eq!(
                     generated_ptx_isa_requirement(&generated).unwrap(),
-                    PtxIsaRequirement::Ptx70,
+                    PtxIsaRequirement::new(70),
                     "{marker} {backend:?}"
                 );
                 assert!(
@@ -3006,7 +2961,7 @@ mod tests {
             assert!(contains_f32x2_features(mnemonic));
             let requirements = detect_module_requirements_in_llvm_text(mnemonic);
             assert_eq!(requirements.features, DetectedFeatures::Sm100);
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86);
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86));
             assert!(!arch_satisfies(
                 &"sm_90".parse().unwrap(),
                 requirements.features
@@ -3059,7 +3014,7 @@ mod tests {
             requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
         assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_80");
@@ -3115,7 +3070,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&combined),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
     }
@@ -3140,11 +3095,11 @@ mod tests {
             assert_eq!(detect_features_in_llvm_text(f16), DetectedFeatures::Basic);
             assert_eq!(
                 detect_module_requirements_in_llvm_text(f16).ptx_isa,
-                PtxIsaRequirement::Ptx62
+                PtxIsaRequirement::new(62)
             );
         }
         assert_eq!(
-            required_ptx_feature(&"sm_70".parse().unwrap(), PtxIsaRequirement::Ptx62).unwrap(),
+            required_ptx_feature(&"sm_70".parse().unwrap(), PtxIsaRequirement::new(62)).unwrap(),
             Some("+ptx62")
         );
         assert_eq!(
@@ -3170,7 +3125,7 @@ mod tests {
             assert_eq!(detect_features_in_llvm_text(bf16), DetectedFeatures::Sm90);
             assert_eq!(
                 detect_module_requirements_in_llvm_text(bf16).ptx_isa,
-                PtxIsaRequirement::Ptx78
+                PtxIsaRequirement::new(78)
             );
         }
         assert_eq!(select_target(DetectedFeatures::Sm90).unwrap().sm(), "sm_90");
@@ -3197,7 +3152,7 @@ mod tests {
                     atom.global.add.noftz.bf16x2 $0, [$1], $2;";
         let requirements = detect_module_requirements_in_llvm_text(both);
         assert_eq!(requirements.features, DetectedFeatures::Sm90);
-        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx78);
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(78));
 
         let dense_bf16_mma =
             "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};";
@@ -3208,7 +3163,7 @@ mod tests {
             mma_f16_requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
         assert_eq!(
@@ -3223,7 +3178,7 @@ mod tests {
             mma_bf16_requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
         assert_eq!(
@@ -3278,7 +3233,7 @@ mod tests {
             fp64_f16_requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
         assert_eq!(
@@ -3293,7 +3248,7 @@ mod tests {
             fp64_bf16_requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
         assert_eq!(
@@ -3311,7 +3266,7 @@ mod tests {
             all_four_requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
         assert_eq!(
@@ -3347,7 +3302,7 @@ mod tests {
             requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
         assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_80");
@@ -3403,7 +3358,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&combined),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
     }
@@ -3435,7 +3390,7 @@ mod tests {
 
         let requirements = detect_module_requirements_in_llvm_text(mnemonic);
         assert_eq!(requirements.features, DetectedFeatures::Sm80);
-        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx70);
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(70));
         let (target, _) =
             resolve_ptx_target(None, "CUDA_OXIDE_TARGET", None, requirements.features)
                 .expect("auto-resolve");
@@ -3484,7 +3439,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&combined),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
     }
@@ -3508,7 +3463,7 @@ mod tests {
                             detect_module_requirements_in_llvm_text(&spelling),
                             ModuleRequirements {
                                 features: DetectedFeatures::Sm80,
-                                ptx_isa: PtxIsaRequirement::Ptx70,
+                                ptx_isa: PtxIsaRequirement::new(70),
                             },
                             "{spelling}"
                         );
@@ -3595,7 +3550,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&combined),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
     }
@@ -3627,7 +3582,7 @@ mod tests {
                             detect_module_requirements_in_llvm_text(&spelling),
                             ModuleRequirements {
                                 features: DetectedFeatures::Sm80,
-                                ptx_isa: PtxIsaRequirement::Ptx70,
+                                ptx_isa: PtxIsaRequirement::new(70),
                             },
                             "{spelling}"
                         );
@@ -3661,7 +3616,7 @@ mod tests {
             requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
         assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_80");
@@ -3709,7 +3664,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&mixed),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
 
@@ -3718,7 +3673,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&newer_ptx),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
     }
@@ -3762,37 +3717,37 @@ mod tests {
                 "m8n8k128",
                 "xor",
                 DetectedFeatures::Sm75,
-                PtxIsaRequirement::Ptx70,
+                PtxIsaRequirement::new(70),
             ),
             (
                 "m16n8k128",
                 "xor",
                 DetectedFeatures::Sm80,
-                PtxIsaRequirement::Ptx70,
+                PtxIsaRequirement::new(70),
             ),
             (
                 "m16n8k256",
                 "xor",
                 DetectedFeatures::Sm80,
-                PtxIsaRequirement::Ptx70,
+                PtxIsaRequirement::new(70),
             ),
             (
                 "m8n8k128",
                 "and",
                 DetectedFeatures::Sm80,
-                PtxIsaRequirement::Ptx71,
+                PtxIsaRequirement::new(71),
             ),
             (
                 "m16n8k128",
                 "and",
                 DetectedFeatures::Sm80,
-                PtxIsaRequirement::Ptx71,
+                PtxIsaRequirement::new(71),
             ),
             (
                 "m16n8k256",
                 "and",
                 DetectedFeatures::Sm80,
-                PtxIsaRequirement::Ptx71,
+                PtxIsaRequirement::new(71),
             ),
         ];
 
@@ -3850,7 +3805,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&combined),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
-                ptx_isa: PtxIsaRequirement::Ptx71,
+                ptx_isa: PtxIsaRequirement::new(71),
             }
         );
     }
@@ -3944,7 +3899,7 @@ mod tests {
                         detect_module_requirements_in_llvm_text(&spelling),
                         ModuleRequirements {
                             features: DetectedFeatures::Sm75,
-                            ptx_isa: PtxIsaRequirement::Ptx65,
+                            ptx_isa: PtxIsaRequirement::new(65),
                         },
                         "{spelling}"
                     );
@@ -4041,7 +3996,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(m16),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
 
@@ -4051,7 +4006,7 @@ mod tests {
             combined_requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
         let (target, _) = resolve_ptx_target(
@@ -4090,7 +4045,7 @@ mod tests {
                         detect_module_requirements_in_llvm_text(&spelling),
                         ModuleRequirements {
                             features: DetectedFeatures::Sm75,
-                            ptx_isa: PtxIsaRequirement::Ptx65,
+                            ptx_isa: PtxIsaRequirement::new(65),
                         },
                         "{spelling}"
                     );
@@ -4123,7 +4078,7 @@ mod tests {
             requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm75,
-                ptx_isa: PtxIsaRequirement::Ptx65,
+                ptx_isa: PtxIsaRequirement::new(65),
             }
         );
         assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_75");
@@ -4218,7 +4173,7 @@ mod tests {
             mixed_requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
         assert_eq!(
@@ -4231,7 +4186,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&newer_ptx),
             ModuleRequirements {
                 features: DetectedFeatures::Sm75 | DetectedFeatures::Movmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
     }
@@ -4265,7 +4220,7 @@ mod tests {
             requirements,
             ModuleRequirements {
                 features: DetectedFeatures::Sm80,
-                ptx_isa: PtxIsaRequirement::Ptx70,
+                ptx_isa: PtxIsaRequirement::new(70),
             }
         );
         assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_80");
@@ -4319,7 +4274,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&combined),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
     }
@@ -4347,7 +4302,7 @@ mod tests {
         );
         assert_eq!(
             detect_module_requirements_in_llvm_text(mnemonic).ptx_isa,
-            PtxIsaRequirement::Ptx78
+            PtxIsaRequirement::new(78)
         );
 
         for near_miss in [
@@ -4375,7 +4330,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(&combined),
             ModuleRequirements {
                 features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             },
             "the architecture and PTX ISA floors must compose independently"
         );
@@ -4389,18 +4344,18 @@ mod tests {
 
         for target in ["sm_75", "sm_80", "sm_86", "sm_87"] {
             assert_eq!(
-                required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::Ptx78).unwrap(),
+                required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::new(78)).unwrap(),
                 Some("+ptx78"),
                 "{target} needs an explicit PTX 7.8 floor"
             );
         }
         assert_eq!(
-            required_ptx_feature(&"sm_90".parse().unwrap(), PtxIsaRequirement::Ptx78).unwrap(),
+            required_ptx_feature(&"sm_90".parse().unwrap(), PtxIsaRequirement::new(78)).unwrap(),
             None
         );
         for target in ["sm_88", "sm_89"] {
             assert_eq!(
-                required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::Ptx78).unwrap(),
+                required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::new(78)).unwrap(),
                 None,
                 "{target} already requires PTX 7.8 or newer"
             );
@@ -4418,7 +4373,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(base_ldmatrix),
             ModuleRequirements {
                 features: DetectedFeatures::Ldmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx65,
+                ptx_isa: PtxIsaRequirement::new(65),
             }
         );
 
@@ -4427,7 +4382,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(cta_ldmatrix),
             ModuleRequirements {
                 features: DetectedFeatures::Ldmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
 
@@ -4439,7 +4394,7 @@ mod tests {
                 detect_module_requirements_in_llvm_text(stmatrix),
                 ModuleRequirements {
                     features: DetectedFeatures::Sm90,
-                    ptx_isa: PtxIsaRequirement::Ptx78,
+                    ptx_isa: PtxIsaRequirement::new(78),
                 }
             );
         }
@@ -4458,7 +4413,7 @@ mod tests {
                         } else {
                             DetectedFeatures::Sm90
                         },
-                    ptx_isa: PtxIsaRequirement::Ptx86,
+                    ptx_isa: PtxIsaRequirement::new(86),
                 },
                 "{newer}"
             );
@@ -4472,21 +4427,21 @@ mod tests {
             detect_module_requirements_in_llvm_text(&mixed),
             ModuleRequirements {
                 features: DetectedFeatures::Movmatrix | DetectedFeatures::Ldmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             },
             "the strongest PTX ISA floor must survive equal sm_75 feature families"
         );
 
         assert_eq!(
-            required_ptx_feature(&"sm_75".parse().unwrap(), PtxIsaRequirement::Ptx65).unwrap(),
+            required_ptx_feature(&"sm_75".parse().unwrap(), PtxIsaRequirement::new(65)).unwrap(),
             Some("+ptx65")
         );
         assert_eq!(
-            required_ptx_feature(&"sm_80".parse().unwrap(), PtxIsaRequirement::Ptx65).unwrap(),
+            required_ptx_feature(&"sm_80".parse().unwrap(), PtxIsaRequirement::new(65)).unwrap(),
             None
         );
         assert_eq!(
-            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::Ptx86).unwrap(),
+            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(86)).unwrap(),
             None
         );
 
@@ -4498,7 +4453,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(adjacent_unrelated_b8),
             ModuleRequirements {
                 features: DetectedFeatures::Ldmatrix,
-                ptx_isa: PtxIsaRequirement::Ptx65,
+                ptx_isa: PtxIsaRequirement::new(65),
             },
             "an unrelated b8 instruction must not raise the ldmatrix family"
         );
@@ -4517,7 +4472,7 @@ mod tests {
                 requirements.features.contains(DetectedFeatures::Tma),
                 "{tma}"
             );
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx80, "{tma}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(80), "{tma}");
         }
 
         let non_bulk = "cp.async.commit_group;";
@@ -4535,7 +4490,7 @@ mod tests {
         );
         assert_eq!(
             detect_module_requirements_in_llvm_text(tma_and_movmatrix).ptx_isa,
-            PtxIsaRequirement::Ptx80
+            PtxIsaRequirement::new(80)
         );
 
         let wgmma = "wgmma.fence.sync.aligned;";
@@ -4543,7 +4498,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(wgmma),
             ModuleRequirements {
                 features: DetectedFeatures::Wgmma,
-                ptx_isa: PtxIsaRequirement::Ptx80,
+                ptx_isa: PtxIsaRequirement::new(80),
             }
         );
 
@@ -4552,31 +4507,31 @@ mod tests {
         assert!(contains_tma_shared_cta_destination(shared_cta));
         let shared_cta_requirements = detect_module_requirements_in_llvm_text(shared_cta);
         assert_eq!(shared_cta_requirements.features, DetectedFeatures::Tma);
-        assert_eq!(shared_cta_requirements.ptx_isa, PtxIsaRequirement::Ptx86);
+        assert_eq!(shared_cta_requirements.ptx_isa, PtxIsaRequirement::new(86));
 
         let shared_source = "cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group;";
         assert!(!contains_tma_shared_cta_destination(shared_source));
         assert_eq!(
             detect_module_requirements_in_llvm_text(shared_source).ptx_isa,
-            PtxIsaRequirement::Ptx80
+            PtxIsaRequirement::new(80)
         );
 
         let cta_group = "cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes.cta_group::1;";
         assert_eq!(
             detect_module_requirements_in_llvm_text(cta_group).ptx_isa,
-            PtxIsaRequirement::Ptx86
+            PtxIsaRequirement::new(86)
         );
 
         assert_eq!(
-            required_ptx_feature(&"sm_90".parse().unwrap(), PtxIsaRequirement::Ptx80).unwrap(),
+            required_ptx_feature(&"sm_90".parse().unwrap(), PtxIsaRequirement::new(80)).unwrap(),
             Some("+ptx80")
         );
         assert_eq!(
-            required_ptx_feature(&"sm_90a".parse().unwrap(), PtxIsaRequirement::Ptx86).unwrap(),
+            required_ptx_feature(&"sm_90a".parse().unwrap(), PtxIsaRequirement::new(86)).unwrap(),
             Some("+ptx86")
         );
         assert_eq!(
-            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::Ptx80).unwrap(),
+            required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(80)).unwrap(),
             None
         );
     }
@@ -4592,7 +4547,7 @@ mod tests {
                 requirements.features.contains(DetectedFeatures::Tma),
                 "{ptx}"
             );
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx80, "{ptx}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(80), "{ptx}");
             assert!(arch_satisfies(
                 &"sm_90".parse().unwrap(),
                 requirements.features
@@ -4602,15 +4557,15 @@ mod tests {
         for (ptx, expected_isa) in [
             (
                 "mbarrier.init.shared.b64 [$0], 1;",
-                PtxIsaRequirement::Ptx70,
+                PtxIsaRequirement::new(70),
             ),
             (
                 "mbarrier.test_wait.parity.shared.b64 $0, [$1], $2;",
-                PtxIsaRequirement::Ptx71,
+                PtxIsaRequirement::new(71),
             ),
             (
                 "mbarrier.try_wait.parity.shared::cta.b64 $0, [$1], $2;",
-                PtxIsaRequirement::Ptx78,
+                PtxIsaRequirement::new(78),
             ),
         ] {
             let requirements = detect_module_requirements_in_llvm_text(ptx);
@@ -4649,16 +4604,16 @@ mod tests {
             );
         }
         assert_eq!(
-            required_ptx_feature(&"sm_80".parse().unwrap(), PtxIsaRequirement::Ptx70).unwrap(),
+            required_ptx_feature(&"sm_80".parse().unwrap(), PtxIsaRequirement::new(70)).unwrap(),
             None
         );
         assert_eq!(
-            required_ptx_feature(&"sm_80".parse().unwrap(), PtxIsaRequirement::Ptx71).unwrap(),
+            required_ptx_feature(&"sm_80".parse().unwrap(), PtxIsaRequirement::new(71)).unwrap(),
             Some("+ptx71")
         );
         for target in ["sm_86", "sm_87", "sm_88", "sm_89"] {
             assert_eq!(
-                required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::Ptx71).unwrap(),
+                required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::new(71)).unwrap(),
                 None,
                 "{target} cannot be downgraded below its minimum PTX ISA"
             );
@@ -4674,7 +4629,7 @@ mod tests {
                 requirements.features.contains(DetectedFeatures::Tma),
                 "{ptx}"
             );
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86, "{ptx}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86), "{ptx}");
             assert!(!arch_satisfies(
                 &"sm_80".parse().unwrap(),
                 requirements.features
@@ -4687,7 +4642,7 @@ mod tests {
         ] {
             let requirements = detect_module_requirements_in_llvm_text(ptx);
             assert!(requirements.features.contains(DetectedFeatures::Tma));
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx80);
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(80));
             assert!(!arch_satisfies(
                 &"sm_80".parse().unwrap(),
                 requirements.features
@@ -4699,7 +4654,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(cluster_sync),
             ModuleRequirements {
                 features: DetectedFeatures::Cluster,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
         assert_eq!(
@@ -4710,7 +4665,7 @@ mod tests {
         let cluster_release = "barrier.cluster.arrive.release;";
         assert_eq!(
             detect_module_requirements_in_llvm_text(cluster_release).ptx_isa,
-            PtxIsaRequirement::Ptx80
+            PtxIsaRequirement::new(80)
         );
 
         for ptx in [
@@ -4722,7 +4677,7 @@ mod tests {
         ] {
             let requirements = detect_module_requirements_in_llvm_text(ptx);
             assert!(requirements.features.contains(DetectedFeatures::Cluster));
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx78);
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(78));
             assert!(!arch_satisfies(
                 &"sm_80".parse().unwrap(),
                 requirements.features
@@ -4740,7 +4695,7 @@ mod tests {
                 requirements.features.contains(DetectedFeatures::Sm90),
                 "{ptx}"
             );
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86, "{ptx}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86), "{ptx}");
             assert_eq!(
                 requirements.features.contains(DetectedFeatures::Cluster),
                 ptx.contains(".cluster"),
@@ -4755,7 +4710,7 @@ mod tests {
         let multimem = "multimem.red.relaxed.cluster.global.add.u32 [$0], $1;";
         let requirements = detect_module_requirements_in_llvm_text(multimem);
         assert_eq!(requirements.features, DetectedFeatures::Sm90);
-        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86);
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86));
         assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_90");
         let multimem_debug_filename = r#"!9 = !DIFile(filename: "multimem.rs", directory: "/tmp")"#;
         assert_eq!(
@@ -4777,7 +4732,11 @@ mod tests {
                 DetectedFeatures::MultimemFp8 | DetectedFeatures::Sm90,
                 "{multimem}"
             );
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86, "{multimem}");
+            assert_eq!(
+                requirements.ptx_isa,
+                PtxIsaRequirement::new(86),
+                "{multimem}"
+            );
             assert_eq!(
                 select_target(requirements.features).unwrap().sm(),
                 "sm_100a"
@@ -4805,7 +4764,7 @@ mod tests {
             requirements.features,
             DetectedFeatures::ReduxF32 | DetectedFeatures::Sm80
         );
-        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86);
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86));
         assert_eq!(
             select_target(requirements.features).unwrap().sm(),
             "sm_100a"
@@ -4834,7 +4793,7 @@ mod tests {
                 detect_module_requirements_in_llvm_text(sreg),
                 ModuleRequirements {
                     features: DetectedFeatures::Cluster,
-                    ptx_isa: PtxIsaRequirement::Ptx78,
+                    ptx_isa: PtxIsaRequirement::new(78),
                 },
                 "{sreg}"
             );
@@ -4847,7 +4806,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(cluster_metadata),
             ModuleRequirements {
                 features: DetectedFeatures::Cluster,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
         let cluster_debug_local =
@@ -4865,7 +4824,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(elect),
             ModuleRequirements {
                 features: DetectedFeatures::Sm90,
-                ptx_isa: PtxIsaRequirement::Ptx80,
+                ptx_isa: PtxIsaRequirement::new(80),
             }
         );
 
@@ -4874,7 +4833,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(tcgen_wait),
             ModuleRequirements {
                 features: DetectedFeatures::Blackwell,
-                ptx_isa: PtxIsaRequirement::Ptx86,
+                ptx_isa: PtxIsaRequirement::new(86),
             }
         );
 
@@ -4892,7 +4851,7 @@ mod tests {
             detect_module_requirements_in_llvm_text(clc),
             ModuleRequirements {
                 features: DetectedFeatures::Sm100,
-                ptx_isa: PtxIsaRequirement::Ptx86,
+                ptx_isa: PtxIsaRequirement::new(86),
             }
         );
         assert_eq!(
@@ -4914,7 +4873,7 @@ mod tests {
             requirements.features,
             DetectedFeatures::Sm100 | DetectedFeatures::BlackwellFamily
         );
-        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86);
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86));
         assert_eq!(
             select_target(requirements.features).unwrap().sm(),
             "sm_100a"
@@ -4957,7 +4916,7 @@ mod tests {
                 requirements.features.contains(DetectedFeatures::Sm100),
                 "{ptx}"
             );
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86, "{ptx}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86), "{ptx}");
             assert!(!arch_satisfies(
                 &"sm_90".parse().unwrap(),
                 requirements.features
@@ -4985,7 +4944,7 @@ mod tests {
                     .contains(DetectedFeatures::BlackwellAccelerated),
                 "{ptx}"
             );
-            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86, "{ptx}");
+            assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86), "{ptx}");
             assert_eq!(
                 select_target(requirements.features).unwrap().sm(),
                 "sm_100a"

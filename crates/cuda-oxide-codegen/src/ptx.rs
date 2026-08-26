@@ -754,11 +754,11 @@ mod tests {
 
         let source = ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         };
         let llc_input = ModuleRequirements {
             features: DetectedFeatures::DynamicStack,
-            ptx_isa: PtxIsaRequirement::Ptx73,
+            ptx_isa: PtxIsaRequirement::new(73),
         };
 
         let merged = merge_module_requirements(source, llc_input);
@@ -766,7 +766,7 @@ mod tests {
             merged.features,
             DetectedFeatures::Sm80 | DetectedFeatures::DynamicStack
         );
-        assert_eq!(merged.ptx_isa, PtxIsaRequirement::Ptx73);
+        assert_eq!(merged.ptx_isa, PtxIsaRequirement::new(73));
         assert_eq!(
             required_ptx_feature(&"sm_80".parse().unwrap(), merged.ptx_isa).unwrap(),
             Some("+ptx73")
