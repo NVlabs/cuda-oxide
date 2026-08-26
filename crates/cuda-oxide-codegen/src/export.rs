@@ -132,7 +132,7 @@ pub(crate) fn resolve_nvvm_target_with_generated(
                 }
             })?;
         }
-        validate_generated_target(&parsed.sm(), generated).map_err(|reason| {
+        validate_generated_target(&parsed, generated).map_err(|reason| {
             PipelineError::TargetSelection {
                 target: parsed.sm(),
                 reason,
@@ -144,20 +144,18 @@ pub(crate) fn resolve_nvvm_target_with_generated(
     if let Some(features) = automatic_features {
         if let Some(target) = device_arch_hint {
             let parsed = parse(target, "detected GPU architecture")?;
-            if arch_satisfies(&parsed.sm(), features)
-                && generated_target_satisfied(&parsed.sm(), generated)
-            {
+            if arch_satisfies(&parsed, features) && generated_target_satisfied(&parsed, generated) {
                 return Ok(parsed);
             }
         }
         let target =
             select_target_with_generated(features, generated).map_err(PipelineError::Export)?;
-        return parse(&target, "feature-based compiler default");
+        return Ok(target);
     }
 
     if let Some(target) = device_arch_hint {
         let parsed = parse(target, "detected GPU architecture")?;
-        if generated_target_satisfied(&parsed.sm(), generated) {
+        if generated_target_satisfied(&parsed, generated) {
             return Ok(parsed);
         }
     }
@@ -165,7 +163,7 @@ pub(crate) fn resolve_nvvm_target_with_generated(
     if !generated.is_empty() {
         let target = select_target_with_generated(DetectedFeatures::Basic, generated)
             .map_err(PipelineError::Export)?;
-        return parse(&target, "generated-intrinsic requirement");
+        return Ok(target);
     }
 
     // Nothing supplied a target, so there is none to name. The caller still

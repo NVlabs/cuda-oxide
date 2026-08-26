@@ -13,7 +13,6 @@ use crate::target::{
     required_ptx_feature, resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
     validate_target_features, validate_target_for_llvm_major,
 };
-use libnvvm_sys::CudaArch;
 use llvm_export::export::DebugKind;
 use ptx_parse::{Document, EditScript, split_top_level};
 use std::path::{Path, PathBuf};
@@ -402,7 +401,10 @@ fn generate_ptx_impl(
         record_diagnostic(
             &mut diagnostics,
             diagnostic_sink,
-            format!("Target: {target} (from {target_source}; detected {detected:?})"),
+            format!(
+                "Target: {} (from {target_source}; detected {detected:?})",
+                target.sm()
+            ),
         );
     }
 
@@ -488,18 +490,9 @@ fn generate_ptx_impl(
     let requirements =
         merge_generated_module_requirements_for_target(requirements, generated, &target)
             .map_err(PipelineError::PtxGeneration)?;
-    let parsed_target =
-        target
-            .parse::<CudaArch>()
-            .map_err(|error| PipelineError::TargetSelection {
-                target: target.clone(),
-                reason: format!(
-                    "{error} (while validating requirements from the final LLVM input)"
-                ),
-            })?;
-    validate_target_features(&parsed_target, requirements.features).map_err(|reason| {
+    validate_target_features(&target, requirements.features).map_err(|reason| {
         PipelineError::TargetSelection {
-            target: target.clone(),
+            target: target.sm(),
             reason: format!("{reason} (requirements from the final LLVM input)"),
         }
     })?;
@@ -530,7 +523,7 @@ fn generate_ptx_impl(
     let mut llc_cmd = std::process::Command::new(&toolchain.llc_path);
     llc_cmd
         .arg("-march=nvptx64")
-        .arg(format!("-mcpu={}", target));
+        .arg(format!("-mcpu={}", target.sm()));
     if let Some(feature) =
         required_ptx_feature(&target, requirements.ptx_isa).map_err(PipelineError::PtxGeneration)?
     {
@@ -775,7 +768,7 @@ mod tests {
         );
         assert_eq!(merged.ptx_isa, PtxIsaRequirement::Ptx73);
         assert_eq!(
-            required_ptx_feature("sm_80", merged.ptx_isa).unwrap(),
+            required_ptx_feature(&"sm_80".parse().unwrap(), merged.ptx_isa).unwrap(),
             Some("+ptx73")
         );
     }
