@@ -372,10 +372,9 @@ fn derived_ptx_feature(gpu_target: &str, instruction_floor: u16) -> Result<(Opti
     let spelling = PtxSpelling::round_up(instruction_floor).with_context(|| {
         format!("instruction PTX floor {instruction_floor} has no supported llc feature spelling")
     })?;
-    if spelling.get() <= target_floor {
-        Ok((None, target_floor))
-    } else {
-        Ok((Some(spelling.feature().to_string()), spelling.get()))
+    match spelling.feature_beyond_floor(target_floor) {
+        Some(feature) => Ok((Some(feature.to_string()), spelling.get())),
+        None => Ok((None, target_floor)),
     }
 }
 

@@ -1800,8 +1800,7 @@ pub fn required_ptx_feature(
     let minimum = recorded_ptx_floor(target).map_err(|error| error.to_string())?;
     Ok(requirement
         .spelling()
-        .filter(|spelling| spelling.get() > minimum)
-        .map(PtxSpelling::feature))
+        .and_then(|spelling| spelling.feature_beyond_floor(minimum)))
 }
 
 /// Reject targets that the supported LLVM 21 backend silently mishandles.

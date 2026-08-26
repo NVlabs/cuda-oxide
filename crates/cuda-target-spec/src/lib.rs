@@ -382,23 +382,20 @@ impl PtxSpelling {
             _ => unreachable!(),
         }
     }
+
+    /// Render this feature only when it is newer than a recorded target floor.
+    pub fn feature_beyond_floor(self, recorded_floor: u16) -> Option<&'static str> {
+        if self.get() <= recorded_floor {
+            None
+        } else {
+            Some(self.feature())
+        }
+    }
 }
 
 /// Render one supported PTX ISA spelling as an LLVM `-mattr` feature.
 pub fn spelling_feature(spelling: u16) -> Option<&'static str> {
     PtxSpelling::from_spelling(spelling).map(PtxSpelling::feature)
-}
-
-/// Render a supported PTX feature only when it is newer than a recorded floor.
-///
-/// This is total over the supported spelling vocabulary; callers are expected
-/// to pass spellings drawn from [`PTX_ISA_SPELLINGS`].
-pub fn feature_beyond_floor(spelling: u16, recorded_floor: u16) -> Option<&'static str> {
-    if spelling <= recorded_floor {
-        None
-    } else {
-        PtxSpelling::from_spelling(spelling).map(PtxSpelling::feature)
-    }
 }
 
 /// Return the smallest supported PTX feature spelling at least `floor`.
@@ -468,10 +465,16 @@ mod tests {
 
     #[test]
     fn feature_beyond_floor_only_renders_supported_newer_spellings() {
-        assert_eq!(feature_beyond_floor(78, 73), Some("+ptx78"));
-        assert_eq!(feature_beyond_floor(73, 73), None);
-        assert_eq!(feature_beyond_floor(70, 73), None);
-        assert_eq!(feature_beyond_floor(74, 73), None);
+        for (spelling, floor, expected) in
+            [(78, 73, Some("+ptx78")), (73, 73, None), (70, 73, None)]
+        {
+            assert_eq!(
+                PtxSpelling::from_spelling(spelling)
+                    .unwrap()
+                    .feature_beyond_floor(floor),
+                expected
+            );
+        }
     }
 
     #[cfg(unix)]
