@@ -156,7 +156,8 @@ pub struct TargetPtxFloor {
 /// Exact target floors recorded from the pinned LLVM 22 NVPTX backend.
 ///
 /// These entries describe backend defaults, not backend-independent CUDA
-/// facts. There are no wildcard or suffix-fallback entries.
+/// facts. There are no wildcard or suffix-fallback entries. Entry order is the
+/// target-selection preference: base targets first, then `a` and `f` families.
 pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
     TargetPtxFloor {
         capability: 70,
@@ -204,44 +205,49 @@ pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
         floor: 78,
     },
     TargetPtxFloor {
+        capability: 100,
+        suffix: None,
+        floor: 86,
+    },
+    TargetPtxFloor {
+        capability: 101,
+        suffix: None,
+        floor: 86,
+    },
+    TargetPtxFloor {
+        capability: 103,
+        suffix: None,
+        floor: 88,
+    },
+    TargetPtxFloor {
+        capability: 110,
+        suffix: None,
+        floor: 90,
+    },
+    TargetPtxFloor {
+        capability: 120,
+        suffix: None,
+        floor: 87,
+    },
+    TargetPtxFloor {
+        capability: 121,
+        suffix: None,
+        floor: 88,
+    },
+    TargetPtxFloor {
         capability: 90,
         suffix: Some('a'),
         floor: 80,
     },
     TargetPtxFloor {
         capability: 100,
-        suffix: None,
-        floor: 86,
-    },
-    TargetPtxFloor {
-        capability: 100,
         suffix: Some('a'),
-        floor: 86,
-    },
-    TargetPtxFloor {
-        capability: 100,
-        suffix: Some('f'),
-        floor: 88,
-    },
-    TargetPtxFloor {
-        capability: 101,
-        suffix: None,
         floor: 86,
     },
     TargetPtxFloor {
         capability: 101,
         suffix: Some('a'),
         floor: 86,
-    },
-    TargetPtxFloor {
-        capability: 101,
-        suffix: Some('f'),
-        floor: 88,
-    },
-    TargetPtxFloor {
-        capability: 103,
-        suffix: None,
-        floor: 88,
     },
     TargetPtxFloor {
         capability: 103,
@@ -249,29 +255,9 @@ pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
         floor: 88,
     },
     TargetPtxFloor {
-        capability: 103,
-        suffix: Some('f'),
-        floor: 88,
-    },
-    TargetPtxFloor {
-        capability: 110,
-        suffix: None,
-        floor: 90,
-    },
-    TargetPtxFloor {
         capability: 110,
         suffix: Some('a'),
         floor: 90,
-    },
-    TargetPtxFloor {
-        capability: 110,
-        suffix: Some('f'),
-        floor: 90,
-    },
-    TargetPtxFloor {
-        capability: 120,
-        suffix: None,
-        floor: 87,
     },
     TargetPtxFloor {
         capability: 120,
@@ -279,18 +265,33 @@ pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
         floor: 87,
     },
     TargetPtxFloor {
-        capability: 120,
+        capability: 121,
+        suffix: Some('a'),
+        floor: 88,
+    },
+    TargetPtxFloor {
+        capability: 100,
         suffix: Some('f'),
         floor: 88,
     },
     TargetPtxFloor {
-        capability: 121,
-        suffix: None,
+        capability: 101,
+        suffix: Some('f'),
         floor: 88,
     },
     TargetPtxFloor {
-        capability: 121,
-        suffix: Some('a'),
+        capability: 103,
+        suffix: Some('f'),
+        floor: 88,
+    },
+    TargetPtxFloor {
+        capability: 110,
+        suffix: Some('f'),
+        floor: 90,
+    },
+    TargetPtxFloor {
+        capability: 120,
+        suffix: Some('f'),
         floor: 88,
     },
     TargetPtxFloor {
