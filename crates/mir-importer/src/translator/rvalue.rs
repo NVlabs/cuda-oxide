@@ -2485,7 +2485,9 @@ pub fn translate_operand(
                 );
             }
 
-            // Debug parsing remains temporarily for non-floating constants.
+            // Debug repr kept for diagnostics only (CUDA_OXIDE_DEBUG_CONST and
+            // the unsupported-constant error at the bottom); constant VALUES
+            // are read through typed rustc_public APIs, never parsed from it.
             let const_str = format!("{:?}", constant.const_);
 
             // Handle pointer-to-array constants (byte strings, typed arrays like [f64; 3], etc.)
@@ -2839,35 +2841,37 @@ pub fn translate_operand(
                 // MirCastOp
                 use dialect_mir::ops::MirCastOp;
 
-                // Parse the pointer value from the constant bytes (typically all zeros for null)
-                let ptr_val = if const_str.contains("bytes: [") {
-                    if let Some(bytes_part) = const_str.split("bytes: [").nth(1) {
-                        let bytes_end = bytes_part.split(']').next().unwrap_or("");
-                        let mut bytes = Vec::new();
-                        for byte_str in bytes_end.split(',') {
-                            if bytes.len() >= 8 {
-                                break;
-                            }
-                            let b_str = byte_str.trim();
-                            if let Some(num_str) = b_str
-                                .strip_prefix("Some(")
-                                .and_then(|s| s.strip_suffix(')'))
-                                && let Ok(byte) = num_str.parse::<u8>()
-                            {
-                                bytes.push(byte);
-                            }
-                        }
-                        let mut res: u64 = 0;
-                        for (i, byte) in bytes.iter().enumerate() {
-                            res |= (*byte as u64) << (i * 8);
-                        }
-                        res
-                    } else {
-                        0
-                    }
-                } else {
-                    0 // Default to null pointer
+                // No provenance, so the data bytes ARE the address. Read the
+                // first pointer-width bytes as a target-endian uint:
+                //
+                //   bytes: [00 00 00 00 00 00 00 00] -> 0x00 (null)
+                //   bytes: [2a 00 00 00 00 00 00 00] -> 0x2a (without_provenance(42))
+                //
+                // A constant with no backing allocation, too few bytes, or an
+                // uninit byte in the range has no readable address; post-mono
+                // MIR should never produce that here, so fail loudly instead
+                // of defaulting to null.
+                let Some(alloc) = backing_alloc else {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "raw pointer constant has no backing allocation to read an \
+                             address from (constant kind: {:?})",
+                            constant.const_.kind()
+                        ))
+                    );
                 };
+                debug_assert!(
+                    alloc.provenance.ptrs.is_empty(),
+                    "provenance-carrying pointer constants must return earlier"
+                );
+                let ptr_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+                let ptr_val = alloc.read_partial_uint(0..ptr_width).map_err(|e| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "raw pointer constant needs {ptr_width} initialized address \
+                         bytes, but reading them failed: {e:?}"
+                    )))
+                })? as u64;
 
                 // Create integer constant (i64) for the pointer value
                 let i64_ty = pliron::builtin::types::IntegerType::get(
@@ -2935,21 +2939,64 @@ pub fn translate_operand(
                 };
 
                 let byte_size = (width_val as usize).div_ceil(8);
-                let int_val = constant_bytes(constant, "integer", loc.clone())
-                    .ok()
-                    .and_then(|bytes| {
-                        (bytes.len() >= byte_size)
-                            .then(|| read_uint_from_bytes(&bytes[..byte_size]))
-                    })
-                    .unwrap_or_else(|| {
-                        let val_str_base = const_str.split(':').next().unwrap_or("0").trim();
-                        let val_str = val_str_base.split('_').next().unwrap_or("0").trim();
-                        let val_clean: String = val_str
-                            .chars()
-                            .filter(|c| c.is_ascii_digit() || *c == '-')
-                            .collect();
-                        val_clean.parse::<i128>().unwrap_or(0) as u128
-                    });
+
+                // Walk to the backing allocation directly instead of going
+                // through `constant_bytes`: that helper zero-fills uninit
+                // bytes, and an integer's value bytes must all be present.
+                //
+                //   bytes: [ff 7f] -> 0x7fff  (fine)
+                //   bytes: [-- 7f] -> error   (uninit byte, not 0x7f00)
+                //
+                // No fallback: a constant we cannot read here is a compiler
+                // bug, never a zero.
+                let alloc = match constant.const_.kind() {
+                    ConstantKind::Allocated(alloc) => alloc,
+                    ConstantKind::Ty(ty_const) => match ty_const.kind() {
+                        rustc_public::ty::TyConstKind::Value(_, alloc) => alloc,
+                        other => {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "integer constant is not an evaluated value \
+                                     (TyConstKind::{other:?}), so its bytes cannot be read"
+                                ))
+                            );
+                        }
+                    },
+                    other => {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "integer constant has no byte-backed allocation \
+                                 (constant kind: {other:?})"
+                            ))
+                        );
+                    }
+                };
+                if !alloc.provenance.ptrs.is_empty() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(
+                            "integer constant carries pointer provenance; its bytes are \
+                             a relocation placeholder, not a number",
+                        )
+                    );
+                }
+                if alloc.bytes.len() < byte_size {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "integer constant has {} data bytes, expected at least \
+                             {byte_size} for i{width_val}",
+                            alloc.bytes.len()
+                        ))
+                    );
+                }
+                let int_val = alloc.read_partial_uint(0..byte_size).map_err(|e| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "integer constant has uninitialized bytes in its value range: {e:?}"
+                    )))
+                })?;
 
                 let width = NonZeroUsize::new(width_val as usize).unwrap();
                 let apint = APInt::from_u128(int_val, width);
