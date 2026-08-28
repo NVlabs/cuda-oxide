@@ -1636,6 +1636,38 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "subfield_edges must not contain Deref projections")]
+    fn deref_in_subfield_edges_panics() {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        // *const i32
+        let ptr = tcx.push(TyKind::RawPtr(TyCtxt::I32, Mutability::Not));
+        // (*const i32,)
+        let ty = tcx.push(TyKind::Tuple(vec![ptr]));
+
+        let mut pt = PlaceGraph::new(Rc::new(tcx));
+        let root = Local::new(1);
+        let root_pidx = pt.allocate_local(root, ty);
+
+        let int = Local::new(2);
+        pt.allocate_local(int, TyCtxt::I32);
+
+        // root -[TupleField(0)]-> root.0 -[Deref]-> int
+        let root_0 = Place::from_projected(root, &[ProjectionElem::TupleField(FieldIdx::new(0))]);
+        pt.set_ref(root_0.clone(), int, None);
+
+        // Violate the ProjectionIter invariant: subfield_edges must only
+        // contain structural projections created by add_place, but we inject
+        // the Deref edge created by set_ref.
+        let root_0_pidx = root_0.to_place_index(&pt).unwrap();
+        let deref_edge = pt.ref_edge(root_0_pidx).unwrap();
+        pt.places[root_0_pidx].subfield_edges.push(deref_edge);
+
+        // Traversing past root.0 consumes its subfield_edges and must trip
+        // the debug_assert.
+        let _ = pt.reachable_from_node(root_pidx).count();
+    }
+
+    #[test]
     fn tuple_projection() {
         let mut tcx = TyCtxt::from_primitives(TyConfig::default());
         let ty = tcx.push(TyKind::Tuple(vec![TyCtxt::I8, TyCtxt::I32]));
