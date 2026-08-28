@@ -92,14 +92,13 @@ cargo oxide run tma_multicast
 
 ## Expected Output
 
-### On Blackwell Datacenter (sm_100a):
+### On Blackwell Datacenter (sm_100a)
 
 ```text
 === TMA Multicast Example (sm_100a) ===
 
 GPU Compute Capability: sm_100
-Loading PTX from: tma_multicast.ptx
-✓ PTX loaded successfully
+✓ embedded module loaded successfully
 
 --- TMA Multicast (tma_multicast_test) ---
 
@@ -115,34 +114,57 @@ Loading PTX from: tma_multicast.ptx
 
 ### On Consumer Blackwell (sm_120)
 
-Consumer Blackwell is supported by observed runtime evidence. PR #668
-confirmed that the example's PTX JIT-loads and runs successfully on an
-RTX 5090 (sm_120).
+Runs on consumer Blackwell: the sm_100a PTX JIT-loads and passes (first
+verified on an RTX 5090 in #668). Transcript from an RTX 5090:
 
-The previous documentation showing a PTX load failure on sm_120 was stale.
+```text
+=== TMA Multicast Example (sm_100a) ===
 
-### On Hopper (sm_90/sm_90a)
+GPU Compute Capability: sm_120
+✓ embedded module loaded successfully
 
-Hopper runtime behavior has not yet been validated on physical Hopper hardware.
-The current host-side example still skips devices with compute capability
-below 10, so this documentation change does not claim Hopper runtime support.
+--- TMA Multicast (tma_multicast_test) ---
+
+1. Setup: 4 CTAs in cluster, tile 64x64 (4096 floats)
+2. Launching tma_multicast_test (cluster=(4,1,1), block=256)...
+3. Verifying all 4 CTAs received the same tile...
+   ✓ All 4 CTAs have identical tile data (4096 values each)!
+
+🎉 TMA multicast successful — one load, 4 CTAs served!
+
+=== TMA Multicast Test Complete ===
+```
+
+### On Hopper (sm_90/sm_90a) or Earlier
+
+Not supported: the shipped PTX targets sm_100a, which the driver will not
+JIT on sm_90. The host example skips any GPU below compute capability 10:
+
+```text
+GPU Compute Capability: sm_90
+
+skipping: TMA multicast requires sm_100a (Blackwell datacenter)
+   Your GPU is sm_90. Use: cargo oxide run tma_copy
+```
 
 ## Hardware Requirements
 
-- **Blackwell**: sm_100a datacenter GPUs; consumer sm_120 reported working in #668
-- **Hopper (sm_90/sm_90a)**: runtime validation pending; currently skipped by the host example
+- **Runs on**: Blackwell, both datacenter sm_100a (B100/B200/GB200) and
+  consumer sm_120 (RTX 5090, verified in #668)
+- **Not supported**: Hopper (sm_90/sm_90a) and earlier; the sm_100a PTX
+  won't JIT there
 - **CUDA Driver**: 12.0+
 - **Cluster launch**: Required (`cuLaunchKernelEx` with cluster dimensions)
 
 ## Multicast vs Unicast TMA
 
-| Aspect              | Unicast (`tma_copy`)             | Multicast (`tma_multicast`)                  |
-|---------------------|----------------------------------|----------------------------------------------|
-| Destination         | One CTA's shared memory          | All CTAs in cluster                          |
-| Bandwidth           | 1x tile transfer                 | 1x transfer, N copies                        |
-| Architecture        | sm_90+ (Hopper+)                 | Blackwell; sm_120 reported working           |
-| Use case            | Single-CTA tile loads            | GEMM/convolution with shared tiles           |
-| `cluster_launch`    | Optional                         | Required                                     |
+| Aspect              | Unicast (`tma_copy`)             | Multicast (`tma_multicast`)         |
+|---------------------|----------------------------------|-------------------------------------|
+| Destination         | One CTA's shared memory          | All CTAs in cluster                 |
+| Bandwidth           | 1x tile transfer                 | 1x transfer, N copies               |
+| Architecture        | sm_90+ (Hopper+)                 | Blackwell (sm_100a, sm_120)         |
+| Use case            | Single-CTA tile loads            | GEMM/convolution with shared tiles  |
+| `cluster_launch`    | Optional                         | Required                            |
 
 ## Pitfalls
 
@@ -157,12 +179,17 @@ writes to every CTA's shared memory and signals every CTA's mbarrier. If any
 CTA hasn't finished `mbarrier_init` + `fence_proxy_async_shared_cta` before
 the multicast fires, the barrier tracking will be silently corrupt.
 
-## Consumer Blackwell Compatibility
+## Which GPUs Run This?
 
-PR #668 established through runtime measurement that this example's PTX
-JIT-loads and executes successfully on an RTX 5090 (sm_120). Therefore,
-consumer Blackwell must not be documented as unsupported.
+The kernel ships as `.target sm_100a` PTX. What matters at run time is
+whether the driver JIT accepts that PTX for your GPU:
 
-This result does not establish Hopper runtime support. Hopper remains a
-separate validation question, and the current host-side example continues
-to skip devices with compute capability below 10.
+```text
+sm_100a PTX ──JIT──► sm_100a (B100/B200/GB200)  ✓ runs
+            ──JIT──► sm_120  (RTX 5090)         ✓ runs (verified in #668)
+            ──JIT──► sm_90   (Hopper)           ✗ rejected; host skips CC < 10
+```
+
+The multicast instruction itself has an sm_90+ floor in the intrinsic
+catalog (whether an sm_90-targeted build would run on real Hopper hardware
+is an open question, tracked in #966).
