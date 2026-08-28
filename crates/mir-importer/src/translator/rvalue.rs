@@ -11030,96 +11030,151 @@ fn discriminant_to_variant_index(
     }
 }
 
-/// Extract enum discriminant from a MirConst using proper rustc_public API.
+/// Read an enum constant's tag and map it to `(variant index, variant name)`.
 ///
-/// This function properly extracts the discriminant value from the constant's
-/// allocated bytes, avoiding fragile debug string parsing.
+/// Only valid for direct-tagged enums (e.g. `#[repr(u8)]` fieldless enums like
+/// `cuda_device::atomic::AtomicOrdering`) where the constant's allocation IS
+/// the tag:
 ///
-/// ## How it works
+/// ```text
+/// alloc bytes [0x02] --read_uint--> tag 2 --discriminant match--> (2, "Release")
+/// ```
 ///
-/// For enum constants, rustc stores the discriminant in `ConstantKind::Allocated(Allocation)`.
-/// The `Allocation.bytes` field contains the raw bytes of the discriminant value.
-/// We use `read_uint()` to properly interpret these bytes.
-///
-/// ## Fallback behavior
-///
-/// If the proper API extraction fails (e.g., for ZeroSized constants), we fall back
-/// to debug string parsing as a last resort, but this should be rare.
-pub(crate) fn extract_enum_discriminant(
+/// Niche-encoded enums store no direct tag, so this mapping would be wrong for
+/// them; the discriminant match errors out instead of guessing. Every failure
+/// here is a hard error: inventing a variant would silently change semantics
+/// (the old Debug-string scrape defaulted to variant 0, turning SeqCst atomics
+/// into Relaxed ones).
+pub(crate) fn extract_enum_variant(
     mir_const: &rustc_public::ty::MirConst,
-    const_str: &str,
-) -> usize {
-    // Try to extract using proper API first
-    match mir_const.kind() {
-        ConstantKind::Allocated(alloc) => {
-            // Use read_uint() to properly parse the bytes
-            if let Ok(val) = alloc.read_uint() {
-                return val as usize;
-            }
-            // If read_uint fails, try raw_bytes
-            if let Ok(bytes) = alloc.raw_bytes()
-                && !bytes.is_empty()
-            {
-                // Convert bytes to usize (little-endian)
-                let mut value: usize = 0;
-                for (i, &byte) in bytes.iter().take(8).enumerate() {
-                    value |= (byte as usize) << (i * 8);
-                }
-                return value;
-            }
-            // Last resort: bytes field directly
-            if !alloc.bytes.is_empty() {
-                let mut value: usize = 0;
-                for (i, opt_byte) in alloc.bytes.iter().take(8).enumerate() {
-                    if let Some(byte) = opt_byte {
-                        value |= (*byte as usize) << (i * 8);
-                    }
-                }
-                return value;
-            }
-            0
-        }
-        ConstantKind::ZeroSized => {
-            // ZeroSized typically means discriminant 0 (e.g., None)
-            0
-        }
-        ConstantKind::Ty(_ty_const) => {
-            // TyConst - try to evaluate
-            if let Ok(val) = mir_const.eval_target_usize() {
-                return val as usize;
-            }
-            // Fall back to parsing for TyConst
-            parse_discriminant_from_debug_string(const_str)
-        }
-        ConstantKind::Unevaluated(_) | ConstantKind::Param(_) => {
-            // These are rare for enum discriminants; fall back to string parsing
-            parse_discriminant_from_debug_string(const_str)
-        }
-    }
-}
+    loc: &Location,
+) -> TranslationResult<(usize, String)> {
+    use rustc_public::ty::{RigidTy, TyConstKind, TyKind, VariantIdx};
 
-/// Fallback: parse discriminant from debug string representation.
-/// This is a last resort when the proper API doesn't work.
-fn parse_discriminant_from_debug_string(const_str: &str) -> usize {
-    // Try to extract discriminant from bytes: [Some(N)] format
-    if let Some(bytes_start) = const_str.find("bytes: [Some(") {
-        let after_prefix = &const_str[bytes_start + 13..]; // skip "bytes: [Some("
-        if let Some(end) = after_prefix.find(')') {
-            let discr_str = &after_prefix[..end];
-            if let Ok(discr) = discr_str.parse::<usize>() {
-                return discr;
+    let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = mir_const.ty().kind() else {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::type_error(format!(
+                "expected an enum constant, got a constant of type {:?}",
+                mir_const.ty()
+            ))
+        );
+    };
+    if adt_def.kind() != AdtKind::Enum {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::type_error(format!(
+                "expected an enum constant, got a {:?} constant of type {}",
+                adt_def.kind(),
+                adt_def.trimmed_name()
+            ))
+        );
+    }
+
+    // Pull the raw tag out of the constant. read_uint() refuses uninitialized
+    // bytes, so a malformed const errors instead of yielding a made-up tag.
+    let (tag, tag_width_bytes) = match mir_const.kind() {
+        ConstantKind::Allocated(alloc) => {
+            let tag = alloc.read_uint().map_err(|e| {
+                input_error!(
+                    loc.clone(),
+                    TranslationErr::invalid_op(format!(
+                        "cannot read the tag of enum {} from its const allocation: {e:?}",
+                        adt_def.trimmed_name()
+                    ))
+                )
+            })?;
+            (tag, alloc.bytes.len())
+        }
+        ConstantKind::Ty(ty_const) => match ty_const.kind() {
+            TyConstKind::Value(_, alloc) => {
+                let tag = alloc.read_uint().map_err(|e| {
+                    input_error!(
+                        loc.clone(),
+                        TranslationErr::invalid_op(format!(
+                            "cannot read the tag of enum {} from its const allocation: {e:?}",
+                            adt_def.trimmed_name()
+                        ))
+                    )
+                })?;
+                (tag, alloc.bytes.len())
             }
+            other => {
+                return input_err!(
+                    loc.clone(),
+                    TranslationErr::unsupported(format!(
+                        "non-value type-level enum constant: {other:?}"
+                    ))
+                );
+            }
+        },
+        ConstantKind::ZeroSized => {
+            // No tag bytes to read; only unambiguous when there is exactly
+            // one variant to pick.
+            let variants = adt_def.variants();
+            if variants.len() == 1 {
+                return Ok((0, variants[0].name()));
+            }
+            return input_err!(
+                loc.clone(),
+                TranslationErr::invalid_op(format!(
+                    "zero-sized constant of enum {} which has {} variants: no tag to read",
+                    adt_def.trimmed_name(),
+                    variants.len()
+                ))
+            );
+        }
+        ConstantKind::Unevaluated(unevaluated) => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "unevaluated enum constant {:?}; use a literal variant",
+                    unevaluated.def
+                ))
+            );
+        }
+        ConstantKind::Param(param) => {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "unmonomorphized const param {} used as an enum value",
+                    param.name
+                ))
+            );
+        }
+    };
+
+    if tag_width_bytes == 0 {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::invalid_op(format!(
+                "empty const allocation for enum {}: no tag to read",
+                adt_def.trimmed_name()
+            ))
+        );
+    }
+
+    // The stored tag is truncated to the physical tag width, while
+    // discriminant_for_variant reports full-width values; compare masked
+    // (same trick as discriminant_to_variant_index above).
+    let mask = if tag_width_bytes >= 16 {
+        u128::MAX
+    } else {
+        (1u128 << (tag_width_bytes * 8)) - 1
+    };
+    for (idx, variant) in adt_def.variants().iter().enumerate() {
+        let discr = adt_def.discriminant_for_variant(VariantIdx::to_val(idx));
+        if discr.val & mask == tag & mask {
+            return Ok((idx, variant.name()));
         }
     }
-    // Try variant name patterns
-    if const_str.contains("::None") || const_str.ends_with("None") {
-        return 0;
-    }
-    if const_str.contains("::Some") {
-        return 1;
-    }
-    // Default to 0
-    0
+    input_err!(
+        loc.clone(),
+        TranslationErr::invalid_op(format!(
+            "enum {} has no variant with tag {tag}",
+            adt_def.trimmed_name()
+        ))
+    )
 }
 
 /// Check if a type is a pointer to SharedArray.
