@@ -97,8 +97,8 @@ pub fn resolve_context() -> Context {
 /// only located via [`backend::backend_so_candidate`], never built and never
 /// cloned, and an invalid `.cargo/cuda-oxide.toml` degrades to defaults with
 /// a warning instead of exiting (so `doctor` can report it as a failed
-/// check). Passive commands such as `doctor` and `clean` must remain usable
-/// without triggering backend setup or network access.
+/// check). Passive commands such as `doctor`, `clean`, `list` and `fmt` must
+/// remain usable without triggering backend setup or network access.
 /// `run`/`build`/`pipeline`/`setup` still build the backend on demand.
 pub fn resolve_passive_context() -> Context {
     if let Some(workspace_root) = backend::find_workspace_root() {
