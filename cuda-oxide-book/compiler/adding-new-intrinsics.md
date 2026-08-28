@@ -130,8 +130,8 @@ instead of producing garbage PTX three stages later.
 
 ### Stage 3 -- Recognize in `mir-importer`
 
-**File:**
-`crates/mir-importer/src/translator/terminator/intrinsics/generated.rs`
+**File:** the intrinsic's family module under
+`crates/mir-importer/src/translator/terminator/intrinsics/generated/`
 
 When the translator processes MIR, every function call passes through
 `try_dispatch_intrinsic()` in `terminator/mod.rs`. The callee's fully
@@ -172,7 +172,7 @@ cannot describe.
 
 ### Stage 4 -- Lower to the LLVM dialect
 
-**File:** `crates/mir-lower/src/convert/generated_intrinsics.rs`
+**File:** the intrinsic's family module under `crates/mir-lower/src/convert/generated_intrinsics/`
 
 The op implements the `MirToLlvmConversion` op interface. For a catalog
 intrinsic the impl is generated alongside a shared converter:
@@ -329,13 +329,13 @@ Three operands this time (member mask, value, and lane mask), one result.
 
 ### Stage 3 -- Recognize in `mir-importer`
 
-**File:**
-`crates/mir-importer/src/translator/terminator/intrinsics/generated.rs`
+**File:** the intrinsic's family module under
+`crates/mir-importer/src/translator/terminator/intrinsics/generated/`
 
 ```{important}
 The warp shuffles are catalog intrinsics, so their dispatch arms *and* their
-argument-translating emitters are generated into `generated.rs`, next to the
-ops from Stage 2. Nothing about a shuffle is written by hand. Hand-written
+argument-translating emitters are generated into `generated/warp_shuffle.rs`,
+next to the ops from Stage 2. Nothing about a shuffle is written by hand. Hand-written
 dispatch lives in `try_dispatch_intrinsic()` in `terminator/mod.rs` and
 covers what the catalog cannot describe. For example,
 `core::intrinsics::typed_swap_nonoverlapping` (the primitive behind

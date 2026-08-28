@@ -84,7 +84,7 @@ For each `MirFuncOp`, `convert_func` (in `lowering.rs`):
 | `aggregate`    | Struct/tuple/array/enum extract, insert, construct, field/element addr                                         |
 | `call`         | `mir.call` (function calls with arg flattening)                                                                |
 
-### Type Converter (`convert/types.rs`)
+### Type Converter (`convert/types/`)
 
 | `dialect-mir` Type   | LLVM dialect Type                                   |
 |----------------------|-----------------------------------------------------|
