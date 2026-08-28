@@ -1484,6 +1484,8 @@ fn get_or_create_extern_shared_global(
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production minting lives in mir-importer's facts.rs.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     //! End-to-end lowering tests for `dialect-mir` memory ops.
     //!

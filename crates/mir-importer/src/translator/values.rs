@@ -35,6 +35,7 @@
 //! [`align_pointer_addr_space`] to pick an alloca pointee that matches what
 //! actually gets stored.
 
+use super::facts;
 use super::facts::self_ty_is_shared_array;
 use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
 use dialect_mir::ops::{MirAllocaOp, MirCastOp, MirLoadOp, MirStoreOp};
@@ -757,17 +758,20 @@ fn propagate_from_local(local: mir::Local, classes: &[SlotAddrSpace]) -> WriteCl
 /// is preserved exactly: address-space inference must never turn `&mut T` into
 /// an erased/raw pointer, or vice versa.
 pub fn align_pointer_addr_space(ctx: &mut Context, elem_ty: TypeHandle, target: u32) -> TypeHandle {
-    let ptr_info = elem_ty
-        .deref(ctx)
-        .downcast_ref::<MirPtrType>()
-        .map(|pt| (pt.pointee, pt.is_mutable, pt.address_space, pt.kind));
-    let Some((pointee, is_mutable, current, kind)) = ptr_info else {
+    let ptr_info = elem_ty.deref(ctx).downcast_ref::<MirPtrType>().map(|pt| {
+        (
+            pt.pointee,
+            pt.address_space,
+            facts::pointer_origin_of_ptr_carrier(pt),
+        )
+    });
+    let Some((pointee, current, origin)) = ptr_info else {
         return elem_ty;
     };
     if current == target {
         return elem_ty;
     }
-    MirPtrType::get_with_kind(ctx, pointee, is_mutable, target, kind).into()
+    facts::mint_ptr_type(ctx, pointee, target, origin).into()
 }
 
 /// Extract a pointer type's address space, or `None` if `elem_ty` is not a
@@ -781,6 +785,8 @@ pub fn pointer_addr_space(ctx: &Context, elem_ty: TypeHandle) -> Option<u32> {
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production code mints via facts::PointerOrigin.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
 

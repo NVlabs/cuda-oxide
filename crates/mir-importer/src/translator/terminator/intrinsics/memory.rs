@@ -7,6 +7,7 @@
 
 use super::super::helpers::{emit_goto, emit_store_result_and_goto};
 use crate::error::{TranslationErr, TranslationResult};
+use crate::translator::facts;
 use crate::translator::values::ValueMap;
 use crate::translator::{rvalue, types};
 use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
@@ -66,7 +67,8 @@ fn establish_dynamic_shared_raw_mut(
         pointer.pointee
     };
 
-    let raw_mut_ty = MirPtrType::get_shared_with_kind(ctx, pointee, true, MirPointerKind::RawMut);
+    let raw_mut_ty =
+        facts::mint_shared_ptr_type(ctx, pointee, facts::abi_dynamic_shared_array_result());
     let cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
@@ -1300,6 +1302,8 @@ pub fn emit_cvta_generic_to_shared_offset(
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production code mints via facts::PointerOrigin.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use pliron::builtin::types::Signedness;

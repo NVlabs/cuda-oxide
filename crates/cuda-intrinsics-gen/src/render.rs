@@ -10962,6 +10962,9 @@ pub struct MapaSharedClusterOp;
 impl MapaSharedClusterOp {
     pub fn new(op: Ptr<Operation>) -> Self { Self { op } }
 
+    // Kind-preserving addrspace retype: copies the source pointer's kind
+    // verbatim; concrete kinds are minted only in mir-importer's facts.rs.
+    #[allow(clippy::disallowed_methods)]
     pub fn build(ctx: &mut Context, source: Value, rank: Value) -> Ptr<Operation> {
         let source_ty = source.get_type(ctx);
         let (pointee, is_mutable, pointer_kind) = {

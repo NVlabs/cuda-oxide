@@ -400,6 +400,8 @@ pub fn register(ctx: &mut Context) {
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production minting lives in mir-importer's facts.rs.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use crate::{

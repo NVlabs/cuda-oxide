@@ -16,6 +16,26 @@
 //! falls through to generic handling, it does not error.
 //!
 //! New rustc questions go HERE, nowhere else.
+//!
+//! # PointerOrigin
+//!
+//! Concrete pointer kinds (`&T`, `&mut T`, `*const T`, `*mut T`) are minted
+//! only here. Evidence goes in, a kinded type comes out:
+//!
+//! ```text
+//! rustc evidence                    named ABI rules
+//! (Ty, BorrowKind, RawPtrKind,     (DynamicSharedArray result,
+//!  Mutability, in-IR carriers)      DisjointSlice data ptr)
+//!        │                                │
+//!        └────────► PointerOrigin ◄───────┘
+//!                        │
+//!                     mint_*  ──► kinded MirPtrType / MirSliceType
+//! ```
+//!
+//! The raw `*_with_kind` constructors are clippy-banned everywhere else in
+//! the workspace, so a concrete kind can't be conjured without one of the
+//! origins above. Erased pointers need no origin; use the plain
+//! constructors (`MirPtrType::get*`, `MirSliceType::get*`).
 
 use crate::error::{TranslationErr, TranslationResult};
 use pliron::location::Location;
@@ -149,6 +169,179 @@ pub(crate) fn self_ty_is_shared_array(substs: &rustc_public::ty::GenericArgs) ->
     };
     is_cuda_device_adt(&adt_def, "SharedArray")
 }
+
+// ============================================================================
+// Pointer-origin facts (the only importer path to kinded pointer types)
+// ============================================================================
+
+// The one place in the importer allowed to touch the clippy-banned kinded
+// constructors: every mint below is justified by a rustc-witnessed origin.
+#[allow(clippy::disallowed_methods)]
+mod pointer_origin {
+    use dialect_mir::types::{MirPointerKind, MirPtrType, MirSliceType};
+    use pliron::context::Context;
+    use pliron::r#type::{TypeHandle, TypedHandle};
+    use rustc_public::mir;
+
+    /// A rustc-witnessed origin for a Rust pointer category.
+    ///
+    /// Fields are private on purpose: the only way to obtain one is to show
+    /// rustc evidence to a constructor below (or to invoke a named ABI rule),
+    /// so a concrete [`MirPointerKind`] can never appear out of thin air.
+    #[derive(Clone, Copy, Debug)]
+    pub(crate) struct PointerOrigin {
+        kind: MirPointerKind,
+        mutable: bool,
+    }
+
+    impl PointerOrigin {
+        /// Machine-level mutability implied by the origin (carrier
+        /// mutability for propagated `Erased` origins).
+        pub(crate) fn is_mutable(self) -> bool {
+            self.mutable
+        }
+    }
+
+    // --- rustc-derived origins ---------------------------------------------
+
+    /// `Some((pointee, origin))` iff `ty` is a reference (`RigidTy::Ref`) or
+    /// a raw pointer (`RigidTy::RawPtr`).
+    ///
+    /// This is the signature-level coupler: every rustc-declared
+    /// param/return/local/constant pointer type flows through here on its way
+    /// into `dialect-mir`.
+    pub(crate) fn pointer_origin_of_ty(
+        ty: &rustc_public::ty::Ty,
+    ) -> Option<(rustc_public::ty::Ty, PointerOrigin)> {
+        use rustc_public::ty::{RigidTy, TyKind};
+        match ty.kind() {
+            TyKind::RigidTy(RigidTy::RawPtr(pointee, mutability)) => {
+                Some((pointee, pointer_origin_of_raw_mutability(mutability)))
+            }
+            TyKind::RigidTy(RigidTy::Ref(_region, pointee, mutability)) => {
+                let mutable = mutability == mir::Mutability::Mut;
+                Some((
+                    pointee,
+                    PointerOrigin {
+                        kind: MirPointerKind::from_reference_mutability(mutable),
+                        mutable,
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// From an `Rvalue::Ref`'s borrow kind: `Mut { .. }` is `UniqueRef`,
+    /// everything else (shared and fake borrows) is `SharedRef`.
+    pub(crate) fn pointer_origin_of_borrow(kind: mir::BorrowKind) -> PointerOrigin {
+        let mutable = matches!(kind, mir::BorrowKind::Mut { .. });
+        PointerOrigin {
+            kind: MirPointerKind::from_reference_mutability(mutable),
+            mutable,
+        }
+    }
+
+    /// From an `Rvalue::AddressOf`'s raw-pointer kind: `Mut` is `RawMut`,
+    /// `Const` and `FakeForPtrMetadata` are `RawConst`.
+    pub(crate) fn pointer_origin_of_raw_ptr(kind: mir::RawPtrKind) -> PointerOrigin {
+        let mutable = matches!(kind, mir::RawPtrKind::Mut);
+        PointerOrigin {
+            kind: MirPointerKind::from_raw_mutability(mutable),
+            mutable,
+        }
+    }
+
+    /// From a raw-pointer `Mutability` (e.g. an `AggregateKind::RawPtr`).
+    pub(crate) fn pointer_origin_of_raw_mutability(m: mir::Mutability) -> PointerOrigin {
+        let mutable = m == mir::Mutability::Mut;
+        PointerOrigin {
+            kind: MirPointerKind::from_raw_mutability(mutable),
+            mutable,
+        }
+    }
+
+    /// Propagation, never strengthening: reuse the kind and mutability an
+    /// in-IR fat-pointer carrier already holds (`Erased` stays `Erased`).
+    pub(crate) fn pointer_origin_of_slice_carrier(slice: &MirSliceType) -> PointerOrigin {
+        PointerOrigin {
+            kind: slice.pointer_kind(),
+            mutable: slice.is_mutable(),
+        }
+    }
+
+    /// Thin-pointer analog of [`pointer_origin_of_slice_carrier`]: address
+    /// projections and address-space retypes copy the base pointer's kind
+    /// verbatim.
+    pub(crate) fn pointer_origin_of_ptr_carrier(ptr: &MirPtrType) -> PointerOrigin {
+        PointerOrigin {
+            kind: ptr.pointer_kind(),
+            mutable: ptr.is_mutable(),
+        }
+    }
+
+    // --- named ABI rules -----------------------------------------------------
+
+    /// ABI RULE: `cuda_device::DynamicSharedArray`'s public API hands out
+    /// `*mut T`. Extern-shared storage and its internal arithmetic stay
+    /// `Erased`; this is the one boundary where the result becomes `RawMut`.
+    pub(crate) fn abi_dynamic_shared_array_result() -> PointerOrigin {
+        PointerOrigin {
+            kind: MirPointerKind::RawMut,
+            mutable: true,
+        }
+    }
+
+    /// ABI RULE: `cuda_device::DisjointSlice<'_, T>` stores its data pointer
+    /// as `*mut T`, so its data/element pointers are always `RawMut`.
+    pub(crate) fn abi_disjoint_slice_data_ptr() -> PointerOrigin {
+        PointerOrigin {
+            kind: MirPointerKind::RawMut,
+            mutable: true,
+        }
+    }
+
+    // --- minting: the only importer path to kinded pointer/slice types ------
+
+    /// Kinded pointer with an explicit address space.
+    pub(crate) fn mint_ptr_type(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        address_space: u32,
+        origin: PointerOrigin,
+    ) -> TypedHandle<MirPtrType> {
+        MirPtrType::get_with_kind(ctx, pointee, origin.mutable, address_space, origin.kind)
+    }
+
+    /// Kinded pointer in the generic address space (0).
+    pub(crate) fn mint_generic_ptr_type(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        origin: PointerOrigin,
+    ) -> TypedHandle<MirPtrType> {
+        MirPtrType::get_generic_with_kind(ctx, pointee, origin.mutable, origin.kind)
+    }
+
+    /// Kinded pointer in the shared-memory address space (3).
+    pub(crate) fn mint_shared_ptr_type(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        origin: PointerOrigin,
+    ) -> TypedHandle<MirPtrType> {
+        MirPtrType::get_shared_with_kind(ctx, pointee, origin.mutable, origin.kind)
+    }
+
+    /// Kinded slice/fat-pointer carrier.
+    pub(crate) fn mint_slice_type(
+        ctx: &mut Context,
+        element_ty: TypeHandle,
+        origin: PointerOrigin,
+    ) -> TypedHandle<MirSliceType> {
+        MirSliceType::get_with_mutability_and_kind(ctx, element_ty, origin.mutable, origin.kind)
+    }
+}
+
+pub(crate) use pointer_origin::*;
 
 // ============================================================================
 // Constant facts (typed reads; exact or hard error)

@@ -742,6 +742,8 @@ pub fn emit_unit_noop_intrinsic(
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production code mints via facts::PointerOrigin.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use dialect_mir::{

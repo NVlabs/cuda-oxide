@@ -101,6 +101,8 @@ fn find_inner_verification_error(
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production minting lives in mir-importer's facts.rs.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use dialect_mir::attributes::FieldIndexAttr;

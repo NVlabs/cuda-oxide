@@ -34,6 +34,7 @@
 //! walked to a destination address with the same place-address walker
 //! that `Rvalue::Ref` uses, then a single `mir.store` writes through it.
 
+use super::facts;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
@@ -1185,22 +1186,18 @@ pub(crate) fn emit_array_element_store(
     // Address projections retain the base pointer's provenance, mutability,
     // and address space. The result is not a new Rust borrow and therefore has
     // no authority to erase and later recover a different pointer category.
-    let (base_mutability, base_address_space, base_kind) = {
+    let (base_origin, base_address_space) = {
         let base_ty = array_ptr.get_type(ctx);
         let base_ty = base_ty.deref(ctx);
         let base_ty = base_ty
             .downcast_ref::<dialect_mir::types::MirPtrType>()
             .expect("array element store base must be a MirPtrType");
-        (base_ty.is_mutable, base_ty.address_space, base_ty.kind)
+        (
+            facts::pointer_origin_of_ptr_carrier(base_ty),
+            base_ty.address_space,
+        )
     };
-    let elem_ptr_ty = dialect_mir::types::MirPtrType::get_with_kind(
-        ctx,
-        element_ty,
-        base_mutability,
-        base_address_space,
-        base_kind,
-    )
-    .into();
+    let elem_ptr_ty = facts::mint_ptr_type(ctx, element_ty, base_address_space, base_origin).into();
 
     use dialect_mir::ops::MirArrayElementAddrOp;
     let addr_op = Operation::new(

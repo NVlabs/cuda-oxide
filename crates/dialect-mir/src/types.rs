@@ -313,6 +313,8 @@ impl MirPtrType {
     /// Existing synthetic-pointer call sites intentionally route through this
     /// constructor and therefore receive `Erased` provenance. Rust-originated
     /// pointers should use [`Self::get_with_kind`].
+    // Internal delegation: passes only Erased, never a concrete kind.
+    #[allow(clippy::disallowed_methods)]
     pub fn get(
         ctx: &mut Context,
         pointee: TypeHandle,
@@ -357,6 +359,8 @@ impl MirPtrType {
     }
 
     /// Create a Rust/source-level pointer in generic address space (0).
+    // Internal delegation between the (banned) kinded constructors.
+    #[allow(clippy::disallowed_methods)]
     pub fn get_generic_with_kind(
         ctx: &mut Context,
         pointee: TypeHandle,
@@ -376,6 +380,8 @@ impl MirPtrType {
     }
 
     /// Create a Rust/source-level pointer in shared memory address space (3).
+    // Internal delegation between the (banned) kinded constructors.
+    #[allow(clippy::disallowed_methods)]
     pub fn get_shared_with_kind(
         ctx: &mut Context,
         pointee: TypeHandle,
@@ -492,6 +498,8 @@ impl MirSliceType {
     }
 
     /// Create a compiler/internal slice carrier with explicit machine mutability.
+    // Internal delegation: passes only Erased, never a concrete kind.
+    #[allow(clippy::disallowed_methods)]
     pub fn get_with_mutability(
         ctx: &mut Context,
         element_ty: TypeHandle,
@@ -501,6 +509,8 @@ impl MirSliceType {
     }
 
     /// Create a slice/fat-pointer retaining its Rust/source-level pointer kind.
+    // Internal delegation between the (banned) kinded constructors.
+    #[allow(clippy::disallowed_methods)]
     pub fn get_with_kind(
         ctx: &mut Context,
         element_ty: TypeHandle,

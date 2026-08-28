@@ -3,6 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+// Tests build kinded fixture types directly; production minting lives in
+// mir-importer's facts.rs (see the workspace clippy.toml disallowed-methods).
+#![allow(clippy::disallowed_methods)]
+
 use dialect_mir::ops as mir;
 use dialect_nvvm::ops as nvvm;
 use llvm_export::ops as llvm;

@@ -830,6 +830,9 @@ impl Verify for MirRefOp {
         let authority = self
             .get_attr_ref_pointer_kind_authority(ctx)
             .map(|authority| authority.clone());
+        // Verifier read-back: recomputes the expected kind from the op's own
+        // mutability evidence to CHECK a mint, not to create one.
+        #[allow(clippy::disallowed_methods)]
         let kind_is_authorized = match authority.as_ref() {
             Some(MirPointerKindAuthorityAttr::Reborrow) => {
                 ptr_ty.kind == MirPointerKind::from_reference_mutability(mutable.0)

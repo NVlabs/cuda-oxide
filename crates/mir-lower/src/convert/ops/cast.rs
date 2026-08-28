@@ -1102,6 +1102,8 @@ fn float_bit_width(ctx: &Context, ty: pliron::r#type::TypeHandle) -> Result<usiz
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production minting lives in mir-importer's facts.rs.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use crate::convert::ops::test_util::*;
     use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
