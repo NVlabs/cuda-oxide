@@ -11,16 +11,17 @@ use crate::model::{
     Tcgen05MmaSelectorLayout, Tcgen05Operation, TmaAdapter, TmaOperation, VoteAdapter,
     WarpBarrierAdapter, WarpShuffleAdapter, WgmmaControlMode,
 };
-use crate::render::common::{intrinsic_marker, rust_header};
+use crate::render::common::{intrinsic_marker, rust_header, uses_identifier};
+use crate::render::families::dialect_nvvm_ops_import_candidates;
 use crate::render::families::{
     active_masks, clc_intrinsics, cluster_barrier_attr, cluster_barriers, cluster_memory,
     cp_async_controls, cp_async_copies, cp_async_mbarriers, debug_controls, dot_products,
-    elect_intrinsics, execution_control_family, execution_controls, extended_minmax,
-    extended_minmax_format_attr, extended_minmax_nan_attr, extended_minmax_operation_attr,
-    extended_minmax_subnormal_attr, extended_minmax_xorsign_abs_attr, integer_minmaxes, ldmatrix,
-    ldmatrix_attr_variants, mbarrier_basics, mbarrier_extended, movmatrix, packed_alus,
-    packed_atomics, packed_conversions, prmts, redux, register_mma_attr_variants, register_mmas,
-    scalar_arithmetic_arity, scalar_arithmetic_format_attr, scalar_arithmetic_operation_attr,
+    elect_intrinsics, execution_controls, extended_minmax, extended_minmax_format_attr,
+    extended_minmax_nan_attr, extended_minmax_operation_attr, extended_minmax_subnormal_attr,
+    extended_minmax_xorsign_abs_attr, integer_minmaxes, ldmatrix, ldmatrix_attr_variants,
+    mbarrier_basics, mbarrier_extended, movmatrix, packed_alus, packed_atomics, packed_conversions,
+    prmts, redux, register_mma_attr_variants, register_mmas, scalar_arithmetic_arity,
+    scalar_arithmetic_format_attr, scalar_arithmetic_operation_attr,
     scalar_arithmetic_rounding_attr, scalar_arithmetic_saturation_attr,
     scalar_arithmetic_subnormal_attr, scalar_arithmetics, scalar_conversion_rounding_attr,
     scalar_conversion_saturation_attr, scalar_conversions, scalar_math_format_attr,
@@ -28,14 +29,14 @@ use crate::render::families::{
     scalar_maths, sparse_mma_attr_variants, sparse_mma_import_adapter, sparse_mma_selector_error,
     sparse_mmas, sregs, stmatrices, stmatrix_compatibility_name, stmatrix_variant, sync_intrinsics,
     tcgen05_intrinsics, tcgen05_ld_register_count, tcgen05_mma_b_usage_attr, tcgen05_mma_form_attr,
-    tcgen05_mma_intrinsics, tcgen05_mma_kind_attr, tcgen05_non_mma_intrinsics,
-    tcgen05_st_register_count, tma_intrinsics, vote_intrinsics, warp_barriers, warp_matches,
-    warp_shuffles, wgmma_controls,
+    tcgen05_mma_intrinsics, tcgen05_mma_kind_attr, tcgen05_st_register_count, tma_intrinsics,
+    vote_intrinsics, warp_barriers, warp_matches, warp_shuffles, wgmma_controls,
 };
 use crate::render::reference::{
     render_compiler_path_patterns, render_inline_patterns, render_string_patterns,
 };
 use std::fmt::Write as _;
+use std::path::PathBuf;
 
 fn render_importer_pure_value_dispatch(
     output: &mut String,
@@ -543,317 +544,174 @@ fn render_importer_tcgen05_mma_dispatch(
     output.push_str("            }\n        }\n");
 }
 
-pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
-    let mut output = rust_header(catalog, hash);
-    output.push_str(
-        "//! Generated raw/compatibility path dispatch for CUDA intrinsics.\n\nuse crate::error::{TranslationErr, TranslationResult};\nuse crate::translator::{rvalue, terminator::helpers};\nuse crate::translator::values::ValueMap;\nuse dialect_nvvm::ops::{",
-    );
-    for (index, record) in sregs(catalog).enumerate() {
-        if index != 0 {
-            output.push_str(", ");
+fn render_importer_tcgen05_non_mma_dispatch(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    let tcgen05 = record.tcgen05.as_ref().unwrap();
+    let operation = tcgen05.operation;
+    let has_half_split_offset = tcgen05
+        .ld
+        .is_some_and(|ld| ld.shape == Tcgen05LdShape::M16x32bx2)
+        || tcgen05
+            .st
+            .is_some_and(|st| st.shape == Tcgen05LdShape::M16x32bx2);
+    let mut path_refs = vec![record.rust.canonical_path.as_str()];
+    path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
+    output.push_str("        ");
+    render_inline_patterns(output, &path_refs);
+    output.push_str(" => {\n");
+    if operation == Tcgen05Operation::St {
+        let count = tcgen05_st_register_count(record);
+        writeln!(
+            output,
+            "            require_arity(name, args.len(), {}, &loc)?;",
+            if has_half_split_offset { 3 } else { 2 }
+        )
+        .unwrap();
+        if has_half_split_offset {
+            output.push_str(
+                    "            if !matches!(args.get(1), Some(mir::Operand::Constant(_))) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
+                );
         }
-        output.push_str(&record.dialect.op_type);
-    }
-    if ldmatrix(catalog).next().is_some() {
-        if sregs(catalog).next().is_some() {
-            output.push_str(", ");
-        }
-        output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
-    }
-    if let Some(record) = movmatrix(catalog).next() {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if register_mmas(catalog).next().is_some() {
-        output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaKindAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
-    }
-    if sparse_mmas(catalog).next().is_some() {
-        output.push_str(", SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr");
-    }
-    if prmts(catalog).next().is_some() {
-        output.push_str(", PrmtModeAttr, PrmtOp");
-    }
-    if scalar_conversions(catalog).next().is_some() {
+        writeln!(
+                output,
+                "            let (operands, last_op) = import_generated_tcgen05_store_operands(\n                ctx, body, args, {count}, {has_half_split_offset}, block_ptr, prev_op, value_map, loc.clone(),\n            )?;"
+            )
+            .unwrap();
+        writeln!(
+                output,
+                "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
+                record.dialect.op_type
+            )
+            .unwrap();
+        output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
         output.push_str(
-            ", ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr",
-        );
+                "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
+            );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n        }\n");
+        return;
     }
-    if scalar_arithmetics(catalog).next().is_some() {
+    let arity = record.dialect.operands.len();
+    writeln!(
+        output,
+        "            require_arity(name, args.len(), {arity}, &loc)?;"
+    )
+    .unwrap();
+    if has_half_split_offset {
         output.push_str(
-            ", ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr",
-        );
-    }
-    if scalar_maths(catalog).next().is_some() {
-        output.push_str(
-            ", ScalarMathFormatAttr, ScalarMathOp, ScalarMathOperationAttr, ScalarMathPrecisionAttr, ScalarMathSubnormalAttr",
-        );
-    }
-    if extended_minmax(catalog).next().is_some() {
-        output.push_str(
-            ", ExtendedMinMaxFormatAttr, ExtendedMinMaxNanAttr, ExtendedMinMaxOp, ExtendedMinMaxOperationAttr, ExtendedMinMaxSubnormalAttr, ExtendedMinMaxXorSignAbsAttr",
-        );
-    }
-    if cluster_barriers(catalog).next().is_some() {
-        output.push_str(", ClusterBarrierModeAttr, ClusterBarrierOp");
-    }
-    if debug_controls(catalog).next().is_some() {
-        output.push_str(", BreakpointOp, PmEventOp, TrapOp");
-    }
-    for record in cluster_memory(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in clc_intrinsics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in execution_controls(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if wgmma_controls(catalog).next().is_some() {
-        output.push_str(
-            ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
-        );
-    }
-    if packed_atomics(catalog).next().is_some() {
-        if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
-            output.push_str(", ");
-        }
-        output.push_str("PackedAtomicAddOp, PackedAtomicFormatAttr");
-    }
-    if redux(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in redux(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if vote_intrinsics(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-            || redux(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in vote_intrinsics(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if active_masks(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in active_masks(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if warp_matches(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in warp_matches(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    for record in elect_intrinsics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if warp_barriers(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in warp_barriers(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if warp_shuffles(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in warp_shuffles(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if packed_alus(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-            || redux(catalog).next().is_some()
-            || vote_intrinsics(catalog).next().is_some()
-            || active_masks(catalog).next().is_some()
-            || warp_matches(catalog).next().is_some()
-            || warp_barriers(catalog).next().is_some()
-            || warp_shuffles(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in packed_alus(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if integer_minmaxes(catalog).next().is_some() {
-        // packed_alu records always exist, so a separator is always needed.
-        output.push_str(", ");
-        for (index, record) in integer_minmaxes(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if packed_conversions(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-            || redux(catalog).next().is_some()
-            || vote_intrinsics(catalog).next().is_some()
-            || active_masks(catalog).next().is_some()
-            || warp_matches(catalog).next().is_some()
-            || warp_barriers(catalog).next().is_some()
-            || warp_shuffles(catalog).next().is_some()
-            || packed_alus(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in packed_conversions(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if cp_async_copies(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in cp_async_copies(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if cp_async_controls(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in cp_async_controls(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if cp_async_mbarriers(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in cp_async_mbarriers(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    for record in mbarrier_basics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in mbarrier_extended(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if dot_products(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-            || redux(catalog).next().is_some()
-            || vote_intrinsics(catalog).next().is_some()
-            || packed_alus(catalog).next().is_some()
-            || packed_conversions(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in dot_products(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if sync_intrinsics(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-            || redux(catalog).next().is_some()
-            || vote_intrinsics(catalog).next().is_some()
-            || dot_products(catalog).next().is_some()
-            || packed_alus(catalog).next().is_some()
-            || packed_conversions(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in sync_intrinsics(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    for record in stmatrices(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in tcgen05_non_mma_intrinsics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if tcgen05_mma_intrinsics(catalog).next().is_some() {
-        output.push_str(", Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaCollectorAAttr, Tcgen05MmaCtaGroupAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp");
+                "            if !matches!(args.get(1), Some(mir::Operand::Constant(_))) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
+            );
     }
     output.push_str(
-        "};\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::{Located, Location};\nuse pliron::op::Op;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\n",
-    );
-    if debug_controls(catalog).next().is_some()
-        || execution_control_family(catalog, "register_control")
-            .next()
-            .is_some()
-    {
-        output.push_str("use dialect_mir::ops::{MirConstantOp, MirUnreachableOp};\n\n");
-    } else if wgmma_controls(catalog).next().is_some() {
-        output.push_str("use dialect_mir::ops::MirConstantOp;\n\n");
-    }
-    if register_mmas(catalog).next().is_some()
-        || sparse_mmas(catalog).next().is_some()
-        || tcgen05_intrinsics(catalog).next().is_some()
-    {
+            "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, arg, value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
+        );
+    if has_half_split_offset {
         output.push_str(
-            "use dialect_mir::{attributes::FieldIndexAttr, ops::{MirConstructArrayOp, MirConstructStructOp, MirExtractFieldOp}, types::{MirArrayType, MirStructType}};\nuse pliron::{builtin::types::{FP32Type, FP64Type, IntegerType, Signedness}, r#type::{TypeHandle, Typed}, value::Value};\n\n",
-        );
+                "            if operands.get(1).and_then(|value| value.defining_op()).and_then(|op| Operation::get_op::<MirConstantOp>(op, ctx)).is_none() {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must lower to a constant\".to_owned()\n                    )\n                );\n            }\n",
+            );
     }
-    if tcgen05_intrinsics(catalog).next().is_some() {
-        output = output.replace(
-            "use crate::translator::{rvalue, terminator::helpers};",
-            "use crate::translator::{rvalue, terminator::helpers, types};",
-        );
+    let load = match operation {
+        Tcgen05Operation::Ld16x256bX8Pure => Some((32, "FP32Type::get(ctx).into()")),
+        Tcgen05Operation::Ld16x256bPure => Some((4, "FP32Type::get(ctx).into()")),
+        Tcgen05Operation::Ld => Some((
+            tcgen05_ld_register_count(record),
+            "IntegerType::get(ctx, 32, Signedness::Unsigned).into()",
+        )),
+        _ => None,
+    };
+    if let Some((count, result_ty)) = load {
+        writeln!(
+            output,
+            "            let result_ty: TypeHandle = {result_ty};"
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "            let result_types = (0..{count}).map(|_| result_ty).collect();"
+        )
+        .unwrap();
+        writeln!(
+                    output,
+                    "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), result_types, operands, vec![], 0);",
+                    record.dialect.op_type
+                )
+                .unwrap();
+        output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str("            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n");
+        if count == 1 {
+            output.push_str(
+                        "            let result = intrinsic.deref(ctx).get_result(0);\n            let value = intrinsic;\n",
+                    );
+        } else {
+            writeln!(
+                        output,
+                        "            let results: Vec<Value> = (0..{count}).map(|index| intrinsic.deref(ctx).get_result(index)).collect();"
+                    )
+                    .unwrap();
+            writeln!(
+                output,
+                "            let array_ty = MirArrayType::get(ctx, result_ty, {count});"
+            )
+            .unwrap();
+            output.push_str(
+                        "            let array = Operation::new(ctx, MirConstructArrayOp::get_concrete_op_info(), vec![array_ty.into()], results, vec![], 0);\n            array.deref_mut(ctx).set_loc(loc.clone());\n            array.insert_after(ctx, intrinsic);\n            let destination_rust_ty = match destination.ty(body.locals()) {\n                Ok(ty) => ty,\n                Err(error) => {\n                    return input_err!(\n                        loc,\n                        TranslationErr::unsupported(format!(\n                            \"failed to resolve destination type for intrinsic result: {error:?}\"\n                        ))\n                    );\n                }\n            };\n            let destination_ty = types::translate_type(ctx, &destination_rust_ty)?;\n            let array_result = array.deref(ctx).get_result(0);\n            let (result, value) = if destination_ty == array_result.get_type(ctx) {\n                (array_result, array)\n            } else {\n                let value = Operation::new(ctx, MirConstructStructOp::get_concrete_op_info(), vec![destination_ty], vec![array_result], vec![], 0);\n                value.deref_mut(ctx).set_loc(loc.clone());\n                value.insert_after(ctx, array);\n                (value.deref(ctx).get_result(0), value)\n            };\n            helpers::set_compiler_result_bundle_marker(ctx, value);\n",
+                    );
+        }
+        writeln!(
+                    output,
+                    "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, value, value_map, block_map, loc,\n                {:?},\n            )?))",
+                    format!("{} call without target block", record.rust.name)
+                )
+                .unwrap();
+    } else {
+        writeln!(
+                    output,
+                    "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
+                    record.dialect.op_type
+                )
+                .unwrap();
+        output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
+        writeln!(
+            output,
+            "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
+            intrinsic_marker(catalog, record)
+        )
+        .unwrap();
+        output.push_str(
+                    "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
+                );
+        writeln!(
+            output,
+            "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
+            format!("{} call without target block", record.rust.name)
+        )
+        .unwrap();
+        output.push_str("            }\n");
     }
-    if elect_intrinsics(catalog).next().is_some() {
-        output.push_str("use dialect_mir::{ops::MirConstructTupleOp, types::MirTupleType};\n\n");
-    }
+    output.push_str("        }\n");
+}
+
+fn append_importer_classification(output: &mut String, catalog: &CatalogFile) {
     writeln!(
         output,
         "pub const GENERATED_INTRINSIC_ABI: u32 = {};",
@@ -871,14 +729,14 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
     );
     output
         .push_str("pub fn is_generated_intrinsic_path(name: &str) -> bool {\n    matches!(name,\n");
-    render_compiler_path_patterns(&mut output, catalog, "        ");
+    render_compiler_path_patterns(output, catalog, "        ");
     output.push_str("    )\n}\n\npub fn is_raw_generated_intrinsic_path(name: &str) -> bool {\n    matches!(name,\n");
     let raw_paths: Vec<_> = catalog
         .intrinsics
         .iter()
         .map(|record| record.rust.canonical_path.as_str())
         .collect();
-    render_string_patterns(&mut output, &raw_paths, "        ");
+    render_string_patterns(output, &raw_paths, "        ");
     // Test-only. The dispatch arms rendered below carry each marker as a
     // literal, and the op-name-keyed lookup the compiler actually calls lives
     // in `cuda-oxide-codegen`; nothing outside this file's own generated tests
@@ -889,13 +747,14 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
         output.push_str("        ");
-        render_inline_patterns(&mut output, &path_refs);
+        render_inline_patterns(output, &path_refs);
         writeln!(output, " => Some({:?}),", intrinsic_marker(catalog, record)).unwrap();
     }
     output.push_str("        _ => None,\n    }\n}\n\n");
-    output.push_str(
-        "#[allow(clippy::too_many_arguments)]\npub fn try_dispatch_generated_intrinsic(\n    ctx: &mut Context,\n    body: &mir::Body,\n    name: &str,\n    args: &[mir::Operand],\n    destination: &mir::Place,\n    target: &Option<usize>,\n    block_ptr: Ptr<BasicBlock>,\n    prev_op: Option<Ptr<Operation>>,\n    value_map: &mut ValueMap,\n    block_map: &[Ptr<BasicBlock>],\n    loc: Location,\n) -> TranslationResult<Option<Ptr<Operation>>> {\n    match name {\n",
-    );
+}
+
+fn sreg_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in sregs(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -924,6 +783,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             "                prev_op, value_map, block_map, loc,\n            )?))\n        }\n",
         );
     }
+    output
+}
+
+fn active_mask_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in active_masks(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -955,6 +819,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn ldmatrix_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in ldmatrix(catalog) {
         let (shape, multiplicity, layout, element, state_space) = ldmatrix_attr_variants(record);
         let register_count = record.ldmatrix.as_ref().unwrap().variant.register_count();
@@ -998,6 +867,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn stmatrix_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in stmatrices(catalog) {
         let (multiplicity, _) = stmatrix_variant(record).expect("stmatrix variant");
         let arity = multiplicity.register_count() + 1;
@@ -1041,6 +915,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    output
+}
+
+fn register_mma_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in register_mmas(catalog) {
         let adapter = match record.register_mma.as_ref().unwrap().adapter {
             RegisterMmaAdapter::C2U32A2U32B1U32ToD2U32 => {
@@ -1124,6 +1003,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn sparse_mma_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in sparse_mmas(catalog) {
         let (
             shape,
@@ -1183,6 +1067,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn packed_atomic_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in packed_atomics(catalog) {
         let format = match record.packed_atomic.as_ref().unwrap().format {
             PackedAtomicFormat::F16x2 => "PackedAtomicFormatAttr::F16x2",
@@ -1222,6 +1111,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn redux_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in redux(catalog) {
         debug_assert_eq!(
             record.redux.as_ref().unwrap().adapter,
@@ -1263,6 +1157,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn vote_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in vote_intrinsics(catalog) {
         debug_assert_eq!(
             record.vote.as_ref().unwrap().adapter,
@@ -1304,6 +1203,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn warp_match_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in warp_matches(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -1341,9 +1245,19 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn elect_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in elect_intrinsics(catalog) {
         render_importer_elect_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn warp_barrier_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in warp_barriers(catalog) {
         debug_assert_eq!(
             record.warp_barrier.as_ref().unwrap().adapter,
@@ -1382,6 +1296,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    output
+}
+
+fn warp_shuffle_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in warp_shuffles(catalog) {
         debug_assert!(matches!(
             record.warp_shuffle.as_ref().unwrap().adapter,
@@ -1427,6 +1346,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn dotprod_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in dot_products(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -1467,30 +1391,75 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn packed_alu_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in packed_alus(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn integer_minmax_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in integer_minmaxes(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn packed_conversion_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in packed_conversions(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn scalar_conversion_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in scalar_conversions(catalog) {
         render_importer_scalar_conversion_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn scalar_arithmetic_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in scalar_arithmetics(catalog) {
         render_importer_scalar_arithmetic_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn scalar_math_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in scalar_maths(catalog) {
         render_importer_scalar_math_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn extended_minmax_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in extended_minmax(catalog) {
         render_importer_extended_minmax_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn movmatrix_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in movmatrix(catalog) {
         render_importer_pure_value_dispatch(&mut output, catalog, record);
     }
+    output
+}
+
+fn prmt_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in prmts(catalog) {
         let mode = match record.prmt.as_ref().unwrap().mode {
             PrmtMode::Generic => "PrmtModeAttr::Generic",
@@ -1547,6 +1516,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn cluster_barrier_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if cluster_barriers(catalog).next().is_some() {
         let arrive = cluster_barriers(catalog)
             .find(|record| {
@@ -1616,6 +1590,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    output
+}
+
+fn cluster_memory_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in cluster_memory(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -1656,6 +1635,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("        }\n");
     }
+    output
+}
+
+fn debug_control_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in debug_controls(catalog) {
         let operation = record.debug_control.as_ref().unwrap().operation;
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
@@ -1763,6 +1747,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
+    output
+}
+
+fn clc_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in clc_intrinsics(catalog) {
         let query = !matches!(
             record.clc.as_ref().unwrap().operation,
@@ -1815,6 +1804,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
+    output
+}
+
+fn wgmma_control_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in wgmma_controls(catalog) {
         let control = record.wgmma_control.as_ref().unwrap();
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
@@ -1895,6 +1889,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    output
+}
+
+fn cp_async_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in cp_async_copies(catalog) {
         let copy = record.cp_async_copy.as_ref().unwrap();
         let dynamic = copy.source_size == CpAsyncSourceSize::Runtime;
@@ -2043,6 +2042,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    output
+}
+
+fn mbarrier_basic_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in mbarrier_basics(catalog) {
         let mbarrier = record.mbarrier_basic.as_ref().unwrap();
         let (argument_names, returns_value) = match mbarrier.operation {
@@ -2125,6 +2129,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
+    output
+}
+
+fn mbarrier_extended_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in mbarrier_extended(catalog) {
         let contract = record.mbarrier_extended.as_ref().unwrap();
         let (arguments, returns_value): (Vec<(usize, &str)>, bool) = match contract.adapter {
@@ -2206,6 +2215,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
+    output
+}
+
+fn sync_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in sync_intrinsics(catalog) {
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
         path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
@@ -2237,6 +2251,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    output
+}
+
+fn execution_control_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in execution_controls(catalog) {
         let operation = ExecutionControlOperation::from_catalog_id(&record.id)
             .expect("closed execution-control record");
@@ -2298,6 +2317,11 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         .unwrap();
         output.push_str("            }\n        }\n");
     }
+    output
+}
+
+fn tma_arms(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in tma_intrinsics(catalog) {
         let operation = record.tma.as_ref().unwrap().operation;
         let mut path_refs = vec![record.rust.canonical_path.as_str()];
@@ -2322,7 +2346,7 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             | TmaOperation::G2sTile5d => {
                 writeln!(
                     output,
-                    "            Ok(Some(super::tma::emit_tma_g2s(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
+                    "            Ok(Some(super::super::tma::emit_tma_g2s(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
                     operation.dimensions().unwrap()
                 )
                 .unwrap();
@@ -2330,14 +2354,14 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             TmaOperation::G2sTile2dMulticast => {
                 writeln!(
                     output,
-                    "            Ok(Some(super::tma::emit_tma_g2s_multicast(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {marker:?},\n            )?))"
+                    "            Ok(Some(super::super::tma::emit_tma_g2s_multicast(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {marker:?},\n            )?))"
                 )
                 .unwrap();
             }
             TmaOperation::G2sTile2dMulticastCg2 => {
                 writeln!(
                     output,
-                    "            Ok(Some(super::tma::emit_tma_g2s_multicast_cg2(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {marker:?},\n            )?))"
+                    "            Ok(Some(super::super::tma::emit_tma_g2s_multicast_cg2(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {marker:?},\n            )?))"
                 )
                 .unwrap();
             }
@@ -2348,7 +2372,7 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             | TmaOperation::S2gTile5d => {
                 writeln!(
                     output,
-                    "            Ok(Some(super::tma::emit_tma_s2g(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
+                    "            Ok(Some(super::super::tma::emit_tma_s2g(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
                     operation.dimensions().unwrap()
                 )
                 .unwrap();
@@ -2356,14 +2380,14 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
             TmaOperation::CommitGroup => {
                 writeln!(
                     output,
-                    "            Ok(Some(super::tma::emit_tma_commit_group(\n                ctx, args, target, block_ptr, prev_op, block_map, loc, {marker:?},\n            )?))"
+                    "            Ok(Some(super::super::tma::emit_tma_commit_group(\n                ctx, args, target, block_ptr, prev_op, block_map, loc, {marker:?},\n            )?))"
                 )
                 .unwrap();
             }
             TmaOperation::WaitGroup | TmaOperation::WaitGroupRead => {
                 writeln!(
                     output,
-                    "            Ok(Some(super::tma::emit_tma_wait_group(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
+                    "            Ok(Some(super::super::tma::emit_tma_wait_group(\n                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc, {}, {marker:?},\n            )?))",
                     operation == TmaOperation::WaitGroupRead
                 )
                 .unwrap();
@@ -2414,182 +2438,19 @@ pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
         }
         output.push_str("        }\n");
     }
-    for record in tcgen05_intrinsics(catalog) {
-        let tcgen05 = record.tcgen05.as_ref().unwrap();
-        if tcgen05.mma.is_some() {
-            render_importer_tcgen05_mma_dispatch(&mut output, catalog, record);
-            continue;
-        }
-        let operation = tcgen05.operation;
-        let has_half_split_offset = tcgen05
-            .ld
-            .is_some_and(|ld| ld.shape == Tcgen05LdShape::M16x32bx2)
-            || tcgen05
-                .st
-                .is_some_and(|st| st.shape == Tcgen05LdShape::M16x32bx2);
-        let mut path_refs = vec![record.rust.canonical_path.as_str()];
-        path_refs.extend(record.rust.compatibility_paths.iter().map(String::as_str));
-        output.push_str("        ");
-        render_inline_patterns(&mut output, &path_refs);
-        output.push_str(" => {\n");
-        if operation == Tcgen05Operation::St {
-            let count = tcgen05_st_register_count(record);
-            writeln!(
-                output,
-                "            require_arity(name, args.len(), {}, &loc)?;",
-                if has_half_split_offset { 3 } else { 2 }
-            )
-            .unwrap();
-            if has_half_split_offset {
-                output.push_str(
-                    "            if !matches!(args.get(1), Some(mir::Operand::Constant(_))) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
-                );
-            }
-            writeln!(
-                output,
-                "            let (operands, last_op) = import_generated_tcgen05_store_operands(\n                ctx, body, args, {count}, {has_half_split_offset}, block_ptr, prev_op, value_map, loc.clone(),\n            )?;"
-            )
-            .unwrap();
-            writeln!(
-                output,
-                "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
-                record.dialect.op_type
-            )
-            .unwrap();
-            output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
-            writeln!(
-                output,
-                "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
-                intrinsic_marker(catalog, record)
-            )
-            .unwrap();
-            output.push_str(
-                "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
-            );
-            writeln!(
-                output,
-                "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
-                format!("{} call without target block", record.rust.name)
-            )
-            .unwrap();
-            output.push_str("            }\n        }\n");
-            continue;
-        }
-        let arity = record.dialect.operands.len();
-        writeln!(
-            output,
-            "            require_arity(name, args.len(), {arity}, &loc)?;"
-        )
-        .unwrap();
-        if has_half_split_offset {
-            output.push_str(
-                "            if !matches!(args.get(1), Some(mir::Operand::Constant(_))) {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must be a compile-time constant\".to_owned()\n                    )\n                );\n            }\n",
-            );
-        }
-        output.push_str(
-            "            let mut last_op = prev_op;\n            let mut operands = Vec::with_capacity(args.len());\n            for arg in args {\n                let (value, translated) = rvalue::translate_operand(\n                    ctx, body, arg, value_map, block_ptr, last_op, loc.clone(),\n                )?;\n                last_op = translated;\n                operands.push(value);\n            }\n",
-        );
-        if has_half_split_offset {
-            output.push_str(
-                "            if operands.get(1).and_then(|value| value.defining_op()).and_then(|op| Operation::get_op::<MirConstantOp>(op, ctx)).is_none() {\n                return input_err!(\n                    loc,\n                    TranslationErr::unsupported(\n                        \"tcgen05 16x32bx2 half-split offset must lower to a constant\".to_owned()\n                    )\n                );\n            }\n",
-            );
-        }
-        let load = match operation {
-            Tcgen05Operation::Ld16x256bX8Pure => Some((32, "FP32Type::get(ctx).into()")),
-            Tcgen05Operation::Ld16x256bPure => Some((4, "FP32Type::get(ctx).into()")),
-            Tcgen05Operation::Ld => Some((
-                tcgen05_ld_register_count(record),
-                "IntegerType::get(ctx, 32, Signedness::Unsigned).into()",
-            )),
-            _ => None,
-        };
-        if let Some((count, result_ty)) = load {
-            writeln!(
-                output,
-                "            let result_ty: TypeHandle = {result_ty};"
-            )
-            .unwrap();
-            writeln!(
-                output,
-                "            let result_types = (0..{count}).map(|_| result_ty).collect();"
-            )
-            .unwrap();
-            writeln!(
-                    output,
-                    "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), result_types, operands, vec![], 0);",
-                    record.dialect.op_type
-                )
-                .unwrap();
-            output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
-            writeln!(
-                output,
-                "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
-                intrinsic_marker(catalog, record)
-            )
-            .unwrap();
-            output
-                .push_str("            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n");
-            if count == 1 {
-                output.push_str(
-                        "            let result = intrinsic.deref(ctx).get_result(0);\n            let value = intrinsic;\n",
-                    );
-            } else {
-                writeln!(
-                        output,
-                        "            let results: Vec<Value> = (0..{count}).map(|index| intrinsic.deref(ctx).get_result(index)).collect();"
-                    )
-                    .unwrap();
-                writeln!(
-                    output,
-                    "            let array_ty = MirArrayType::get(ctx, result_ty, {count});"
-                )
-                .unwrap();
-                output.push_str(
-                        "            let array = Operation::new(ctx, MirConstructArrayOp::get_concrete_op_info(), vec![array_ty.into()], results, vec![], 0);\n            array.deref_mut(ctx).set_loc(loc.clone());\n            array.insert_after(ctx, intrinsic);\n            let destination_rust_ty = match destination.ty(body.locals()) {\n                Ok(ty) => ty,\n                Err(error) => {\n                    return input_err!(\n                        loc,\n                        TranslationErr::unsupported(format!(\n                            \"failed to resolve destination type for intrinsic result: {error:?}\"\n                        ))\n                    );\n                }\n            };\n            let destination_ty = types::translate_type(ctx, &destination_rust_ty)?;\n            let array_result = array.deref(ctx).get_result(0);\n            let (result, value) = if destination_ty == array_result.get_type(ctx) {\n                (array_result, array)\n            } else {\n                let value = Operation::new(ctx, MirConstructStructOp::get_concrete_op_info(), vec![destination_ty], vec![array_result], vec![], 0);\n                value.deref_mut(ctx).set_loc(loc.clone());\n                value.insert_after(ctx, array);\n                (value.deref(ctx).get_result(0), value)\n            };\n            helpers::set_compiler_result_bundle_marker(ctx, value);\n",
-                    );
-            }
-            writeln!(
-                    output,
-                    "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, value, value_map, block_map, loc,\n                {:?},\n            )?))",
-                    format!("{} call without target block", record.rust.name)
-                )
-                .unwrap();
-        } else {
-            writeln!(
-                    output,
-                    "            let intrinsic = Operation::new(ctx, {}::get_concrete_op_info(), vec![], operands, vec![], 0);",
-                    record.dialect.op_type
-                )
-                .unwrap();
-            output.push_str("            intrinsic.deref_mut(ctx).set_loc(loc.clone());\n");
-            writeln!(
-                output,
-                "            helpers::set_generated_intrinsic_marker(ctx, intrinsic, {:?});",
-                intrinsic_marker(catalog, record)
-            )
-            .unwrap();
-            output.push_str(
-                    "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n",
-                );
-            writeln!(
-                output,
-                "                input_err!(loc, TranslationErr::unsupported({:?}.to_owned()))",
-                format!("{} call without target block", record.rust.name)
-            )
-            .unwrap();
-            output.push_str("            }\n");
-        }
-        output.push_str("        }\n");
-    }
-    output.push_str("        _ => Ok(None),\n    }\n}\n\n");
+    output
+}
+
+fn importer_helpers_body(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     output.push_str(
-        "fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
+        "pub(super) fn require_arity(\n    name: &str,\n    actual: usize,\n    expected: usize,\n    loc: &Location,\n) -> TranslationResult<()> {\n    if actual != expected {\n        return input_err!(\n            loc.clone(),\n            TranslationErr::unsupported(format!(\n                \"generated intrinsic `{name}` expects {expected} arguments, got {actual}\"\n            ))\n        );\n    }\n    Ok(())\n}\n",
     );
     if tcgen05_mma_intrinsics(catalog).next().is_some() {
         output.push_str(
             r#"
 
-fn generated_tcgen05_mma_selector(operand: Option<&mir::Operand>) -> Option<u32> {
+pub(super) fn generated_tcgen05_mma_selector(operand: Option<&mir::Operand>) -> Option<u32> {
     use rustc_public::ty::{ConstantKind, TyConstKind};
     let mir::Operand::Constant(constant) = operand? else { return None; };
     let value: u128 = match constant.const_.kind() {
@@ -2613,7 +2474,7 @@ fn generated_tcgen05_mma_selector(operand: Option<&mir::Operand>) -> Option<u32>
             r#"
 
 #[allow(clippy::too_many_arguments)]
-fn import_generated_tcgen05_store_operands(
+pub(super) fn import_generated_tcgen05_store_operands(
     ctx: &mut Context,
     body: &mir::Body,
     args: &[mir::Operand],
@@ -2753,7 +2614,7 @@ fn import_generated_tcgen05_store_operands(
             r#"
 
 #[derive(Clone, Copy)]
-enum GeneratedMmaImportAdapter {
+pub(super) enum GeneratedMmaImportAdapter {
     C2U32A2U32B1U32ToD2U32,
     C2U32A4U32B2U32ToD2U32,
     C2U32A4U32B4U32ToD2U32,
@@ -2816,7 +2677,7 @@ fn extract_generated_mma_array(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn import_generated_mma_operands(
+pub(super) fn import_generated_mma_operands(
     ctx: &mut Context,
     body: &mir::Body,
     args: &[mir::Operand],
@@ -2909,7 +2770,7 @@ fn import_generated_mma_operands(
     Ok((operands, last_op, result_ty, result_count))
 }
 
-fn bundle_generated_mma_results(
+pub(super) fn bundle_generated_mma_results(
     ctx: &mut Context,
     mma: Ptr<Operation>,
     result_ty: TypeHandle,
@@ -2935,65 +2796,531 @@ fn bundle_generated_mma_results(
 "#,
         );
     }
-    output.push_str("\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n");
-    for record in &catalog.intrinsics {
-        writeln!(
-            output,
-            "    #[test]\n    fn {}_uses_only_canonical_or_compatibility_defpaths() {{",
-            record.id
-        )
-        .unwrap();
-        writeln!(
-            output,
-            "        assert!(is_generated_intrinsic_path({:?}));",
-            record.rust.canonical_path
-        )
-        .unwrap();
-        writeln!(
-            output,
-            "        assert!(is_raw_generated_intrinsic_path({:?}));",
-            record.rust.canonical_path
-        )
-        .unwrap();
-        writeln!(
-            output,
-            "        assert_eq!(generated_intrinsic_marker({:?}), Some({:?}));",
-            record.rust.canonical_path,
-            intrinsic_marker(catalog, record)
-        )
-        .unwrap();
-        writeln!(
+    output
+}
+
+fn render_importer_record_test(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    writeln!(
+        output,
+        "    #[test]\n    fn {}_uses_only_canonical_or_compatibility_defpaths() {{",
+        record.id
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "        assert!(is_generated_intrinsic_path({:?}));",
+        record.rust.canonical_path
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "        assert!(is_raw_generated_intrinsic_path({:?}));",
+        record.rust.canonical_path
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "        assert_eq!(generated_intrinsic_marker({:?}), Some({:?}));",
+        record.rust.canonical_path,
+        intrinsic_marker(catalog, record)
+    )
+    .unwrap();
+    writeln!(
             output,
             "        assert!(matches!(classify_raw_intrinsic_path(\"cuda_intrinsics\", {:?}.into()), RawIntrinsicIdentity::Known(_)));",
             record.rust.canonical_path
         )
         .unwrap();
+    writeln!(
+        output,
+        "        assert!(!is_generated_intrinsic_path({:?}));",
+        record.rust.public_path
+    )
+    .unwrap();
+    for compatibility_path in &record.rust.compatibility_paths {
         writeln!(
-            output,
-            "        assert!(!is_generated_intrinsic_path({:?}));",
-            record.rust.public_path
-        )
-        .unwrap();
-        for compatibility_path in &record.rust.compatibility_paths {
-            writeln!(
                 output,
                 "        assert!(is_generated_intrinsic_path({compatibility_path:?}));\n        assert!(!is_raw_generated_intrinsic_path({compatibility_path:?}));\n        assert_eq!(generated_intrinsic_marker({compatibility_path:?}), Some({:?}));",
                 intrinsic_marker(catalog, record)
             )
             .unwrap();
-        }
-        writeln!(
+    }
+    writeln!(
             output,
             "        assert!(!is_generated_intrinsic_path(\"cuda_intrinsics::__cuda_oxide_intrinsic_abi_v{}::{}\"));",
             catalog.intrinsic_abi + 1,
             record.rust.abi_id
         )
         .unwrap();
-        output.push_str("    }\n");
+    output.push_str("    }\n");
+}
+
+const IMPORTER_GENERATED_DIR: &str =
+    "crates/mir-importer/src/translator/terminator/intrinsics/generated";
+
+/// tcgen05 dispatch sub-shards, keyed off the catalog contract member each
+/// record carries (the same fields `tcgen05_mma_intrinsics` /
+/// `tcgen05_non_mma_intrinsics` inspect, extended to ld/st/cp).
+const TCGEN05_BUCKETS: &[&str] = &[
+    "tcgen05_mma",
+    "tcgen05_ld",
+    "tcgen05_st",
+    "tcgen05_cp",
+    "tcgen05_other",
+];
+
+fn tcgen05_member_bucket(record: &CatalogIntrinsic) -> &'static str {
+    let tcgen05 = record.tcgen05.as_ref().expect("tcgen05 record");
+    if tcgen05.mma.is_some() {
+        "tcgen05_mma"
+    } else if tcgen05.ld.is_some() {
+        "tcgen05_ld"
+    } else if tcgen05.st.is_some() {
+        "tcgen05_st"
+    } else if tcgen05.cp.is_some() {
+        "tcgen05_cp"
+    } else {
+        "tcgen05_other"
+    }
+}
+
+fn tcgen05_bucket_arms(catalog: &CatalogFile, bucket: &str) -> String {
+    let mut output = String::new();
+    for record in
+        tcgen05_intrinsics(catalog).filter(|record| tcgen05_member_bucket(record) == bucket)
+    {
+        if record.tcgen05.as_ref().unwrap().mma.is_some() {
+            render_importer_tcgen05_mma_dispatch(&mut output, catalog, record);
+        } else {
+            render_importer_tcgen05_non_mma_dispatch(&mut output, catalog, record);
+        }
+    }
+    output
+}
+
+/// Dispatch shards in the old single-file family emission order. `cp_async`
+/// and `execution_control` coalesce the same catalog families as
+/// `dialect-nvvm/src/ops/generated/`.
+fn importer_dispatch_shards(catalog: &CatalogFile) -> Vec<(&'static str, String)> {
+    let mut shards: Vec<(&'static str, String)> = vec![
+        ("sreg", sreg_arms(catalog)),
+        ("active_mask", active_mask_arms(catalog)),
+        ("ldmatrix", ldmatrix_arms(catalog)),
+        ("stmatrix", stmatrix_arms(catalog)),
+        ("register_mma", register_mma_arms(catalog)),
+        ("sparse_mma", sparse_mma_arms(catalog)),
+        ("packed_atomic", packed_atomic_arms(catalog)),
+        ("redux", redux_arms(catalog)),
+        ("vote", vote_arms(catalog)),
+        ("warp_match", warp_match_arms(catalog)),
+        ("elect", elect_arms(catalog)),
+        ("warp_barrier", warp_barrier_arms(catalog)),
+        ("warp_shuffle", warp_shuffle_arms(catalog)),
+        ("dotprod", dotprod_arms(catalog)),
+        ("packed_alu", packed_alu_arms(catalog)),
+        ("integer_minmax", integer_minmax_arms(catalog)),
+        ("packed_conversion", packed_conversion_arms(catalog)),
+        ("scalar_conversion", scalar_conversion_arms(catalog)),
+        ("scalar_arithmetic", scalar_arithmetic_arms(catalog)),
+        ("scalar_math", scalar_math_arms(catalog)),
+        ("extended_minmax", extended_minmax_arms(catalog)),
+        ("movmatrix", movmatrix_arms(catalog)),
+        ("prmt", prmt_arms(catalog)),
+        ("cluster_barrier", cluster_barrier_arms(catalog)),
+        ("cluster_memory", cluster_memory_arms(catalog)),
+        ("debug_control", debug_control_arms(catalog)),
+        ("clc", clc_arms(catalog)),
+        ("wgmma_control", wgmma_control_arms(catalog)),
+        ("cp_async", cp_async_arms(catalog)),
+        ("mbarrier_basic", mbarrier_basic_arms(catalog)),
+        ("mbarrier_extended", mbarrier_extended_arms(catalog)),
+        ("sync", sync_arms(catalog)),
+        ("execution_control", execution_control_arms(catalog)),
+        ("tma", tma_arms(catalog)),
+    ];
+    for bucket in TCGEN05_BUCKETS {
+        shards.push((bucket, tcgen05_bucket_arms(catalog, bucket)));
+    }
+    shards.retain(|(_, arms)| !arms.is_empty());
+    shards
+}
+
+/// Test shards keep whole families together (tcgen05 fits one test file).
+const IMPORTER_TEST_SHARD_ORDER: &[&str] = &[
+    "sreg",
+    "active_mask",
+    "ldmatrix",
+    "stmatrix",
+    "register_mma",
+    "sparse_mma",
+    "packed_atomic",
+    "redux",
+    "vote",
+    "warp_match",
+    "elect",
+    "warp_barrier",
+    "warp_shuffle",
+    "dotprod",
+    "packed_alu",
+    "integer_minmax",
+    "packed_conversion",
+    "scalar_conversion",
+    "scalar_arithmetic",
+    "scalar_math",
+    "extended_minmax",
+    "movmatrix",
+    "prmt",
+    "cluster_barrier",
+    "cluster_memory",
+    "debug_control",
+    "clc",
+    "wgmma_control",
+    "cp_async",
+    "mbarrier_basic",
+    "mbarrier_extended",
+    "sync",
+    "execution_control",
+    "tma",
+    "tcgen05",
+];
+
+fn importer_shard_for_family(family: &str) -> &'static str {
+    match family {
+        "cp_async_copy" | "cp_async_control" | "cp_async_mbarrier" => "cp_async",
+        "counted_barrier" | "grid_dependency" | "register_control" => "execution_control",
+        _ => IMPORTER_TEST_SHARD_ORDER
+            .iter()
+            .copied()
+            .find(|shard| *shard == family)
+            .unwrap_or_else(|| panic!("unmapped generated intrinsic family `{family}`")),
+    }
+}
+
+fn importer_test_shards(catalog: &CatalogFile) -> Vec<(&'static str, Vec<&CatalogIntrinsic>)> {
+    let mut shards: Vec<(&'static str, Vec<&CatalogIntrinsic>)> = IMPORTER_TEST_SHARD_ORDER
+        .iter()
+        .map(|name| (*name, Vec::new()))
+        .collect();
+    for record in &catalog.intrinsics {
+        let shard = importer_shard_for_family(&record.family);
+        shards
+            .iter_mut()
+            .find(|(name, _)| *name == shard)
+            .expect("closed importer shard list")
+            .1
+            .push(record);
+    }
+    shards.retain(|(_, records)| !records.is_empty());
+    shards
+}
+
+fn push_use_group<S: AsRef<str>>(output: &mut String, root: &str, items: &[S]) {
+    match items {
+        [] => {}
+        [only] => writeln!(output, "use {root}::{};", only.as_ref()).unwrap(),
+        _ => writeln!(
+            output,
+            "use {root}::{{{}}};",
+            items
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap(),
+    }
+}
+
+fn nested_use_items(prefix: &str, items: &[&str]) -> Option<String> {
+    match items {
+        [] => None,
+        [only] => Some(format!("{prefix}::{only}")),
+        _ => Some(format!("{prefix}::{{{}}}", items.join(", "))),
+    }
+}
+
+/// Build the exact `use` list one importer shard needs by scanning its body.
+/// `dispatch_signature` marks files whose `try_dispatch` signature always
+/// needs the dispatch parameter types; `helpers_module` suppresses the
+/// `super::helpers` group inside the helpers module itself.
+fn importer_shard_imports(
+    catalog: &CatalogFile,
+    body: &str,
+    dispatch_signature: bool,
+    helpers_module: bool,
+) -> String {
+    let mut output = String::new();
+    let mut error_items = Vec::new();
+    if uses_identifier(body, "TranslationErr") {
+        error_items.push("TranslationErr");
+    }
+    if dispatch_signature || uses_identifier(body, "TranslationResult") {
+        error_items.push("TranslationResult");
+    }
+    push_use_group(&mut output, "crate::error", &error_items);
+
+    let mut translator_items = Vec::new();
+    if body.contains("rvalue::") {
+        translator_items.push("rvalue");
+    }
+    if body.contains("helpers::") {
+        translator_items.push("terminator::helpers");
+    }
+    if uses_identifier(body, "types") {
+        translator_items.push("types");
+    }
+    if dispatch_signature || uses_identifier(body, "ValueMap") {
+        translator_items.push("values::ValueMap");
+    }
+    push_use_group(&mut output, "crate::translator", &translator_items);
+
+    let mut mir_dialect = Vec::new();
+    if uses_identifier(body, "FieldIndexAttr") {
+        mir_dialect.push("attributes::FieldIndexAttr".to_owned());
+    }
+    let mir_ops: Vec<&str> = [
+        "MirConstantOp",
+        "MirConstructArrayOp",
+        "MirConstructStructOp",
+        "MirConstructTupleOp",
+        "MirExtractFieldOp",
+        "MirUnreachableOp",
+    ]
+    .into_iter()
+    .filter(|item| uses_identifier(body, item))
+    .collect();
+    if let Some(nested) = nested_use_items("ops", &mir_ops) {
+        mir_dialect.push(nested);
+    }
+    let mir_types: Vec<&str> = ["MirArrayType", "MirStructType", "MirTupleType"]
+        .into_iter()
+        .filter(|item| uses_identifier(body, item))
+        .collect();
+    if let Some(nested) = nested_use_items("types", &mir_types) {
+        mir_dialect.push(nested);
+    }
+    push_use_group(&mut output, "dialect_mir", &mir_dialect);
+
+    let nvvm: Vec<String> = dialect_nvvm_ops_import_candidates(catalog)
+        .into_iter()
+        .filter(|item| uses_identifier(body, item))
+        .collect();
+    push_use_group(&mut output, "dialect_nvvm::ops", &nvvm);
+
+    if dispatch_signature || uses_identifier(body, "BasicBlock") {
+        output.push_str("use pliron::basic_block::BasicBlock;\n");
+    }
+    let builtin: Vec<&str> = ["FP32Type", "FP64Type", "IntegerType", "Signedness"]
+        .into_iter()
+        .filter(|item| uses_identifier(body, item))
+        .collect();
+    push_use_group(&mut output, "pliron::builtin::types", &builtin);
+    if dispatch_signature || uses_identifier(body, "Context") || uses_identifier(body, "Ptr") {
+        output.push_str("use pliron::context::{Context, Ptr};\n");
+    }
+    if body.contains("input_err!") {
+        output.push_str("use pliron::input_err;\n");
+    }
+    let mut location_items = Vec::new();
+    if body.contains(".set_loc(") {
+        location_items.push("Located");
+    }
+    if dispatch_signature || uses_identifier(body, "Location") {
+        location_items.push("Location");
+    }
+    push_use_group(&mut output, "pliron::location", &location_items);
+    if body.contains("::get_concrete_op_info(") || body.contains(".get_operation()") {
+        output.push_str("use pliron::op::Op;\n");
+    }
+    if dispatch_signature || uses_identifier(body, "Operation") {
+        output.push_str("use pliron::operation::Operation;\n");
+    }
+    let mut type_items = Vec::new();
+    if uses_identifier(body, "TypeHandle") {
+        type_items.push("TypeHandle");
+    }
+    if body.contains(".get_type(") {
+        type_items.push("Typed");
+    }
+    push_use_group(&mut output, "pliron::r#type", &type_items);
+    if uses_identifier(body, "Value") {
+        output.push_str("use pliron::value::Value;\n");
+    }
+    if dispatch_signature || uses_identifier(body, "mir") {
+        output.push_str("use rustc_public::mir;\n");
+    }
+
+    if !helpers_module {
+        let glue: Vec<&str> = [
+            "GeneratedMmaImportAdapter",
+            "bundle_generated_mma_results",
+            "generated_tcgen05_mma_selector",
+            "import_generated_mma_operands",
+            "import_generated_tcgen05_store_operands",
+            "require_arity",
+        ]
+        .into_iter()
+        .filter(|item| uses_identifier(body, item))
+        .collect();
+        push_use_group(&mut output, "super::helpers", &glue);
+    }
+    output
+}
+
+const IMPORTER_DISPATCH_PARAMS: &[(&str, &str)] = &[
+    ("ctx", "&mut Context"),
+    ("body", "&mir::Body"),
+    ("name", "&str"),
+    ("args", "&[mir::Operand]"),
+    ("destination", "&mir::Place"),
+    ("target", "&Option<usize>"),
+    ("block_ptr", "Ptr<BasicBlock>"),
+    ("prev_op", "Option<Ptr<Operation>>"),
+    ("value_map", "&mut ValueMap"),
+    ("block_map", "&[Ptr<BasicBlock>]"),
+    ("loc", "Location"),
+];
+
+fn importer_dispatch_file(catalog: &CatalogFile, hash: &str, shard: &str, arms: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    writeln!(
+        output,
+        "//! Generated raw/compatibility dispatch arms: `{shard}` intrinsics.\n"
+    )
+    .unwrap();
+    output.push_str(&importer_shard_imports(catalog, arms, true, false));
+    output.push_str("\n#[allow(clippy::too_many_arguments)]\npub(super) fn try_dispatch(\n");
+    for (parameter, ty) in IMPORTER_DISPATCH_PARAMS {
+        let silent = *parameter != "name" && !uses_identifier(arms, parameter);
+        writeln!(
+            output,
+            "    {}{parameter}: {ty},",
+            if silent { "_" } else { "" }
+        )
+        .unwrap();
+    }
+    output.push_str(") -> TranslationResult<Option<Ptr<Operation>>> {\n    match name {\n");
+    output.push_str(arms);
+    output.push_str("        _ => Ok(None),\n    }\n}\n");
+    output
+}
+
+fn importer_helpers_file(catalog: &CatalogFile, hash: &str) -> String {
+    let body = importer_helpers_body(catalog);
+    let mut output = rust_header(catalog, hash);
+    output.push_str("//! Shared glue for the generated intrinsic dispatch shards.\n\n");
+    output.push_str(&importer_shard_imports(catalog, &body, false, true));
+    output.push('\n');
+    output.push_str(&body);
+    output.push('\n');
+    output
+}
+
+fn importer_mod_file(
+    catalog: &CatalogFile,
+    hash: &str,
+    shards: &[(&'static str, String)],
+) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Generated raw/compatibility path dispatch for CUDA intrinsics.\n\nuse crate::error::{TranslationErr, TranslationResult};\nuse crate::translator::values::ValueMap;\nuse pliron::basic_block::BasicBlock;\nuse pliron::context::{Context, Ptr};\nuse pliron::input_err;\nuse pliron::location::Location;\nuse pliron::operation::Operation;\nuse rustc_public::{CrateDef, mir, ty::FnDef};\n\nmod helpers;\n",
+    );
+    for (shard, _) in shards {
+        writeln!(output, "mod {shard};").unwrap();
+    }
+    output.push_str("#[cfg(test)]\nmod tests;\n\n");
+    append_importer_classification(&mut output, catalog);
+    output.push_str(
+        "#[allow(clippy::too_many_arguments)]\npub fn try_dispatch_generated_intrinsic(\n    ctx: &mut Context,\n    body: &mir::Body,\n    name: &str,\n    args: &[mir::Operand],\n    destination: &mir::Place,\n    target: &Option<usize>,\n    block_ptr: Ptr<BasicBlock>,\n    prev_op: Option<Ptr<Operation>>,\n    value_map: &mut ValueMap,\n    block_map: &[Ptr<BasicBlock>],\n    loc: Location,\n) -> TranslationResult<Option<Ptr<Operation>>> {\n",
+    );
+    for (shard, _) in shards {
+        writeln!(
+            output,
+            "    if let Some(operation) = {shard}::try_dispatch(\n        ctx, body, name, args, destination, target, block_ptr, prev_op, value_map, block_map,\n        loc.clone(),\n    )? {{\n        return Ok(Some(operation));\n    }}"
+        )
+        .unwrap();
+    }
+    output.push_str("    Ok(None)\n}\n");
+    output
+}
+
+fn importer_tests_mod_file(
+    catalog: &CatalogFile,
+    hash: &str,
+    shards: &[(&'static str, Vec<&CatalogIntrinsic>)],
+) -> String {
+    let mut output = rust_header(catalog, hash);
+    output.push_str(
+        "//! Generated dispatch-path tests, grouped per intrinsic family.\n\nuse super::*;\n\n",
+    );
+    for (shard, _) in shards {
+        writeln!(output, "mod {shard};").unwrap();
     }
     output.push_str(
         "\n    #[test]\n    fn raw_intrinsic_identity_classification_fails_closed() {\n        assert_eq!(\n            classify_raw_intrinsic_path(\"serde\", \"serde::helper\".into()),\n            RawIntrinsicIdentity::NotRawCrate\n        );\n        assert!(matches!(\n            classify_raw_intrinsic_path(\"cuda_intrinsics\", \"cuda_intrinsics::__cuda_oxide_intrinsic_abi_v2::i0001\".into()),\n            RawIntrinsicIdentity::UnsupportedAbi(_)\n        ));\n        assert!(matches!(\n            classify_raw_intrinsic_path(\"cuda_intrinsics\", \"cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i9999\".into()),\n            RawIntrinsicIdentity::UnknownId(_)\n        ));\n        assert!(matches!(\n            classify_raw_intrinsic_path(\"cuda_intrinsics\", \"cuda_intrinsics::helper\".into()),\n            RawIntrinsicIdentity::UnknownId(_)\n        ));\n    }\n",
     );
-    output.push_str("}\n");
     output
+}
+
+fn importer_tests_shard_file(
+    catalog: &CatalogFile,
+    hash: &str,
+    shard: &str,
+    records: &[&CatalogIntrinsic],
+) -> String {
+    let mut output = rust_header(catalog, hash);
+    writeln!(
+        output,
+        "//! Generated dispatch-path tests: `{shard}` intrinsics.\n\nuse super::super::*;\n"
+    )
+    .unwrap();
+    for record in records {
+        render_importer_record_test(&mut output, catalog, record);
+    }
+    output
+}
+
+pub(super) fn render_importer_files(catalog: &CatalogFile, hash: &str) -> Vec<(PathBuf, String)> {
+    let shards = importer_dispatch_shards(catalog);
+    let test_shards = importer_test_shards(catalog);
+    let mut files = vec![
+        (
+            PathBuf::from(format!("{IMPORTER_GENERATED_DIR}/mod.rs")),
+            importer_mod_file(catalog, hash, &shards),
+        ),
+        (
+            PathBuf::from(format!("{IMPORTER_GENERATED_DIR}/helpers.rs")),
+            importer_helpers_file(catalog, hash),
+        ),
+        (
+            PathBuf::from(format!("{IMPORTER_GENERATED_DIR}/tests/mod.rs")),
+            importer_tests_mod_file(catalog, hash, &test_shards),
+        ),
+    ];
+    for (shard, arms) in &shards {
+        files.push((
+            PathBuf::from(format!("{IMPORTER_GENERATED_DIR}/{shard}.rs")),
+            importer_dispatch_file(catalog, hash, shard, arms),
+        ));
+    }
+    for (shard, records) in &test_shards {
+        files.push((
+            PathBuf::from(format!("{IMPORTER_GENERATED_DIR}/tests/{shard}.rs")),
+            importer_tests_shard_file(catalog, hash, shard, records),
+        ));
+    }
+    files
+}
+
+#[cfg(test)]
+pub(super) fn render_importer(catalog: &CatalogFile, hash: &str) -> String {
+    render_importer_files(catalog, hash)
+        .into_iter()
+        .map(|(_, contents)| contents)
+        .collect::<Vec<_>>()
+        .join("\n")
 }

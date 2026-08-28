@@ -14,19 +14,20 @@ use crate::model::{
     WarpBarrierAdapter, WarpMatchAdapter, WarpShuffleAdapter, WarpShuffleMode,
     WarpShuffleValueKind, WgmmaControlMode,
 };
-use crate::render::common::rust_header;
+use crate::render::common::{rust_header, uses_identifier};
 use crate::render::families::{
     active_masks, clc_intrinsics, cluster_barrier_attr, cluster_barrier_template, cluster_barriers,
     cluster_memory, cp_async_controls, cp_async_copies, cp_async_mbarriers, debug_controls,
-    dot_product_ptx, dot_products, elect_intrinsics, execution_controls, expected_ptx_head,
-    extended_minmax, extended_minmax_carrier, extended_minmax_format_attr,
-    extended_minmax_nan_attr, extended_minmax_operation_attr, extended_minmax_ptx_mnemonic,
-    extended_minmax_subnormal_attr, extended_minmax_xorsign_abs_attr, integer_minmax_ptx_mnemonic,
-    integer_minmaxes, ldmatrix, ldmatrix_attr_variants, ldmatrix_compat_op, mbarrier_basics,
-    mbarrier_extended, movmatrix, movmatrix_template, packed_alu_ptx_mnemonic, packed_alu_width,
-    packed_alus, packed_atomics, packed_conversion_ptx_mnemonic, packed_conversion_result_width,
-    packed_conversion_source_width, packed_conversion_typed_llvm_name, packed_conversions, prmts,
-    redux, register_mma_attr_variants, register_mma_compat_op_type, register_mma_constraints,
+    dialect_nvvm_ops_import_candidates, dot_product_ptx, dot_products, elect_intrinsics,
+    execution_controls, expected_ptx_head, extended_minmax, extended_minmax_carrier,
+    extended_minmax_format_attr, extended_minmax_nan_attr, extended_minmax_operation_attr,
+    extended_minmax_ptx_mnemonic, extended_minmax_subnormal_attr, extended_minmax_xorsign_abs_attr,
+    integer_minmax_ptx_mnemonic, integer_minmaxes, ldmatrix, ldmatrix_attr_variants,
+    ldmatrix_compat_op, mbarrier_basics, mbarrier_extended, movmatrix, movmatrix_template,
+    packed_alu_ptx_mnemonic, packed_alu_width, packed_alus, packed_atomics,
+    packed_conversion_ptx_mnemonic, packed_conversion_result_width, packed_conversion_source_width,
+    packed_conversion_typed_llvm_name, packed_conversions, prmts, redux,
+    register_mma_attr_variants, register_mma_compat_op_type, register_mma_constraints,
     register_mma_extra_operand_count, register_mma_fragment_counts, register_mma_result_variant,
     register_mma_template, register_mmas, scalar_arithmetic_contract,
     scalar_arithmetic_format_attr, scalar_arithmetic_llvm_mechanism,
@@ -46,391 +47,10 @@ use crate::render::families::{
     wgmma_controls,
 };
 use std::fmt::Write as _;
+use std::path::PathBuf;
 
-pub(super) fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
-    let mut output = rust_header(catalog, hash);
-    output.push_str(
-        "//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\nuse crate::conversion_interface::MirToLlvmConversion;\nuse crate::convert::intrinsics::{atomic::convert_packed_atom_add, basic::convert_sreg_read_inline, common::{call_intrinsic, create_i32_const, inline_asm_convergent}, cp_async::{convert_generated_cp_async_control, convert_generated_cp_async_copy, convert_generated_cp_async_mbarrier}, dotprod::convert_generated_dot_product, ldmatrix::convert_generated_ldmatrix, mbarrier::{convert_arrive, convert_init, convert_inval, convert_test_wait}, packed::{convert_generated_packed_alu, convert_generated_packed_f32x2, convert_generated_packed_unary}, prmt::convert_generated_prmt, warp::{convert_active_mask, convert_bar_warp_sync, convert_match_all, convert_match_any, convert_redux, convert_shuffle_f32, convert_shuffle_i32, convert_shuffle_i64, convert_vote}, wmma::{convert_generated_register_mma, convert_generated_sparse_mma, GeneratedMmaResultType}};\nuse crate::{context, IntrinsicBackend};\nuse dialect_nvvm::ops::{",
-    );
-    if debug_controls(catalog).next().is_some() {
-        output = output.replace(
-            "inline_asm_convergent}",
-            "inline_asm_convergent, inline_asm_sideeffect}",
-        );
-    }
-    if integer_minmaxes(catalog).next().is_some() {
-        output = output.replace(
-            "ldmatrix::convert_generated_ldmatrix, ",
-            "integer_minmax::convert_generated_integer_minmax, ldmatrix::convert_generated_ldmatrix, ",
-        );
-    }
-    if stmatrices(catalog).next().is_some() {
-        output = output.replace(
-            "common::{call_intrinsic,",
-            "common::{call_intrinsic, cast_to_shared_addrspace,",
-        );
-    }
-    if clc_intrinsics(catalog).next().is_some() {
-        output = output.replace(
-            "cp_async::{",
-            "clc::{convert_generated_clc_query, convert_generated_clc_try_cancel}, cp_async::{",
-        );
-    }
-    if tma_intrinsics(catalog).next().is_some() {
-        output = output.replace(
-            "prmt::convert_generated_prmt, warp::{",
-            "prmt::convert_generated_prmt, tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_prefetch_tensormap, convert_prefetch_tile, convert_reduce_s2g, convert_s2g, convert_tensormap_fence, convert_tensormap_replace, PrefetchTileConfig, ReduceConfig}, warp::{",
-        );
-    }
-    if execution_controls(catalog).next().is_some() {
-        output = output.replace(
-            "dotprod::convert_generated_dot_product, ",
-            "dotprod::convert_generated_dot_product, execution_control::{convert_counted_barrier, convert_grid_dependency, convert_setmaxnreg}, ",
-        );
-    }
-    if scalar_conversions(catalog).next().is_some() {
-        output = output.replace(
-            "prmt::convert_generated_prmt, ",
-            "prmt::convert_generated_prmt, scalar_conversion::convert_generated_scalar_conversion, ",
-        );
-    }
-    if scalar_arithmetics(catalog).next().is_some() {
-        output = output.replace(
-            "prmt::convert_generated_prmt, ",
-            "prmt::convert_generated_prmt, scalar_arithmetic::convert_generated_scalar_arithmetic, ",
-        );
-    }
-    if scalar_maths(catalog).next().is_some() {
-        output = output.replace(
-            "prmt::convert_generated_prmt, ",
-            "prmt::convert_generated_prmt, scalar_math::convert_generated_scalar_math, ",
-        );
-    }
-    if extended_minmax(catalog).next().is_some() {
-        output = output.replace(
-            "dotprod::convert_generated_dot_product, ",
-            "dotprod::convert_generated_dot_product, extended_minmax::{MinMaxCarrier, convert_generated_extended_minmax}, ",
-        );
-    }
-    if elect_intrinsics(catalog).next().is_some() {
-        output = output.replace(
-            "warp::{convert_active_mask,",
-            "warp::{convert_active_mask, convert_elect_sync_inline, convert_elect_sync_typed,",
-        );
-    }
-    for (index, record) in sregs(catalog).enumerate() {
-        if index != 0 {
-            output.push_str(", ");
-        }
-        output.push_str(&record.dialect.op_type);
-    }
-    if ldmatrix(catalog).next().is_some() {
-        if sregs(catalog).next().is_some() {
-            output.push_str(", ");
-        }
-        output.push_str("LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr");
-        for record in ldmatrix(catalog) {
-            if let Some((op_type, _)) = ldmatrix_compat_op(record) {
-                output.push_str(", ");
-                output.push_str(op_type);
-            }
-        }
-    }
-    if let Some(record) = movmatrix(catalog).next() {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if register_mmas(catalog).next().is_some() {
-        for record in
-            register_mmas(catalog).filter(|record| register_mma_compat_op_type(record).is_some())
-        {
-            output.push_str(", ");
-            output.push_str(register_mma_compat_op_type(record).unwrap());
-        }
-        output.push_str(", RegisterMmaAccumulatorAttr, RegisterMmaElementAttr, RegisterMmaKindAttr, RegisterMmaLayoutAttr, RegisterMmaOp, RegisterMmaOperationAttr, RegisterMmaOverflowAttr, RegisterMmaShapeAttr");
-    }
-    if sparse_mmas(catalog).next().is_some() {
-        output.push_str(", SparseMmaAccumulatorAttr, SparseMmaElementAttr, SparseMmaLayoutAttr, SparseMmaMetadataAttr, SparseMmaOp, SparseMmaOverflowAttr, SparseMmaSelectorAttr, SparseMmaShapeAttr");
-    }
-    if prmts(catalog).next().is_some() {
-        output.push_str(", PrmtModeAttr, PrmtOp");
-    }
-    if scalar_conversions(catalog).next().is_some() {
-        output.push_str(
-            ", ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr",
-        );
-    }
-    if scalar_arithmetics(catalog).next().is_some() {
-        output.push_str(
-            ", ScalarArithmeticFormatAttr, ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr",
-        );
-    }
-    if scalar_maths(catalog).next().is_some() {
-        output.push_str(
-            ", ScalarMathFormatAttr, ScalarMathOp, ScalarMathOperationAttr, ScalarMathPrecisionAttr, ScalarMathSubnormalAttr",
-        );
-    }
-    if extended_minmax(catalog).next().is_some() {
-        output.push_str(
-            ", ExtendedMinMaxFormatAttr, ExtendedMinMaxNanAttr, ExtendedMinMaxOp, ExtendedMinMaxOperationAttr, ExtendedMinMaxSubnormalAttr, ExtendedMinMaxXorSignAbsAttr",
-        );
-    }
-    if cluster_barriers(catalog).next().is_some() {
-        output.push_str(", ClusterBarrierModeAttr, ClusterBarrierOp, ClusterSyncOp");
-    }
-    if debug_controls(catalog).next().is_some() {
-        output.push_str(", BreakpointOp, PmEventOp, TrapOp");
-    }
-    for record in clc_intrinsics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if wgmma_controls(catalog).next().is_some() {
-        output.push_str(
-            ", WgmmaCommitGroupSyncAlignedOp, WgmmaFenceSyncAlignedOp, WgmmaWaitGroupSyncAlignedOp",
-        );
-    }
-    for record in tcgen05_non_mma_intrinsics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if tcgen05_mma_intrinsics(catalog).next().is_some() {
-        output.push_str(", Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaCollectorAAttr, Tcgen05MmaCtaGroupAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp");
-    }
-    if packed_atomics(catalog).next().is_some() {
-        if sregs(catalog).next().is_some() || ldmatrix(catalog).next().is_some() {
-            output.push_str(", ");
-        }
-        output.push_str("NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr, PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr, PackedAtomicSubnormalAttr");
-    }
-    if redux(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in redux(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if vote_intrinsics(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-            || redux(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in vote_intrinsics(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if active_masks(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in active_masks(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if warp_matches(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in warp_matches(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    for record in elect_intrinsics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    if warp_barriers(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in warp_barriers(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if dot_products(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-            || redux(catalog).next().is_some()
-            || vote_intrinsics(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in dot_products(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if sync_intrinsics(catalog).next().is_some() {
-        if sregs(catalog).next().is_some()
-            || ldmatrix(catalog).next().is_some()
-            || packed_atomics(catalog).next().is_some()
-            || redux(catalog).next().is_some()
-            || vote_intrinsics(catalog).next().is_some()
-            || dot_products(catalog).next().is_some()
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in sync_intrinsics(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if warp_shuffles(catalog).next().is_some() {
-        output.push_str(", ");
-        for (index, record) in warp_shuffles(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if packed_alus(catalog).next().is_some() {
-        if catalog
-            .intrinsics
-            .iter()
-            .any(|record| record.family != "packed_alu")
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in packed_alus(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if integer_minmaxes(catalog).next().is_some() {
-        // packed_alu records always exist, so a separator is always needed.
-        output.push_str(", ");
-        for (index, record) in integer_minmaxes(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    if packed_conversions(catalog).next().is_some() {
-        if catalog
-            .intrinsics
-            .iter()
-            .any(|record| record.family != "packed_conversion")
-        {
-            output.push_str(", ");
-        }
-        for (index, record) in packed_conversions(catalog).enumerate() {
-            if index != 0 {
-                output.push_str(", ");
-            }
-            output.push_str(&record.dialect.op_type);
-        }
-    }
-    for record in cp_async_copies(catalog)
-        .chain(cp_async_controls(catalog))
-        .chain(cp_async_mbarriers(catalog))
-    {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in mbarrier_basics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in cluster_memory(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in stmatrices(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in mbarrier_extended(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in tma_intrinsics(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    for record in execution_controls(catalog) {
-        output.push_str(", ");
-        output.push_str(&record.dialect.op_type);
-    }
-    output.push_str(
-        "};\nuse llvm_export::{ops::AsmKind, types as llvm_types};\nuse pliron::{\n    builtin::types::{IntegerType, Signedness},\n    context::{Context, Ptr},\n    derive::op_interface_impl,\n    irbuild::{\n        dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,\n    },\n    op::Op,\n    operation::Operation,\n    result::Result,\n};\n\n",
-    );
-    if cluster_memory(catalog).next().is_some() {
-        if !output.contains("cast_to_shared_addrspace") {
-            output = output.replace(
-                "common::{call_intrinsic, ",
-                "common::{call_intrinsic, cast_to_shared_addrspace, ",
-            );
-        }
-        output = output
-            .replace(
-                "use llvm_export::{ops::AsmKind, types as llvm_types};",
-                "use llvm_export::{op_interfaces::CastOpInterface, ops as llvm_ops, ops::AsmKind, types as llvm_types};",
-            )
-            .replace(
-                "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,",
-                "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        inserter::Inserter,\n        rewriter::Rewriter,",
-            );
-    }
-    if tcgen05_intrinsics(catalog).next().is_some() {
-        output = output.replace(
-            "use llvm_export::{ops::AsmKind, types as llvm_types};",
-            "use llvm_export::{ops as llvm_ops, ops::AsmKind, types as llvm_types};",
-        );
-        output = output.replace(
-            "builtin::types::{IntegerType, Signedness}",
-            "builtin::types::{FP32Type, IntegerType, Signedness}",
-        );
-        output = output.replace(
-            "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        rewriter::Rewriter,",
-            "dialect_conversion::{DialectConversionRewriter, OperandsInfo},\n        inserter::Inserter,\n        rewriter::Rewriter,",
-        );
-    }
-    output.push_str("use pliron::location::Located;\n\n");
-    if mbarrier_extended(catalog).next().is_some() {
-        if !output.contains("cast_to_shared_addrspace") {
-            output = output.replace(
-                "common::{call_intrinsic,",
-                "common::{call_intrinsic, cast_to_shared_addrspace,",
-            );
-        }
-        output = if output.contains("inline_asm_sideeffect}") {
-            output.replace(
-                "inline_asm_sideeffect}",
-                "inline_asm_sideeffect, trunc_to_i1}",
-            )
-        } else {
-            output.replace(
-                "inline_asm_convergent}",
-                "inline_asm_convergent, trunc_to_i1}",
-            )
-        };
-        output.push_str("use pliron::value::DefiningEntity;\n\n");
-    }
+fn lowering_shared_converters(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     output.push_str(
         "fn convert_zero_operand_scalar_direct(\n    ctx: &mut Context,\n    rewriter: &mut DialectConversionRewriter,\n    op: Ptr<Operation>,\n    width: u32,\n    intrinsic_name: &str,\n) -> Result<()> {\n    let result_ty = IntegerType::get(ctx, width, Signedness::Signless);\n    let function_ty = llvm_types::FuncType::get(ctx, result_ty.into(), vec![], false);\n    let call = call_intrinsic(ctx, rewriter, op, intrinsic_name, function_ty, vec![])?;\n    rewriter.replace_operation(ctx, op, call);\n    Ok(())\n}\n\n",
     );
@@ -610,6 +230,11 @@ fn convert_generated_tcgen05_load(
 "#,
         );
     }
+    output
+}
+
+fn sreg_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in sregs(catalog) {
         writeln!(
             output,
@@ -663,6 +288,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn active_mask_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in active_masks(catalog) {
         debug_assert_eq!(
             record.active_mask.as_ref().unwrap().adapter,
@@ -678,6 +308,11 @@ fn convert_generated_tcgen05_load(
             "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let op = self.get_operation();\n        match context::lowering_options(ctx).intrinsic_backend {\n            IntrinsicBackend::LlvmNvptx => {\n                convert_active_mask(ctx, rewriter, op, operands_info)\n            }\n            IntrinsicBackend::LibNvvm => {\n                let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);\n                let inline_asm = inline_asm_convergent(\n                    ctx,\n                    rewriter,\n                    op,\n                    i32_ty.into(),\n                    vec![],\n                    \"activemask.b32 $0;\",\n                    \"=r,~{memory}\",\n                );\n                rewriter.replace_operation(ctx, op, inline_asm);\n                Ok(())\n            }\n        }\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn ldmatrix_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if ldmatrix(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for LdmatrixOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = {\n            let shape = self.get_attr_nvvm_ldmatrix_shape(ctx);\n            let multiplicity = self.get_attr_nvvm_ldmatrix_multiplicity(ctx);\n            let layout = self.get_attr_nvvm_ldmatrix_layout(ctx);\n            let element = self.get_attr_nvvm_ldmatrix_element(ctx);\n            let state_space = self.get_attr_nvvm_ldmatrix_state_space(ctx);\n            match (shape.as_deref(), multiplicity.as_deref(), layout.as_deref(), element.as_deref(), state_space.as_deref()) {\n",
@@ -717,6 +352,11 @@ fn convert_generated_tcgen05_load(
             .unwrap();
         }
     }
+    output
+}
+
+fn stmatrix_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in stmatrices(catalog) {
         let (multiplicity, layout) = stmatrix_variant(record).expect("stmatrix variant");
         let count = multiplicity.register_count();
@@ -734,6 +374,11 @@ fn convert_generated_tcgen05_load(
         )
         .unwrap();
     }
+    output
+}
+
+fn movmatrix_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if let Some(record) = movmatrix(catalog).next() {
         writeln!(
             output,
@@ -743,6 +388,11 @@ fn convert_generated_tcgen05_load(
         )
         .unwrap();
     }
+    output
+}
+
+fn register_mma_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if register_mmas(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for RegisterMmaOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let operation = self.operation_or_multiply(ctx);\n        let kind = self.kind_or_inferred(ctx);\n        let recipe = match (\n            self.get_attr_nvvm_register_mma_shape(ctx).as_deref(),\n            operation,\n            kind,\n            self.get_attr_nvvm_register_mma_accumulator(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_a_element(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_b_element(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_a_layout(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_b_layout(ctx).as_deref(),\n            self.get_attr_nvvm_register_mma_overflow(ctx).as_deref(),\n        ) {\n",
@@ -790,6 +440,11 @@ fn convert_generated_tcgen05_load(
             .unwrap();
         }
     }
+    output
+}
+
+fn sparse_mma_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if sparse_mmas(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for SparseMmaOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_sparse_mma_shape(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_accumulator(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_a_element(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_b_element(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_a_layout(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_b_layout(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_overflow(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_metadata(ctx).as_deref(),\n            self.get_attr_nvvm_sparse_mma_selector(ctx).as_deref(),\n        ) {\n",
@@ -821,6 +476,11 @@ fn convert_generated_tcgen05_load(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.sparse_mma variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_sparse_mma(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn prmt_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if prmts(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for PrmtOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match self.get_attr_nvvm_prmt_mode(ctx).as_deref() {\n",
@@ -865,6 +525,11 @@ fn convert_generated_tcgen05_load(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.prmt mode has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_prmt(ctx, rewriter, self.get_operation(), recipe.0, recipe.1)\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn scalar_conversion_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if scalar_conversions(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for ScalarConversionOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_scalar_conversion_rounding(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_conversion_saturation(ctx).as_deref(),\n        ) {\n",
@@ -884,6 +549,11 @@ fn convert_generated_tcgen05_load(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_conversion variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_conversion(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1,\n        )\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn scalar_arithmetic_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if scalar_arithmetics(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for ScalarArithmeticOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_scalar_arithmetic_format(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_arithmetic_operation(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_arithmetic_rounding(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_arithmetic_subnormal(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_arithmetic_saturation(ctx).as_deref(),\n        ) {\n",
@@ -909,6 +579,11 @@ fn convert_generated_tcgen05_load(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_arithmetic variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_arithmetic(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3,\n        )\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn scalar_math_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if scalar_maths(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for ScalarMathOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_scalar_math_format(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_math_operation(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_math_precision(ctx).as_deref(),\n            self.get_attr_nvvm_scalar_math_subnormal(ctx).as_deref(),\n        ) {\n",
@@ -942,6 +617,11 @@ fn convert_generated_tcgen05_load(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.scalar_math variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_scalar_math(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1, recipe.2, recipe.3, recipe.4,\n        )\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn extended_minmax_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if extended_minmax(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for ExtendedMinMaxOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match (\n            self.get_attr_nvvm_extended_minmax_format(ctx).as_deref(),\n            self.get_attr_nvvm_extended_minmax_operation(ctx).as_deref(),\n            self.get_attr_nvvm_extended_minmax_subnormal(ctx).as_deref(),\n            self.get_attr_nvvm_extended_minmax_nan(ctx).as_deref(),\n            self.get_attr_nvvm_extended_minmax_xorsign_abs(ctx).as_deref(),\n        ) {\n",
@@ -964,6 +644,11 @@ fn convert_generated_tcgen05_load(
             "            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.extended_minmax variant has no generated lowering recipe\",\n            ),\n        };\n        convert_generated_extended_minmax(\n            ctx, rewriter, self.get_operation(), recipe.0, recipe.1,\n        )\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn cluster_barrier_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if cluster_barriers(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for ClusterBarrierOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let recipe = match self.get_attr_nvvm_cluster_barrier_mode(ctx).as_deref() {\n",
@@ -1028,6 +713,11 @@ fn convert_generated_tcgen05_load(
             "            }\n        }\n        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn wgmma_control_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if wgmma_controls(catalog).next().is_some() {
         output.push_str(
             "fn convert_generated_wgmma_control(\n\
@@ -1090,6 +780,11 @@ fn convert_generated_tcgen05_load(
             .unwrap();
         }
     }
+    output
+}
+
+fn packed_atomic_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     if packed_atomics(catalog).next().is_some() {
         output.push_str(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for PackedAtomicAddOp {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        let format = self.get_attr_nvvm_packed_atomic_format(ctx);\n        let state_space = self.get_attr_nvvm_packed_atomic_state_space(ctx);\n        let ordering = self.get_attr_nvvm_packed_atomic_ordering(ctx);\n        let scope = self.get_attr_nvvm_packed_atomic_scope(ctx);\n        let rounding = self.get_attr_nvvm_packed_atomic_rounding(ctx);\n        let subnormal = self.get_attr_nvvm_packed_atomic_subnormal(ctx);\n        let atomicity = self.get_attr_nvvm_packed_atomic_atomicity(ctx);\n        let ptx_type = match (format.as_deref(), state_space.as_deref(), ordering.as_deref(), scope.as_deref(), rounding.as_deref(), subnormal.as_deref(), atomicity.as_deref()) {\n            (Some(&PackedAtomicFormatAttr::F16x2), Some(&PackedAtomicStateSpaceAttr::Global), Some(&PackedAtomicOrderingAttr::Relaxed), Some(&PackedAtomicScopeAttr::Gpu), Some(&PackedAtomicRoundingAttr::Rn), Some(&PackedAtomicSubnormalAttr::NoFtz), Some(&PackedAtomicAtomicityAttr::PerElement)) => \"f16x2\",\n            (Some(&PackedAtomicFormatAttr::Bf16x2), Some(&PackedAtomicStateSpaceAttr::Global), Some(&PackedAtomicOrderingAttr::Relaxed), Some(&PackedAtomicScopeAttr::Gpu), Some(&PackedAtomicRoundingAttr::Rn), Some(&PackedAtomicSubnormalAttr::NoFtz), Some(&PackedAtomicAtomicityAttr::PerElement)) => \"bf16x2\",\n            _ => return pliron::input_err!(\n                self.get_operation().deref(ctx).loc(),\n                \"nvvm.packed_atomic_add attributes have no generated lowering recipe\",\n            ),\n        };\n        convert_packed_atom_add(ctx, rewriter, self.get_operation(), ptx_type)\n    }\n}\n\n",
@@ -1102,6 +797,11 @@ fn convert_generated_tcgen05_load(
             "#[op_interface_impl]\nimpl MirToLlvmConversion for NvvmAtomAddF16x2Op {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        convert_packed_atom_add(ctx, rewriter, self.get_operation(), \"f16x2\")\n    }\n}\n\n#[op_interface_impl]\nimpl MirToLlvmConversion for NvvmAtomAddBf16x2Op {\n    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        _operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        convert_packed_atom_add(ctx, rewriter, self.get_operation(), \"bf16x2\")\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn redux_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in redux(catalog) {
         debug_assert_eq!(
             record.redux.as_ref().unwrap().adapter,
@@ -1124,6 +824,11 @@ fn convert_generated_tcgen05_load(
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn vote_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in vote_intrinsics(catalog) {
         debug_assert_eq!(
             record.vote.as_ref().unwrap().adapter,
@@ -1146,6 +851,11 @@ fn convert_generated_tcgen05_load(
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn warp_match_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in warp_matches(catalog) {
         let warp_match = record.warp_match.as_ref().unwrap();
         let helper = match warp_match.adapter {
@@ -1175,6 +885,11 @@ fn convert_generated_tcgen05_load(
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn elect_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in elect_intrinsics(catalog) {
         writeln!(
             output,
@@ -1211,6 +926,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("        }\n    }\n}\n\n");
     }
+    output
+}
+
+fn warp_barrier_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in warp_barriers(catalog) {
         debug_assert_eq!(
             record.warp_barrier.as_ref().unwrap().adapter,
@@ -1226,6 +946,11 @@ fn convert_generated_tcgen05_load(
             "    fn convert(\n        &self,\n        ctx: &mut Context,\n        rewriter: &mut DialectConversionRewriter,\n        operands_info: &OperandsInfo,\n    ) -> Result<()> {\n        convert_bar_warp_sync(ctx, rewriter, self.get_operation(), operands_info)\n    }\n}\n\n",
         );
     }
+    output
+}
+
+fn warp_shuffle_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in warp_shuffles(catalog) {
         let shuffle = record.warp_shuffle.as_ref().unwrap();
         writeln!(
@@ -1277,6 +1002,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn packed_alu_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in packed_alus(catalog) {
         let width = packed_alu_width(record);
         writeln!(
@@ -1296,6 +1026,11 @@ fn convert_generated_tcgen05_load(
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn integer_minmax_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in integer_minmaxes(catalog) {
         writeln!(
             output,
@@ -1314,6 +1049,11 @@ fn convert_generated_tcgen05_load(
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn packed_conversion_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in packed_conversions(catalog) {
         let conversion = record
             .packed_conversion
@@ -1361,6 +1101,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn cp_async_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in cp_async_copies(catalog) {
         let copy = record.cp_async_copy.as_ref().unwrap();
         let cache_policy = match copy.cache_policy {
@@ -1436,6 +1181,11 @@ fn convert_generated_tcgen05_load(
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn mbarrier_basic_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in mbarrier_basics(catalog) {
         let mbarrier = record.mbarrier_basic.as_ref().unwrap();
         let helper = match (mbarrier.operation, mbarrier.adapter) {
@@ -1470,6 +1220,11 @@ fn convert_generated_tcgen05_load(
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn cluster_memory_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in cluster_memory(catalog) {
         let cluster = record.cluster_memory.as_ref().unwrap();
         let (template, constraints) =
@@ -1510,6 +1265,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn mbarrier_extended_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in mbarrier_extended(catalog) {
         let contract = record.mbarrier_extended.as_ref().unwrap();
         let (template, constraints) =
@@ -1592,6 +1352,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn dotprod_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in dot_products(catalog) {
         let insert_low_half_selector = matches!(
             record.dot_product.as_ref().unwrap().adapter,
@@ -1615,6 +1380,11 @@ fn convert_generated_tcgen05_load(
         .unwrap();
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn clc_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in clc_intrinsics(catalog) {
         writeln!(
             output,
@@ -1649,6 +1419,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn execution_control_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in execution_controls(catalog) {
         let operation = ExecutionControlOperation::from_catalog_id(&record.id)
             .expect("closed execution-control record");
@@ -1711,6 +1486,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn tma_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in tma_intrinsics(catalog) {
         let operation = record.tma.as_ref().unwrap().operation;
         writeln!(
@@ -1902,6 +1682,11 @@ fn convert_generated_tcgen05_load(
         }
         output.push_str("    }\n}\n\n");
     }
+    output
+}
+
+fn tcgen05_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in tcgen05_non_mma_intrinsics(catalog) {
         let operation = record.tcgen05.as_ref().unwrap().operation;
         let (template, constraints, result_count) = tcgen05_inline_asm(record);
@@ -2082,6 +1867,11 @@ impl MirToLlvmConversion for Tcgen05MmaOp {
 "#,
         );
     }
+    output
+}
+
+fn debug_control_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in debug_controls(catalog) {
         writeln!(
             output,
@@ -2112,6 +1902,11 @@ impl MirToLlvmConversion for Tcgen05MmaOp {
         }
         output.push_str("        rewriter.erase_operation(ctx, op);\n        Ok(())\n    }\n}\n\n");
     }
+    output
+}
+
+fn sync_impls(catalog: &CatalogFile) -> String {
+    let mut output = String::new();
     for record in sync_intrinsics(catalog) {
         writeln!(
             output,
@@ -2149,4 +1944,374 @@ impl MirToLlvmConversion for Tcgen05MmaOp {
         }
     }
     output
+}
+
+const LOWERING_GENERATED_DIR: &str = "crates/mir-lower/src/convert/generated_intrinsics";
+
+/// Lowering shards in the old single-file impl emission order. `cp_async`
+/// and `execution_control` coalesce the same catalog families as
+/// `dialect-nvvm/src/ops/generated/`.
+fn lowering_shards(catalog: &CatalogFile) -> Vec<(&'static str, String)> {
+    let mut shards: Vec<(&'static str, String)> = vec![
+        ("sreg", sreg_impls(catalog)),
+        ("active_mask", active_mask_impls(catalog)),
+        ("ldmatrix", ldmatrix_impls(catalog)),
+        ("stmatrix", stmatrix_impls(catalog)),
+        ("movmatrix", movmatrix_impls(catalog)),
+        ("register_mma", register_mma_impls(catalog)),
+        ("sparse_mma", sparse_mma_impls(catalog)),
+        ("prmt", prmt_impls(catalog)),
+        ("scalar_conversion", scalar_conversion_impls(catalog)),
+        ("scalar_arithmetic", scalar_arithmetic_impls(catalog)),
+        ("scalar_math", scalar_math_impls(catalog)),
+        ("extended_minmax", extended_minmax_impls(catalog)),
+        ("cluster_barrier", cluster_barrier_impls(catalog)),
+        ("wgmma_control", wgmma_control_impls(catalog)),
+        ("packed_atomic", packed_atomic_impls(catalog)),
+        ("redux", redux_impls(catalog)),
+        ("vote", vote_impls(catalog)),
+        ("warp_match", warp_match_impls(catalog)),
+        ("elect", elect_impls(catalog)),
+        ("warp_barrier", warp_barrier_impls(catalog)),
+        ("warp_shuffle", warp_shuffle_impls(catalog)),
+        ("packed_alu", packed_alu_impls(catalog)),
+        ("integer_minmax", integer_minmax_impls(catalog)),
+        ("packed_conversion", packed_conversion_impls(catalog)),
+        ("cp_async", cp_async_impls(catalog)),
+        ("mbarrier_basic", mbarrier_basic_impls(catalog)),
+        ("cluster_memory", cluster_memory_impls(catalog)),
+        ("mbarrier_extended", mbarrier_extended_impls(catalog)),
+        ("dotprod", dotprod_impls(catalog)),
+        ("clc", clc_impls(catalog)),
+        ("execution_control", execution_control_impls(catalog)),
+        ("tma", tma_impls(catalog)),
+        ("tcgen05", tcgen05_impls(catalog)),
+        ("debug_control", debug_control_impls(catalog)),
+        ("sync", sync_impls(catalog)),
+    ];
+    shards.retain(|(_, impls)| !impls.is_empty());
+    shards
+}
+
+/// Map every helper a lowering shard may pull from `crate::convert::intrinsics`.
+const LOWERING_INTRINSIC_HELPERS: &[(&str, &str)] = &[
+    ("convert_packed_atom_add", "atomic::convert_packed_atom_add"),
+    (
+        "convert_sreg_read_inline",
+        "basic::convert_sreg_read_inline",
+    ),
+    (
+        "convert_generated_clc_query",
+        "clc::convert_generated_clc_query",
+    ),
+    (
+        "convert_generated_clc_try_cancel",
+        "clc::convert_generated_clc_try_cancel",
+    ),
+    ("call_intrinsic", "common::call_intrinsic"),
+    (
+        "cast_to_shared_addrspace",
+        "common::cast_to_shared_addrspace",
+    ),
+    ("create_i32_const", "common::create_i32_const"),
+    ("inline_asm_convergent", "common::inline_asm_convergent"),
+    ("inline_asm_sideeffect", "common::inline_asm_sideeffect"),
+    ("trunc_to_i1", "common::trunc_to_i1"),
+    (
+        "convert_generated_cp_async_control",
+        "cp_async::convert_generated_cp_async_control",
+    ),
+    (
+        "convert_generated_cp_async_copy",
+        "cp_async::convert_generated_cp_async_copy",
+    ),
+    (
+        "convert_generated_cp_async_mbarrier",
+        "cp_async::convert_generated_cp_async_mbarrier",
+    ),
+    (
+        "convert_generated_dot_product",
+        "dotprod::convert_generated_dot_product",
+    ),
+    (
+        "convert_counted_barrier",
+        "execution_control::convert_counted_barrier",
+    ),
+    (
+        "convert_grid_dependency",
+        "execution_control::convert_grid_dependency",
+    ),
+    (
+        "convert_setmaxnreg",
+        "execution_control::convert_setmaxnreg",
+    ),
+    ("MinMaxCarrier", "extended_minmax::MinMaxCarrier"),
+    (
+        "convert_generated_extended_minmax",
+        "extended_minmax::convert_generated_extended_minmax",
+    ),
+    (
+        "convert_generated_integer_minmax",
+        "integer_minmax::convert_generated_integer_minmax",
+    ),
+    (
+        "convert_generated_ldmatrix",
+        "ldmatrix::convert_generated_ldmatrix",
+    ),
+    ("convert_arrive", "mbarrier::convert_arrive"),
+    ("convert_init", "mbarrier::convert_init"),
+    ("convert_inval", "mbarrier::convert_inval"),
+    ("convert_test_wait", "mbarrier::convert_test_wait"),
+    (
+        "convert_generated_packed_alu",
+        "packed::convert_generated_packed_alu",
+    ),
+    (
+        "convert_generated_packed_f32x2",
+        "packed::convert_generated_packed_f32x2",
+    ),
+    (
+        "convert_generated_packed_unary",
+        "packed::convert_generated_packed_unary",
+    ),
+    ("convert_generated_prmt", "prmt::convert_generated_prmt"),
+    (
+        "convert_generated_scalar_arithmetic",
+        "scalar_arithmetic::convert_generated_scalar_arithmetic",
+    ),
+    (
+        "convert_generated_scalar_conversion",
+        "scalar_conversion::convert_generated_scalar_conversion",
+    ),
+    (
+        "convert_generated_scalar_math",
+        "scalar_math::convert_generated_scalar_math",
+    ),
+    ("PrefetchTileConfig", "tma::PrefetchTileConfig"),
+    ("ReduceConfig", "tma::ReduceConfig"),
+    ("convert_control", "tma::convert_control"),
+    ("convert_g2s", "tma::convert_g2s"),
+    (
+        "convert_g2s_multicast_cg2",
+        "tma::convert_g2s_multicast_cg2",
+    ),
+    (
+        "convert_prefetch_tensormap",
+        "tma::convert_prefetch_tensormap",
+    ),
+    ("convert_prefetch_tile", "tma::convert_prefetch_tile"),
+    ("convert_reduce_s2g", "tma::convert_reduce_s2g"),
+    ("convert_s2g", "tma::convert_s2g"),
+    ("convert_tensormap_fence", "tma::convert_tensormap_fence"),
+    (
+        "convert_tensormap_replace",
+        "tma::convert_tensormap_replace",
+    ),
+    ("convert_active_mask", "warp::convert_active_mask"),
+    ("convert_bar_warp_sync", "warp::convert_bar_warp_sync"),
+    (
+        "convert_elect_sync_inline",
+        "warp::convert_elect_sync_inline",
+    ),
+    ("convert_elect_sync_typed", "warp::convert_elect_sync_typed"),
+    ("convert_match_all", "warp::convert_match_all"),
+    ("convert_match_any", "warp::convert_match_any"),
+    ("convert_redux", "warp::convert_redux"),
+    ("convert_shuffle_f32", "warp::convert_shuffle_f32"),
+    ("convert_shuffle_i32", "warp::convert_shuffle_i32"),
+    ("convert_shuffle_i64", "warp::convert_shuffle_i64"),
+    ("convert_vote", "warp::convert_vote"),
+    ("GeneratedMmaResultType", "wmma::GeneratedMmaResultType"),
+    (
+        "convert_generated_register_mma",
+        "wmma::convert_generated_register_mma",
+    ),
+    (
+        "convert_generated_sparse_mma",
+        "wmma::convert_generated_sparse_mma",
+    ),
+];
+
+fn lowering_push_use_group<S: AsRef<str>>(output: &mut String, root: &str, items: &[S]) {
+    match items {
+        [] => {}
+        [only] => writeln!(output, "use {root}::{};", only.as_ref()).unwrap(),
+        _ => writeln!(
+            output,
+            "use {root}::{{{}}};",
+            items
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap(),
+    }
+}
+
+/// Build the exact `use` list one lowering shard (or the shared-converter
+/// module, with `shard_file` false) needs by scanning its body.
+fn lowering_shard_imports(catalog: &CatalogFile, body: &str, shard_file: bool) -> String {
+    let mut output = String::new();
+    if uses_identifier(body, "MirToLlvmConversion") {
+        output.push_str("use crate::conversion_interface::MirToLlvmConversion;\n");
+    }
+    let helpers: Vec<&str> = LOWERING_INTRINSIC_HELPERS
+        .iter()
+        .filter(|(token, _)| uses_identifier(body, token))
+        .map(|(_, path)| *path)
+        .collect();
+    lowering_push_use_group(&mut output, "crate::convert::intrinsics", &helpers);
+    let mut crate_items = Vec::new();
+    if uses_identifier(body, "IntrinsicBackend") {
+        crate_items.push("IntrinsicBackend");
+    }
+    if body.contains("context::") {
+        crate_items.push("context");
+    }
+    lowering_push_use_group(&mut output, "crate", &crate_items);
+
+    let nvvm: Vec<String> = dialect_nvvm_ops_import_candidates(catalog)
+        .into_iter()
+        .filter(|item| uses_identifier(body, item))
+        .collect();
+    lowering_push_use_group(&mut output, "dialect_nvvm::ops", &nvvm);
+
+    let mut llvm_items = Vec::new();
+    if body.contains("IntToPtrOp::new(") {
+        llvm_items.push("op_interfaces::CastOpInterface");
+    }
+    if body.contains("llvm_ops::") {
+        llvm_items.push("ops as llvm_ops");
+    }
+    if uses_identifier(body, "AsmKind") {
+        llvm_items.push("ops::AsmKind");
+    }
+    if body.contains("llvm_types::") {
+        llvm_items.push("types as llvm_types");
+    }
+    lowering_push_use_group(&mut output, "llvm_export", &llvm_items);
+
+    let builtin: Vec<&str> = ["FP32Type", "IntegerType", "Signedness"]
+        .into_iter()
+        .filter(|item| uses_identifier(body, item))
+        .collect();
+    lowering_push_use_group(&mut output, "pliron::builtin::types", &builtin);
+    let mut context_items = Vec::new();
+    if uses_identifier(body, "Context") {
+        context_items.push("Context");
+    }
+    if uses_identifier(body, "Ptr") {
+        context_items.push("Ptr");
+    }
+    lowering_push_use_group(&mut output, "pliron::context", &context_items);
+    if body.contains("#[op_interface_impl]") {
+        output.push_str("use pliron::derive::op_interface_impl;\n");
+    }
+    let mut conversion_items = Vec::new();
+    if uses_identifier(body, "DialectConversionRewriter") {
+        conversion_items.push("DialectConversionRewriter");
+    }
+    if uses_identifier(body, "OperandsInfo") {
+        conversion_items.push("OperandsInfo");
+    }
+    lowering_push_use_group(
+        &mut output,
+        "pliron::irbuild::dialect_conversion",
+        &conversion_items,
+    );
+    if body.contains(".insert_operation(") {
+        output.push_str("use pliron::irbuild::inserter::Inserter;\n");
+    }
+    if body.contains(".replace_operation(")
+        || body.contains(".replace_operation_with_values(")
+        || body.contains(".erase_operation(")
+    {
+        output.push_str("use pliron::irbuild::rewriter::Rewriter;\n");
+    }
+    if body.contains(".loc()") || body.contains(".set_loc(") {
+        output.push_str("use pliron::location::Located;\n");
+    }
+    if body.contains("::get_concrete_op_info(") || body.contains(".get_operation()") {
+        output.push_str("use pliron::op::Op;\n");
+    }
+    if uses_identifier(body, "Operation") {
+        output.push_str("use pliron::operation::Operation;\n");
+    }
+    if uses_identifier(body, "Result") {
+        output.push_str("use pliron::result::Result;\n");
+    }
+    if uses_identifier(body, "DefiningEntity") {
+        output.push_str("use pliron::value::DefiningEntity;\n");
+    }
+
+    if shard_file {
+        let converters: Vec<&str> = [
+            "convert_generated_stmatrix",
+            "convert_generated_tcgen05_load",
+            "convert_generated_tcgen05_void",
+            "convert_zero_operand_scalar_direct",
+        ]
+        .into_iter()
+        .filter(|item| uses_identifier(body, item))
+        .collect();
+        lowering_push_use_group(&mut output, "super", &converters);
+    }
+    output
+}
+
+fn lowering_shard_file(catalog: &CatalogFile, hash: &str, shard: &str, impls: &str) -> String {
+    let mut output = rust_header(catalog, hash);
+    writeln!(
+        output,
+        "//! Generated conversion interfaces: `{shard}` intrinsics.\n"
+    )
+    .unwrap();
+    output.push_str(&lowering_shard_imports(catalog, impls, true));
+    output.push('\n');
+    output.push_str(impls);
+    output
+}
+
+fn lowering_mod_file(
+    catalog: &CatalogFile,
+    hash: &str,
+    shards: &[(&'static str, String)],
+) -> String {
+    let converters = lowering_shared_converters(catalog);
+    let mut output = rust_header(catalog, hash);
+    output
+        .push_str("//! Generated conversion interfaces for admitted CUDA intrinsic families.\n\n");
+    output.push_str(&lowering_shard_imports(catalog, &converters, false));
+    output.push('\n');
+    for (shard, _) in shards {
+        writeln!(output, "mod {shard};").unwrap();
+    }
+    output.push('\n');
+    output.push_str(&converters);
+    output
+}
+
+pub(super) fn render_lowering_files(catalog: &CatalogFile, hash: &str) -> Vec<(PathBuf, String)> {
+    let shards = lowering_shards(catalog);
+    let mut files = vec![(
+        PathBuf::from(format!("{LOWERING_GENERATED_DIR}/mod.rs")),
+        lowering_mod_file(catalog, hash, &shards),
+    )];
+    for (shard, impls) in &shards {
+        files.push((
+            PathBuf::from(format!("{LOWERING_GENERATED_DIR}/{shard}.rs")),
+            lowering_shard_file(catalog, hash, shard, impls),
+        ));
+    }
+    files
+}
+
+#[cfg(test)]
+pub(super) fn render_lowering(catalog: &CatalogFile, hash: &str) -> String {
+    render_lowering_files(catalog, hash)
+        .into_iter()
+        .map(|(_, contents)| contents)
+        .collect::<Vec<_>>()
+        .join("\n")
 }

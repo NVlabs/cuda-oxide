@@ -4,6 +4,7 @@
  */
 
 use crate::model::{CatalogFile, CatalogIntrinsic};
+use std::collections::BTreeSet;
 
 mod misc;
 mod mma;
@@ -298,4 +299,100 @@ pub(super) fn integer_minmaxes(catalog: &CatalogFile) -> impl Iterator<Item = &C
         .intrinsics
         .iter()
         .filter(|record| record.family == "integer_minmax")
+}
+
+/// Everything a sharded generated output may import from `dialect_nvvm::ops`:
+/// each record's op type, the compatibility op types, and the attribute types
+/// the renderers spell out inline. Shard emitters filter this list against the
+/// shard body so each generated file imports exactly what it uses.
+pub(super) fn dialect_nvvm_ops_import_candidates(catalog: &CatalogFile) -> Vec<String> {
+    let mut candidates: BTreeSet<String> = [
+        "BreakpointOp",
+        "ClusterBarrierModeAttr",
+        "ClusterBarrierOp",
+        "ClusterSyncOp",
+        "ExtendedMinMaxFormatAttr",
+        "ExtendedMinMaxNanAttr",
+        "ExtendedMinMaxOp",
+        "ExtendedMinMaxOperationAttr",
+        "ExtendedMinMaxSubnormalAttr",
+        "ExtendedMinMaxXorSignAbsAttr",
+        "LdmatrixElementAttr",
+        "LdmatrixLayoutAttr",
+        "LdmatrixMultiplicityAttr",
+        "LdmatrixOp",
+        "LdmatrixShapeAttr",
+        "LdmatrixStateSpaceAttr",
+        "NvvmAtomAddBf16x2Op",
+        "NvvmAtomAddF16x2Op",
+        "PackedAtomicAddOp",
+        "PackedAtomicAtomicityAttr",
+        "PackedAtomicFormatAttr",
+        "PackedAtomicOrderingAttr",
+        "PackedAtomicRoundingAttr",
+        "PackedAtomicScopeAttr",
+        "PackedAtomicStateSpaceAttr",
+        "PackedAtomicSubnormalAttr",
+        "PmEventOp",
+        "PrmtModeAttr",
+        "PrmtOp",
+        "RegisterMmaAccumulatorAttr",
+        "RegisterMmaElementAttr",
+        "RegisterMmaKindAttr",
+        "RegisterMmaLayoutAttr",
+        "RegisterMmaOp",
+        "RegisterMmaOperationAttr",
+        "RegisterMmaOverflowAttr",
+        "RegisterMmaShapeAttr",
+        "ScalarArithmeticFormatAttr",
+        "ScalarArithmeticOp",
+        "ScalarArithmeticOperationAttr",
+        "ScalarArithmeticRoundingAttr",
+        "ScalarArithmeticSaturationAttr",
+        "ScalarArithmeticSubnormalAttr",
+        "ScalarConversionOp",
+        "ScalarConversionRoundingAttr",
+        "ScalarConversionSaturationAttr",
+        "ScalarMathFormatAttr",
+        "ScalarMathOp",
+        "ScalarMathOperationAttr",
+        "ScalarMathPrecisionAttr",
+        "ScalarMathSubnormalAttr",
+        "SparseMmaAccumulatorAttr",
+        "SparseMmaElementAttr",
+        "SparseMmaLayoutAttr",
+        "SparseMmaMetadataAttr",
+        "SparseMmaOp",
+        "SparseMmaOverflowAttr",
+        "SparseMmaSelectorAttr",
+        "SparseMmaShapeAttr",
+        "Tcgen05MmaBBufferAttr",
+        "Tcgen05MmaBUsageAttr",
+        "Tcgen05MmaCollectorAAttr",
+        "Tcgen05MmaCtaGroupAttr",
+        "Tcgen05MmaFormAttr",
+        "Tcgen05MmaKindAttr",
+        "Tcgen05MmaOp",
+        "TrapOp",
+        "WgmmaCommitGroupSyncAlignedOp",
+        "WgmmaFenceSyncAlignedOp",
+        "WgmmaWaitGroupSyncAlignedOp",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    for record in &catalog.intrinsics {
+        candidates.insert(record.dialect.op_type.clone());
+    }
+    for record in ldmatrix(catalog) {
+        if let Some((op_type, _)) = ldmatrix_compat_op(record) {
+            candidates.insert(op_type.to_owned());
+        }
+    }
+    for record in register_mmas(catalog) {
+        if let Some(op_type) = register_mma_compat_op_type(record) {
+            candidates.insert(op_type.to_owned());
+        }
+    }
+    candidates.into_iter().collect()
 }

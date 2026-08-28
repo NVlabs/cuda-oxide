@@ -413,7 +413,12 @@ fn scalar_tf32_conversions_render_one_exact_attribute_carrier() {
     }
 
     let targets = render_targets(&catalog, "test-hash");
-    let production_targets = targets.split("\n#[cfg(test)]").next().unwrap();
+    let production_targets = render_targets_files(&catalog, "test-hash")
+        .into_iter()
+        .filter(|(path, _)| !path.to_string_lossy().contains("/tests/"))
+        .map(|(_, contents)| contents)
+        .collect::<Vec<_>>()
+        .join("\n");
     assert_eq!(
         production_targets
             .matches("GeneratedIntrinsicVariant::ScalarConversion {")
@@ -665,9 +670,8 @@ fn clc_rendering_preserves_api_and_uses_typed_llvm_routes() {
     assert!(importer.contains("helpers::emit_store_result_and_goto"));
 
     let lowering = render_lowering(&catalog, "test-hash");
-    assert!(
-        lowering.contains("clc::{convert_generated_clc_query, convert_generated_clc_try_cancel}")
-    );
+    assert!(lowering.contains("clc::convert_generated_clc_query"));
+    assert!(lowering.contains("clc::convert_generated_clc_try_cancel"));
     assert!(lowering.contains(
             "convert_generated_clc_try_cancel(ctx, rewriter, self.get_operation(), operands_info, \"llvm__nvvm_dclusterlaunchcontrol_dtry_ucancel_dasync_dshared\")"
         ));

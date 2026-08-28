@@ -14,13 +14,16 @@ use crate::model::{
     ScalarConversionSaturation, SparseMmaAccumulator, SparseMmaElement, SparseMmaLayout,
     SparseMmaMetadata, SparseMmaOverflow, SparseMmaSelector, SparseMmaShape, WgmmaControlMode,
 };
-use crate::render::common::{generated_hardware_target, intrinsic_marker, rust_header};
+use crate::render::common::{
+    generated_hardware_target, intrinsic_marker, rust_header, uses_identifier,
+};
 use crate::render::families::{
     extended_minmax, ldmatrix, ldmatrix_compat_op, register_mma_effective_kind, scalar_arithmetics,
     scalar_conversions, tcgen05_mma_form_name, tcgen05_mma_intrinsics, wgmma_controls,
 };
 use crate::render::reference::render_string_patterns;
 use std::fmt::Write as _;
+use std::path::PathBuf;
 
 pub(super) fn render_collector(catalog: &CatalogFile, hash: &str) -> String {
     let mut output = rust_header(catalog, hash);
@@ -414,12 +417,85 @@ fn replace_exact_render_fragment(output: &mut String, fragment: &str, replacemen
     output.replace_range(start..start + fragment.len(), replacement);
 }
 
-pub(super) fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
-    let mut records = catalog.intrinsics.iter().collect::<Vec<_>>();
-    records.sort_by(|left, right| left.rust.abi_id.cmp(&right.rust.abi_id));
+fn render_target_record(output: &mut String, catalog: &CatalogFile, record: &CatalogIntrinsic) {
+    let llvm_facts = match &record.llvm {
+        Some(llvm) => {
+            let result_range = match &llvm.result_facts.range {
+                Some(range) => format!(
+                    "Some(GeneratedIntrinsicRange {{ lower: {:?}, upper_exclusive: {:?} }})",
+                    range.lower, range.upper_exclusive
+                ),
+                None => "None".to_owned(),
+            };
+            format!(
+                "Some(GeneratedLlvmFacts {{ properties: &{:?}, result_no_undef: {}, result_range: {} }})",
+                llvm.properties, llvm.result_facts.no_undef, result_range
+            )
+        }
+        None => "None".to_owned(),
+    };
+    writeln!(
+            output,
+            "    GeneratedIntrinsicTarget {{ marker: {:?}, id: {:?}, abi_id: {:?}, dialect_op: {:?}, variant: {}, requirement: GeneratedTargetRequirement {{ minimum_ptx: GeneratedPtxVersion::from_encoded({}), hardware: {} }}, backend_requirements: {}, selections: {}, llvm: {} }},",
+            intrinsic_marker(catalog, record),
+            record.id,
+            record.rust.abi_id,
+            record.dialect.op_name,
+            generated_intrinsic_variant(record),
+            record.target.minimum_ptx.encoded(),
+            generated_hardware_target(&record.target.hardware),
+            generated_backend_requirements(record),
+            generated_selection_alternatives(&record.selections),
+            llvm_facts,
+        )
+        .unwrap();
+}
+
+fn render_target_record_assertions(
+    output: &mut String,
+    catalog: &CatalogFile,
+    record: &CatalogIntrinsic,
+) {
+    writeln!(
+        output,
+        "        let target = generated_intrinsic_target_by_marker({:?}).unwrap();",
+        intrinsic_marker(catalog, record)
+    )
+    .unwrap();
+    writeln!(
+            output,
+            "        assert_eq!(target.id, {:?});\n        assert_eq!(target.abi_id, {:?});\n        assert_eq!(target.dialect_op, {:?});\n        assert_eq!(target.variant, {});\n        assert_eq!(target.requirement.minimum_ptx.encoded(), {});\n        assert_eq!(target.requirement.hardware, const {{ {} }});\n        assert_eq!(target.backend_requirements, const {{ {} }});\n        assert_eq!(target.selections, {});",
+            record.id,
+            record.rust.abi_id,
+            record.dialect.op_name,
+            generated_intrinsic_variant(record),
+            record.target.minimum_ptx.encoded(),
+            generated_hardware_target(&record.target.hardware),
+            generated_backend_requirements(record),
+            generated_selection_alternatives(&record.selections),
+        )
+        .unwrap();
+    match &record.llvm {
+        Some(llvm) => {
+            writeln!(
+                output,
+                "        assert_eq!(target.llvm.unwrap().properties, &{:?} as &[&str]);",
+                llvm.properties
+            )
+            .unwrap();
+        }
+        None => output.push_str("        assert!(target.llvm.is_none());\n"),
+    }
+}
+
+fn targets_mod_file(
+    catalog: &CatalogFile,
+    hash: &str,
+    groups: &[(&'static str, Vec<&CatalogIntrinsic>)],
+) -> String {
     let mut output = rust_header(catalog, hash);
     output.push_str(
-        "//! Generated target requirements and separately imported LLVM/selection facts.\n\npub const GENERATED_INTRINSIC_MARKER_ATTR: &str = \"cuda_oxide_intrinsic_marker\";\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct GeneratedPtxVersion(u16);\nimpl GeneratedPtxVersion {\n    pub const fn from_encoded(encoded: u16) -> Self { Self(encoded) }\n    pub const fn encoded(self) -> u16 { self.0 }\n    pub const fn major(self) -> u16 { self.0 / 10 }\n    pub const fn minor(self) -> u16 { self.0 % 10 }\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareAlternative { MinimumSm(u16), ExactArchitecture(u16), FamilyTarget(u16) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetSelectorBinding { pub name: &'static str, pub value: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetAlternative { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareAlternative }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]), TargetMatrix { selectors: &'static [GeneratedTargetSelectorBinding], alternatives: &'static [GeneratedTargetAlternative] } }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetRequirement { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareTarget }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicBackend { LlvmNvptx, LibNvvm }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedBackendRequirement { pub backend: GeneratedIntrinsicBackend, pub requirement: GeneratedTargetRequirement }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSelectionAddressSpace { Generic, Shared }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedImmediateBinding { pub argument_index: usize, pub value: i64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionConstraints { pub address_space: Option<GeneratedSelectionAddressSpace>, pub immediate_bindings: &'static [GeneratedImmediateBinding] }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionAlternative { pub source_record: &'static str, pub asm: &'static str, pub predicates: &'static [&'static str], pub constraints: GeneratedSelectionConstraints }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicRange { pub lower: &'static str, pub upper_exclusive: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedLlvmFacts { pub properties: &'static [&'static str], pub result_no_undef: bool, pub result_range: Option<GeneratedIntrinsicRange> }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixShape { M8n8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixMultiplicity { X1, X2, X4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixLayout { Normal, Transposed }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPackedAtomicFormat { F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaShape { M8n8k4, M16n8k8, M16n8k16, M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {\n    Scalar,\n    Ldmatrix { shape: GeneratedLdmatrixShape, multiplicity: GeneratedLdmatrixMultiplicity, layout: GeneratedLdmatrixLayout },\n    PackedAtomic { format: GeneratedPackedAtomicFormat },\n    RegisterMma { shape: GeneratedRegisterMmaShape, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget {\n    pub marker: &'static str,\n    pub id: &'static str,\n    pub abi_id: &'static str,\n    pub dialect_op: &'static str,\n    pub variant: GeneratedIntrinsicVariant,\n    pub requirement: GeneratedTargetRequirement,\n    pub backend_requirements: &'static [GeneratedBackendRequirement],\n    pub selections: &'static [GeneratedSelectionAlternative],\n    pub llvm: Option<GeneratedLlvmFacts>,\n}\n\nimpl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}\n\npub const GENERATED_INTRINSIC_TARGETS: &[GeneratedIntrinsicTarget] = &[\n",
+        "//! Generated target requirements and separately imported LLVM/selection facts.\n\npub const GENERATED_INTRINSIC_MARKER_ATTR: &str = \"cuda_oxide_intrinsic_marker\";\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]\npub struct GeneratedPtxVersion(u16);\nimpl GeneratedPtxVersion {\n    pub const fn from_encoded(encoded: u16) -> Self { Self(encoded) }\n    pub const fn encoded(self) -> u16 { self.0 }\n    pub const fn major(self) -> u16 { self.0 / 10 }\n    pub const fn minor(self) -> u16 { self.0 % 10 }\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareAlternative { MinimumSm(u16), ExactArchitecture(u16), FamilyTarget(u16) }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetSelectorBinding { pub name: &'static str, pub value: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetAlternative { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareAlternative }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedHardwareTarget { All, AnyOf(&'static [GeneratedHardwareAlternative]), TargetMatrix { selectors: &'static [GeneratedTargetSelectorBinding], alternatives: &'static [GeneratedTargetAlternative] } }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedTargetRequirement { pub minimum_ptx: GeneratedPtxVersion, pub hardware: GeneratedHardwareTarget }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicBackend { LlvmNvptx, LibNvvm }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedBackendRequirement { pub backend: GeneratedIntrinsicBackend, pub requirement: GeneratedTargetRequirement }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedSelectionAddressSpace { Generic, Shared }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedImmediateBinding { pub argument_index: usize, pub value: i64 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionConstraints { pub address_space: Option<GeneratedSelectionAddressSpace>, pub immediate_bindings: &'static [GeneratedImmediateBinding] }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedSelectionAlternative { pub source_record: &'static str, pub asm: &'static str, pub predicates: &'static [&'static str], pub constraints: GeneratedSelectionConstraints }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicRange { pub lower: &'static str, pub upper_exclusive: &'static str }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedLlvmFacts { pub properties: &'static [&'static str], pub result_no_undef: bool, pub result_range: Option<GeneratedIntrinsicRange> }\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixShape { M8n8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixMultiplicity { X1, X2, X4 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedLdmatrixLayout { Normal, Transposed }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedPackedAtomicFormat { F16x2, Bf16x2 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaShape { M8n8k4, M16n8k8, M16n8k16, M16n8k32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaAccumulator { F32, F64, S32 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaElement { Bf16, F16, Tf32, F64, S8, U8 }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaLayout { Row, Col }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedRegisterMmaOverflow { NotApplicable, Wrapping, Satfinite }\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum GeneratedIntrinsicVariant {\n    Scalar,\n    Ldmatrix { shape: GeneratedLdmatrixShape, multiplicity: GeneratedLdmatrixMultiplicity, layout: GeneratedLdmatrixLayout },\n    PackedAtomic { format: GeneratedPackedAtomicFormat },\n    RegisterMma { shape: GeneratedRegisterMmaShape, accumulator: GeneratedRegisterMmaAccumulator, a_element: GeneratedRegisterMmaElement, b_element: GeneratedRegisterMmaElement, a_layout: GeneratedRegisterMmaLayout, b_layout: GeneratedRegisterMmaLayout, overflow: GeneratedRegisterMmaOverflow },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget {\n    pub marker: &'static str,\n    pub id: &'static str,\n    pub abi_id: &'static str,\n    pub dialect_op: &'static str,\n    pub variant: GeneratedIntrinsicVariant,\n    pub requirement: GeneratedTargetRequirement,\n    pub backend_requirements: &'static [GeneratedBackendRequirement],\n    pub selections: &'static [GeneratedSelectionAlternative],\n    pub llvm: Option<GeneratedLlvmFacts>,\n}\n\nimpl GeneratedIntrinsicTarget {\n    pub fn requirement_for_backend(&self, backend: GeneratedIntrinsicBackend) -> GeneratedTargetRequirement {\n        self.backend_requirements.iter().find(|entry| entry.backend == backend).map(|entry| entry.requirement).unwrap_or(self.requirement)\n    }\n}\n",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -560,41 +636,17 @@ impl GeneratedIntrinsicTarget {
             "    Tcgen05Mma { form: GeneratedTcgen05MmaForm, target_selector: GeneratedTcgen05MmaTargetSelector, compatibility_alias: bool },\n}\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct GeneratedIntrinsicTarget",
         );
     }
-    for record in records.iter().copied() {
-        let llvm_facts = match &record.llvm {
-            Some(llvm) => {
-                let result_range = match &llvm.result_facts.range {
-                    Some(range) => format!(
-                        "Some(GeneratedIntrinsicRange {{ lower: {:?}, upper_exclusive: {:?} }})",
-                        range.lower, range.upper_exclusive
-                    ),
-                    None => "None".to_owned(),
-                };
-                format!(
-                    "Some(GeneratedLlvmFacts {{ properties: &{:?}, result_no_undef: {}, result_range: {} }})",
-                    llvm.properties, llvm.result_facts.no_undef, result_range
-                )
-            }
-            None => "None".to_owned(),
-        };
-        writeln!(
-            output,
-            "    GeneratedIntrinsicTarget {{ marker: {:?}, id: {:?}, abi_id: {:?}, dialect_op: {:?}, variant: {}, requirement: GeneratedTargetRequirement {{ minimum_ptx: GeneratedPtxVersion::from_encoded({}), hardware: {} }}, backend_requirements: {}, selections: {}, llvm: {} }},",
-            intrinsic_marker(catalog, record),
-            record.id,
-            record.rust.abi_id,
-            record.dialect.op_name,
-            generated_intrinsic_variant(record),
-            record.target.minimum_ptx.encoded(),
-            generated_hardware_target(&record.target.hardware),
-            generated_backend_requirements(record),
-            generated_selection_alternatives(&record.selections),
-            llvm_facts,
-        )
-        .unwrap();
+    output.push_str(
+        "pub const GENERATED_INTRINSIC_TARGET_GROUPS: &[&[GeneratedIntrinsicTarget]] = &[\n",
+    );
+    for (shard, _) in groups {
+        writeln!(output, "    {shard}::TARGETS,").unwrap();
     }
     output.push_str(
-        "];\n\npub fn generated_intrinsic_target_by_marker(marker: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    GENERATED_INTRINSIC_TARGETS.iter().find(|target| target.marker == marker)\n}\n\npub fn generated_intrinsic_targets_by_op_name(op_name: &str) -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> + '_ {\n    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| target.dialect_op == op_name)\n}\n\npub fn generated_intrinsic_target_by_op_name(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_targets_by_op_name(op_name).next()\n}\n\npub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_operation_matches(ctx: &Context, target: &GeneratedIntrinsicTarget, operation: Ptr<Operation>) -> bool {\n    match target.variant {\n        GeneratedIntrinsicVariant::Scalar => true,\n        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };\n            let shape_matches = matches!(shape, GeneratedLdmatrixShape::M8n8) && op.get_attr_nvvm_ldmatrix_shape(ctx).as_deref() == Some(&LdmatrixShapeAttr::M8n8);\n            let multiplicity_matches = match multiplicity {\n                GeneratedLdmatrixMultiplicity::X1 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X1),\n                GeneratedLdmatrixMultiplicity::X2 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X2),\n                GeneratedLdmatrixMultiplicity::X4 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X4),\n            };\n            let layout_matches = match layout {\n                GeneratedLdmatrixLayout::Normal => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Normal),\n                GeneratedLdmatrixLayout::Transposed => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Transposed),\n            };\n            shape_matches && multiplicity_matches && layout_matches\n                && op.get_attr_nvvm_ldmatrix_element(ctx).as_deref() == Some(&LdmatrixElementAttr::B16)\n                && op.get_attr_nvvm_ldmatrix_state_space(ctx).as_deref() == Some(&LdmatrixStateSpaceAttr::Shared)\n        }\n        GeneratedIntrinsicVariant::PackedAtomic { format } => {\n            let Some(op) = Operation::get_op::<PackedAtomicAddOp>(operation, ctx) else { return false; };\n            let format_matches = match format {\n                GeneratedPackedAtomicFormat::F16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::F16x2),\n                GeneratedPackedAtomicFormat::Bf16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::Bf16x2),\n            };\n            format_matches\n                && op.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref() == Some(&PackedAtomicStateSpaceAttr::Global)\n                && op.get_attr_nvvm_packed_atomic_ordering(ctx).as_deref() == Some(&PackedAtomicOrderingAttr::Relaxed)\n                && op.get_attr_nvvm_packed_atomic_scope(ctx).as_deref() == Some(&PackedAtomicScopeAttr::Gpu)\n                && op.get_attr_nvvm_packed_atomic_rounding(ctx).as_deref() == Some(&PackedAtomicRoundingAttr::Rn)\n                && op.get_attr_nvvm_packed_atomic_subnormal(ctx).as_deref() == Some(&PackedAtomicSubnormalAttr::NoFtz)\n                && op.get_attr_nvvm_packed_atomic_atomicity(ctx).as_deref() == Some(&PackedAtomicAtomicityAttr::PerElement)\n        }\n        GeneratedIntrinsicVariant::RegisterMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow } => {\n            let Some(op) = Operation::get_op::<RegisterMmaOp>(operation, ctx) else { return false; };\n            let shape_matches = match shape {\n                GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k8),\n                GeneratedRegisterMmaShape::M16n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k16),\n                GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n            };\n            let accumulator_matches = match accumulator {\n                GeneratedRegisterMmaAccumulator::F32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F32),\n                GeneratedRegisterMmaAccumulator::F64 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F64),\n                GeneratedRegisterMmaAccumulator::S32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::S32),\n            };\n            let element_matches = |expected, actual: Option<&RegisterMmaElementAttr>| match expected {\n                GeneratedRegisterMmaElement::Bf16 => actual == Some(&RegisterMmaElementAttr::Bf16),\n                GeneratedRegisterMmaElement::F16 => actual == Some(&RegisterMmaElementAttr::F16),\n                GeneratedRegisterMmaElement::Tf32 => actual == Some(&RegisterMmaElementAttr::Tf32),\n                GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8 => actual == Some(&RegisterMmaElementAttr::S8),\n                GeneratedRegisterMmaElement::U8 => actual == Some(&RegisterMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&RegisterMmaLayoutAttr>| match expected {\n                GeneratedRegisterMmaLayout::Row => actual == Some(&RegisterMmaLayoutAttr::Row),\n                GeneratedRegisterMmaLayout::Col => actual == Some(&RegisterMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedRegisterMmaOverflow::NotApplicable => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::NotApplicable),\n                GeneratedRegisterMmaOverflow::Wrapping => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Wrapping),\n                GeneratedRegisterMmaOverflow::Satfinite => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Satfinite),\n            };\n            shape_matches && accumulator_matches\n                && element_matches(a_element, op.get_attr_nvvm_register_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_register_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_register_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_register_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n        }\n    }\n}\n",
+        "];\n\npub fn generated_intrinsic_targets() -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> {\n    GENERATED_INTRINSIC_TARGET_GROUPS.iter().flat_map(|group| group.iter())\n}\n\n",
+    );
+    output.push_str(
+        "pub fn generated_intrinsic_target_by_marker(marker: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_targets().find(|target| target.marker == marker)\n}\n\npub fn generated_intrinsic_targets_by_op_name(op_name: &str) -> impl Iterator<Item = &'static GeneratedIntrinsicTarget> + '_ {\n    generated_intrinsic_targets().filter(move |target| target.dialect_op == op_name)\n}\n\npub fn generated_intrinsic_target_by_op_name(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_targets_by_op_name(op_name).next()\n}\n\npub fn generated_intrinsic_target(op_name: &str) -> Option<&'static GeneratedIntrinsicTarget> {\n    generated_intrinsic_target_by_op_name(op_name)\n}\n\npub fn generated_intrinsic_operation_matches(ctx: &Context, target: &GeneratedIntrinsicTarget, operation: Ptr<Operation>) -> bool {\n    match target.variant {\n        GeneratedIntrinsicVariant::Scalar => true,\n        GeneratedIntrinsicVariant::Ldmatrix { shape, multiplicity, layout } => {\n            let Some(op) = Operation::get_op::<LdmatrixOp>(operation, ctx) else { return false; };\n            let shape_matches = matches!(shape, GeneratedLdmatrixShape::M8n8) && op.get_attr_nvvm_ldmatrix_shape(ctx).as_deref() == Some(&LdmatrixShapeAttr::M8n8);\n            let multiplicity_matches = match multiplicity {\n                GeneratedLdmatrixMultiplicity::X1 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X1),\n                GeneratedLdmatrixMultiplicity::X2 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X2),\n                GeneratedLdmatrixMultiplicity::X4 => op.get_attr_nvvm_ldmatrix_multiplicity(ctx).as_deref() == Some(&LdmatrixMultiplicityAttr::X4),\n            };\n            let layout_matches = match layout {\n                GeneratedLdmatrixLayout::Normal => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Normal),\n                GeneratedLdmatrixLayout::Transposed => op.get_attr_nvvm_ldmatrix_layout(ctx).as_deref() == Some(&LdmatrixLayoutAttr::Transposed),\n            };\n            shape_matches && multiplicity_matches && layout_matches\n                && op.get_attr_nvvm_ldmatrix_element(ctx).as_deref() == Some(&LdmatrixElementAttr::B16)\n                && op.get_attr_nvvm_ldmatrix_state_space(ctx).as_deref() == Some(&LdmatrixStateSpaceAttr::Shared)\n        }\n        GeneratedIntrinsicVariant::PackedAtomic { format } => {\n            let Some(op) = Operation::get_op::<PackedAtomicAddOp>(operation, ctx) else { return false; };\n            let format_matches = match format {\n                GeneratedPackedAtomicFormat::F16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::F16x2),\n                GeneratedPackedAtomicFormat::Bf16x2 => op.get_attr_nvvm_packed_atomic_format(ctx).as_deref() == Some(&PackedAtomicFormatAttr::Bf16x2),\n            };\n            format_matches\n                && op.get_attr_nvvm_packed_atomic_state_space(ctx).as_deref() == Some(&PackedAtomicStateSpaceAttr::Global)\n                && op.get_attr_nvvm_packed_atomic_ordering(ctx).as_deref() == Some(&PackedAtomicOrderingAttr::Relaxed)\n                && op.get_attr_nvvm_packed_atomic_scope(ctx).as_deref() == Some(&PackedAtomicScopeAttr::Gpu)\n                && op.get_attr_nvvm_packed_atomic_rounding(ctx).as_deref() == Some(&PackedAtomicRoundingAttr::Rn)\n                && op.get_attr_nvvm_packed_atomic_subnormal(ctx).as_deref() == Some(&PackedAtomicSubnormalAttr::NoFtz)\n                && op.get_attr_nvvm_packed_atomic_atomicity(ctx).as_deref() == Some(&PackedAtomicAtomicityAttr::PerElement)\n        }\n        GeneratedIntrinsicVariant::RegisterMma { shape, accumulator, a_element, b_element, a_layout, b_layout, overflow } => {\n            let Some(op) = Operation::get_op::<RegisterMmaOp>(operation, ctx) else { return false; };\n            let shape_matches = match shape {\n                GeneratedRegisterMmaShape::M8n8k4 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M8n8k4),\n                GeneratedRegisterMmaShape::M16n8k8 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k8),\n                GeneratedRegisterMmaShape::M16n8k16 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k16),\n                GeneratedRegisterMmaShape::M16n8k32 => op.get_attr_nvvm_register_mma_shape(ctx).as_deref() == Some(&RegisterMmaShapeAttr::M16n8k32),\n            };\n            let accumulator_matches = match accumulator {\n                GeneratedRegisterMmaAccumulator::F32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F32),\n                GeneratedRegisterMmaAccumulator::F64 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::F64),\n                GeneratedRegisterMmaAccumulator::S32 => op.get_attr_nvvm_register_mma_accumulator(ctx).as_deref() == Some(&RegisterMmaAccumulatorAttr::S32),\n            };\n            let element_matches = |expected, actual: Option<&RegisterMmaElementAttr>| match expected {\n                GeneratedRegisterMmaElement::Bf16 => actual == Some(&RegisterMmaElementAttr::Bf16),\n                GeneratedRegisterMmaElement::F16 => actual == Some(&RegisterMmaElementAttr::F16),\n                GeneratedRegisterMmaElement::Tf32 => actual == Some(&RegisterMmaElementAttr::Tf32),\n                GeneratedRegisterMmaElement::F64 => actual == Some(&RegisterMmaElementAttr::F64),\n                GeneratedRegisterMmaElement::S8 => actual == Some(&RegisterMmaElementAttr::S8),\n                GeneratedRegisterMmaElement::U8 => actual == Some(&RegisterMmaElementAttr::U8),\n            };\n            let layout_matches = |expected, actual: Option<&RegisterMmaLayoutAttr>| match expected {\n                GeneratedRegisterMmaLayout::Row => actual == Some(&RegisterMmaLayoutAttr::Row),\n                GeneratedRegisterMmaLayout::Col => actual == Some(&RegisterMmaLayoutAttr::Col),\n            };\n            let overflow_matches = match overflow {\n                GeneratedRegisterMmaOverflow::NotApplicable => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::NotApplicable),\n                GeneratedRegisterMmaOverflow::Wrapping => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Wrapping),\n                GeneratedRegisterMmaOverflow::Satfinite => op.get_attr_nvvm_register_mma_overflow(ctx).as_deref() == Some(&RegisterMmaOverflowAttr::Satfinite),\n            };\n            shape_matches && accumulator_matches\n                && element_matches(a_element, op.get_attr_nvvm_register_mma_a_element(ctx).as_deref())\n                && element_matches(b_element, op.get_attr_nvvm_register_mma_b_element(ctx).as_deref())\n                && layout_matches(a_layout, op.get_attr_nvvm_register_mma_a_layout(ctx).as_deref())\n                && layout_matches(b_layout, op.get_attr_nvvm_register_mma_b_layout(ctx).as_deref())\n                && overflow_matches\n        }\n    }\n}\n",
     );
     if tcgen05_mma_intrinsics(catalog).next().is_some() {
         replace_exact_render_fragment(
@@ -686,8 +738,8 @@ impl GeneratedIntrinsicTarget {
     );
     replace_exact_render_fragment(
         &mut output,
-        "    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| target.dialect_op == op_name)\n",
-        "    let compatibility_marker = generated_intrinsic_compatibility_marker_by_op_name(op_name);\n    GENERATED_INTRINSIC_TARGETS.iter().filter(move |target| {\n        target.dialect_op == op_name || compatibility_marker == Some(target.marker)\n    })\n",
+        "    generated_intrinsic_targets().filter(move |target| target.dialect_op == op_name)\n",
+        "    let compatibility_marker = generated_intrinsic_compatibility_marker_by_op_name(op_name);\n    generated_intrinsic_targets().filter(move |target| {\n        target.dialect_op == op_name || compatibility_marker == Some(target.marker)\n    })\n",
     );
     replace_exact_render_fragment(
         &mut output,
@@ -891,41 +943,296 @@ impl GeneratedIntrinsicTarget {
             "SparseMmaSelectorAttr, SparseMmaShapeAttr, Tcgen05MmaBBufferAttr, Tcgen05MmaBUsageAttr, Tcgen05MmaCollectorAAttr, Tcgen05MmaCtaGroupAttr, Tcgen05MmaFormAttr, Tcgen05MmaKindAttr, Tcgen05MmaOp",
         );
     }
+    output.push('\n');
+    for (shard, _) in groups {
+        writeln!(output, "mod {shard};").unwrap();
+    }
+    output.push_str("\n#[cfg(test)]\nmod tests;\n");
+    output
+}
+
+const TARGETS_GENERATED_DIR: &str = "crates/cuda-oxide-codegen/src/generated_intrinsic_targets";
+
+/// Family shard for one target record. Mirrors the dialect-nvvm family
+/// coalescings; tcgen05 sub-splits on the same contract members the
+/// importer shards use, with the MMA half further cut on the
+/// warp-specialized form bit so every table file stays reviewable.
+fn targets_record_shard(record: &CatalogIntrinsic) -> &'static str {
+    if record.family == "tcgen05" {
+        let tcgen05 = record.tcgen05.as_ref().expect("tcgen05 record");
+        if let Some(mma) = &tcgen05.mma {
+            return if tcgen05_mma_form_name(mma.form).starts_with("Ws") {
+                "tcgen05_mma_ws"
+            } else {
+                "tcgen05_mma"
+            };
+        }
+        if tcgen05.ld.is_some() {
+            return "tcgen05_ld";
+        }
+        if tcgen05.st.is_some() {
+            return "tcgen05_st";
+        }
+        if tcgen05.cp.is_some() {
+            return "tcgen05_cp";
+        }
+        return "tcgen05_other";
+    }
+    match record.family.as_str() {
+        "cp_async_copy" | "cp_async_control" | "cp_async_mbarrier" => "cp_async",
+        "counted_barrier" | "grid_dependency" | "register_control" => "execution_control",
+        family => TARGETS_FAMILY_SHARDS
+            .iter()
+            .copied()
+            .find(|shard| *shard == family)
+            .unwrap_or_else(|| panic!("unmapped generated intrinsic family `{family}`")),
+    }
+}
+
+const TARGETS_FAMILY_SHARDS: &[&str] = &[
+    "sreg",
+    "active_mask",
+    "ldmatrix",
+    "stmatrix",
+    "register_mma",
+    "sparse_mma",
+    "packed_atomic",
+    "redux",
+    "vote",
+    "warp_match",
+    "elect",
+    "warp_barrier",
+    "warp_shuffle",
+    "dotprod",
+    "packed_alu",
+    "integer_minmax",
+    "packed_conversion",
+    "scalar_conversion",
+    "scalar_arithmetic",
+    "scalar_math",
+    "extended_minmax",
+    "movmatrix",
+    "prmt",
+    "cluster_barrier",
+    "cluster_memory",
+    "debug_control",
+    "clc",
+    "wgmma_control",
+    "mbarrier_basic",
+    "mbarrier_extended",
+    "sync",
+    "tma",
+];
+
+/// Group the abi-sorted records per shard; group order is each shard's first
+/// appearance in abi order, so iteration stays as close to the old global
+/// table order as a per-family split permits.
+fn targets_groups(catalog: &CatalogFile) -> Vec<(&'static str, Vec<&CatalogIntrinsic>)> {
+    let mut records = catalog.intrinsics.iter().collect::<Vec<_>>();
+    records.sort_by(|left, right| left.rust.abi_id.cmp(&right.rust.abi_id));
+    let mut groups: Vec<(&'static str, Vec<&CatalogIntrinsic>)> = Vec::new();
+    for record in records {
+        let shard = targets_record_shard(record);
+        match groups.iter_mut().find(|(name, _)| *name == shard) {
+            Some((_, members)) => members.push(record),
+            None => groups.push((shard, vec![record])),
+        }
+    }
+    groups
+}
+
+/// Every type name a target shard may need from the module root.
+const TARGETS_TYPE_CANDIDATES: &[&str] = &[
+    "GeneratedBackendRequirement",
+    "GeneratedClusterBarrierMode",
+    "GeneratedExtendedMinMaxFormat",
+    "GeneratedExtendedMinMaxNan",
+    "GeneratedExtendedMinMaxOperation",
+    "GeneratedExtendedMinMaxSubnormal",
+    "GeneratedHardwareAlternative",
+    "GeneratedHardwareTarget",
+    "GeneratedImmediateBinding",
+    "GeneratedIntrinsicBackend",
+    "GeneratedIntrinsicRange",
+    "GeneratedIntrinsicTarget",
+    "GeneratedIntrinsicVariant",
+    "GeneratedLdmatrixElement",
+    "GeneratedLdmatrixLayout",
+    "GeneratedLdmatrixMultiplicity",
+    "GeneratedLdmatrixShape",
+    "GeneratedLlvmFacts",
+    "GeneratedPackedAtomicFormat",
+    "GeneratedPrmtMode",
+    "GeneratedPtxVersion",
+    "GeneratedRegisterMmaAccumulator",
+    "GeneratedRegisterMmaElement",
+    "GeneratedRegisterMmaKind",
+    "GeneratedRegisterMmaLayout",
+    "GeneratedRegisterMmaOperation",
+    "GeneratedRegisterMmaOverflow",
+    "GeneratedRegisterMmaShape",
+    "GeneratedScalarArithmeticFormat",
+    "GeneratedScalarArithmeticOperation",
+    "GeneratedScalarArithmeticRounding",
+    "GeneratedScalarArithmeticSaturation",
+    "GeneratedScalarArithmeticSubnormal",
+    "GeneratedScalarConversionRounding",
+    "GeneratedScalarConversionSaturation",
+    "GeneratedSelectionAddressSpace",
+    "GeneratedSelectionAlternative",
+    "GeneratedSelectionConstraints",
+    "GeneratedSparseMmaAccumulator",
+    "GeneratedSparseMmaElement",
+    "GeneratedSparseMmaLayout",
+    "GeneratedSparseMmaMetadata",
+    "GeneratedSparseMmaOverflow",
+    "GeneratedSparseMmaSelector",
+    "GeneratedSparseMmaShape",
+    "GeneratedTargetAlternative",
+    "GeneratedTargetContract",
+    "GeneratedTargetRequirement",
+    "GeneratedTargetSelectorBinding",
+    "GeneratedTcgen05MmaForm",
+    "GeneratedTcgen05MmaTargetSelector",
+    "GeneratedWgmmaControlMode",
+];
+
+fn targets_shard_imports(entries: &str) -> String {
+    let items: Vec<&str> = TARGETS_TYPE_CANDIDATES
+        .iter()
+        .copied()
+        .filter(|item| uses_identifier(entries, item))
+        .collect();
+    format!("use super::{{{}}};\n", items.join(", "))
+}
+
+fn targets_shard_file(
+    catalog: &CatalogFile,
+    hash: &str,
+    shard: &str,
+    records: &[&CatalogIntrinsic],
+) -> String {
+    let mut entries = String::new();
+    for record in records {
+        render_target_record(&mut entries, catalog, record);
+    }
+    let mut output = rust_header(catalog, hash);
+    writeln!(
+        output,
+        "//! Generated intrinsic target records: `{shard}` intrinsics.\n"
+    )
+    .unwrap();
+    output.push_str(&targets_shard_imports(&entries));
+    output.push_str("\npub(super) const TARGETS: &[GeneratedIntrinsicTarget] = &[\n");
+    output.push_str(&entries);
+    output.push_str("];\n");
+    output
+}
+
+/// Test files per table shard. `register_mma` alone splits its assertion
+/// blocks on the accumulator contract so no generated test file passes the
+/// 10k-line review bound; every other shard keeps a single test file.
+fn targets_test_shards<'catalog>(
+    groups: &[(&'static str, Vec<&'catalog CatalogIntrinsic>)],
+) -> Vec<(String, Vec<&'catalog CatalogIntrinsic>)> {
+    let mut test_shards = Vec::new();
+    for (shard, records) in groups {
+        if *shard == "register_mma" {
+            let (integer, float): (Vec<_>, Vec<_>) = records.iter().copied().partition(|record| {
+                matches!(
+                    record
+                        .register_mma
+                        .as_ref()
+                        .expect("register_mma record")
+                        .accumulator,
+                    RegisterMmaAccumulator::S32
+                )
+            });
+            test_shards.push(("register_mma_float".to_owned(), float));
+            test_shards.push(("register_mma_s32".to_owned(), integer));
+        } else {
+            test_shards.push(((*shard).to_owned(), records.clone()));
+        }
+    }
+    test_shards
+}
+
+fn targets_tests_mod_file(
+    catalog: &CatalogFile,
+    hash: &str,
+    test_shards: &[(String, Vec<&CatalogIntrinsic>)],
+) -> String {
+    let mut output = rust_header(catalog, hash);
     output.push_str(
-        "\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use std::collections::BTreeSet;\n\n    #[test]\n    fn generated_target_table_is_unique_and_lookup_is_complete() {\n        let mut ids = BTreeSet::new();\n        let mut markers = BTreeSet::new();\n        let mut previous_abi_id = None;\n        for target in GENERATED_INTRINSIC_TARGETS {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n",
+        "//! Generated intrinsic target tests, grouped per family shard.\n\nuse super::*;\nuse std::collections::BTreeSet;\n\n",
     );
+    for (shard, _) in test_shards {
+        writeln!(output, "mod {shard};").unwrap();
+    }
+    output.push_str(
+        "\n#[test]\nfn generated_target_table_is_unique_and_lookup_is_complete() {\n    let mut ids = BTreeSet::new();\n    let mut markers = BTreeSet::new();\n    let mut abi_ids = BTreeSet::new();\n    for group in GENERATED_INTRINSIC_TARGET_GROUPS {\n        let mut previous_abi_id = None;\n        for target in *group {\n            if let Some(previous) = previous_abi_id {\n                assert!(previous < target.abi_id, \"generated ABI IDs are not strictly increasing: {previous} then {}\", target.abi_id);\n            }\n            previous_abi_id = Some(target.abi_id);\n            assert!(abi_ids.insert(target.abi_id), \"duplicate generated ABI ID {}\", target.abi_id);\n            assert!(ids.insert(target.id), \"duplicate generated intrinsic ID {}\", target.id);\n            assert!(markers.insert(target.marker), \"duplicate generated marker {}\", target.marker);\n            assert_eq!(generated_intrinsic_target_by_marker(target.marker), Some(target));\n            assert!(generated_intrinsic_targets_by_op_name(target.dialect_op).any(|candidate| candidate == target));\n        }\n    }\n    assert!(generated_intrinsic_target_by_marker(\"v1:i9999\").is_none());\n}\n",
+    );
+    output
+}
+
+fn targets_tests_shard_file(
+    catalog: &CatalogFile,
+    hash: &str,
+    shard: &str,
+    records: &[&CatalogIntrinsic],
+) -> String {
+    let mut output = rust_header(catalog, hash);
+    writeln!(
+        output,
+        "//! Generated intrinsic target tests: `{shard}` intrinsics.\n\nuse super::super::*;\n"
+    )
+    .unwrap();
     for record in records {
         writeln!(
             output,
-            "        let target = generated_intrinsic_target_by_marker({:?}).unwrap();",
-            intrinsic_marker(catalog, record)
+            "#[test]\nfn {}_target_matches_the_catalog() {{",
+            record.id
         )
         .unwrap();
-        writeln!(
-            output,
-            "        assert_eq!(target.id, {:?});\n        assert_eq!(target.abi_id, {:?});\n        assert_eq!(target.dialect_op, {:?});\n        assert_eq!(target.variant, {});\n        assert_eq!(target.requirement.minimum_ptx.encoded(), {});\n        assert_eq!(target.requirement.hardware, const {{ {} }});\n        assert_eq!(target.backend_requirements, const {{ {} }});\n        assert_eq!(target.selections, {});",
-            record.id,
-            record.rust.abi_id,
-            record.dialect.op_name,
-            generated_intrinsic_variant(record),
-            record.target.minimum_ptx.encoded(),
-            generated_hardware_target(&record.target.hardware),
-            generated_backend_requirements(record),
-            generated_selection_alternatives(&record.selections),
-        )
-        .unwrap();
-        match &record.llvm {
-            Some(llvm) => {
-                writeln!(
-                    output,
-                    "        assert_eq!(target.llvm.unwrap().properties, &{:?} as &[&str]);",
-                    llvm.properties
-                )
-                .unwrap();
-            }
-            None => output.push_str("        assert!(target.llvm.is_none());\n"),
-        }
+        render_target_record_assertions(&mut output, catalog, record);
+        output.push_str("}\n\n");
     }
-    output.push_str("        assert!(generated_intrinsic_target_by_marker(\"v1:i9999\").is_none());\n    }\n}\n");
     output
+}
+
+pub(super) fn render_targets_files(catalog: &CatalogFile, hash: &str) -> Vec<(PathBuf, String)> {
+    let groups = targets_groups(catalog);
+    let test_shards = targets_test_shards(&groups);
+    let mut files = vec![
+        (
+            PathBuf::from(format!("{TARGETS_GENERATED_DIR}/mod.rs")),
+            targets_mod_file(catalog, hash, &groups),
+        ),
+        (
+            PathBuf::from(format!("{TARGETS_GENERATED_DIR}/tests/mod.rs")),
+            targets_tests_mod_file(catalog, hash, &test_shards),
+        ),
+    ];
+    for (shard, records) in &groups {
+        files.push((
+            PathBuf::from(format!("{TARGETS_GENERATED_DIR}/{shard}.rs")),
+            targets_shard_file(catalog, hash, shard, records),
+        ));
+    }
+    for (shard, records) in &test_shards {
+        files.push((
+            PathBuf::from(format!("{TARGETS_GENERATED_DIR}/tests/{shard}.rs")),
+            targets_tests_shard_file(catalog, hash, shard, records),
+        ));
+    }
+    files
+}
+
+#[cfg(test)]
+pub(super) fn render_targets(catalog: &CatalogFile, hash: &str) -> String {
+    render_targets_files(catalog, hash)
+        .into_iter()
+        .map(|(_, contents)| contents)
+        .collect::<Vec<_>>()
+        .join("\n")
 }

@@ -903,47 +903,62 @@ fn extended_mbarrier_rendering_preserves_all_manual_contracts() {
 
 #[test]
 fn lowering_imports_cast_to_shared_addrspace_exactly_once_across_families() {
-    // The stmatrix, cluster_memory, and mbarrier_extended families all
-    // insert the `cast_to_shared_addrspace` helper into the same
-    // `common::{call_intrinsic, ...}` use group. An unguarded second
-    // insert duplicates the name inside one use group, which is a hard
-    // rustc error (E0252) in the raw generator output. The rustfmt pass
-    // run over generated files silently dedupes the duplicate, so assert
-    // on the raw (pre-rustfmt) output to catch a regressed guard loudly.
+    // The stmatrix, cluster_memory, and mbarrier_extended families all pull
+    // the `cast_to_shared_addrspace` helper from `convert::intrinsics`. Each
+    // sharded lowering file must import the name at most once in the raw
+    // generator output (a duplicate inside one use group is a hard rustc
+    // error, E0252, that the rustfmt pass would silently dedupe), and every
+    // shard whose body calls the helper must import it exactly once.
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let catalog = crate::resolve::resolve(&repo_root).unwrap();
     assert!(stmatrices(&catalog).next().is_some());
     assert!(cluster_memory(&catalog).next().is_some());
     assert!(mbarrier_extended(&catalog).next().is_some());
 
-    let import_count = |lowering: &str| {
-        // Everything before the first rendered helper function is the
-        // module header plus the use block; helper call sites in the
-        // function bodies below must not count.
-        let bodies_start = lowering
-            .find("fn convert_zero_operand_scalar_direct")
-            .expect("lowering output must contain the first helper function");
-        lowering[..bodies_start]
+    let import_count = |contents: &str| {
+        // Everything before the first rendered item is the module header
+        // plus the use block; helper call sites in the item bodies below
+        // must not count.
+        let bodies_start = contents
+            .find("#[op_interface_impl]")
+            .or_else(|| contents.find("mod "))
+            .expect("lowering output must contain rendered items");
+        contents[..bodies_start]
             .matches("cast_to_shared_addrspace")
             .count()
     };
+    let shard_import_count = |catalog: &CatalogFile, shard: &str| {
+        let files = render_lowering_files(catalog, "test-hash");
+        let (_, contents) = files
+            .iter()
+            .find(|(path, _)| path.ends_with(format!("{shard}.rs")))
+            .unwrap_or_else(|| panic!("missing lowering shard `{shard}`"));
+        import_count(contents)
+    };
 
-    assert_eq!(
-        import_count(&render_lowering(&catalog, "test-hash")),
-        1,
-        "cast_to_shared_addrspace must be imported exactly once in the \
-             raw lowering output when multiple families need it"
-    );
+    for (path, contents) in render_lowering_files(&catalog, "test-hash") {
+        assert!(
+            import_count(&contents) <= 1,
+            "cast_to_shared_addrspace must be imported at most once in the \
+                 raw output of {}",
+            path.display()
+        );
+    }
+    // The shared stmatrix converter lives in mod.rs; the cluster_memory and
+    // mbarrier_extended impls call the helper directly in their own shards.
+    assert_eq!(shard_import_count(&catalog, "mod"), 1);
+    assert_eq!(shard_import_count(&catalog, "cluster_memory"), 1);
+    assert_eq!(shard_import_count(&catalog, "mbarrier_extended"), 1);
 
-    // The guard must not suppress the import either: with stmatrix
-    // absent, cluster_memory still needs the helper and must insert it.
+    // Dropping stmatrix must not suppress the import where it is still
+    // needed: cluster_memory keeps using the helper.
     let mut without_stmatrix = catalog;
     without_stmatrix
         .intrinsics
         .retain(|record| record.family != "stmatrix");
     assert!(stmatrices(&without_stmatrix).next().is_none());
     assert_eq!(
-        import_count(&render_lowering(&without_stmatrix, "test-hash")),
+        shard_import_count(&without_stmatrix, "cluster_memory"),
         1,
         "cast_to_shared_addrspace must still be imported when only \
              cluster_memory and mbarrier_extended need it"

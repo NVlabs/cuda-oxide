@@ -4,7 +4,9 @@
  */
 
 use crate::model::{CatalogFile, ExtendedMinMaxFormat, IntrinsicBackend, PackedAluFormat};
-use crate::render::collector_targets::{render_collector, render_targets};
+#[cfg(test)]
+use crate::render::collector_targets::render_targets;
+use crate::render::collector_targets::{render_collector, render_targets_files};
 use crate::render::common::backend_label;
 use crate::render::compat::{
     render_compat_clc, render_compat_cluster_barrier, render_compat_cluster_memory,
@@ -38,8 +40,12 @@ use crate::render::families::{
     scalar_arithmetics, scalar_conversions, scalar_maths, stmatrices, sync_intrinsics,
     tcgen05_intrinsics, threadfence_ptx_level, tma_intrinsics, wgmma_controls,
 };
+#[cfg(test)]
 use crate::render::importer::render_importer;
+use crate::render::importer::render_importer_files;
+#[cfg(test)]
 use crate::render::lowering::render_lowering;
+use crate::render::lowering::render_lowering_files;
 use crate::render::probes::{render_elect_probe, render_special_register_probe};
 use crate::render::raw_abi::{render_raw_abi, render_raw_mod};
 use crate::render::reference::render_reference;
@@ -417,22 +423,19 @@ pub fn all_outputs(
         "crates/dialect-nvvm/src/ops/generated/warp_shuffle.rs".into(),
         render_dialect_warp_shuffle(catalog, catalog_sha256),
     );
-    outputs.insert(
-        "crates/mir-importer/src/translator/terminator/intrinsics/generated.rs".into(),
-        render_importer(catalog, catalog_sha256),
-    );
-    outputs.insert(
-        "crates/mir-lower/src/convert/generated_intrinsics.rs".into(),
-        render_lowering(catalog, catalog_sha256),
-    );
+    for (path, contents) in render_importer_files(catalog, catalog_sha256) {
+        outputs.insert(path, contents);
+    }
+    for (path, contents) in render_lowering_files(catalog, catalog_sha256) {
+        outputs.insert(path, contents);
+    }
     outputs.insert(
         "crates/rustc-codegen-cuda/src/generated_intrinsics.rs".into(),
         render_collector(catalog, catalog_sha256),
     );
-    outputs.insert(
-        "crates/cuda-oxide-codegen/src/generated_intrinsic_targets.rs".into(),
-        render_targets(catalog, catalog_sha256),
-    );
+    for (path, contents) in render_targets_files(catalog, catalog_sha256) {
+        outputs.insert(path, contents);
+    }
     for record in &catalog.intrinsics {
         if record.special_register.is_some() || record.family == "elect" {
             for backend in [IntrinsicBackend::LlvmNvptx, IntrinsicBackend::LibNvvm] {

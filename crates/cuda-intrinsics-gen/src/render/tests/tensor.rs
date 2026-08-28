@@ -472,9 +472,21 @@ fn tma_rendering_preserves_api_and_injects_backend_defaults() {
 
     let lowering = render_lowering(&catalog, "test-hash");
     assert!(lowering.contains("CpAsyncBulkTensorG2sTile1dOp"));
-    assert!(lowering.contains(
-            "tma::{convert_control, convert_g2s, convert_g2s_multicast_cg2, convert_prefetch_tensormap, convert_prefetch_tile, convert_reduce_s2g, convert_s2g, convert_tensormap_fence, convert_tensormap_replace, PrefetchTileConfig, ReduceConfig}"
-        ));
+    for tma_import in [
+        "tma::convert_control",
+        "tma::convert_g2s",
+        "tma::convert_g2s_multicast_cg2",
+        "tma::convert_prefetch_tensormap",
+        "tma::convert_prefetch_tile",
+        "tma::convert_reduce_s2g",
+        "tma::convert_s2g",
+        "tma::convert_tensormap_fence",
+        "tma::convert_tensormap_replace",
+        "tma::PrefetchTileConfig",
+        "tma::ReduceConfig",
+    ] {
+        assert!(lowering.contains(tma_import), "{tma_import}");
+    }
     assert!(
         lowering
             .contains("convert_g2s(ctx, rewriter, self.get_operation(), operands_info, 5, false)")

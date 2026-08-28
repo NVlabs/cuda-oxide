@@ -64,6 +64,29 @@ pub(super) fn intrinsic_marker(catalog: &CatalogFile, record: &CatalogIntrinsic)
     format!("v{}:{}", catalog.intrinsic_abi, record.rust.abi_id)
 }
 
+/// True when `identifier` occurs in `body` as a standalone token that is not
+/// path-qualified (not immediately preceded by `::`). Drives the per-shard
+/// import lists of the sharded generated outputs: an identifier that only
+/// appears fully qualified (e.g. `dialect_nvvm::ops::TmaOp`) must not be
+/// imported, while `TmaOp::build` or `PrmtModeAttr::Generic` must be.
+pub(super) fn uses_identifier(body: &str, identifier: &str) -> bool {
+    let bytes = body.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut search_from = 0;
+    while let Some(found) = body[search_from..].find(identifier) {
+        let begin = search_from + found;
+        let end = begin + identifier.len();
+        let before_ok = begin == 0 || !is_word(bytes[begin - 1]);
+        let after_ok = end == bytes.len() || !is_word(bytes[end]);
+        let unqualified = begin < 2 || &body[begin - 2..begin] != "::";
+        if before_ok && after_ok && unqualified {
+            return true;
+        }
+        search_from = begin + 1;
+    }
+    false
+}
+
 pub(super) fn hardware_target_label(target: &CatalogHardwareTarget) -> String {
     match target {
         CatalogHardwareTarget::All => "all".to_owned(),

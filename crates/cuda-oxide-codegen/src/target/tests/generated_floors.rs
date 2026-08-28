@@ -535,11 +535,10 @@ fn generated_packed_atomic_floors_are_backend_specific() {
 #[test]
 fn generated_non_mma_tcgen05_targets_preserve_the_backend_split() {
     use crate::generated_intrinsic_targets::{
-        GENERATED_INTRINSIC_TARGETS, GeneratedIntrinsicBackend, GeneratedIntrinsicVariant,
+        GeneratedIntrinsicBackend, GeneratedIntrinsicVariant, generated_intrinsic_targets,
     };
 
-    let targets = GENERATED_INTRINSIC_TARGETS
-        .iter()
+    let targets = generated_intrinsic_targets()
         .filter(|target| {
             target.id.starts_with("tcgen05_")
                 && !matches!(target.variant, GeneratedIntrinsicVariant::Tcgen05Mma { .. })
