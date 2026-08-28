@@ -135,7 +135,7 @@ dependencies = [
 [[package]]
 name = "cuda-async"
 version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5cf5a55baaa59b4d3c352bf4652bb0a01e842c19"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -151,7 +151,7 @@ dependencies = [
 [[package]]
 name = "cuda-bindings"
 version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5cf5a55baaa59b4d3c352bf4652bb0a01e842c19"
 dependencies = [
  "bindgen",
  "libloading",
@@ -164,7 +164,7 @@ dependencies = [
 [[package]]
 name = "cuda-core"
 version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5cf5a55baaa59b4d3c352bf4652bb0a01e842c19"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "cuda-core-derive"
 version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#9620a6f9475b737b5588f5d06cc00738d69ac480"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5cf5a55baaa59b4d3c352bf4652bb0a01e842c19"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -213,6 +213,10 @@ dependencies = [
  "reserved-oxide-symbols",
  "syn",
 ]
+
+[[package]]
+name = "cuda-target-spec"
+version = "0.1.0"
 
 [[package]]
 name = "dashmap"
@@ -472,6 +476,7 @@ dependencies = [
 name = "libnvvm-sys"
 version = "0.2.1"
 dependencies = [
+ "cuda-target-spec",
  "libloading",
  "thiserror 2.0.18",
 ]
