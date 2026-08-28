@@ -30,12 +30,13 @@
 //! - `translate_constant`: Translates MIR constants to `dialect-mir`
 //! - `create_ghost_enum_default`: Synthesises a placeholder for never-assigned enum locals
 
+use super::facts;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
-use crate::translator::values::ValueMap;
+use crate::translator::values::{ValueMap, generic_pointer_kind_retype_allowed};
 use dialect_iket::{ops::IketSentinelTokenOp, types::IketRangeTokenType};
-use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::attributes::MirFP16Attr;
+use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
 use dialect_mir::ops::{
     MirAddOp, MirBitAndOp, MirBitOrOp, MirBitXorOp, MirCastOp, MirCheckedAddOp, MirCheckedMulOp,
     MirCheckedSubOp, MirCmpOp, MirConstantOp, MirConstructArrayOp, MirConstructEnumOp,
@@ -43,7 +44,7 @@ use dialect_mir::ops::{
     MirInsertFieldOp, MirLeOp, MirLoadOp, MirLtOp, MirMulOp, MirNeOp, MirNegOp, MirNotOp,
     MirPtrOffsetOp, MirRefOp, MirRemOp, MirShlOp, MirShrOp, MirSubOp, MirUndefOp,
 };
-use dialect_mir::types::MirFP16Type;
+use dialect_mir::types::{MirFP16Type, MirPointerKind};
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -62,18 +63,14 @@ use rustc_public::ty::{AdtKind, ConstantKind};
 use rustc_public_bridge::IndexedVal;
 use std::num::NonZeroUsize;
 
-/// Cast a value to a target type if address spaces differ.
+/// Normalize a pointer-like value without creating new Rust pointer semantics.
 ///
-/// When constructing structs/enums, the field type uses generic address space (0)
-/// because Rust's type system doesn't carry address space info. But the actual
-/// value may have a specific address space (e.g., addrspace:3 for shared memory).
-///
-/// This function inserts a MirCastOp to convert from the specific address space
-/// to the generic address space, following LLVM's model where generic pointers
-/// can hold any address space pointer.
-///
-/// Returns the (possibly casted) value and the last inserted operation.
-fn cast_to_generic_addrspace_if_needed(
+/// This helper is for representation adjustments such as address-space
+/// normalization and aggregate/local type reconciliation. Thin pointers must
+/// have the same pointee and fat slices the same element type. A concrete kind
+/// may be preserved or deliberately erased, but `Erased` cannot regain a
+/// concrete Rust kind and two distinct concrete kinds cannot be interconverted.
+fn cast_to_expected_pointer_type_if_needed(
     ctx: &mut Context,
     value: Value,
     expected_type: TypeHandle,
@@ -82,59 +79,149 @@ fn cast_to_generic_addrspace_if_needed(
     loc: Location,
 ) -> (Value, Option<Ptr<Operation>>) {
     let value_type = value.get_type(ctx);
-
-    // Check if both are pointer types
-    let value_ptr_info: Option<(TypeHandle, bool, u32)> = {
-        let ty_ref = value_type.deref(ctx);
-        ty_ref
-            .downcast_ref::<dialect_mir::types::MirPtrType>()
-            .map(|pt| (pt.pointee, pt.is_mutable, pt.address_space))
-    };
-
-    let expected_ptr_info: Option<(TypeHandle, bool, u32)> = {
-        let ty_ref = expected_type.deref(ctx);
-        ty_ref
-            .downcast_ref::<dialect_mir::types::MirPtrType>()
-            .map(|pt| (pt.pointee, pt.is_mutable, pt.address_space))
-    };
-
-    if let (
-        Some((val_pointee, val_mut, val_addrspace)),
-        Some((exp_pointee, exp_mut, exp_addrspace)),
-    ) = (value_ptr_info, expected_ptr_info)
-    {
-        // Both are pointers - check if address spaces differ
-        if val_addrspace != exp_addrspace && val_pointee == exp_pointee && val_mut == exp_mut {
-            // Need to insert an address space cast
-            // Create the target type (same pointer but with expected address space)
-            let target_ptr_ty =
-                dialect_mir::types::MirPtrType::get(ctx, exp_pointee, exp_mut, exp_addrspace);
-
-            let cast_op = Operation::new(
-                ctx,
-                MirCastOp::get_concrete_op_info(),
-                vec![target_ptr_ty.into()],
-                vec![value],
-                vec![],
-                0,
-            );
-            cast_op.deref_mut(ctx).set_loc(loc);
-            MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
-
-            if let Some(prev) = prev_op {
-                cast_op.insert_after(ctx, prev);
-            } else {
-                cast_op.insert_at_front(block_ptr, ctx);
-            }
-
-            let casted_value = cast_op.deref(ctx).get_result(0);
-            return (casted_value, Some(cast_op));
-        }
+    if value_type == expected_type {
+        return (value, prev_op);
     }
 
-    // No cast needed
-    (value, prev_op)
+    let compatible = {
+        let value_ref = value_type.deref(ctx);
+        let expected_ref = expected_type.deref(ctx);
+
+        match (
+            value_ref.downcast_ref::<dialect_mir::types::MirPtrType>(),
+            expected_ref.downcast_ref::<dialect_mir::types::MirPtrType>(),
+        ) {
+            (Some(value_ptr), Some(expected_ptr)) => {
+                value_ptr.pointee == expected_ptr.pointee
+                    && value_ptr.is_mutable == expected_ptr.is_mutable
+                    && generic_pointer_kind_retype_allowed(value_ptr.kind, expected_ptr.kind)
+            }
+            _ => match (
+                value_ref.downcast_ref::<dialect_mir::types::MirSliceType>(),
+                expected_ref.downcast_ref::<dialect_mir::types::MirSliceType>(),
+            ) {
+                (Some(value_slice), Some(expected_slice)) => {
+                    value_slice.element_ty == expected_slice.element_ty
+                        && value_slice.is_mutable == expected_slice.is_mutable
+                        && generic_pointer_kind_retype_allowed(
+                            value_slice.kind,
+                            expected_slice.kind,
+                        )
+                }
+                _ => false,
+            },
+        }
+    };
+
+    if !compatible {
+        return (value, prev_op);
+    }
+
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![expected_type],
+        vec![value],
+        vec![],
+        0,
+    );
+    cast_op.deref_mut(ctx).set_loc(loc);
+    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+
+    match prev_op {
+        Some(prev) => cast_op.insert_after(ctx, prev),
+        None => cast_op.insert_at_front(block_ptr, ctx),
+    }
+
+    (cast_op.deref(ctx).get_result(0), Some(cast_op))
 }
+
+/// Establish the exact pointer/reference type declared by rustc at a semantic boundary.
+///
+/// `Rvalue::Ref` and `Rvalue::AddressOf` are not representation-only
+/// normalizations: they create a new Rust pointer/reference value. The result
+/// type supplied by rustc is therefore authoritative, including legitimate
+/// transitions such as `RawMut -> UniqueRef` for `unsafe { &mut *raw }`. This
+/// helper still requires the same thin-pointee or fat-slice element shape so it
+/// cannot hide an unrelated representation mismatch.
+fn cast_to_declared_rust_pointer_type_if_needed(
+    ctx: &mut Context,
+    value: Value,
+    expected_type: TypeHandle,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+    authority: MirPointerKindAuthorityAttr,
+) -> (Value, Option<Ptr<Operation>>) {
+    let value_type = value.get_type(ctx);
+    if value_type == expected_type {
+        return (value, prev_op);
+    }
+
+    let compatible = {
+        let value_ref = value_type.deref(ctx);
+        let expected_ref = expected_type.deref(ctx);
+
+        match (
+            value_ref.downcast_ref::<dialect_mir::types::MirPtrType>(),
+            expected_ref.downcast_ref::<dialect_mir::types::MirPtrType>(),
+        ) {
+            (Some(value_ptr), Some(expected_ptr)) => value_ptr.pointee == expected_ptr.pointee,
+            _ => match (
+                value_ref.downcast_ref::<dialect_mir::types::MirSliceType>(),
+                expected_ref.downcast_ref::<dialect_mir::types::MirSliceType>(),
+            ) {
+                (Some(value_slice), Some(expected_slice)) => {
+                    value_slice.element_ty == expected_slice.element_ty
+                }
+                _ => false,
+            },
+        }
+    };
+
+    if !compatible {
+        return (value, prev_op);
+    }
+
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![expected_type],
+        vec![value],
+        vec![],
+        0,
+    );
+    cast_op.deref_mut(ctx).set_loc(loc);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    cast.set_pointer_kind_authority(ctx, authority);
+
+    match prev_op {
+        Some(prev) => cast_op.insert_after(ctx, prev),
+        None => cast_op.insert_at_front(block_ptr, ctx),
+    }
+
+    (cast_op.deref(ctx).get_result(0), Some(cast_op))
+}
+
+/// Return the physical-storage form of a thin pointer type.
+///
+/// Allocation operations create addresses, not Rust borrows/raw-pointer
+/// values, so their results stay `Erased`. The translated Rust constant type
+/// is established by a separately marked boundary cast.
+fn erase_thin_pointer_kind(ctx: &mut Context, pointer_ty: TypeHandle) -> Option<TypeHandle> {
+    let (pointee, is_mutable, address_space) = {
+        let pointer_ty = pointer_ty.deref(ctx);
+        let pointer_ty = pointer_ty.downcast_ref::<dialect_mir::types::MirPtrType>()?;
+        (
+            pointer_ty.pointee,
+            pointer_ty.is_mutable,
+            pointer_ty.address_space,
+        )
+    };
+    Some(dialect_mir::types::MirPtrType::get(ctx, pointee, is_mutable, address_space).into())
+}
+
 /// Coerce a raw data pointer so it points to `element_type` in the generic
 /// address space.
 ///
@@ -142,33 +229,34 @@ fn cast_to_generic_addrspace_if_needed(
 /// pointer, but a reinterpret cast at the call site (e.g. `p as *mut (u64, u64)`
 /// feeding a `[(u64, u64)]` slice) can leave the data operand typed to the
 /// pre-cast pointee. The fat pointer's data slot must be a generic-address-space
-/// pointer to the slice element type (the same `get_generic` slot every other
-/// data-slot construction uses), so when the pointee differs, emit a `PtrToPtr`
-/// cast to that type. This also normalizes a non-generic address space, composing
-/// with `cast_to_generic_addrspace_if_needed`, which only fires when the pointee
-/// already matched.
+/// pointer to the slice element type, so when the pointee differs, emit a
+/// `PtrToPtr` cast to that type. The data carrier retains its existing pointer
+/// kind; otherwise constructing the fat pointer could launder an Erased carrier
+/// back into a concrete slice kind.
 fn coerce_slice_data_pointee(
     ctx: &mut Context,
     value: Value,
     element_type: TypeHandle,
-    is_mutable: bool,
+    _is_mutable: bool,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> (Value, Option<Ptr<Operation>>) {
-    let pointee_matches = {
+    let (pointee_matches, origin) = {
         let value_type = value.get_type(ctx);
         let ty_ref = value_type.deref(ctx);
         match ty_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
-            Some(pt) => pt.pointee == element_type,
+            Some(pt) => (
+                pt.pointee == element_type,
+                facts::pointer_origin_of_ptr_carrier(pt),
+            ),
             None => return (value, prev_op),
         }
     };
     if pointee_matches {
         return (value, prev_op);
     }
-    let target_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, element_type, is_mutable).into();
+    let target_ptr_ty: TypeHandle = facts::mint_generic_ptr_type(ctx, element_type, origin).into();
     let cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
@@ -215,7 +303,7 @@ fn cast_struct_fields_to_expected_types(
 
     for (i, value) in field_values.into_iter().enumerate() {
         if let Some(expected_type) = field_types.get(i) {
-            let (casted_value, new_prev_op) = cast_to_generic_addrspace_if_needed(
+            let (casted_value, new_prev_op) = cast_to_expected_pointer_type_if_needed(
                 ctx,
                 value,
                 *expected_type,
@@ -270,7 +358,7 @@ fn cast_enum_fields_to_expected_types(
 
     for (i, value) in field_values.into_iter().enumerate() {
         if let Some(expected_type) = variant_field_types.get(i) {
-            let (casted_value, new_prev_op) = cast_to_generic_addrspace_if_needed(
+            let (casted_value, new_prev_op) = cast_to_expected_pointer_type_if_needed(
                 ctx,
                 value,
                 *expected_type,
@@ -603,6 +691,12 @@ pub fn translate_rvalue(
             if let mir::CastKind::PointerCoercion(mir::PointerCoercion::ReifyFnPointer(_)) = kind {
                 return translate_reify_fn_pointer(ctx, body, operand, ty, block_ptr, prev_op, loc);
             }
+            if let mir::CastKind::PointerCoercion(mir::PointerCoercion::ClosureFnPointer(_)) = kind
+            {
+                return translate_closure_fn_pointer(
+                    ctx, body, operand, ty, block_ptr, prev_op, loc,
+                );
+            }
 
             let (operand_val, prev_op_after_operand) = translate_operand(
                 ctx,
@@ -659,7 +753,17 @@ pub fn translate_rvalue(
                 mir::CastKind::Subtype => MirCastKindAttr::Subtype,
             };
             let cast_op = MirCastOp::new(op);
-            cast_op.set_attr_cast_kind(ctx, cast_kind_attr);
+            cast_op.set_attr_cast_kind(ctx, cast_kind_attr.clone());
+            if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, result_type)
+                || (cast_kind_attr == MirCastKindAttr::Transmute
+                    && !dialect_mir::types::pointer_kinds_in_type(ctx, result_type).is_empty())
+            {
+                // This operation comes directly from a rustc MIR CastKind, so
+                // any concrete result category, including one nested in an
+                // aggregate transmute, is an explicit Rust semantic boundary
+                // rather than a generic representation adjustment.
+                cast_op.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::RustCast);
+            }
 
             let result = op.deref(ctx).get_result(0);
 
@@ -756,16 +860,35 @@ pub fn translate_rvalue(
             // no extra allocation is needed. `mem2reg` folds this back into
             // SSA when the borrow doesn't escape.
             //
-            // Mutability: slots are always allocated mutable (we may store
-            // into them regardless of the Rust mutability of the local).
-            // Callers that expect a `*const T` pointer handle the coercion
-            // via `MirCastOp::PointerCoercionMutToConst`; most consumers in
-            // the dialect (FieldAddr, ArrayElementAddr, Load, Store) are
-            // mutability-agnostic at the pliron level.
-            let is_mutable = matches!(borrow_kind, mir::BorrowKind::Mut { .. });
+            // Slots are always allocated mutable because the importer writes
+            // locals through them. They are compiler storage, not `&mut T`.
+            // The normalization below retypes the physical slot address to the
+            // exact Rust reference kind without treating slot mutability as
+            // evidence of uniqueness.
+            let origin = facts::pointer_origin_of_borrow(*borrow_kind);
+            let is_mutable = origin.is_mutable();
             if place.projection.is_empty() {
                 if let Some(slot) = value_map.get_slot(place.local) {
-                    return Ok((None, slot, prev_op));
+                    // The slot is compiler storage (`Erased`) and is always
+                    // mutable. Taking a Rust borrow is the semantic boundary
+                    // where that physical address acquires the exact `&T` /
+                    // `&mut T` type recorded by rustc.
+                    let rust_result_type = rvalue.ty(body.locals()).map_err(|error| {
+                        input_error_noloc!(TranslationErr::unsupported(format!(
+                            "failed to determine reference rvalue type: {error:?}"
+                        )))
+                    })?;
+                    let expected_ptr_type = types::translate_type(ctx, &rust_result_type)?;
+                    let (result, last_inserted) = cast_to_declared_rust_pointer_type_if_needed(
+                        ctx,
+                        slot,
+                        expected_ptr_type,
+                        block_ptr,
+                        prev_op,
+                        loc.clone(),
+                        MirPointerKindAuthorityAttr::Reborrow,
+                    );
+                    return Ok((None, result, last_inserted));
                 }
                 // ZST local (no slot). Synthesise a pointer-to-ZST via
                 // MirRefOp as a fallback so callers still get a well-typed
@@ -789,7 +912,7 @@ pub fn translate_rvalue(
                             loc.clone(),
                         )?
                     };
-                let ptr_ty = dialect_mir::types::MirPtrType::get_generic(ctx, ty_ptr, is_mutable);
+                let ptr_ty = facts::mint_generic_ptr_type(ctx, ty_ptr, origin);
                 let ref_op = Operation::new(
                     ctx,
                     MirRefOp::get_concrete_op_info(),
@@ -799,7 +922,9 @@ pub fn translate_rvalue(
                     0,
                 );
                 ref_op.deref_mut(ctx).set_loc(loc);
-                MirRefOp::new(ref_op).set_mutable(ctx, is_mutable);
+                let mir_ref = MirRefOp::new(ref_op);
+                mir_ref.set_mutable(ctx, is_mutable);
+                mir_ref.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
                 match last_inserted {
                     Some(p) => ref_op.insert_after(ctx, p),
                     None => ref_op.insert_at_front(block_ptr, ctx),
@@ -832,13 +957,14 @@ pub fn translate_rvalue(
                 })?;
                 let expected_ptr_type = types::translate_type(ctx, &rust_result_type)?;
 
-                let (result_val, last_inserted) = cast_to_generic_addrspace_if_needed(
+                let (result_val, last_inserted) = cast_to_declared_rust_pointer_type_if_needed(
                     ctx,
                     result_val,
                     expected_ptr_type,
                     block_ptr,
                     last_inserted,
                     loc.clone(),
+                    MirPointerKindAuthorityAttr::Reborrow,
                 );
 
                 return Ok((None, result_val, last_inserted));
@@ -872,7 +998,7 @@ pub fn translate_rvalue(
                 translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
 
             let val_ty = val.get_type(ctx);
-            let ptr_ty = dialect_mir::types::MirPtrType::get_generic(ctx, val_ty, is_mutable);
+            let ptr_ty = facts::mint_generic_ptr_type(ctx, val_ty, origin);
 
             let ref_op = Operation::new(
                 ctx,
@@ -883,7 +1009,9 @@ pub fn translate_rvalue(
                 0,
             );
             ref_op.deref_mut(ctx).set_loc(loc);
-            MirRefOp::new(ref_op).set_mutable(ctx, is_mutable);
+            let mir_ref = MirRefOp::new(ref_op);
+            mir_ref.set_mutable(ctx, is_mutable);
+            mir_ref.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
 
             let result_val = ref_op.deref(ctx).get_result(0);
             Ok((Some(ref_op), result_val, last_inserted))
@@ -895,13 +1023,31 @@ pub fn translate_rvalue(
             // must address the ORIGINAL place, so this routes through the
             // same unified address walker as `Rvalue::Ref` (which also gives
             // raw pointers the runtime-Index / ConstantIndex handling).
-            let is_mutable = matches!(mutability, mir::RawPtrKind::Mut);
+            let origin = facts::pointer_origin_of_raw_ptr(*mutability);
+            let is_mutable = origin.is_mutable();
 
-            // Bare local: the alloca slot IS the address.
+            // Bare local: the alloca slot is the physical address, but the
+            // result must carry the exact raw-pointer kind rather than the
+            // slot's compiler-only `Erased` provenance.
             if place.projection.is_empty()
                 && let Some(slot) = value_map.get_slot(place.local)
             {
-                return Ok((None, slot, prev_op));
+                let rust_result_type = rvalue.ty(body.locals()).map_err(|error| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "failed to determine address-of rvalue type: {error:?}"
+                    )))
+                })?;
+                let expected_ptr_type = types::translate_type(ctx, &rust_result_type)?;
+                let (result, last_inserted) = cast_to_declared_rust_pointer_type_if_needed(
+                    ctx,
+                    slot,
+                    expected_ptr_type,
+                    block_ptr,
+                    prev_op,
+                    loc.clone(),
+                    MirPointerKindAuthorityAttr::RawAddress,
+                );
+                return Ok((None, result, last_inserted));
             }
 
             // Unified address path: full projection walk from the slot
@@ -926,13 +1072,14 @@ pub fn translate_rvalue(
                 })?;
                 let expected_ptr_type = types::translate_type(ctx, &rust_result_type)?;
 
-                let (result_val, last_inserted) = cast_to_generic_addrspace_if_needed(
+                let (result_val, last_inserted) = cast_to_declared_rust_pointer_type_if_needed(
                     ctx,
                     result_val,
                     expected_ptr_type,
                     block_ptr,
                     last_inserted,
                     loc.clone(),
+                    MirPointerKindAuthorityAttr::RawAddress,
                 );
 
                 return Ok((None, result_val, last_inserted));
@@ -962,7 +1109,7 @@ pub fn translate_rvalue(
                 translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
 
             let val_ty = val.get_type(ctx);
-            let ptr_ty = dialect_mir::types::MirPtrType::get_generic(ctx, val_ty, is_mutable);
+            let ptr_ty = facts::mint_generic_ptr_type(ctx, val_ty, origin);
 
             use dialect_mir::ops::MirRefOp;
             let ref_op = Operation::new(
@@ -977,6 +1124,7 @@ pub fn translate_rvalue(
 
             let mir_ref_op = MirRefOp::new(ref_op);
             mir_ref_op.set_mutable(ctx, is_mutable);
+            mir_ref_op.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::RawAddress);
 
             let result_val = ref_op.deref(ctx).get_result(0);
 
@@ -1260,7 +1408,7 @@ pub fn translate_rvalue(
                             current_prev_op,
                             loc.clone(),
                         )?;
-                        let (val, new_prev_op) = cast_to_generic_addrspace_if_needed(
+                        let (val, new_prev_op) = cast_to_expected_pointer_type_if_needed(
                             ctx,
                             val,
                             element_type,
@@ -1367,7 +1515,6 @@ pub fn translate_rvalue(
                     // `slice::index::get_offset_len_noubcheck`) and by
                     // `ptr::slice_from_raw_parts` / `ptr::from_raw_parts`.
                     // The two operands are (data_pointer, metadata).
-                    use rustc_public::mir::Mutability;
                     use rustc_public::ty::{RigidTy, TyKind};
 
                     if operands.len() != 2 {
@@ -1380,7 +1527,8 @@ pub fn translate_rvalue(
                         );
                     }
 
-                    let is_mutable = matches!(mutability, Mutability::Mut);
+                    let origin = facts::pointer_origin_of_raw_mutability(*mutability);
+                    let is_mutable = origin.is_mutable();
 
                     match pointee_ty.kind() {
                         TyKind::RigidTy(RigidTy::Slice(elem_ty)) => {
@@ -1414,20 +1562,16 @@ pub fn translate_rvalue(
                             // addrspace(3); normalize them like the struct/array
                             // arms do.
                             let expected_ptr_ty: TypeHandle =
-                                dialect_mir::types::MirPtrType::get_generic(
+                                facts::mint_generic_ptr_type(ctx, element_type, origin).into();
+                            let (data_val, current_prev_op) =
+                                cast_to_expected_pointer_type_if_needed(
                                     ctx,
-                                    element_type,
-                                    is_mutable,
-                                )
-                                .into();
-                            let (data_val, current_prev_op) = cast_to_generic_addrspace_if_needed(
-                                ctx,
-                                data_val,
-                                expected_ptr_ty,
-                                block_ptr,
-                                prev_after_len,
-                                loc.clone(),
-                            );
+                                    data_val,
+                                    expected_ptr_ty,
+                                    block_ptr,
+                                    prev_after_len,
+                                    loc.clone(),
+                                );
 
                             // Coerce the data pointer to the slice element type: a
                             // reinterpret cast feeding `from_raw_parts` can leave it
@@ -1443,7 +1587,7 @@ pub fn translate_rvalue(
                                 loc.clone(),
                             );
 
-                            let slice_ty = dialect_mir::types::MirSliceType::get(ctx, element_type);
+                            let slice_ty = facts::mint_slice_type(ctx, element_type, origin);
 
                             use dialect_mir::ops::MirConstructSliceOp;
                             let op = Operation::new(
@@ -1905,8 +2049,16 @@ pub fn translate_operand(
                 // Extract element type, size, and alignment from SharedArray<T, N, ALIGN>
                 let (elem_ty, array_size, alignment) = extract_shared_array_info(ctx, &rust_ty)?;
 
-                // Create a shared memory pointer type
-                let ptr_ty = dialect_mir::types::MirPtrType::get_shared(ctx, elem_ty, true).into();
+                // Allocation creates physical storage with Erased provenance.
+                // The Rust constant's exact reference/raw-pointer kind is
+                // established explicitly after the producer.
+                let declared_ptr_ty = types::translate_type(ctx, &rust_ty)?;
+                let storage_ptr_ty =
+                    erase_thin_pointer_kind(ctx, declared_ptr_ty).ok_or_else(|| {
+                        input_error_noloc!(TranslationErr::unsupported(
+                            "SharedArray constant did not translate to a thin pointer type"
+                        ))
+                    })?;
 
                 // Create a MirSharedAllocOp to represent the shared memory allocation
                 // This will be lowered to an LLVM global with addrspace(3)
@@ -1917,12 +2069,12 @@ pub fn translate_operand(
                 let op = Operation::new(
                     ctx,
                     MirSharedAllocOp::get_concrete_op_info(),
-                    vec![ptr_ty],
+                    vec![storage_ptr_ty],
                     vec![],
                     vec![],
                     0,
                 );
-                op.deref_mut(ctx).set_loc(loc);
+                op.deref_mut(ctx).set_loc(loc.clone());
 
                 let shared_alloc = MirSharedAllocOp::new(op);
 
@@ -1942,15 +2094,28 @@ pub fn translate_operand(
                 );
                 shared_alloc.set_attr_size(ctx, size_attr);
 
-                // Store the alloc key so lowering can deduplicate
-                let alloc_key = format!("{:?}", constant.const_);
+                // Full debug resolves an injective static key.  Off and line
+                // tables deliberately retain the historical allocation key and
+                // avoid the extra stable-MIR identity work entirely.
+                let source_identity = value_map
+                    .debug_variables()
+                    .then(|| shared_static_source_identity(constant))
+                    .flatten();
+                let alloc_key = if let Some(identity) = &source_identity {
+                    identity.key.clone()
+                } else {
+                    format!("{:?}", constant.const_)
+                };
                 shared_alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key));
 
                 // Record which Rust `static` this is. The alloc key above is
                 // opaque and lowering mints an anonymous `__shared_mem_N`
                 // symbol, so without this the generated shared-memory blocks
                 // cannot be attributed back to source.
-                if let Some(source_name) = shared_static_source_name(constant) {
+                if let Some(identity) = source_identity {
+                    shared_alloc.set_attr_source_name(ctx, StringAttr::new(identity.name));
+                    shared_alloc.set_attr_source_key(ctx, StringAttr::new(identity.key));
+                } else if let Some(source_name) = shared_static_source_name(constant) {
                     shared_alloc.set_attr_source_name(ctx, StringAttr::new(source_name));
                 }
 
@@ -1965,9 +2130,18 @@ pub fn translate_operand(
                     shared_alloc.get_operation().insert_at_front(block_ptr, ctx);
                 }
 
-                let val = shared_alloc.get_operation().deref(ctx).get_result(0);
+                let storage = shared_alloc.get_operation().deref(ctx).get_result(0);
+                let (value, last_op) = cast_to_declared_rust_pointer_type_if_needed(
+                    ctx,
+                    storage,
+                    declared_ptr_ty,
+                    block_ptr,
+                    Some(shared_alloc.get_operation()),
+                    loc.clone(),
+                    MirPointerKindAuthorityAttr::StaticAddress,
+                );
 
-                return Ok((val, Some(shared_alloc.get_operation())));
+                return Ok((value, last_op));
             }
 
             // Check if this is a pointer to Barrier (static barrier in shared memory)
@@ -1980,20 +2154,27 @@ pub fn translate_operand(
                 )
                 .into();
 
-                // Create a shared memory pointer type (addrspace 3)
-                let ptr_ty = dialect_mir::types::MirPtrType::get_shared(ctx, elem_ty, true).into();
+                // Keep the allocation itself Erased, then establish the Rust
+                // constant's declared pointer category at a visible boundary.
+                let declared_ptr_ty = types::translate_type(ctx, &rust_ty)?;
+                let storage_ptr_ty =
+                    erase_thin_pointer_kind(ctx, declared_ptr_ty).ok_or_else(|| {
+                        input_error_noloc!(TranslationErr::unsupported(
+                            "Barrier constant did not translate to a thin pointer type"
+                        ))
+                    })?;
 
                 // Create a MirSharedAllocOp for the barrier
                 use dialect_mir::ops::MirSharedAllocOp;
                 let op = Operation::new(
                     ctx,
                     MirSharedAllocOp::get_concrete_op_info(),
-                    vec![ptr_ty],
+                    vec![storage_ptr_ty],
                     vec![],
                     vec![],
                     0,
                 );
-                op.deref_mut(ctx).set_loc(loc);
+                op.deref_mut(ctx).set_loc(loc.clone());
 
                 let shared_alloc = MirSharedAllocOp::new(op);
 
@@ -2013,13 +2194,23 @@ pub fn translate_operand(
                 );
                 shared_alloc.set_attr_size(ctx, size_attr);
 
-                // Store the alloc key so lowering can deduplicate
-                let alloc_key = format!("{:?}", constant.const_);
+                let source_identity = value_map
+                    .debug_variables()
+                    .then(|| shared_static_source_identity(constant))
+                    .flatten();
+                let alloc_key = if let Some(identity) = &source_identity {
+                    identity.key.clone()
+                } else {
+                    format!("{:?}", constant.const_)
+                };
                 shared_alloc.set_attr_alloc_key(ctx, StringAttr::new(alloc_key));
 
                 // A `Barrier` static occupies shared memory too, so name it
                 // for the same attribution reason as `SharedArray` above.
-                if let Some(source_name) = shared_static_source_name(constant) {
+                if let Some(identity) = source_identity {
+                    shared_alloc.set_attr_source_name(ctx, StringAttr::new(identity.name));
+                    shared_alloc.set_attr_source_key(ctx, StringAttr::new(identity.key));
+                } else if let Some(source_name) = shared_static_source_name(constant) {
                     shared_alloc.set_attr_source_name(ctx, StringAttr::new(source_name));
                 }
 
@@ -2029,9 +2220,18 @@ pub fn translate_operand(
                     shared_alloc.get_operation().insert_at_front(block_ptr, ctx);
                 }
 
-                let val = shared_alloc.get_operation().deref(ctx).get_result(0);
+                let storage = shared_alloc.get_operation().deref(ctx).get_result(0);
+                let (value, last_op) = cast_to_declared_rust_pointer_type_if_needed(
+                    ctx,
+                    storage,
+                    declared_ptr_ty,
+                    block_ptr,
+                    Some(shared_alloc.get_operation()),
+                    loc.clone(),
+                    MirPointerKindAuthorityAttr::StaticAddress,
+                );
 
-                return Ok((val, Some(shared_alloc.get_operation())));
+                return Ok((value, last_op));
             }
 
             // Ordinary Rust `static` / `static mut` values in device code live in
@@ -2039,61 +2239,51 @@ pub fn translate_operand(
             // statics have already been intercepted above and remain addrspace 3.
             // Statics tagged `#[constant]` (detected by the mangled symbol
             // prefix) instead lower into constant memory (addrspace 4).
-            if let Some((pointee_ty, is_mutable)) = get_static_pointer_info(&rust_ty)
+            if let Some((pointee_ty, origin)) = get_static_pointer_info(&rust_ty)
                 && let Some(static_target) = static_target_from_constant(constant, loc.clone())?
             {
+                let is_mutable = origin.is_mutable();
                 let static_ty = static_target.static_def.ty();
                 let pointee_mir_ty = types::translate_type(ctx, &pointee_ty)?;
                 let static_mir_ty = types::translate_type(ctx, &static_ty)?;
 
-                // A zero addend must still refer to the complete static object.
-                // Reinterpreting the base address as an unrelated pointee remains unsupported.
-                // The one supported exception is array→slice unsize (`&[T; N]` → `&[T]` /
-                // `*const [T]`), which needs a fat pointer carrying the array length.
-                if static_target.byte_offset == 0 && pointee_mir_ty != static_mir_ty {
-                    if let Some((elem_ty, array_len)) =
+                // A zero addend may name either the whole static or a subobject
+                // at byte zero (for example `&ARRAY[0]` or `&STRUCT.first`).
+                // Array→slice unsize remains special because it needs a fat
+                // pointer carrying the evaluated metadata word. Other sized
+                // pointees continue through byte-address normalization below.
+                if static_target.byte_offset == 0
+                    && pointee_mir_ty != static_mir_ty
+                    && let Some((elem_ty, array_len)) =
                         array_to_slice_unsize_info(&static_ty, &pointee_ty, loc.clone())?
-                    {
-                        // The emitted length is the constant's own metadata
-                        // word, not the array's N: a zero-addend prefix
-                        // subslice (`split_at(k).0` over the static) stores
-                        // k there. The array length only bounds it.
-                        let len = slice_len_from_constant(constant, loc.clone())?;
-                        if len > array_len {
-                            return input_err!(
-                                loc,
-                                TranslationErr::unsupported(format!(
-                                    "constant slice over device static {} stores length {}, \
-                                     which exceeds the static array's length {}",
-                                    static_target.static_def.name(),
-                                    len,
-                                    array_len
-                                ))
-                            );
-                        }
-                        return translate_static_array_as_slice(
-                            ctx,
-                            &static_target.static_def,
-                            elem_ty,
-                            len,
-                            is_mutable,
-                            0,
-                            block_ptr,
-                            prev_op,
-                            loc.clone(),
+                {
+                    // The emitted length is the constant's own metadata
+                    // word, not the array's N: a zero-addend prefix
+                    // subslice (`split_at(k).0` over the static) stores
+                    // k there. The array length only bounds it.
+                    let len = slice_len_from_constant(constant, loc.clone())?;
+                    if len > array_len {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "constant slice over device static {} stores length {}, \
+                                 which exceeds the static array's length {}",
+                                static_target.static_def.name(),
+                                len,
+                                array_len
+                            ))
                         );
                     }
-                    return input_err!(
-                        loc,
-                        TranslationErr::unsupported(format!(
-                            "constant pointer to device static {} has pointee type {:?}, \
-                             but the full static has type {:?}; zero-addend pointee \
-                             reinterpretations and unsized coercions other than \
-                             same-element array\u{2192}slice unsize are not supported",
-                            static_target.static_def.name(),
-                            pointee_ty,
-                            static_ty
-                        ))
+                    return translate_static_array_as_slice(
+                        ctx,
+                        &static_target.static_def,
+                        elem_ty,
+                        len,
+                        origin,
+                        0,
+                        block_ptr,
+                        prev_op,
+                        loc.clone(),
                     );
                 }
 
@@ -2125,7 +2315,7 @@ pub fn translate_operand(
                         &static_target.static_def,
                         elem_ty,
                         len,
-                        is_mutable,
+                        origin,
                         static_target.byte_offset,
                         block_ptr,
                         prev_op,
@@ -2133,39 +2323,36 @@ pub fn translate_operand(
                     );
                 }
 
-                // Interior pointers are supported only for sized pointees. A slice, str,
-                // trait object, or another DST requires metadata and cannot be represented
-                // by the thin pointer emitted below. Note that `layout()` succeeds for
-                // DSTs such as `[f32]` (with an unsized shape), so a successful layout
-                // query must still be checked for sizedness explicitly.
-                if static_target.byte_offset != 0 {
-                    let pointee_layout = pointee_ty.layout().map_err(|e| {
-                        input_error!(
-                            loc.clone(),
-                            TranslationErr::unsupported(format!(
-                                "constant pointer into device static {} has byte offset {}, \
-                                 but pointee type {:?} does not have a sized layout: {:?}",
-                                static_target.static_def.name(),
-                                static_target.byte_offset,
-                                pointee_ty,
-                                e
-                            ))
-                        )
-                    })?;
-                    if !pointee_layout.shape().is_sized() {
-                        return input_err!(
-                            loc,
-                            TranslationErr::unsupported(format!(
-                                "constant pointer into device static {} has byte offset {}, \
-                                 but pointee type {:?} is unsized; cuda-oxide does not yet \
-                                 preserve the fat-pointer metadata an interior slice or DST \
-                                 pointer needs",
-                                static_target.static_def.name(),
-                                static_target.byte_offset,
-                                pointee_ty
-                            ))
-                        );
-                    }
+                // Every remaining path emits a thin pointer, including a
+                // zero-addend pointer to a first field/element. A slice, str,
+                // trait object, or another DST requires metadata and cannot be
+                // represented here. Note that `layout()` succeeds for DSTs
+                // such as `[f32]`, so check the returned shape explicitly.
+                let pointee_layout = pointee_ty.layout().map_err(|e| {
+                    input_error!(
+                        loc.clone(),
+                        TranslationErr::unsupported(format!(
+                            "constant pointer into device static {} has byte offset {}, \
+                             but pointee type {:?} does not have a sized layout: {:?}",
+                            static_target.static_def.name(),
+                            static_target.byte_offset,
+                            pointee_ty,
+                            e
+                        ))
+                    )
+                })?;
+                if !pointee_layout.shape().is_sized() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "constant pointer into device static {} has byte offset {}, \
+                             but pointee type {:?} is unsized; cuda-oxide does not yet \
+                             preserve the fat-pointer metadata this slice or DST pointer needs",
+                            static_target.static_def.name(),
+                            static_target.byte_offset,
+                            pointee_ty
+                        ))
+                    );
                 }
 
                 // The materialized constant pointer must carry the exact
@@ -2292,7 +2479,9 @@ pub fn translate_operand(
                 );
             }
 
-            // Debug parsing remains temporarily for non-floating constants.
+            // Debug repr kept for diagnostics only (CUDA_OXIDE_DEBUG_CONST and
+            // the unsupported-constant error at the bottom); constant VALUES
+            // are read through typed rustc_public APIs, never parsed from it.
             let const_str = format!("{:?}", constant.const_);
 
             // Handle pointer-to-array constants (byte strings, typed arrays like [f64; 3], etc.)
@@ -2459,6 +2648,10 @@ pub fn translate_operand(
 
                     mir_ref
                         .set_attr_mutable(ctx, dialect_mir::attributes::MutabilityAttr(is_mutable));
+                    mir_ref.set_pointer_kind_authority(
+                        ctx,
+                        MirPointerKindAuthorityAttr::StaticAddress,
+                    );
 
                     if let Some(prev) = last_op {
                         mir_ref.get_operation().insert_after(ctx, prev);
@@ -2618,6 +2811,10 @@ pub fn translate_operand(
                     let mir_ref = MirRefOp::new(ref_op);
                     mir_ref
                         .set_attr_mutable(ctx, dialect_mir::attributes::MutabilityAttr(is_mutable));
+                    mir_ref.set_pointer_kind_authority(
+                        ctx,
+                        MirPointerKindAuthorityAttr::StaticAddress,
+                    );
 
                     if let Some(prev) = last_op {
                         mir_ref.get_operation().insert_after(ctx, prev);
@@ -2638,35 +2835,37 @@ pub fn translate_operand(
                 // MirCastOp
                 use dialect_mir::ops::MirCastOp;
 
-                // Parse the pointer value from the constant bytes (typically all zeros for null)
-                let ptr_val = if const_str.contains("bytes: [") {
-                    if let Some(bytes_part) = const_str.split("bytes: [").nth(1) {
-                        let bytes_end = bytes_part.split(']').next().unwrap_or("");
-                        let mut bytes = Vec::new();
-                        for byte_str in bytes_end.split(',') {
-                            if bytes.len() >= 8 {
-                                break;
-                            }
-                            let b_str = byte_str.trim();
-                            if let Some(num_str) = b_str
-                                .strip_prefix("Some(")
-                                .and_then(|s| s.strip_suffix(')'))
-                                && let Ok(byte) = num_str.parse::<u8>()
-                            {
-                                bytes.push(byte);
-                            }
-                        }
-                        let mut res: u64 = 0;
-                        for (i, byte) in bytes.iter().enumerate() {
-                            res |= (*byte as u64) << (i * 8);
-                        }
-                        res
-                    } else {
-                        0
-                    }
-                } else {
-                    0 // Default to null pointer
+                // No provenance, so the data bytes ARE the address. Read the
+                // first pointer-width bytes as a target-endian uint:
+                //
+                //   bytes: [00 00 00 00 00 00 00 00] -> 0x00 (null)
+                //   bytes: [2a 00 00 00 00 00 00 00] -> 0x2a (without_provenance(42))
+                //
+                // A constant with no backing allocation, too few bytes, or an
+                // uninit byte in the range has no readable address; post-mono
+                // MIR should never produce that here, so fail loudly instead
+                // of defaulting to null.
+                let Some(alloc) = backing_alloc else {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "raw pointer constant has no backing allocation to read an \
+                             address from (constant kind: {:?})",
+                            constant.const_.kind()
+                        ))
+                    );
                 };
+                debug_assert!(
+                    alloc.provenance.ptrs.is_empty(),
+                    "provenance-carrying pointer constants must return earlier"
+                );
+                let ptr_width = rustc_public::target::MachineInfo::target_pointer_width().bytes();
+                let ptr_val = alloc.read_partial_uint(0..ptr_width).map_err(|e| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "raw pointer constant needs {ptr_width} initialized address \
+                         bytes, but reading them failed: {e:?}"
+                    )))
+                })? as u64;
 
                 // Create integer constant (i64) for the pointer value
                 let i64_ty = pliron::builtin::types::IntegerType::get(
@@ -2709,8 +2908,14 @@ pub fn translate_operand(
                     0,
                 );
                 cast_op.deref_mut(ctx).set_loc(loc);
-                MirCastOp::new(cast_op)
-                    .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+                let cast = MirCastOp::new(cast_op);
+                cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+                if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, const_ty_ptr) {
+                    cast.set_pointer_kind_authority(
+                        ctx,
+                        MirPointerKindAuthorityAttr::StaticAddress,
+                    );
+                }
 
                 cast_op.insert_after(ctx, const_op.get_operation());
 
@@ -2728,21 +2933,64 @@ pub fn translate_operand(
                 };
 
                 let byte_size = (width_val as usize).div_ceil(8);
-                let int_val = constant_bytes(constant, "integer", loc.clone())
-                    .ok()
-                    .and_then(|bytes| {
-                        (bytes.len() >= byte_size)
-                            .then(|| read_uint_from_bytes(&bytes[..byte_size]))
-                    })
-                    .unwrap_or_else(|| {
-                        let val_str_base = const_str.split(':').next().unwrap_or("0").trim();
-                        let val_str = val_str_base.split('_').next().unwrap_or("0").trim();
-                        let val_clean: String = val_str
-                            .chars()
-                            .filter(|c| c.is_ascii_digit() || *c == '-')
-                            .collect();
-                        val_clean.parse::<i128>().unwrap_or(0) as u128
-                    });
+
+                // Walk to the backing allocation directly instead of going
+                // through `constant_bytes`: that helper zero-fills uninit
+                // bytes, and an integer's value bytes must all be present.
+                //
+                //   bytes: [ff 7f] -> 0x7fff  (fine)
+                //   bytes: [-- 7f] -> error   (uninit byte, not 0x7f00)
+                //
+                // No fallback: a constant we cannot read here is a compiler
+                // bug, never a zero.
+                let alloc = match constant.const_.kind() {
+                    ConstantKind::Allocated(alloc) => alloc,
+                    ConstantKind::Ty(ty_const) => match ty_const.kind() {
+                        rustc_public::ty::TyConstKind::Value(_, alloc) => alloc,
+                        other => {
+                            return input_err!(
+                                loc,
+                                TranslationErr::unsupported(format!(
+                                    "integer constant is not an evaluated value \
+                                     (TyConstKind::{other:?}), so its bytes cannot be read"
+                                ))
+                            );
+                        }
+                    },
+                    other => {
+                        return input_err!(
+                            loc,
+                            TranslationErr::unsupported(format!(
+                                "integer constant has no byte-backed allocation \
+                                 (constant kind: {other:?})"
+                            ))
+                        );
+                    }
+                };
+                if !alloc.provenance.ptrs.is_empty() {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(
+                            "integer constant carries pointer provenance; its bytes are \
+                             a relocation placeholder, not a number",
+                        )
+                    );
+                }
+                if alloc.bytes.len() < byte_size {
+                    return input_err!(
+                        loc,
+                        TranslationErr::unsupported(format!(
+                            "integer constant has {} data bytes, expected at least \
+                             {byte_size} for i{width_val}",
+                            alloc.bytes.len()
+                        ))
+                    );
+                }
+                let int_val = alloc.read_partial_uint(0..byte_size).map_err(|e| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "integer constant has uninitialized bytes in its value range: {e:?}"
+                    )))
+                })?;
 
                 let width = NonZeroUsize::new(width_val as usize).unwrap();
                 let apint = APInt::from_u128(int_val, width);
@@ -3449,19 +3697,15 @@ fn translate_place_value_fallback(
                             .element_type()
                     };
 
-                    // Get address space from array pointer
-                    let address_space = {
-                        let arr_ptr_ty_ref = arr_ptr_ty.deref(ctx);
-                        arr_ptr_ty_ref
-                            .downcast_ref::<dialect_mir::types::MirPtrType>()
-                            .expect("Should be MirPtrType")
-                            .address_space
-                    };
-
-                    // Create element pointer type
-                    let elem_ptr_ty =
-                        dialect_mir::types::MirPtrType::get(ctx, element_ty, false, address_space)
-                            .into();
+                    // Projection keeps the slot address's machine mutability,
+                    // address space, and pointer kind (or explicitly erases
+                    // only the kind). A read does not require manufacturing
+                    // an immutable address type.
+                    let elem_ptr_ty = projected_pointer_type(
+                        ctx, arr_ptr_ty, element_ty,
+                        /* legacy requested mutability, ignored */ false,
+                    )
+                    .expect("array slot must be a MirPtrType");
 
                     // Create MirArrayElementAddrOp to get element pointer
                     use dialect_mir::ops::MirArrayElementAddrOp;
@@ -3597,7 +3841,7 @@ fn translate_place_value_fallback(
                     // Slot-backed path: GEP + load from the slot.
                     let mut current_prev = prev_op;
 
-                    let (element_ty, address_space) = {
+                    let (element_ty, arr_ptr_ty) = {
                         let arr_ptr_ty = arr_ptr.get_type(ctx);
                         let arr_ptr_ty_ref = arr_ptr_ty.deref(ctx);
                         let mir_ptr_ty = arr_ptr_ty_ref
@@ -3620,7 +3864,7 @@ fn translate_place_value_fallback(
                                 ))
                             })?
                             .element_type();
-                        (elem_ty, mir_ptr_ty.address_space)
+                        (elem_ty, arr_ptr_ty)
                     };
 
                     use dialect_mir::ops::MirConstantOp;
@@ -3648,9 +3892,11 @@ fn translate_place_value_fallback(
                     current_prev = Some(const_op_ptr);
                     let index_value = const_op_ptr.deref(ctx).get_result(0);
 
-                    let elem_ptr_ty =
-                        dialect_mir::types::MirPtrType::get(ctx, element_ty, false, address_space)
-                            .into();
+                    let elem_ptr_ty = projected_pointer_type(
+                        ctx, arr_ptr_ty, element_ty,
+                        /* legacy requested mutability, ignored */ false,
+                    )
+                    .expect("array slot must be a MirPtrType");
 
                     use dialect_mir::ops::MirArrayElementAddrOp;
                     let addr_op = Operation::new(
@@ -3797,7 +4043,15 @@ fn apply_deref_projection(
             // Slices are unsized — we can't load `[T]` into an SSA value.
             // Extract the data pointer (field 0 of the fat pointer {ptr, len}).
             // Subsequent Index/ConstantIndex projections will do ptr arithmetic + load.
-            let ptr_ty = dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, false).into();
+            let origin = ptr_value
+                .get_type(ctx)
+                .deref(ctx)
+                .downcast_ref::<dialect_mir::types::MirSliceType>()
+                .map(facts::pointer_origin_of_slice_carrier);
+            let ptr_ty: TypeHandle = match origin {
+                Some(origin) => facts::mint_generic_ptr_type(ctx, element_ty, origin).into(),
+                None => dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, false).into(),
+            };
 
             let extract_op = Operation::new(
                 ctx,
@@ -3842,25 +4096,27 @@ fn apply_field_addr_and_load(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    use dialect_mir::ops::MirFieldAddrOp;
-
     let field_type = types::translate_type(ctx, field_ty)?;
-    let field_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, field_type, false).into();
+    let field_ptr_ty = projected_pointer_type(
+        ctx,
+        aggregate_ptr.get_type(ctx),
+        field_type,
+        /* legacy requested mutability, ignored */ false,
+    )
+    .ok_or_else(|| {
+        input_error!(
+            loc.clone(),
+            TranslationErr::unsupported("field-address base is not a MIR pointer".to_string())
+        )
+    })?;
 
-    let addr_op = Operation::new(
+    let addr_op = dialect_mir::ops::MirFieldAddrOp::build(
         ctx,
-        MirFieldAddrOp::get_concrete_op_info(),
-        vec![field_ptr_ty],
-        vec![aggregate_ptr],
-        vec![],
-        0,
-    );
+        aggregate_ptr,
+        field_ptr_ty,
+        field_idx as u32,
+    )?;
     addr_op.deref_mut(ctx).set_loc(loc.clone());
-    MirFieldAddrOp::new(addr_op).set_attr_field_index(
-        ctx,
-        dialect_mir::attributes::FieldIndexAttr(field_idx as u32),
-    );
     match prev_op {
         Some(p) => addr_op.insert_after(ctx, p),
         None => addr_op.insert_at_front(block_ptr, ctx),
@@ -3901,7 +4157,7 @@ fn apply_field_projection(
         vec![],
         0,
     );
-    op.deref_mut(ctx).set_loc(loc);
+    op.deref_mut(ctx).set_loc(loc.clone());
 
     let extract_op = MirExtractFieldOp::new(op);
     extract_op.set_attr_index(
@@ -4280,7 +4536,7 @@ fn emit_array_subslice_address(
 ) -> TranslationResult<(Value, Ptr<Operation>)> {
     use dialect_mir::ops::MirArrayElementAddrOp;
 
-    let (element_ty, array_len, addr_space) = {
+    let (element_ty, array_len) = {
         let ptr_ty = array_ptr.get_type(ctx);
         let ptr_ty = ptr_ty.deref(ctx);
         let Some(ptr_ty) = ptr_ty.downcast_ref::<dialect_mir::types::MirPtrType>() else {
@@ -4298,11 +4554,7 @@ fn emit_array_subslice_address(
                 )
             );
         };
-        (
-            array_ty.element_type(),
-            array_ty.size(),
-            ptr_ty.address_space,
-        )
+        (array_ty.element_type(), array_ty.size())
     };
 
     let Some(projected_len) = to.checked_sub(from) else {
@@ -4323,8 +4575,13 @@ fn emit_array_subslice_address(
     }
 
     let (from_value, from_op) = emit_usize_constant(ctx, from, block_ptr, prev_op, loc.clone());
-    let elem_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get(ctx, element_ty, is_mutable, addr_space).into();
+    let elem_ptr_ty = projected_pointer_type(
+        ctx,
+        array_ptr.get_type(ctx),
+        element_ty,
+        /* legacy requested mutability, ignored */ is_mutable,
+    )
+    .expect("array subslice base must be a MirPtrType");
     let addr_op = Operation::new(
         ctx,
         MirArrayElementAddrOp::get_concrete_op_info(),
@@ -4339,8 +4596,13 @@ fn emit_array_subslice_address(
 
     let projected_array_ty: TypeHandle =
         dialect_mir::types::MirArrayType::get(ctx, element_ty, projected_len).into();
-    let projected_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get(ctx, projected_array_ty, is_mutable, addr_space).into();
+    let projected_ptr_ty = projected_pointer_type(
+        ctx,
+        elem_ptr.get_type(ctx),
+        projected_array_ty,
+        /* legacy requested mutability, ignored */ is_mutable,
+    )
+    .expect("array subslice element address must be a MirPtrType");
     let cast_op = Operation::new(
         ctx,
         MirCastOp::get_concrete_op_info(),
@@ -4373,6 +4635,17 @@ fn emit_slice_subslice_value(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Ptr<Operation>)> {
+    // Subslice is a projection of an existing fat pointer, not a new borrow.
+    // Preserve the source pointer category; callers that explicitly form a
+    // reborrow/raw address normalize the terminal result to their new Rust
+    // type afterwards. A non-slice carrier keeps the caller's mutability with
+    // Erased provenance.
+    let origin = slice_value
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirSliceType>()
+        .map(facts::pointer_origin_of_slice_carrier);
+
     use dialect_mir::ops::MirConstructSliceOp;
 
     let Some(trim) = from.checked_add(to) else {
@@ -4382,8 +4655,10 @@ fn emit_slice_subslice_value(
         );
     };
 
-    let data_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, is_mutable).into();
+    let data_ptr_ty: TypeHandle = match origin {
+        Some(origin) => facts::mint_generic_ptr_type(ctx, element_ty, origin).into(),
+        None => dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, is_mutable).into(),
+    };
     let extract_ptr = Operation::new(
         ctx,
         MirExtractFieldOp::get_concrete_op_info(),
@@ -4444,7 +4719,10 @@ fn emit_slice_subslice_value(
     sub_op.insert_after(ctx, trim_op);
     let new_len = sub_op.deref(ctx).get_result(0);
 
-    let slice_ty = dialect_mir::types::MirSliceType::get(ctx, element_ty);
+    let slice_ty = match origin {
+        Some(origin) => facts::mint_slice_type(ctx, element_ty, origin),
+        None => dialect_mir::types::MirSliceType::get_with_mutability(ctx, element_ty, is_mutable),
+    };
     let construct = Operation::new(
         ctx,
         MirConstructSliceOp::get_concrete_op_info(),
@@ -4597,7 +4875,7 @@ fn translate_place_addr_from_slot(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<Option<(Value, Option<Ptr<Operation>>)>> {
-    use dialect_mir::ops::{MirConstantOp, MirFieldAddrOp};
+    use dialect_mir::ops::MirConstantOp;
 
     let mut current = slot;
     let mut current_prev_op = prev_op;
@@ -4761,11 +5039,11 @@ fn translate_place_addr_from_slot(
                                 | mir::ProjectionElem::ConstantIndex {
                                     from_end: false, ..
                                 } => {
-                                    let data_ptr_ty: TypeHandle =
-                                        dialect_mir::types::MirPtrType::get_generic(
-                                            ctx, elem_ty, is_mutable,
-                                        )
-                                        .into();
+                                    let Some(data_ptr_ty) =
+                                        erased_slice_data_pointer_type(ctx, subslice, elem_ty)
+                                    else {
+                                        return Ok(None);
+                                    };
                                     let extract_ptr = Operation::new(
                                         ctx,
                                         MirExtractFieldOp::get_concrete_op_info(),
@@ -4794,9 +5072,11 @@ fn translate_place_addr_from_slot(
                         // Its pointee is the slice's element type: the
                         // struct itself for a fat struct reference, or the
                         // element for an ordinary `&[T]` / `DisjointSlice`.
-                        let data_ptr_ty: TypeHandle =
-                            dialect_mir::types::MirPtrType::get_generic(ctx, elem_ty, is_mutable)
-                                .into();
+                        let Some(data_ptr_ty) =
+                            erased_slice_data_pointer_type(ctx, fat_val, elem_ty)
+                        else {
+                            return Ok(None);
+                        };
                         let extract_ptr = Operation::new(
                             ctx,
                             MirExtractFieldOp::get_concrete_op_info(),
@@ -4839,26 +5119,20 @@ fn translate_place_addr_from_slot(
                             // type (see `translate_type`'s ADT arm), so the
                             // field-addr result is a pointer to the element
                             // and the dialect verifier agrees.
-                            let tail_ptr_ty: TypeHandle =
-                                dialect_mir::types::MirPtrType::get_generic(
-                                    ctx,
-                                    tail_elem_ty,
-                                    is_mutable,
-                                )
-                                .into();
-                            let tail_addr = Operation::new(
+                            let tail_ptr_ty = projected_pointer_type(
                                 ctx,
-                                MirFieldAddrOp::get_concrete_op_info(),
-                                vec![tail_ptr_ty],
-                                vec![data_ptr],
-                                vec![],
-                                0,
-                            );
+                                data_ptr.get_type(ctx),
+                                tail_elem_ty,
+                                /* legacy requested mutability, ignored */ is_mutable,
+                            )
+                            .expect("fat-pointer data extraction must yield a MirPtrType");
+                            let tail_addr = dialect_mir::ops::MirFieldAddrOp::build(
+                                ctx,
+                                data_ptr,
+                                tail_ptr_ty,
+                                *field_idx as u32,
+                            )?;
                             tail_addr.deref_mut(ctx).set_loc(loc.clone());
-                            MirFieldAddrOp::new(tail_addr).set_attr_field_index(
-                                ctx,
-                                dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                            );
                             tail_addr.insert_after(ctx, extract_ptr);
                             let tail_ptr = tail_addr.deref(ctx).get_result(0);
 
@@ -4871,7 +5145,20 @@ fn translate_place_addr_from_slot(
                                 loc.clone(),
                             );
 
-                            let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
+                            // Erased kind on purpose: this fat value is a projection-internal
+                            // reconstruction of the DST tail. A Rust kind is established only
+                            // when the value crosses an `Rvalue::Ref`/`AddressOf` boundary,
+                            // which retypes it to the declared kind.
+                            let tail_is_mutable = tail_ptr_ty
+                                .deref(ctx)
+                                .downcast_ref::<dialect_mir::types::MirPtrType>()
+                                .expect("slice-tail projection must produce a MirPtrType")
+                                .is_mutable;
+                            let slice_ty = dialect_mir::types::MirSliceType::get_with_mutability(
+                                ctx,
+                                tail_elem_ty,
+                                tail_is_mutable,
+                            );
                             use dialect_mir::ops::MirConstructSliceOp;
                             let construct = Operation::new(
                                 ctx,
@@ -4894,13 +5181,11 @@ fn translate_place_addr_from_slot(
                             // to its data pointer, then let the existing
                             // Index/ConstantIndex arms perform the element
                             // offset and return the real address.
-                            let indexed_data_ptr_ty: TypeHandle =
-                                dialect_mir::types::MirPtrType::get_generic(
-                                    ctx,
-                                    tail_elem_ty,
-                                    is_mutable,
-                                )
-                                .into();
+                            let Some(indexed_data_ptr_ty) =
+                                erased_slice_data_pointer_type(ctx, tail_slice, tail_elem_ty)
+                            else {
+                                return Ok(None);
+                            };
                             let indexed_extract = Operation::new(
                                 ctx,
                                 MirExtractFieldOp::get_concrete_op_info(),
@@ -5049,26 +5334,33 @@ fn translate_place_addr_from_slot(
                         // The physical struct stores an unsized slice tail as
                         // its element type, so the field address must be `*T`,
                         // not `*[T]`.
-                        let tail_addr = Operation::new(
+                        let tail_addr = dialect_mir::ops::MirFieldAddrOp::build(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![tail_ptr_ty],
-                            vec![current],
-                            vec![],
-                            0,
-                        );
+                            current,
+                            tail_ptr_ty,
+                            *field_idx as u32,
+                        )?;
                         tail_addr.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(tail_addr).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         match current_prev_op {
                             Some(previous) => tail_addr.insert_after(ctx, previous),
                             None => tail_addr.insert_at_front(block_ptr, ctx),
                         }
                         let tail_ptr = tail_addr.deref(ctx).get_result(0);
 
-                        let slice_ty = dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
+                        // Erased kind on purpose: this fat value is a projection-internal
+                        // reconstruction of the DST tail. A Rust kind is established only
+                        // when the value crosses an `Rvalue::Ref`/`AddressOf` boundary,
+                        // which retypes it to the declared kind.
+                        let tail_is_mutable = tail_ptr_ty
+                            .deref(ctx)
+                            .downcast_ref::<dialect_mir::types::MirPtrType>()
+                            .expect("slice-tail projection must produce a MirPtrType")
+                            .is_mutable;
+                        let slice_ty = dialect_mir::types::MirSliceType::get_with_mutability(
+                            ctx,
+                            tail_elem_ty,
+                            tail_is_mutable,
+                        );
                         use dialect_mir::ops::MirConstructSliceOp;
                         let construct = Operation::new(
                             ctx,
@@ -5170,20 +5462,13 @@ fn translate_place_addr_from_slot(
                     return Ok(None);
                 };
 
-                let op = Operation::new(
+                let op = dialect_mir::ops::MirFieldAddrOp::build(
                     ctx,
-                    MirFieldAddrOp::get_concrete_op_info(),
-                    vec![result_ptr_ty],
-                    vec![current],
-                    vec![],
-                    0,
-                );
+                    current,
+                    result_ptr_ty,
+                    flat_field_index,
+                )?;
                 op.deref_mut(ctx).set_loc(loc.clone());
-
-                MirFieldAddrOp::new(op).set_attr_field_index(
-                    ctx,
-                    dialect_mir::attributes::FieldIndexAttr(flat_field_index),
-                );
 
                 match current_prev_op {
                     Some(previous) => op.insert_after(ctx, previous),
@@ -5381,13 +5666,17 @@ fn indexed_element_ptr_type(
     ctx: &mut Context,
     current_ptr_ty: TypeHandle,
     pointee_kind: PointeeKind,
-    addr_space: u32,
-    is_mutable: bool,
+    _addr_space: u32,
+    _is_mutable: bool,
 ) -> TypeHandle {
     match pointee_kind {
-        PointeeKind::Array(element_ty) => {
-            dialect_mir::types::MirPtrType::get(ctx, element_ty, is_mutable, addr_space).into()
-        }
+        PointeeKind::Array(element_ty) => projected_pointer_type(
+            ctx,
+            current_ptr_ty,
+            element_ty,
+            /* legacy requested mutability, ignored */ false,
+        )
+        .expect("indexed array base must be a MirPtrType"),
         PointeeKind::Direct => current_ptr_ty,
     }
 }
@@ -5404,7 +5693,7 @@ fn emit_indexed_element_addr(
     current: Value,
     index_val: Value,
     pointee_kind: PointeeKind,
-    addr_space: u32,
+    _addr_space: u32,
     is_mutable: bool,
     block_ptr: Ptr<BasicBlock>,
     current_prev_op: Option<Ptr<Operation>>,
@@ -5415,7 +5704,8 @@ fn emit_indexed_element_addr(
     let addr_op = match pointee_kind {
         PointeeKind::Array(element_ty) => {
             let elem_ptr_ty =
-                dialect_mir::types::MirPtrType::get(ctx, element_ty, is_mutable, addr_space).into();
+                projected_pointer_type(ctx, current.get_type(ctx), element_ty, is_mutable)
+                    .expect("indexed array base must be a MirPtrType");
             Operation::new(
                 ctx,
                 MirArrayElementAddrOp::get_concrete_op_info(),
@@ -5488,16 +5778,18 @@ fn projected_pointer_type(
     ctx: &mut Context,
     base_ptr_ty: TypeHandle,
     pointee: TypeHandle,
-    is_mutable: bool,
+    _is_mutable: bool,
 ) -> Option<TypeHandle> {
-    let address_space = {
+    let (origin, address_space) = {
         let base_ptr_ty = base_ptr_ty.deref(ctx);
-        base_ptr_ty
-            .downcast_ref::<dialect_mir::types::MirPtrType>()?
-            .address_space
+        let base_ptr_ty = base_ptr_ty.downcast_ref::<dialect_mir::types::MirPtrType>()?;
+        (
+            facts::pointer_origin_of_ptr_carrier(base_ptr_ty),
+            base_ptr_ty.address_space,
+        )
     };
 
-    Some(dialect_mir::types::MirPtrType::get(ctx, pointee, is_mutable, address_space).into())
+    Some(facts::mint_ptr_type(ctx, pointee, address_space, origin).into())
 }
 
 /// Build a `DisjointSlice` value from the fields of its MIR aggregate.
@@ -5555,8 +5847,9 @@ fn construct_disjoint_slice_aggregate(
     // memory carries addrspace(3) and would not match the element pointer the
     // verifier expects.
     let expected_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, element_type, true).into();
-    let (data_val, current_prev_op) = cast_to_generic_addrspace_if_needed(
+        facts::mint_generic_ptr_type(ctx, element_type, facts::abi_disjoint_slice_data_ptr())
+            .into();
+    let (data_val, current_prev_op) = cast_to_expected_pointer_type_if_needed(
         ctx,
         runtime_fields[0],
         expected_ptr_ty,
@@ -5665,6 +5958,40 @@ fn slice_like_element_type(ctx: &Context, ty: TypeHandle) -> Option<TypeHandle> 
         })
 }
 
+/// Return the projection-internal data-pointer type for a fat slice value.
+///
+/// Ordinary slices deliberately erase their Rust pointer kind while retaining
+/// the carrier's exact machine mutability. `DisjointSlice` instead has a fixed
+/// `RawMut` field contract. In both cases extraction is representation-only:
+/// it cannot invent writable evidence or a stronger Rust category.
+fn erased_slice_data_pointer_type(
+    ctx: &mut Context,
+    slice_value: Value,
+    element_ty: TypeHandle,
+) -> Option<TypeHandle> {
+    let slice_ty = slice_value.get_type(ctx);
+    let ordinary_mutability = slice_ty
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirSliceType>()
+        .map(|slice| slice.is_mutable);
+    if let Some(is_mutable) = ordinary_mutability {
+        return Some(
+            dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, is_mutable).into(),
+        );
+    }
+    if slice_ty
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirDisjointSliceType>()
+        .is_some()
+    {
+        return Some(
+            facts::mint_generic_ptr_type(ctx, element_ty, facts::abi_disjoint_slice_data_ptr())
+                .into(),
+        );
+    }
+    None
+}
+
 fn rust_ty_is_slice(ty: &rustc_public::ty::Ty) -> bool {
     matches!(
         ty.kind(),
@@ -5690,8 +6017,9 @@ fn normalize_slice_value_to_data_ptr(
         return (value, prev_op);
     };
 
-    let data_ptr_ty: TypeHandle =
-        dialect_mir::types::MirPtrType::get_generic(ctx, element_ty, false).into();
+    let Some(data_ptr_ty) = erased_slice_data_pointer_type(ctx, value, element_ty) else {
+        return (value, prev_op);
+    };
     let extract_ptr = Operation::new(
         ctx,
         MirExtractFieldOp::get_concrete_op_info(),
@@ -5805,10 +6133,9 @@ pub fn translate_place_iterative(
                     .deref(ctx)
                     .is::<dialect_mir::types::MirSliceType>();
                 let pointer_info = get_static_pointer_info(&current_rust_ty);
-                let slice_deref_mutability =
-                    pointer_info.as_ref().and_then(|(pointee, is_mutable)| {
-                        rust_ty_is_slice(pointee).then_some(*is_mutable)
-                    });
+                let slice_deref_mutability = pointer_info.as_ref().and_then(|(pointee, origin)| {
+                    rust_ty_is_slice(pointee).then_some(origin.is_mutable())
+                });
                 let current_is_slice_tail_ref = pointer_info
                     .as_ref()
                     .is_some_and(|(pointee, _)| types::slice_tail_element_ty(pointee).is_some());
@@ -5898,23 +6225,21 @@ pub fn translate_place_iterative(
                         // The struct model stores an unsized `[T]` tail as the
                         // element type `T`, because the elements live inline after
                         // the sized prefix. Address the field as `*T`, not `*[T]`.
-                        use dialect_mir::ops::{MirConstructSliceOp, MirFieldAddrOp};
-                        let tail_ptr_ty: TypeHandle =
-                            dialect_mir::types::MirPtrType::get_generic(ctx, tail_elem_ty, false)
-                                .into();
-                        let tail_addr = Operation::new(
+                        use dialect_mir::ops::MirConstructSliceOp;
+                        let tail_ptr_ty = projected_pointer_type(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![tail_ptr_ty],
-                            vec![current_value],
-                            vec![],
-                            0,
-                        );
+                            current_value.get_type(ctx),
+                            tail_elem_ty,
+                            /* legacy requested mutability, ignored */ false,
+                        )
+                        .expect("slice-tail field base must be a MirPtrType");
+                        let tail_addr = dialect_mir::ops::MirFieldAddrOp::build(
+                            ctx,
+                            current_value,
+                            tail_ptr_ty,
+                            *field_idx as u32,
+                        )?;
                         tail_addr.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(tail_addr).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         match current_prev_op {
                             Some(prev) => tail_addr.insert_after(ctx, prev),
                             None => tail_addr.insert_at_front(block_ptr, ctx),
@@ -5922,12 +6247,22 @@ pub fn translate_place_iterative(
                         let tail_ptr = tail_addr.deref(ctx).get_result(0);
 
                         // Reconstruct the semantic `[T]` value from the inline tail
-                        // address plus the metadata carried from the outer fat reference.
+                        // address plus the metadata carried from the outer fat reference,
+                        // with an intentionally Erased pointer kind: a Rust kind is
+                        // established only at the `Rvalue::Ref`/`AddressOf` boundary.
                         // A following Index or ConstantIndex can scalarize this
                         // MirSliceType to field 0 and reuse the existing pointer-offset
                         // + load path.
-                        let tail_slice_ty =
-                            dialect_mir::types::MirSliceType::get(ctx, tail_elem_ty);
+                        let tail_is_mutable = tail_ptr_ty
+                            .deref(ctx)
+                            .downcast_ref::<dialect_mir::types::MirPtrType>()
+                            .expect("slice-tail projection must produce a MirPtrType")
+                            .is_mutable;
+                        let tail_slice_ty = dialect_mir::types::MirSliceType::get_with_mutability(
+                            ctx,
+                            tail_elem_ty,
+                            tail_is_mutable,
+                        );
                         let construct_tail = Operation::new(
                             ctx,
                             MirConstructSliceOp::get_concrete_op_info(),
@@ -5960,24 +6295,21 @@ pub fn translate_place_iterative(
                             );
                         }
 
-                        use dialect_mir::ops::MirFieldAddrOp;
                         let field_type = types::translate_type(ctx, field_ty)?;
-                        let field_ptr_ty: TypeHandle =
-                            dialect_mir::types::MirPtrType::get_generic(ctx, field_type, false)
-                                .into();
-                        let field_addr = Operation::new(
+                        let field_ptr_ty = projected_pointer_type(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![field_ptr_ty],
-                            vec![current_value],
-                            vec![],
-                            0,
-                        );
+                            current_value.get_type(ctx),
+                            field_type,
+                            /* legacy requested mutability, ignored */ false,
+                        )
+                        .expect("nested DST field base must be a MirPtrType");
+                        let field_addr = dialect_mir::ops::MirFieldAddrOp::build(
+                            ctx,
+                            current_value,
+                            field_ptr_ty,
+                            *field_idx as u32,
+                        )?;
                         field_addr.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(field_addr).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         match current_prev_op {
                             Some(prev) => field_addr.insert_after(ctx, prev),
                             None => field_addr.insert_at_front(block_ptr, ctx),
@@ -6564,7 +6896,10 @@ fn translate_ptr_to_array_constant(
         }
         _ => constant.const_.ty(),
     };
-    if let Some(union_name) = stored_type_union_name(rust_array_ty, &mut Vec::new()) {
+    let expected_size = rust_type_layout_size(rust_array_ty, loc.clone())?;
+    if expected_size != 0
+        && let Some(union_name) = stored_type_union_name(rust_array_ty, &mut Vec::new())
+    {
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
@@ -6574,7 +6909,6 @@ fn translate_ptr_to_array_constant(
     }
 
     validate_ptr_to_array_constant_type(ctx, array_ty, loc.clone())?;
-    let expected_size = rust_type_layout_size(rust_array_ty, loc.clone())?;
     // The same byte-size agreement the bare-array promotion demands: the
     // global's declared type is the converted dialect type while its
     // initializer bytes come from rustc's evaluated allocation, so the two
@@ -6611,22 +6945,24 @@ fn translate_ptr_to_array_constant(
     );
 
     let global_ptr = global_alloc.get_operation().deref(ctx).get_result(0);
-    let (ptr_val, last_op) = cast_to_generic_addrspace_if_needed(
+    let (ptr_val, last_op) = cast_to_declared_rust_pointer_type_if_needed(
         ctx,
         global_ptr,
         const_ty_ptr,
         block_ptr,
         Some(global_alloc.get_operation()),
         loc,
+        MirPointerKindAuthorityAttr::StaticAddress,
     );
     Ok((ptr_val, last_op))
 }
 
 /// Materialize an evaluated constant allocation as an immutable device global.
 ///
-/// Deduplicated by type, bytes, and relocation identity. Pointer placeholder
-/// bytes alone are not enough: two constants can have identical byte images and
-/// addends while their rustc provenance targets different statics.
+/// Deduplicated by type, bytes, allocation alignment, and relocation identity.
+/// Pointer placeholder bytes alone are not enough: two constants can have
+/// identical byte images and addends while their rustc provenance targets
+/// different statics or their backing allocations require different alignment.
 ///
 /// The global is marked immutable, which is what makes it useful beyond simply
 /// having an address: the exporter writes LLVM `constant`, so `opt` may treat
@@ -6648,7 +6984,6 @@ pub(crate) fn emit_promoted_immutable_global(
     let global_key = promoted_constant_dedup_key(ctx, value_ty, initializer);
     let global_ptr_ty = MirPtrType::get_global(ctx, value_ty, false);
     let validation_ty = promoted_global_validation_type(ctx, value_ty, initializer.bytes.len());
-
     let global_op = Operation::new(
         ctx,
         MirGlobalAllocOp::get_concrete_op_info(),
@@ -6908,6 +7243,15 @@ fn promoted_global_validation_type(
     byte_len: usize,
 ) -> TypeHandle {
     use dialect_mir::types::MirArrayType;
+
+    // A zero-byte allocation has no field bytes whose physical placement
+    // needs the packed-storage fallback. Retain the semantic type so the
+    // immutable-global root remains an exact authority for rustc-promoted
+    // `&mut [T; 0]`; lowering still checks its zero size and required
+    // alignment before emitting `[0 x i8]` storage.
+    if byte_len == 0 {
+        return value_ty;
+    }
 
     if !type_contains_packed_struct_storage(ctx, value_ty) {
         return value_ty;
@@ -7323,14 +7667,9 @@ pub(crate) fn translate_array_constant_into_alloca(
     count_op.insert_after(ctx, global_alloc.get_operation());
     let count = count_op.deref(ctx).get_result(0);
 
-    let memcpy_op = Operation::new(
-        ctx,
-        dialect_mir::ops::MirMemcpyOp::get_concrete_op_info(),
-        vec![],
-        vec![dest_addr, src, count],
-        vec![],
-        0,
-    );
+    // Typed builder: stamps the elem_type fact from dest_addr (the whole
+    // promoted aggregate type; count is 1), read back by lowering.
+    let memcpy_op = dialect_mir::ops::MirMemcpyOp::build(ctx, dest_addr, src, count)?;
     memcpy_op.deref_mut(ctx).set_loc(loc);
     memcpy_op.insert_after(ctx, count_op);
 
@@ -8341,9 +8680,25 @@ enum UnionConstantStorageKind {
     },
 }
 
+/// How a classified union constant is consumed by its caller.
+///
+/// SSA reconstruction materializes the carrier field's own reference type, so
+/// a reference minted for the wrong alternative could claim validity for a
+/// pointee the program never wrote. Device-static physical storage emits the
+/// exact evaluated bytes plus one integer-width relocation slot and never
+/// mints a typed reference, so same-kind reference alternatives may keep
+/// different pointee views there; device code reads the storage through its
+/// own field types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnionConstantUse {
+    SsaReconstruction,
+    PhysicalStorage,
+}
+
 fn classify_union_constant_storage(
     ctx: &Context,
     union_ty: TypeHandle,
+    usage: UnionConstantUse,
 ) -> Result<UnionConstantStorageKind, String> {
     let (name, field_types) = {
         let ty_ref = union_ty.deref(ctx);
@@ -8363,20 +8718,20 @@ fn classify_union_constant_storage(
         return Ok(UnionConstantStorageKind::ByteImage);
     }
 
-    let mut carrier: Option<(usize, TypeHandle, u32)> = None;
+    let mut carrier: Option<(usize, TypeHandle, u32, MirPointerKind, bool)> = None;
     for (field_index, field_ty) in field_types.into_iter().enumerate() {
         if types::is_zst_type(ctx, field_ty) {
             continue;
         }
 
-        let address_space = {
+        let pointer_semantics = {
             let field_ref = field_ty.deref(ctx);
             field_ref
                 .downcast_ref::<dialect_mir::types::MirPtrType>()
-                .map(|ptr| ptr.address_space)
+                .map(|ptr| (ptr.address_space, ptr.kind, ptr.is_mutable))
         };
 
-        let Some(address_space) = address_space else {
+        let Some((address_space, pointer_kind, is_mutable)) = pointer_semantics else {
             if constant_type_contains_pointer(ctx, field_ty) {
                 return Err(format!(
                     "Initialized union constant `{name}` contains pointer-bearing field \
@@ -8391,20 +8746,62 @@ fn classify_union_constant_storage(
             ));
         };
 
+        if dialect_mir::types::is_opaque_fn_pointer_type(ctx, field_ty) {
+            return Err(format!(
+                "Initialized union constant `{name}` contains canonical function-pointer \
+                 field {field_index}; function tokens cannot serve as data-pointer union storage"
+            ));
+        }
+        if pointer_kind == MirPointerKind::UniqueRef {
+            return Err(format!(
+                "Initialized union constant `{name}` contains UniqueRef field {field_index}; \
+                 constant reconstruction cannot establish uniqueness"
+            ));
+        }
+
         match carrier {
-            None => carrier = Some((field_index, field_ty, address_space)),
-            Some((_, _, carrier_address_space)) if carrier_address_space == address_space => {}
-            Some((_, _, carrier_address_space)) => {
+            None => {
+                carrier = Some((
+                    field_index,
+                    field_ty,
+                    address_space,
+                    pointer_kind,
+                    is_mutable,
+                ));
+            }
+            Some((
+                _,
+                carrier_field_ty,
+                carrier_address_space,
+                carrier_kind,
+                carrier_mutability,
+            )) if carrier_address_space == address_space
+                && carrier_kind == pointer_kind
+                && carrier_mutability == is_mutable =>
+            {
+                if usage == UnionConstantUse::SsaReconstruction
+                    && pointer_kind == MirPointerKind::SharedRef
+                    && carrier_field_ty != field_ty
+                {
+                    return Err(format!(
+                        "Initialized union constant `{name}` mixes reference pointee types; \
+                         rustc's evaluated allocation does not retain the active union field, \
+                         so reconstructing either reference view could invent pointee validity"
+                    ));
+                }
+            }
+            Some((_, _, carrier_address_space, carrier_kind, carrier_mutability)) => {
                 return Err(format!(
-                    "Initialized union constant `{name}` mixes pointer address spaces \
-                     {carrier_address_space} and {address_space}; one union carrier cannot \
-                     preserve both representations"
+                    "Initialized union constant `{name}` mixes pointer storage semantics \
+                     (address space/kind/mutability {carrier_address_space}/{carrier_kind:?}/{carrier_mutability} \
+                     and {address_space}/{pointer_kind:?}/{is_mutable}); one union carrier cannot \
+                     preserve both representations and Rust pointer categories"
                 ));
             }
         }
     }
 
-    let Some((field_index, field_ty, _)) = carrier else {
+    let Some((field_index, field_ty, _, _, _)) = carrier else {
         return Err(format!(
             "Initialized union constant `{name}` is pointer-bearing but has no non-ZST \
              thin-pointer field"
@@ -8417,24 +8814,22 @@ fn classify_union_constant_storage(
     })
 }
 
-/// Whether a mixed thin-pointer/integer union can use its evaluated byte image
-/// when the allocation carries no relocation provenance.
+/// Return the full-width integer field through which a relocation-free mixed
+/// raw-pointer/integer union can be reconstructed without producing a pointer.
 ///
 /// Keep this deliberately narrower than [`classify_union_constant_storage`]:
 /// the ordinary classifier remains the provenance-preserving authority used by
 /// pointer-bearing constants and device-static union initializers. This helper
 /// only admits one naturally aligned pointer word whose non-ZST alternatives
-/// are compatible thin pointers or full-width integers.
-fn relocation_free_pointer_integer_union_uses_byte_image(
+/// are semantically compatible generic raw pointers or full-width integers.
+fn relocation_free_pointer_integer_union_storage_field(
     ctx: &Context,
     union_ty: TypeHandle,
     pointer_width: usize,
-) -> bool {
+) -> Option<(usize, TypeHandle)> {
     let (union_size, union_align, field_types) = {
         let ty_ref = union_ty.deref(ctx);
-        let Some(union_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirUnionType>() else {
-            return false;
-        };
+        let union_ty = ty_ref.downcast_ref::<dialect_mir::types::MirUnionType>()?;
         (
             union_ty.total_size(),
             union_ty.abi_align(),
@@ -8444,25 +8839,33 @@ fn relocation_free_pointer_integer_union_uses_byte_image(
 
     let pointer_width_u64 = pointer_width as u64;
     if union_size != pointer_width_u64 || union_align != pointer_width_u64 {
-        return false;
+        return None;
     }
 
     let integer_width = (pointer_width * 8) as u32;
-    let mut pointer_address_space = None;
+    let mut pointer_semantics = None;
     let mut saw_pointer = false;
-    let mut saw_integer = false;
+    let mut integer_field = None;
 
-    for field_ty in field_types {
+    for (field_index, field_ty) in field_types.into_iter().enumerate() {
         if types::is_zst_type(ctx, field_ty) {
             continue;
         }
 
         let field_ref = field_ty.deref(ctx);
         if let Some(pointer) = field_ref.downcast_ref::<dialect_mir::types::MirPtrType>() {
-            match pointer_address_space {
-                None => pointer_address_space = Some(pointer.address_space),
-                Some(address_space) if address_space == pointer.address_space => {}
-                Some(_) => return false,
+            if !matches!(
+                pointer.kind,
+                MirPointerKind::RawConst | MirPointerKind::RawMut
+            ) || pointer.address_space != dialect_mir::types::address_space::GENERIC
+            {
+                return None;
+            }
+            let semantics = (pointer.address_space, pointer.kind, pointer.is_mutable);
+            match pointer_semantics {
+                None => pointer_semantics = Some(semantics),
+                Some(existing) if existing == semantics => {}
+                Some(_) => return None,
             }
             saw_pointer = true;
             continue;
@@ -8472,17 +8875,18 @@ fn relocation_free_pointer_integer_union_uses_byte_image(
             .downcast_ref::<IntegerType>()
             .is_some_and(|integer| integer.width() == integer_width)
         {
-            saw_integer = true;
+            integer_field.get_or_insert((field_index, field_ty));
             continue;
         }
 
         // Fat pointers, nested pointer aggregates, partial-width integers, and
         // unrelated scalar/aggregate alternatives keep the existing fail-closed
         // path. The byte-image exception is intentionally pointer-word exact.
-        return false;
+        return None;
     }
 
-    saw_pointer && saw_integer
+    saw_pointer.then_some(())?;
+    integer_field
 }
 
 /// Admit only the device-static union shape whose complete storage can be
@@ -8550,12 +8954,15 @@ fn validate_device_static_union_storage(
         )
     };
 
-    let storage_kind = classify_union_constant_storage(ctx, union_ty).map_err(|message| {
-        format!(
-            "union `{union_name}` whose initializer cannot preserve pointer provenance: \
-             {message}"
-        )
-    })?;
+    let storage_kind =
+        classify_union_constant_storage(ctx, union_ty, UnionConstantUse::PhysicalStorage).map_err(
+            |message| {
+                format!(
+                    "union `{union_name}` whose initializer cannot preserve pointer provenance: \
+                 {message}"
+                )
+            },
+        )?;
     if !matches!(storage_kind, UnionConstantStorageKind::ThinPointer { .. }) {
         return Err(format!(
             "union `{union_name}` without thin-pointer storage; device-global union \
@@ -8726,28 +9133,34 @@ fn translate_union_constant_from_alloc(
         end,
         pointer_width,
     );
+    let storage = &alloc.bytes[base_offset..end];
 
     // A mixed pointer/integer union initialized through the integer view carries
-    // no relocation provenance. In that one case the evaluated bytes and init
-    // mask are the complete storage truth, so reuse the existing byte-image
-    // materializer before the provenance-aware classifier rejects the overlap.
-    // Keep classify_union_constant_storage unchanged: #984's device-static gate
-    // and relocation-bearing union constants still depend on its strict policy.
+    // no relocation provenance. When every byte is initialized, the evaluated
+    // byte image is the complete storage truth. Reconstruct it through the
+    // full-width integer field so no inactive pointer alternative is produced.
+    // Keep this no-relocation exception separate: #984's device-static gate and
+    // relocation-bearing union constants use the stricter pointer classifier.
     if relocations.is_empty()
-        && relocation_free_pointer_integer_union_uses_byte_image(ctx, union_ty, pointer_width)
+        && storage.iter().all(Option::is_some)
+        && let Some((integer_field_index, integer_field_ty)) =
+            relocation_free_pointer_integer_union_storage_field(ctx, union_ty, pointer_width)
     {
-        return translate_union_constant_from_storage(
+        return translate_pointer_integer_union_constant_from_storage(
             ctx,
             union_ty,
-            &alloc.bytes[base_offset..end],
+            integer_field_index,
+            integer_field_ty,
+            storage,
             block_ptr,
             prev_op,
             loc,
         );
     }
 
-    let storage_kind = classify_union_constant_storage(ctx, union_ty)
-        .map_err(|message| input_error!(loc.clone(), TranslationErr::unsupported(message)))?;
+    let storage_kind =
+        classify_union_constant_storage(ctx, union_ty, UnionConstantUse::SsaReconstruction)
+            .map_err(|message| input_error!(loc.clone(), TranslationErr::unsupported(message)))?;
 
     match storage_kind {
         UnionConstantStorageKind::ByteImage => {
@@ -8762,14 +9175,7 @@ fn translate_union_constant_from_alloc(
                 );
             }
 
-            translate_union_constant_from_storage(
-                ctx,
-                union_ty,
-                &alloc.bytes[base_offset..end],
-                block_ptr,
-                prev_op,
-                loc,
-            )
+            translate_union_constant_from_storage(ctx, union_ty, storage, block_ptr, prev_op, loc)
         }
         UnionConstantStorageKind::ThinPointer {
             field_index,
@@ -8864,6 +9270,94 @@ fn translate_union_constant_from_storage(
         return translate_zero_sized_constant_value(ctx, union_ty, block_ptr, prev_op, loc);
     }
 
+    let (byte_array, array_op) =
+        translate_constant_storage_byte_array(ctx, storage, block_ptr, prev_op, loc.clone());
+
+    let cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![union_ty],
+        vec![byte_array],
+        vec![],
+        0,
+    );
+    cast_op.deref_mut(ctx).set_loc(loc);
+    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+    cast_op.insert_after(ctx, array_op);
+
+    Ok((cast_op.deref(ctx).get_result(0), Some(cast_op)))
+}
+
+/// Reconstruct a relocation-free pointer/integer union through its integer
+/// field, exactly as an ordinary Rust union aggregate is constructed.
+///
+/// The byte-array-to-integer transmute is representation-only and produces no
+/// pointer carrier. Inserting that integer into an undefined union therefore
+/// keeps the pointer alternatives inactive instead of asking a synthetic
+/// transmute to establish their raw-pointer kinds.
+#[allow(clippy::too_many_arguments)]
+fn translate_pointer_integer_union_constant_from_storage(
+    ctx: &mut Context,
+    union_ty: TypeHandle,
+    integer_field_index: usize,
+    integer_field_ty: TypeHandle,
+    storage: &[Option<u8>],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    debug_assert!(!storage.is_empty());
+
+    let (byte_array, array_op) =
+        translate_constant_storage_byte_array(ctx, storage, block_ptr, prev_op, loc.clone());
+
+    let integer_cast_op = Operation::new(
+        ctx,
+        MirCastOp::get_concrete_op_info(),
+        vec![integer_field_ty],
+        vec![byte_array],
+        vec![],
+        0,
+    );
+    integer_cast_op.deref_mut(ctx).set_loc(loc.clone());
+    MirCastOp::new(integer_cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
+    integer_cast_op.insert_after(ctx, array_op);
+    let integer_value = integer_cast_op.deref(ctx).get_result(0);
+
+    let undef_op = MirUndefOp::new(ctx, union_ty).get_operation();
+    undef_op.deref_mut(ctx).set_loc(loc.clone());
+    undef_op.insert_after(ctx, integer_cast_op);
+    let undef_value = undef_op.deref(ctx).get_result(0);
+
+    let insert_op = Operation::new(
+        ctx,
+        MirInsertFieldOp::get_concrete_op_info(),
+        vec![union_ty],
+        vec![undef_value, integer_value],
+        vec![],
+        0,
+    );
+    insert_op.deref_mut(ctx).set_loc(loc);
+    MirInsertFieldOp::new(insert_op).set_attr_insert_index(
+        ctx,
+        dialect_mir::attributes::FieldIndexAttr(integer_field_index as u32),
+    );
+    insert_op.insert_after(ctx, undef_op);
+
+    Ok((insert_op.deref(ctx).get_result(0), Some(insert_op)))
+}
+
+/// Build the exact `[u8; size]` SSA image used by constant-storage
+/// reconstruction. `None` bytes remain `mir.undef`.
+fn translate_constant_storage_byte_array(
+    ctx: &mut Context,
+    storage: &[Option<u8>],
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> (Value, Ptr<Operation>) {
+    debug_assert!(!storage.is_empty());
+
     let byte_ty = IntegerType::get(ctx, 8, Signedness::Unsigned);
     let byte_ty_handle: TypeHandle = byte_ty.into();
     let mut bytes = Vec::with_capacity(storage.len());
@@ -8916,21 +9410,7 @@ fn translate_union_constant_from_storage(
         Some(prev) => array_op.insert_after(ctx, prev),
         None => array_op.insert_at_front(block_ptr, ctx),
     }
-    let byte_array = array_op.deref(ctx).get_result(0);
-
-    let cast_op = Operation::new(
-        ctx,
-        MirCastOp::get_concrete_op_info(),
-        vec![union_ty],
-        vec![byte_array],
-        vec![],
-        0,
-    );
-    cast_op.deref_mut(ctx).set_loc(loc);
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::Transmute);
-    cast_op.insert_after(ctx, array_op);
-
-    Ok((cast_op.deref(ctx).get_result(0), Some(cast_op)))
+    (array_op.deref(ctx).get_result(0), array_op)
 }
 
 /// Translate an enum constant by reconstructing both its active variant and any
@@ -9718,8 +10198,11 @@ fn translate_constant_value_from_bytes(
                 0,
             );
             cast_op.deref_mut(ctx).set_loc(loc.clone());
-            MirCastOp::new(cast_op)
-                .set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+            let cast = MirCastOp::new(cast_op);
+            cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+            if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, ty_ptr) {
+                cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::StaticAddress);
+            }
             cast_op.insert_after(ctx, const_op.get_operation());
 
             Ok((cast_op.deref(ctx).get_result(0), Some(cast_op)))
@@ -10017,7 +10500,7 @@ fn translate_union_aggregate(
         prev_op,
         loc.clone(),
     )?;
-    let (active_value, current_prev_op) = cast_to_generic_addrspace_if_needed(
+    let (active_value, current_prev_op) = cast_to_expected_pointer_type_if_needed(
         ctx,
         active_value,
         expected_field_ty,
@@ -10326,7 +10809,6 @@ fn translate_reify_fn_pointer(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
-    use dialect_mir::ops::MirConstantOp;
     use rustc_public::mir::mono::Instance;
     use std::hash::{Hash, Hasher};
 
@@ -10377,6 +10859,69 @@ fn translate_reify_fn_pointer(
         h.finish() | 1
     };
 
+    materialize_function_pointer_token(ctx, dest_ty, token, block_ptr, prev_op, loc)
+}
+
+/// Lower a non-capturing `closure -> fn pointer` coercion.
+///
+/// Like named function items, a closure value is zero-sized and contains no
+/// code address to extract. Resolve rustc's `FnOnce` closure shim and use its
+/// mangled identity to create the same non-null comparison token used by
+/// `translate_reify_fn_pointer`.
+fn translate_closure_fn_pointer(
+    ctx: &mut Context,
+    body: &mir::Body,
+    operand: &mir::Operand,
+    dest_ty: &rustc_public::ty::Ty,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
+    use rustc_public::{
+        mir::mono::Instance,
+        ty::{ClosureKind, RigidTy, TyKind},
+    };
+    use std::hash::{Hash, Hasher};
+
+    let operand_ty = operand.ty(body.locals()).map_err(|error| {
+        input_error_noloc!(TranslationErr::unsupported(format!(
+            "ClosureFnPointer: cannot read operand type: {error:?}"
+        )))
+    })?;
+    let TyKind::RigidTy(RigidTy::Closure(closure_def, substs)) = operand_ty.kind() else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "ClosureFnPointer on a non-closure operand of type {operand_ty:?}"
+            ))
+        );
+    };
+    let mangled = Instance::resolve_closure(closure_def, &substs, ClosureKind::FnOnce)
+        .map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "ClosureFnPointer: cannot resolve closure shim: {error:?}"
+            )))
+        })?
+        .mangled_name();
+    let token = {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        mangled.hash(&mut hasher);
+        hasher.finish() | 1
+    };
+
+    materialize_function_pointer_token(ctx, dest_ty, token, block_ptr, prev_op, loc)
+}
+
+fn materialize_function_pointer_token(
+    ctx: &mut Context,
+    dest_ty: &rustc_public::ty::Ty,
+    token: u64,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(Option<Ptr<Operation>>, Value, Option<Ptr<Operation>>)> {
+    use dialect_mir::ops::MirConstantOp;
+
     // Materialize the token and cast it to the fn-pointer type, the same
     // two-op shape used for provenance-carrying pointer constants.
     let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
@@ -10408,7 +10953,8 @@ fn translate_reify_fn_pointer(
         0,
     );
     cast_op.deref_mut(ctx).set_loc(loc);
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
 
     let result = cast_op.deref(ctx).get_result(0);
     Ok((Some(cast_op), result, Some(int_op)))
@@ -10519,99 +11065,7 @@ fn discriminant_to_variant_index(
     }
 }
 
-/// Extract enum discriminant from a MirConst using proper rustc_public API.
-///
-/// This function properly extracts the discriminant value from the constant's
-/// allocated bytes, avoiding fragile debug string parsing.
-///
-/// ## How it works
-///
-/// For enum constants, rustc stores the discriminant in `ConstantKind::Allocated(Allocation)`.
-/// The `Allocation.bytes` field contains the raw bytes of the discriminant value.
-/// We use `read_uint()` to properly interpret these bytes.
-///
-/// ## Fallback behavior
-///
-/// If the proper API extraction fails (e.g., for ZeroSized constants), we fall back
-/// to debug string parsing as a last resort, but this should be rare.
-pub(crate) fn extract_enum_discriminant(
-    mir_const: &rustc_public::ty::MirConst,
-    const_str: &str,
-) -> usize {
-    // Try to extract using proper API first
-    match mir_const.kind() {
-        ConstantKind::Allocated(alloc) => {
-            // Use read_uint() to properly parse the bytes
-            if let Ok(val) = alloc.read_uint() {
-                return val as usize;
-            }
-            // If read_uint fails, try raw_bytes
-            if let Ok(bytes) = alloc.raw_bytes()
-                && !bytes.is_empty()
-            {
-                // Convert bytes to usize (little-endian)
-                let mut value: usize = 0;
-                for (i, &byte) in bytes.iter().take(8).enumerate() {
-                    value |= (byte as usize) << (i * 8);
-                }
-                return value;
-            }
-            // Last resort: bytes field directly
-            if !alloc.bytes.is_empty() {
-                let mut value: usize = 0;
-                for (i, opt_byte) in alloc.bytes.iter().take(8).enumerate() {
-                    if let Some(byte) = opt_byte {
-                        value |= (*byte as usize) << (i * 8);
-                    }
-                }
-                return value;
-            }
-            0
-        }
-        ConstantKind::ZeroSized => {
-            // ZeroSized typically means discriminant 0 (e.g., None)
-            0
-        }
-        ConstantKind::Ty(_ty_const) => {
-            // TyConst - try to evaluate
-            if let Ok(val) = mir_const.eval_target_usize() {
-                return val as usize;
-            }
-            // Fall back to parsing for TyConst
-            parse_discriminant_from_debug_string(const_str)
-        }
-        ConstantKind::Unevaluated(_) | ConstantKind::Param(_) => {
-            // These are rare for enum discriminants; fall back to string parsing
-            parse_discriminant_from_debug_string(const_str)
-        }
-    }
-}
-
-/// Fallback: parse discriminant from debug string representation.
-/// This is a last resort when the proper API doesn't work.
-fn parse_discriminant_from_debug_string(const_str: &str) -> usize {
-    // Try to extract discriminant from bytes: [Some(N)] format
-    if let Some(bytes_start) = const_str.find("bytes: [Some(") {
-        let after_prefix = &const_str[bytes_start + 13..]; // skip "bytes: [Some("
-        if let Some(end) = after_prefix.find(')') {
-            let discr_str = &after_prefix[..end];
-            if let Ok(discr) = discr_str.parse::<usize>() {
-                return discr;
-            }
-        }
-    }
-    // Try variant name patterns
-    if const_str.contains("::None") || const_str.ends_with("None") {
-        return 0;
-    }
-    if const_str.contains("::Some") {
-        return 1;
-    }
-    // Default to 0
-    0
-}
-
-/// Check if a type is a pointer to SharedArray.
+/// Check if a type is a pointer to cuda-device's SharedArray.
 fn is_shared_array_pointer(ty: &rustc_public::ty::Ty) -> bool {
     use rustc_public::ty::{RigidTy, TyKind};
 
@@ -10620,7 +11074,7 @@ fn is_shared_array_pointer(ty: &rustc_public::ty::Ty) -> bool {
             // Check if the pointee is SharedArray
             match pointee_ty.kind() {
                 TyKind::RigidTy(RigidTy::Adt(adt_def, _)) => {
-                    adt_def.trimmed_name() == "SharedArray"
+                    types::is_cuda_device_adt(&adt_def, "SharedArray")
                 }
                 _ => false,
             }
@@ -10629,7 +11083,8 @@ fn is_shared_array_pointer(ty: &rustc_public::ty::Ty) -> bool {
     }
 }
 
-/// Check if a type is a pointer to Barrier (mbarrier state in shared memory).
+/// Check if a type is a pointer to cuda-device's Barrier (mbarrier state in
+/// shared memory).
 fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
     use rustc_public::ty::{RigidTy, TyKind};
 
@@ -10637,7 +11092,9 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
         TyKind::RigidTy(RigidTy::RawPtr(pointee_ty, _)) => {
             // Check if the pointee is Barrier
             match pointee_ty.kind() {
-                TyKind::RigidTy(RigidTy::Adt(adt_def, _)) => adt_def.trimmed_name() == "Barrier",
+                TyKind::RigidTy(RigidTy::Adt(adt_def, _)) => {
+                    types::is_cuda_device_adt(&adt_def, "Barrier")
+                }
                 _ => false,
             }
         }
@@ -10645,16 +11102,44 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
     }
 }
 
-/// Best-effort Rust path of the `static` a shared-memory constant refers to.
+struct SharedStaticSourceIdentity {
+    name: String,
+    key: String,
+}
+
+/// Resolve a whole-static shared allocation to both its display path and its
+/// injective compiler identity.
 ///
-/// Used only to label the generated `__shared_mem_N` global, so this is
-/// deliberately infallible: an unexpected constant shape yields `None` and the
-/// allocation stays unlabelled rather than failing a translation that would
-/// otherwise have succeeded. That is why it does not reuse
-/// [`static_target_from_constant`], which rejects multi-relocation constants —
-/// a diagnostic label must never be able to turn into a hard error. It also
-/// has no use for the byte addend: a `SharedArray` or `Barrier` constant always
-/// points at the whole static.
+/// `StaticDef::name()` deliberately omits DefPath disambiguators, so distinct
+/// same-leaf nested statics can have the same display path. The mangled static
+/// instance remains unique and is used for both deduplication and the full-debug
+/// side-table join. Interior pointers are rejected: a `SharedArray` or
+/// `Barrier` allocation always represents the entire static.
+fn shared_static_source_identity(
+    constant: &mir::ConstOperand,
+) -> Option<SharedStaticSourceIdentity> {
+    let ConstantKind::Allocated(allocation) = constant.const_.kind() else {
+        return None;
+    };
+    if allocation.provenance.ptrs.len() != 1 {
+        return None;
+    }
+    let &(relocation_offset, _) = allocation.provenance.ptrs.first()?;
+    let target = static_target_from_allocation_at(allocation, relocation_offset)
+        .ok()
+        .flatten()?;
+    if target.byte_offset != 0 {
+        return None;
+    }
+    let name = target.static_def.name();
+    let key = crate::device_static_global_key(&target.static_def);
+    Some(SharedStaticSourceIdentity { name, key })
+}
+
+/// Historical best-effort source label used by non-Full builds.
+///
+/// This intentionally performs no strict validation: the comment label must
+/// never turn an otherwise valid translation into an error.
 fn shared_static_source_name(constant: &mir::ConstOperand) -> Option<String> {
     use rustc_public::mir::alloc::GlobalAlloc;
 
@@ -10756,7 +11241,7 @@ fn static_target_from_allocation_at(
 /// One pointer-width relocation inside an evaluated Rust static initializer.
 ///
 /// The source and target offsets are byte offsets. `target_key` is the same
-/// stable rustc identity stored on the target `MirGlobalAllocOp`.
+/// domain-tagged rustc identity stored on the target `MirGlobalAllocOp`.
 struct GlobalInitializerRelocation {
     source_offset: u64,
     width_bytes: u32,
@@ -10778,14 +11263,7 @@ pub(crate) struct GlobalInitializerData {
 }
 
 fn static_global_key(static_def: &rustc_public::mir::mono::StaticDef) -> String {
-    let static_ty = static_def.ty();
-    if is_constant_wrapper_type(&static_ty) {
-        rustc_public::mir::mono::Instance::from(*static_def)
-            .mangled_name()
-            .to_string()
-    } else {
-        static_def.name()
-    }
+    crate::device_static_global_key(static_def)
 }
 
 fn static_global_address_space(static_def: &rustc_public::mir::mono::StaticDef) -> u32 {
@@ -11177,27 +11655,35 @@ fn promoted_constant_dedup_key(
     initializer: &GlobalInitializerData,
 ) -> String {
     let relocations = encode_global_initializer_relocations(&initializer.relocations);
-    promoted_constant_dedup_key_from_parts(ctx, ty, &initializer.bytes, &relocations)
+    promoted_constant_dedup_key_from_parts(
+        ctx,
+        ty,
+        &initializer.bytes,
+        initializer.alignment,
+        &relocations,
+    )
 }
 
 fn promoted_constant_dedup_key_from_parts(
     ctx: &Context,
     ty: TypeHandle,
     bytes: &[u8],
+    alignment: u64,
     relocations: &str,
 ) -> String {
     // This string is only an in-pass map key; it never becomes the emitted
-    // symbol name. Keep the full type, byte image, and relocation encoding so
-    // constants with identical placeholder bytes but different provenance
-    // targets cannot alias.
+    // symbol name. Keep the full type, byte image, allocation alignment, and
+    // relocation encoding so constants with identical bytes but different
+    // storage requirements or provenance targets cannot alias.
     let ty = ty.deref(ctx).disp(ctx).to_string();
     let bytes = bytes_to_hex(bytes);
-    format!(
-        "__cuda_oxide_promoted_type{}:{ty}:bytes{}:{bytes}:relocs{}:{relocations}",
+    let fingerprint = format!(
+        "__cuda_oxide_promoted_type{}:{ty}:bytes{}:{bytes}:align{alignment}:relocs{}:{relocations}",
         ty.len(),
         bytes.len() / 2,
         relocations.len()
-    )
+    );
+    dialect_mir::ops::encode_promoted_global_key(&fingerprint)
 }
 
 /// Detect zero-addend array→slice unsize: static `[T; N]` viewed as `[T]`.
@@ -11460,16 +11946,16 @@ fn translate_static_array_as_slice(
     static_def: &rustc_public::mir::mono::StaticDef,
     elem_ty: rustc_public::ty::Ty,
     len: u64,
-    is_mutable: bool,
+    origin: facts::PointerOrigin,
     byte_offset: u64,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
     use dialect_mir::ops::MirConstructSliceOp;
-    use dialect_mir::types::MirSliceType;
 
     let elem_mir_ty = types::translate_type(ctx, &elem_ty)?;
+    let is_mutable = origin.is_mutable();
 
     let (data_ptr, prev_after_data) = if byte_offset == 0 {
         let static_ty = static_def.ty();
@@ -11477,7 +11963,7 @@ fn translate_static_array_as_slice(
 
         // Thin pointer to the full array object (exact Rust `&[T; N]` shape).
         let thin_array_ptr_ty: TypeHandle =
-            dialect_mir::types::MirPtrType::get_generic(ctx, array_mir_ty, is_mutable).into();
+            facts::mint_generic_ptr_type(ctx, array_mir_ty, origin).into();
 
         let (array_ptr, prev_after_array) = translate_static_global_pointer(
             ctx,
@@ -11502,8 +11988,7 @@ fn translate_static_array_as_slice(
             loc.clone(),
         )
     } else {
-        let data_ptr_ty: TypeHandle =
-            dialect_mir::types::MirPtrType::get_generic(ctx, elem_mir_ty, is_mutable).into();
+        let data_ptr_ty: TypeHandle = facts::mint_generic_ptr_type(ctx, elem_mir_ty, origin).into();
 
         translate_static_global_pointer(
             ctx,
@@ -11539,7 +12024,7 @@ fn translate_static_array_as_slice(
     };
     let len_val = len_op.deref(ctx).get_result(0);
 
-    let slice_ty = MirSliceType::get(ctx, elem_mir_ty);
+    let slice_ty = facts::mint_slice_type(ctx, elem_mir_ty, origin);
     let construct = Operation::new(
         ctx,
         MirConstructSliceOp::get_concrete_op_info(),
@@ -11816,7 +12301,11 @@ fn translate_thin_pointer_at_alloc_offset(
         0,
     );
     cast_op.deref_mut(ctx).set_loc(loc);
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PointerWithExposedProvenance);
+    if dialect_mir::types::type_contains_concrete_pointer_kind(ctx, result_ptr_ty) {
+        cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::StaticAddress);
+    }
     cast_op.insert_after(ctx, const_op.get_operation());
     Ok((cast_op.deref(ctx).get_result(0), Some(cast_op)))
 }
@@ -11839,7 +12328,7 @@ fn translate_slice_at_alloc_offset(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    let Some((pointee_ty, is_mutable)) = get_static_pointer_info(rust_ty) else {
+    let Some((pointee_ty, origin)) = get_static_pointer_info(rust_ty) else {
         return input_err!(
             loc,
             TranslationErr::unsupported(format!(
@@ -11902,7 +12391,7 @@ fn translate_slice_at_alloc_offset(
         &static_target.static_def,
         elem_ty,
         len,
-        is_mutable,
+        origin,
         static_target.byte_offset,
         block_ptr,
         prev_op,
@@ -12821,25 +13310,29 @@ fn translate_static_global_pointer(
     let base_ptr = materialized.base_ptr;
     let insert_after = state.last_op.unwrap_or(materialized.global_op);
 
+    let (base_pointee_ty, address_space) = {
+        let base_ty = base_ptr.get_type(ctx);
+        let base_ty = base_ty.deref(ctx);
+        let base_ptr_ty = base_ty
+            .downcast_ref::<dialect_mir::types::MirPtrType>()
+            .expect("MirGlobalAllocOp must return MirPtrType");
+        (base_ptr_ty.pointee, base_ptr_ty.address_space)
+    };
+
     // Preserve the existing direct path. It avoids generating unnecessary
     // casts and pointer arithmetic for ordinary references to whole statics.
     // The result is still normalized to the exact translated Rust operand
     // type: slot stores and mem2reg are type-strict, so the physical
-    // address-space pointer must not leak into the function body.
-    if byte_offset == 0 {
+    // address-space pointer must not leak into the function body. A zero-addend
+    // relocation may still name the first element of an array static (or an
+    // equivalent differently typed view). Keep those on the byte-addressed
+    // path below so `StaticAddress` establishes only the final kind/address
+    // space after generic Erased casts have normalized the pointee shape.
+    if byte_offset == 0 && base_pointee_ty == result_pointee_ty {
         let (result, last_op) =
             retype_static_pointer_result(ctx, base_ptr, result_ptr_ty, insert_after, loc);
         return Ok((result, Some(last_op)));
     }
-
-    let address_space = {
-        let base_ty = base_ptr.get_type(ctx);
-        let base_ty = base_ty.deref(ctx);
-        base_ty
-            .downcast_ref::<dialect_mir::types::MirPtrType>()
-            .expect("MirGlobalAllocOp must return MirPtrType")
-            .address_space
-    };
 
     // mir.ptr_offset scales by sizeof(pointee). Cast to u8 first so the
     // rustc addend is interpreted as bytes rather than static elements.
@@ -12967,7 +13460,15 @@ fn retype_static_pointer_result(
         0,
     );
     cast_op.deref_mut(ctx).set_loc(loc);
-    MirCastOp::new(cast_op).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    let cast = MirCastOp::new(cast_op);
+    cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+    if result_ptr_ty
+        .deref(ctx)
+        .downcast_ref::<dialect_mir::types::MirPtrType>()
+        .is_some_and(|pointer| pointer.kind != MirPointerKind::Erased)
+    {
+        cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::StaticAddress);
+    }
     cast_op.insert_after(ctx, insert_after);
 
     (cast_op.deref(ctx).get_result(0), cast_op)
@@ -13046,22 +13547,15 @@ fn set_global_initializer_relocations_attr(
 }
 
 /// Check if a type is a pointer/reference to a static allocation.
-/// Returns `(pointee_ty, is_mutable)` when the type can carry a static address.
+/// Returns `(pointee_ty, origin)` when the type can carry a static address.
+/// Keeping the origin here prevents constant materialization from collapsing
+/// `&T`/`&mut T` and raw pointers before they enter `dialect-mir`.
 use super::values::is_constant_wrapper_type;
 
-fn get_static_pointer_info(ty: &rustc_public::ty::Ty) -> Option<(rustc_public::ty::Ty, bool)> {
-    use rustc_public::mir::Mutability;
-    use rustc_public::ty::{RigidTy, TyKind};
-
-    match ty.kind() {
-        TyKind::RigidTy(RigidTy::RawPtr(pointee_ty, mutability)) => {
-            Some((pointee_ty, mutability == Mutability::Mut))
-        }
-        TyKind::RigidTy(RigidTy::Ref(_, pointee_ty, mutability)) => {
-            Some((pointee_ty, mutability == Mutability::Mut))
-        }
-        _ => None,
-    }
+fn get_static_pointer_info(
+    ty: &rustc_public::ty::Ty,
+) -> Option<(rustc_public::ty::Ty, facts::PointerOrigin)> {
+    facts::pointer_origin_of_ty(ty)
 }
 
 /// Extract element type, size, and alignment from a pointer to SharedArray<T, N, ALIGN>.
@@ -13072,81 +13566,68 @@ fn extract_shared_array_info(
 ) -> TranslationResult<(pliron::r#type::TypeHandle, usize, usize)> {
     use rustc_public::ty::{GenericArgKind, RigidTy, TyKind};
 
-    /// Parse a const generic value from debug string
-    fn parse_const_value(c: &rustc_public::ty::TyConst) -> Option<usize> {
-        let const_str = format!("{:?}", c);
-        // Parse the bytes from the debug string
-        if let Some(bytes_part) = const_str.split("bytes: [").nth(1)
-            && let Some(bytes_end) = bytes_part.split(']').next()
-        {
-            let mut bytes = Vec::new();
-            for byte_str in bytes_end.split(',') {
-                if bytes.len() >= 8 {
-                    break;
-                }
-                let b_str = byte_str.trim();
-                if let Some(num_str) = b_str
-                    .strip_prefix("Some(")
-                    .and_then(|s| s.strip_suffix(')'))
-                    && let Ok(byte) = num_str.parse::<u8>()
-                {
-                    bytes.push(byte);
-                }
-            }
-            // Convert bytes to usize (little-endian)
-            let mut value: usize = 0;
-            for (i, byte) in bytes.iter().enumerate() {
-                value |= (*byte as usize) << (i * 8);
-            }
-            return Some(value);
-        }
-        None
-    }
-
     match ty.kind() {
         TyKind::RigidTy(RigidTy::RawPtr(pointee_ty, _)) => {
             match pointee_ty.kind() {
                 TyKind::RigidTy(RigidTy::Adt(adt_def, substs)) => {
-                    if adt_def.trimmed_name() != "SharedArray" {
+                    if !types::is_cuda_device_adt(&adt_def, "SharedArray") {
                         return input_err_noloc!(TranslationErr::unsupported(format!(
-                            "Expected SharedArray, got {}",
+                            "Expected cuda_device::SharedArray, got {}",
                             adt_def.trimmed_name()
                         )));
                     }
 
                     let generic_args = &substs.0;
 
-                    // Find the element type (first Type arg)
-                    let elem_ty = generic_args
-                        .iter()
-                        .find_map(|arg| match arg {
-                            GenericArgKind::Type(t) => Some(t),
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            input_error_noloc!(TranslationErr::unsupported(
-                                "SharedArray missing element type"
-                            ))
-                        })?;
+                    // SharedArray substs arrive in declaration order, with
+                    // the ALIGN default already materialized by rustc:
+                    //
+                    //   SharedArray<T, N, ALIGN = 0>
+                    //     [0] T      type
+                    //     [1] N      const usize (element count)
+                    //     [2] ALIGN  const usize (0 = natural alignment)
+                    //
+                    // Reads are positional on purpose: if N fails to
+                    // evaluate that's an error, never "slide over and read
+                    // ALIGN as N". If cuda-device ever reorders these
+                    // generics, this read must change in the same commit.
+                    debug_assert!(
+                        generic_args.len() == 2 || generic_args.len() == 3,
+                        "SharedArray is declared <T, const N, const ALIGN = 0>; \
+                         got {} generic args",
+                        generic_args.len()
+                    );
 
-                    // Collect all const generic arguments (N, then ALIGN)
-                    let const_values: Vec<usize> = generic_args
-                        .iter()
-                        .filter_map(|arg| match arg {
-                            GenericArgKind::Const(c) => parse_const_value(c),
-                            _ => None,
-                        })
-                        .collect();
+                    let Some(GenericArgKind::Type(elem_ty)) = generic_args.first() else {
+                        return input_err_noloc!(TranslationErr::unsupported(
+                            "SharedArray substs missing the element type at position 0"
+                        ));
+                    };
 
-                    // First const is N (size), required
-                    let size = *const_values.first().ok_or_else(|| {
-                        input_error_noloc!(TranslationErr::unsupported(
-                            "SharedArray missing size const"
-                        ))
-                    })?;
+                    let Some(GenericArgKind::Const(n_const)) = generic_args.get(1) else {
+                        return input_err_noloc!(TranslationErr::unsupported(
+                            "SharedArray substs missing the N const generic at position 1"
+                        ));
+                    };
+                    let size = facts::eval_usize_const(n_const, "SharedArray N", None)? as usize;
 
-                    // Second const is ALIGN (alignment), optional, defaults to 0
-                    let alignment = const_values.get(1).copied().unwrap_or(0);
+                    // ALIGN = 0 means natural alignment (the declaration
+                    // default). Only a genuinely two-generic SharedArray may
+                    // omit it; a present-but-unreadable position 2 is an
+                    // error, silently dropping a user-requested
+                    // over-alignment would miscompile.
+                    let alignment = match generic_args.get(2) {
+                        Some(GenericArgKind::Const(align_const)) => {
+                            facts::eval_usize_const(align_const, "SharedArray ALIGN", None)?
+                                as usize
+                        }
+                        Some(_) => {
+                            return input_err_noloc!(TranslationErr::unsupported(
+                                "SharedArray substs position 2 is not the ALIGN const generic"
+                            ));
+                        }
+                        None => 0,
+                    };
 
                     let translated_elem_ty = types::translate_type(ctx, elem_ty)?;
                     Ok((translated_elem_ty, size, alignment))
@@ -13448,7 +13929,10 @@ mod pointer_array_constant_type_tests {
 
 #[cfg(test)]
 mod promotable_array_element_tests {
-    use super::{dialect_stored_size, promotable_array_element, validate_array_value_element_type};
+    use super::{
+        dialect_stored_size, promotable_array_element, promoted_global_validation_type,
+        validate_array_value_element_type,
+    };
     use dialect_mir::types::{
         EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
     };
@@ -13689,7 +14173,21 @@ mod promotable_array_element_tests {
             promotable_array_element(&ctx, empty_packed_array),
             "a zero-length packed array remains vacuously promotable"
         );
-
+        assert_eq!(
+            promoted_global_validation_type(&mut ctx, empty_packed_array, 0),
+            empty_packed_array,
+            "zero-byte promotion must retain the semantic [Packed; 0] type"
+        );
+        let packed_byte_len = dialect_stored_size(&ctx, packed_struct_array).unwrap() as usize;
+        let packed_validation =
+            promoted_global_validation_type(&mut ctx, packed_struct_array, packed_byte_len);
+        let packed_validation_ref = packed_validation.deref(&ctx);
+        let packed_validation_array = packed_validation_ref
+            .downcast_ref::<MirArrayType>()
+            .expect("packed validation storage must be an array");
+        assert_eq!(packed_validation_array.size, 20);
+        assert_eq!(packed_validation_array.element_ty, u8_ty);
+        drop(packed_validation_ref);
         // `repr(C, packed(2))` keeps one explicit byte between the fields and
         // a six-byte stride. Natural LLVM still cannot place the u32 at offset
         // two, while a packed struct plus one byte padding slot can.
@@ -13883,22 +14381,32 @@ mod promotable_array_element_tests {
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production code mints via facts::PointerOrigin.
+#[allow(clippy::disallowed_methods)]
 mod aggregate_relocation_tests {
     use super::{
-        UnionConstantStorageKind, classify_union_constant_storage, constant_type_contains_pointer,
-        decode_relocation_addend, find_unconsumed_relocation, match_thin_pointer_relocation,
-        provenance_starts_in_range, relocation_free_pointer_integer_union_uses_byte_image,
-        relocation_offsets_overlapping_range, validate_array_value_element_type,
+        UnionConstantStorageKind, UnionConstantUse, classify_union_constant_storage,
+        constant_type_contains_pointer, decode_relocation_addend, find_unconsumed_relocation,
+        match_thin_pointer_relocation, provenance_starts_in_range,
+        relocation_free_pointer_integer_union_storage_field, relocation_offsets_overlapping_range,
+        translate_pointer_integer_union_constant_from_storage, validate_array_value_element_type,
         validate_device_static_union_storage, validate_slice_relocation_shape,
     };
+    use dialect_mir::ops::{MirCastOp, MirInsertFieldOp};
     use dialect_mir::types::{
-        EnumVariant, MirArrayType, MirEnumType, MirPtrType, MirStructType, MirTupleType,
-        MirUnionType,
+        EnumVariant, MirArrayType, MirEnumType, MirPointerKind, MirPtrType, MirStructType,
+        MirTupleType, MirUnionType, pointer_carriers_in_type,
     };
+    use pliron::basic_block::BasicBlock;
     use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::common_traits::Verify;
     use pliron::context::Context;
+    use pliron::linked_list::ContainsLinkedList;
     use pliron::location::Location;
+    use pliron::op::Op;
+    use pliron::operation::Operation;
     use pliron::r#type::TypeHandle;
+    use pliron::r#type::Typed;
     use rustc_public::target::Endian;
 
     #[test]
@@ -14177,7 +14685,11 @@ mod aggregate_relocation_tests {
             "pointer-only union constants must use typed reconstruction"
         );
         assert_eq!(
-            classify_union_constant_storage(&ctx, pointer_only_union_ty),
+            classify_union_constant_storage(
+                &ctx,
+                pointer_only_union_ty,
+                UnionConstantUse::SsaReconstruction
+            ),
             Ok(UnionConstantStorageKind::ThinPointer {
                 field_index: 0,
                 field_ty: pointer_field_ty,
@@ -14192,35 +14704,36 @@ mod aggregate_relocation_tests {
         );
 
         let u64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let raw_const_pointer_field_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, false, MirPointerKind::RawConst)
+                .into();
         let pointer_integer_union_ty: TypeHandle = MirUnionType::get(
             &mut ctx,
             "PointerBits".into(),
             vec!["ptr".into(), "bits".into()],
-            vec![pointer_field_ty, u64_ty],
+            vec![raw_const_pointer_field_ty, u64_ty],
             8,
             8,
         )
         .into();
-        let pointer_integer_error = classify_union_constant_storage(&ctx, pointer_integer_union_ty)
-            .expect_err("the provenance-aware classifier must keep pointer/integer overlap closed");
+        let pointer_integer_error = classify_union_constant_storage(
+            &ctx,
+            pointer_integer_union_ty,
+            UnionConstantUse::SsaReconstruction,
+        )
+        .expect_err("the provenance-aware classifier must keep pointer/integer overlap closed");
         assert!(
             pointer_integer_error.contains("pointer/integer union constants"),
             "diagnostic must explain the provenance-vs-bits conflict: {pointer_integer_error}"
         );
-        assert!(
-            relocation_free_pointer_integer_union_uses_byte_image(
-                &ctx,
-                pointer_integer_union_ty,
-                8,
-            ),
+        assert_eq!(
+            relocation_free_pointer_integer_union_storage_field(&ctx, pointer_integer_union_ty, 8),
+            Some((1, u64_ty)),
             "a pointer-word ptr/u64 union is byte-image eligible when the allocation has no relocation"
         );
-        assert!(
-            !relocation_free_pointer_integer_union_uses_byte_image(
-                &ctx,
-                pointer_integer_union_ty,
-                4,
-            ),
+        assert_eq!(
+            relocation_free_pointer_integer_union_storage_field(&ctx, pointer_integer_union_ty, 4),
+            None,
             "the exception must not cross a target pointer-width mismatch"
         );
 
@@ -14228,17 +14741,18 @@ mod aggregate_relocation_tests {
             &mut ctx,
             "PointerNarrowBits".into(),
             vec!["ptr".into(), "bits".into()],
-            vec![pointer_field_ty, u32_ty],
+            vec![raw_const_pointer_field_ty, u32_ty],
             8,
             8,
         )
         .into();
-        assert!(
-            !relocation_free_pointer_integer_union_uses_byte_image(
+        assert_eq!(
+            relocation_free_pointer_integer_union_storage_field(
                 &ctx,
                 u32_pointer_integer_union_ty,
-                8,
+                8
             ),
+            None,
             "partial-width integer alternatives stay outside the initial pointer-word exception"
         );
 
@@ -14252,8 +14766,12 @@ mod aggregate_relocation_tests {
             8,
         )
         .into();
-        let fat_pointer_error = classify_union_constant_storage(&ctx, fat_pointer_union_ty)
-            .expect_err("fat-pointer union storage must remain fail-closed");
+        let fat_pointer_error = classify_union_constant_storage(
+            &ctx,
+            fat_pointer_union_ty,
+            UnionConstantUse::SsaReconstruction,
+        )
+        .expect_err("fat-pointer union storage must remain fail-closed");
         assert!(
             fat_pointer_error.contains("not a thin pointer"),
             "diagnostic must identify unsupported fat/nested storage: {fat_pointer_error}"
@@ -14285,6 +14803,250 @@ mod aggregate_relocation_tests {
     }
 
     #[test]
+    fn relocation_free_pointer_integer_union_gate_is_raw_only() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let u64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let raw_mut_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, true, MirPointerKind::RawMut)
+                .into();
+        let raw_mut_union: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "RawMutBits".into(),
+            vec!["ptr".into(), "bits".into()],
+            vec![raw_mut_ty, u64_ty],
+            8,
+            8,
+        )
+        .into();
+        assert_eq!(
+            relocation_free_pointer_integer_union_storage_field(&ctx, raw_mut_union, 8),
+            Some((1, u64_ty)),
+            "RawMut carries no uniqueness claim and may use the integer storage view"
+        );
+
+        let erased_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, false).into();
+        let shared_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, false, MirPointerKind::SharedRef)
+                .into();
+        let unique_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, true, MirPointerKind::UniqueRef)
+                .into();
+        let global_raw_ty: TypeHandle = MirPtrType::get_with_kind(
+            &mut ctx,
+            u32_ty,
+            false,
+            dialect_mir::types::address_space::GLOBAL,
+            MirPointerKind::RawConst,
+        )
+        .into();
+        let fn_marker: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "FnPtrTarget".into(),
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            0,
+            0,
+        )
+        .into();
+        let fn_token_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, fn_marker, false).into();
+
+        for (name, pointer_ty) in [
+            ("Erased", erased_ty),
+            ("SharedRef", shared_ty),
+            ("UniqueRef", unique_ty),
+            ("non-generic raw", global_raw_ty),
+            ("function token", fn_token_ty),
+        ] {
+            let union_ty: TypeHandle = MirUnionType::get(
+                &mut ctx,
+                format!("{name}Bits"),
+                vec!["ptr".into(), "bits".into()],
+                vec![pointer_ty, u64_ty],
+                8,
+                8,
+            )
+            .into();
+            assert_eq!(
+                relocation_free_pointer_integer_union_storage_field(&ctx, union_ty, 8),
+                None,
+                "{name} must not acquire a pointer category from integer-initialized union storage"
+            );
+        }
+    }
+
+    #[test]
+    fn pointer_only_union_classifier_preserves_reference_semantics() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared_u32: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, false, MirPointerKind::SharedRef)
+                .into();
+        let shared_u8: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u8_ty, false, MirPointerKind::SharedRef)
+                .into();
+        let raw_u32: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, false, MirPointerKind::RawConst)
+                .into();
+        let raw_u8: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u8_ty, false, MirPointerKind::RawConst)
+                .into();
+        let raw_mut_u32: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, true, MirPointerKind::RawMut)
+                .into();
+        let unique_u32: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, true, MirPointerKind::UniqueRef)
+                .into();
+
+        let raw_views: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "RawViews".into(),
+            vec!["word".into(), "byte".into()],
+            vec![raw_u32, raw_u8],
+            8,
+            8,
+        )
+        .into();
+        assert!(
+            classify_union_constant_storage(&ctx, raw_views, UnionConstantUse::SsaReconstruction)
+                .is_ok(),
+            "same-kind raw pointers may safely use different pointee views"
+        );
+
+        for (name, fields, expected) in [
+            (
+                "MixedReferencePointees",
+                vec![shared_u32, shared_u8],
+                "reference pointee types",
+            ),
+            (
+                "MixedRawKinds",
+                vec![raw_u32, raw_mut_u32],
+                "pointer storage semantics",
+            ),
+            ("UniqueReference", vec![unique_u32, unique_u32], "UniqueRef"),
+        ] {
+            let union_ty: TypeHandle = MirUnionType::get(
+                &mut ctx,
+                name.into(),
+                vec!["first".into(), "second".into()],
+                fields,
+                8,
+                8,
+            )
+            .into();
+            let error = classify_union_constant_storage(
+                &ctx,
+                union_ty,
+                UnionConstantUse::SsaReconstruction,
+            )
+            .expect_err("ambiguous pointer semantics must fail closed");
+            assert!(
+                error.contains(expected),
+                "{name} diagnostic must identify {expected}: {error}"
+            );
+        }
+
+        // Physical device-static storage emits exact bytes plus one
+        // integer-width relocation slot and never mints a typed reference, so
+        // same-kind reference alternatives with different pointee views stay
+        // supported there (e.g. `union { word: &'static u32, byte: &'static u8 }`).
+        let mixed_reference_pointees: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "MixedReferencePointees".into(),
+            vec!["first".into(), "second".into()],
+            vec![shared_u32, shared_u8],
+            8,
+            8,
+        )
+        .into();
+        assert!(
+            classify_union_constant_storage(
+                &ctx,
+                mixed_reference_pointees,
+                UnionConstantUse::PhysicalStorage
+            )
+            .is_ok(),
+            "physical initializer storage must keep mixed-pointee reference unions supported"
+        );
+    }
+
+    #[test]
+    fn pointer_integer_union_materialization_never_transmutes_to_a_pointer_carrier() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let u64_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
+        let raw_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, false, MirPointerKind::RawConst)
+                .into();
+        let union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "PointerOrBits".into(),
+            vec!["pointer".into(), "bits".into()],
+            vec![raw_ty, u64_ty],
+            8,
+            8,
+        )
+        .into();
+        let block = BasicBlock::new(&mut ctx, None, vec![]);
+
+        let (value, last_op) = translate_pointer_integer_union_constant_from_storage(
+            &mut ctx,
+            union_ty,
+            1,
+            u64_ty,
+            &[
+                Some(0x88),
+                Some(0x77),
+                Some(0x66),
+                Some(0x55),
+                Some(0x44),
+                Some(0x33),
+                Some(0x22),
+                Some(0x11),
+            ],
+            block,
+            None,
+            Location::Unknown,
+        )
+        .expect("the exact raw-pointer/integer storage shape must materialize");
+        assert_eq!(value.get_type(&ctx), union_ty);
+
+        let last_op = last_op.expect("non-empty storage must emit an insert operation");
+        let insert = Operation::get_op::<MirInsertFieldOp>(last_op, &ctx)
+            .expect("the final operation must insert the integer union field");
+        assert_eq!(
+            insert.get_attr_insert_index(&ctx).map(|index| index.0),
+            Some(1)
+        );
+        assert!(insert.verify(&ctx).is_ok());
+
+        for operation in block.deref(&ctx).iter(&ctx) {
+            if let Some(cast) = Operation::get_op::<MirCastOp>(operation, &ctx) {
+                assert!(cast.verify(&ctx).is_ok());
+                let result_ty = cast
+                    .get_operation()
+                    .deref(&ctx)
+                    .get_result(0)
+                    .get_type(&ctx);
+                assert!(
+                    pointer_carriers_in_type(&ctx, result_ty).is_empty(),
+                    "constant storage may transmute bytes to the integer field, never to a pointer-bearing union"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn device_static_union_storage_gate_admits_only_one_anchored_pointer_word() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
@@ -14308,6 +15070,39 @@ mod aggregate_relocation_tests {
             Ok(()),
             "one naturally aligned pointer word with one anchored relocation is the \
              accepted shape"
+        );
+
+        // The example shape `union { word: &'static u32, byte: &'static u8 }`:
+        // same-kind references with different pointee views. The storage gate
+        // emits bytes plus one relocation slot and never mints a typed
+        // reference, so this stays supported even though SSA reconstruction
+        // of the same union fails closed.
+        let shared_word_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, false, MirPointerKind::SharedRef)
+                .into();
+        let shared_byte_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u8_ty, false, MirPointerKind::SharedRef)
+                .into();
+        let mixed_reference_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "MixedReferenceWord".into(),
+            vec!["word".into(), "byte".into()],
+            vec![shared_word_ty, shared_byte_ty],
+            8,
+            8,
+        )
+        .into();
+        assert_eq!(
+            validate_device_static_union_storage(
+                &ctx,
+                mixed_reference_union_ty,
+                8,
+                8,
+                8,
+                &[(0, 8)]
+            ),
+            Ok(()),
+            "mixed-pointee reference unions remain valid device-static storage"
         );
 
         let byte_image_error =
@@ -14402,6 +15197,8 @@ mod aggregate_relocation_tests {
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production code mints via facts::PointerOrigin.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use dialect_mir::types::{MirArrayType, MirPtrType, MirStructType, MirTupleType};
@@ -14624,6 +15421,99 @@ mod tests {
     }
 
     #[test]
+    fn expected_pointer_normalization_rejects_concrete_kind_change() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let pointee_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let source_ty: TypeHandle = MirPtrType::get_generic_with_kind(
+            &mut ctx,
+            pointee_ty,
+            false,
+            MirPointerKind::SharedRef,
+        )
+        .into();
+        let target_ty: TypeHandle = MirPtrType::get_generic_with_kind(
+            &mut ctx,
+            pointee_ty,
+            true,
+            MirPointerKind::UniqueRef,
+        )
+        .into();
+        let block = BasicBlock::new(&mut ctx, None, vec![source_ty]);
+        let source = block.deref(&ctx).get_argument(0);
+
+        let (normalized, last_op) = cast_to_expected_pointer_type_if_needed(
+            &mut ctx,
+            source,
+            target_ty,
+            block,
+            None,
+            Location::Unknown,
+        );
+
+        assert_eq!(normalized.get_type(&ctx), source_ty);
+        assert!(
+            last_op.is_none(),
+            "generic normalization must not strengthen SharedRef into UniqueRef"
+        );
+
+        let erased_read: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee_ty, false).into();
+        let erased_write: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee_ty, true).into();
+        let erased_block = BasicBlock::new(&mut ctx, None, vec![erased_read]);
+        let erased_value = erased_block.deref(&ctx).get_argument(0);
+        let (normalized, last_op) = cast_to_expected_pointer_type_if_needed(
+            &mut ctx,
+            erased_value,
+            erased_write,
+            erased_block,
+            None,
+            Location::Unknown,
+        );
+        assert_eq!(normalized.get_type(&ctx), erased_read);
+        assert!(
+            last_op.is_none(),
+            "generic normalization must not manufacture writable Erased evidence"
+        );
+    }
+
+    #[test]
+    fn rust_pointer_boundary_allows_raw_mut_reborrow_to_unique_ref() {
+        let mut ctx = Context::new();
+        crate::translator::register_dialects(&mut ctx);
+
+        let pointee_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let raw_mut_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee_ty, true, MirPointerKind::RawMut)
+                .into();
+        let unique_ref_ty: TypeHandle = MirPtrType::get_generic_with_kind(
+            &mut ctx,
+            pointee_ty,
+            true,
+            MirPointerKind::UniqueRef,
+        )
+        .into();
+        let block = BasicBlock::new(&mut ctx, None, vec![raw_mut_ty]);
+        let raw_mut = block.deref(&ctx).get_argument(0);
+
+        let (reborrow, last_op) = cast_to_declared_rust_pointer_type_if_needed(
+            &mut ctx,
+            raw_mut,
+            unique_ref_ty,
+            block,
+            None,
+            Location::Unknown,
+            MirPointerKindAuthorityAttr::Reborrow,
+        );
+
+        assert_eq!(reborrow.get_type(&ctx), unique_ref_ty);
+        assert!(
+            last_op.is_some(),
+            "Rvalue::Ref must trust rustc's declared reborrow result kind"
+        );
+    }
+
+    #[test]
     fn projected_address_normalization_matches_expected_pointer_type() {
         let mut ctx = Context::new();
         crate::translator::register_dialects(&mut ctx);
@@ -14632,27 +15522,33 @@ mod tests {
 
         let physical_ptr_ty: TypeHandle = MirPtrType::get(&mut ctx, pointee_ty, false, 1).into();
 
-        let expected_rust_ptr_ty: TypeHandle =
-            MirPtrType::get_generic(&mut ctx, pointee_ty, false).into();
+        let expected_rust_ptr_ty: TypeHandle = MirPtrType::get_generic_with_kind(
+            &mut ctx,
+            pointee_ty,
+            false,
+            MirPointerKind::SharedRef,
+        )
+        .into();
 
         let block = BasicBlock::new(&mut ctx, None, vec![physical_ptr_ty]);
         let physical_pointer = block.deref(&ctx).get_argument(0);
 
         // Rvalue::Ref and Rvalue::AddressOf both use this normalization after
         // computing a projected address in its physical address space.
-        let (normalized_pointer, last_op) = cast_to_generic_addrspace_if_needed(
+        let (normalized_pointer, last_op) = cast_to_declared_rust_pointer_type_if_needed(
             &mut ctx,
             physical_pointer,
             expected_rust_ptr_ty,
             block,
             None,
             Location::Unknown,
+            MirPointerKindAuthorityAttr::Reborrow,
         );
 
         assert_eq!(
             normalized_pointer.get_type(&ctx),
             expected_rust_ptr_ty,
-            "projected addresses must be normalized to the exact Rust pointer type"
+            "projected addresses must be normalized to the exact Rust pointer type and kind"
         );
 
         let cast_op = last_op.expect(
@@ -14794,11 +15690,18 @@ mod checked_binary_op_tests {
         let target_a = "v1 1 0 8 1 0 8 target_a ";
         let target_b = "v1 1 0 8 1 0 8 target_b ";
 
-        let key_a = promoted_constant_dedup_key_from_parts(&ctx, table_ty, &bytes, target_a);
-        let key_b = promoted_constant_dedup_key_from_parts(&ctx, table_ty, &bytes, target_b);
+        let key_a = promoted_constant_dedup_key_from_parts(&ctx, table_ty, &bytes, 8, target_a);
+        let key_b = promoted_constant_dedup_key_from_parts(&ctx, table_ty, &bytes, 8, target_b);
         assert_ne!(
             key_a, key_b,
             "identical bytes with different relocation targets must not alias"
+        );
+
+        let differently_aligned =
+            promoted_constant_dedup_key_from_parts(&ctx, table_ty, &bytes, 16, target_a);
+        assert_ne!(
+            key_a, differently_aligned,
+            "identical type, bytes, and relocations with different allocation alignment must not alias"
         );
     }
 }

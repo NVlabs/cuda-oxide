@@ -731,9 +731,13 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
             self.export_value(ptr, value_names, output)?;
         }
-        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
-            .unwrap_or_else(|| self.natural_alignment(ty));
-        writeln!(output, ", align {align}").unwrap();
+        if let Some(align) = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .or_else(|| self.natural_alignment(ty))
+        {
+            writeln!(output, ", align {align}").unwrap();
+        } else {
+            writeln!(output).unwrap();
+        }
         Ok(())
     }
 
@@ -770,9 +774,13 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
             self.export_value(ptr, value_names, output)?;
         }
-        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
-            .unwrap_or_else(|| self.natural_alignment(val_ty));
-        writeln!(output, ", align {align}").unwrap();
+        if let Some(align) = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .or_else(|| self.natural_alignment(val_ty))
+        {
+            writeln!(output, ", align {align}").unwrap();
+        } else {
+            writeln!(output).unwrap();
+        }
         Ok(())
     }
 
@@ -822,9 +830,13 @@ impl<'a> ModuleExportState<'a> {
             self.export_type(array_size.get_type(self.ctx), output)?;
             write!(output, " {array_size_name}").unwrap();
         }
-        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
-            .unwrap_or_else(|| self.natural_alignment(elem_llvm_ty));
-        writeln!(output, ", align {align}").unwrap();
+        if let Some(align) = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .or_else(|| self.natural_alignment(elem_llvm_ty))
+        {
+            writeln!(output, ", align {align}").unwrap();
+        } else {
+            writeln!(output).unwrap();
+        }
 
         if needs_normalization {
             write!(output, "  {res_name} = bitcast ").unwrap();
@@ -1217,7 +1229,15 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
             self.export_value(ptr, value_names, output)?;
         }
-        let align = self.natural_alignment(ty);
+        // Atomic loads must state an alignment; the operand types are
+        // power-of-two scalars, so this is always answerable. Error rather
+        // than fabricate if it ever is not.
+        let align = self.natural_alignment(ty).ok_or_else(|| {
+            format!(
+                "atomic load requires an explicit alignment, but `{}` has no known ABI alignment",
+                ty.deref(self.ctx).disp(self.ctx)
+            )
+        })?;
         writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
         Ok(())
     }
@@ -1251,7 +1271,13 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
             self.export_value(ptr, value_names, output)?;
         }
-        let align = self.natural_alignment(val_ty);
+        // Same contract as atomic load: exact alignment or a loud error.
+        let align = self.natural_alignment(val_ty).ok_or_else(|| {
+            format!(
+                "atomic store requires an explicit alignment, but `{}` has no known ABI alignment",
+                val_ty.deref(self.ctx).disp(self.ctx)
+            )
+        })?;
         writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
         Ok(())
     }

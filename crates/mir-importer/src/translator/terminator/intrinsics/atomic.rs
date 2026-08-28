@@ -65,7 +65,7 @@
 use super::super::helpers::emit_store_result_and_goto;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
-use crate::translator::{rvalue, types};
+use crate::translator::{facts, rvalue, types};
 
 use dialect_nvvm::ops::InlinePtxOp;
 use dialect_nvvm::ops::atomic::{
@@ -232,23 +232,32 @@ fn method_to_rmw_kind(method: &str, info: &AtomicTypeInfo) -> Option<AtomicRmwKi
 /// Extract an `AtomicOrdering` from a MIR operand that represents
 /// a `cuda_device::atomic::AtomicOrdering` enum value.
 ///
-/// The enum has `#[repr(u8)]` with discriminants:
-///   Relaxed=0, Acquire=1, Release=2, AcqRel=3, SeqCst=4
-fn extract_ordering(operand: &mir::Operand) -> AtomicOrdering {
-    if let mir::Operand::Constant(constant) = operand {
-        let const_str = format!("{:?}", constant.const_);
-        let discr = rvalue::extract_enum_discriminant(&constant.const_, &const_str);
-        match discr {
-            0 => AtomicOrdering::Relaxed,
-            1 => AtomicOrdering::Acquire,
-            2 => AtomicOrdering::Release,
-            3 => AtomicOrdering::AcqRel,
-            4 => AtomicOrdering::SeqCst,
-            _ => AtomicOrdering::SeqCst, // Conservative fallback
-        }
-    } else {
-        // Non-constant ordering (dynamic) -- use SeqCst as conservative default.
-        AtomicOrdering::SeqCst
+/// The ordering decides which memory fences the emitted PTX carries, so
+/// there is no safe guess: matching is by variant NAME (layout drift in
+/// cuda-device cannot silently remap orderings) and anything that is not a
+/// readable constant variant is a hard error.
+fn extract_ordering(operand: &mir::Operand, loc: &Location) -> TranslationResult<AtomicOrdering> {
+    let mir::Operand::Constant(constant) = operand else {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "atomic ordering must be a compile-time constant (a literal AtomicOrdering \
+                 variant)"
+                    .to_string()
+            )
+        );
+    };
+    let (_idx, variant_name) = facts::extract_enum_variant(&constant.const_, loc)?;
+    match variant_name.as_str() {
+        "Relaxed" => Ok(AtomicOrdering::Relaxed),
+        "Acquire" => Ok(AtomicOrdering::Acquire),
+        "Release" => Ok(AtomicOrdering::Release),
+        "AcqRel" => Ok(AtomicOrdering::AcqRel),
+        "SeqCst" => Ok(AtomicOrdering::SeqCst),
+        other => input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(format!("unknown AtomicOrdering variant `{other}`"))
+        ),
     }
 }
 
@@ -381,7 +390,7 @@ fn emit_atomic_load(
         );
     }
 
-    let ordering = extract_ordering(&args[1]);
+    let ordering = extract_ordering(&args[1], &loc)?;
     let result_ty = type_info.element_type(ctx);
 
     let (ptr_val, last_op) = rvalue::translate_operand(
@@ -447,7 +456,7 @@ fn emit_atomic_store(
         );
     }
 
-    let ordering = extract_ordering(&args[2]);
+    let ordering = extract_ordering(&args[2], &loc)?;
 
     // Get the value to store (arg 1)
     let (val, last_op) = rvalue::translate_operand(
@@ -540,7 +549,7 @@ fn emit_atomic_rmw(
         );
     }
 
-    let ordering = extract_ordering(&args[2]);
+    let ordering = extract_ordering(&args[2], &loc)?;
     let result_ty = type_info.element_type(ctx);
 
     // Get the pointer (arg 0)
@@ -647,8 +656,8 @@ fn emit_atomic_compare_exchange(
         );
     }
 
-    let success_ordering = extract_ordering(&args[3]);
-    let failure_ordering = extract_ordering(&args[4]);
+    let success_ordering = extract_ordering(&args[3], &loc)?;
+    let failure_ordering = extract_ordering(&args[4], &loc)?;
     let result_ty = type_info.element_type(ctx);
 
     // Get the pointer (arg 0)

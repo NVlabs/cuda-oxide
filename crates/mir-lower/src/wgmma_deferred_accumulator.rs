@@ -55,10 +55,11 @@
 //! contains the final `wait_group<0>`. This form is selected before the
 //! single-slot counted loop.
 
+use dialect_mir::attributes::MirCastKindAttr;
 use dialect_mir::{
     ops::{
-        MirAddOp, MirArrayElementAddrOp, MirCondBranchOp, MirConstantOp, MirFuncOp, MirGeOp,
-        MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirNotOp, MirStorageDeadOp,
+        MirAddOp, MirArrayElementAddrOp, MirCastOp, MirCondBranchOp, MirConstantOp, MirFuncOp,
+        MirGeOp, MirGotoOp, MirGtOp, MirLeOp, MirLoadOp, MirLtOp, MirNotOp, MirStorageDeadOp,
         MirStorageLiveOp, MirStoreOp, MirSubOp,
     },
     types::{MirArrayType, MirPtrType, address_space},
@@ -82,7 +83,7 @@ use pliron::{
         types::{FP32Type, IntegerType, Signedness},
     },
     context::{Context, Ptr},
-    graph::dominance::DomInfo,
+    graph::{ControlFlowGraph, dominance::DomInfo},
     irbuild::{
         listener::Recorder,
         rewriter::{IRRewriter, Rewriter},
@@ -297,6 +298,7 @@ fn counted_loop_operation_is_supported(ctx: &Context, operation: Ptr<Operation>)
         || Operation::get_op::<MirCondBranchOp>(operation, ctx).is_some()
         || Operation::get_op::<MirGotoOp>(operation, ctx).is_some()
         || wgmma_mma_kind(ctx, operation).is_some()
+        || is_representation_only_ptr_retype(ctx, operation)
 }
 
 fn pipelined_counted_loop_operation_is_supported(ctx: &Context, operation: Ptr<Operation>) -> bool {
@@ -304,6 +306,38 @@ fn pipelined_counted_loop_operation_is_supported(ctx: &Context, operation: Ptr<O
         && wgmma_mma_kind(ctx, operation).is_none_or(|kind| kind == WgmmaMmaKind::Bf16M64N64))
         || Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_some()
         || Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some()
+}
+
+/// Return whether the pointer-form MMA is guaranteed to execute on every
+/// completed counted-loop iteration.
+///
+/// Rust MIR represents a call as a block terminator. After intrinsic import,
+/// that commonly leaves the MMA in the block immediately before the latch,
+/// with the post-call arithmetic in the latch itself. Accept that source shape
+/// only when the MMA block unconditionally enters the unique latch and no
+/// other predecessor can bypass it.
+fn counted_loop_mma_is_mandatory(
+    ctx: &Context,
+    region: Ptr<Region>,
+    mma_block: Ptr<BasicBlock>,
+    latch: Ptr<BasicBlock>,
+) -> bool {
+    if mma_block == latch {
+        return true;
+    }
+
+    let Some(terminator) = mma_block.deref(ctx).get_terminator(ctx) else {
+        return false;
+    };
+    if Operation::get_op::<MirGotoOp>(terminator, ctx).is_none() {
+        return false;
+    }
+    let successors = terminator.deref(ctx).successors().collect::<Vec<_>>();
+    if successors.as_slice() != [latch] {
+        return false;
+    }
+
+    region.predecessors(ctx, &latch).as_slice() == [mma_block]
 }
 
 fn find_preheader_fence(
@@ -342,37 +376,51 @@ fn find_exit_commit_wait(
     exit: Ptr<BasicBlock>,
 ) -> Result<Option<(Ptr<Operation>, Ptr<Operation>)>> {
     let mut commit = None;
-    for operation in exit.deref(ctx).iter(ctx).collect::<Vec<_>>() {
-        if is_ignorable(ctx, operation) {
-            continue;
+    let mut block = exit;
+    let mut visited = FxHashSet::default();
+
+    loop {
+        if !visited.insert(block) {
+            return pliron::input_err_noloc!(
+                "counted WGMMA commit/wait sequence crosses a control-flow cycle"
+            );
         }
 
-        if commit.is_none() {
-            if Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_none() {
-                return Ok(None);
+        for operation in block.deref(ctx).iter(ctx).collect::<Vec<_>>() {
+            if is_ignorable(ctx, operation) {
+                continue;
             }
-            require_nullary_control_op(ctx, operation, "WGMMA commit_group")?;
-            commit = Some(operation);
-            continue;
-        }
 
-        if Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some() {
-            require_wait_shape(ctx, operation)?;
-            let wait_operand = operation.deref(ctx).get_operand(0);
-            if integer_constant_u64(ctx, wait_operand) != Some(0) {
-                return pliron::input_err_noloc!(
-                    "counted WGMMA loop requires a final wait_group<0>"
-                );
+            if commit.is_none() {
+                if Operation::get_op::<WgmmaCommitGroupSyncAlignedOp>(operation, ctx).is_none() {
+                    return Ok(None);
+                }
+                require_nullary_control_op(ctx, operation, "WGMMA commit_group")?;
+                commit = Some(operation);
+                continue;
             }
-            return Ok(Some((commit.expect("commit is set"), operation)));
+
+            if Operation::get_op::<WgmmaWaitGroupSyncAlignedOp>(operation, ctx).is_some() {
+                require_wait_shape(ctx, operation)?;
+                let wait_operand = operation.deref(ctx).get_operand(0);
+                if integer_constant_u64(ctx, wait_operand) != Some(0) {
+                    return pliron::input_err_noloc!(
+                        "counted WGMMA loop requires a final wait_group<0>"
+                    );
+                }
+                return Ok(Some((commit.expect("commit is set"), operation)));
+            }
+
+            return pliron::input_err_noloc!(
+                "unsupported operation between WGMMA commit_group and final wait_group<0>"
+            );
         }
 
-        return pliron::input_err_noloc!(
-            "unsupported operation between WGMMA commit_group and final wait_group<0>"
-        );
+        let Some(next) = next_linear_block(ctx, block, commit.is_some())? else {
+            return Ok(None);
+        };
+        block = next;
     }
-
-    Ok(None)
 }
 
 fn find_exit_wait_zero(ctx: &Context, exit: Ptr<BasicBlock>) -> Result<Option<Ptr<Operation>>> {
@@ -603,20 +651,24 @@ fn match_pipelined_counted_loop(
         let Some(shape) = value_accumulator_shape(ctx, accumulator) else {
             return Ok(None);
         };
-        if accumulator
+        let accumulator_identity = canonical_accumulator_identity(ctx, accumulator);
+        if accumulator_identity
             .defining_block()
             .is_some_and(|block| r#loop.blocks.contains(&block))
-            || accumulator
+            || accumulator_identity
                 .defining_op()
                 .and_then(|operation| operation.deref(ctx).get_parent_block())
                 .is_some_and(|block| r#loop.blocks.contains(&block))
         {
             return Ok(None);
         }
-        if accumulators.contains(&accumulator) {
+        if accumulators.contains(&accumulator_identity) {
             return Ok(None);
         }
-        accumulators.push(accumulator);
+        // Counted-loop lowering is hoisted into the preheader, so retain the
+        // canonical storage address rather than a reborrow cast defined in the
+        // loop body.
+        accumulators.push(accumulator_identity);
         slot_types.push(shape);
         descriptor_args.extend([mma_ref.get_operand(1), mma_ref.get_operand(2)]);
     }
@@ -766,7 +818,10 @@ fn match_counted_loop(
         // for the linear matcher, which rejects unsupported shapes.
         return Ok(None);
     }
-    if mma.deref(ctx).get_parent_block() != Some(latch) {
+    let Some(mma_block) = mma.deref(ctx).get_parent_block() else {
+        return Ok(None);
+    };
+    if !counted_loop_mma_is_mandatory(ctx, region, mma_block, latch) {
         return Ok(None);
     }
     require_pointer_mma_shape(ctx, *mma)?;
@@ -777,10 +832,11 @@ fn match_counted_loop(
     let Some((row_type, element_type)) = value_accumulator_shape(ctx, accumulator) else {
         return Ok(None);
     };
-    if accumulator
+    let accumulator_identity = canonical_accumulator_identity(ctx, accumulator);
+    if accumulator_identity
         .defining_block()
         .is_some_and(|block| r#loop.blocks.contains(&block))
-        || accumulator
+        || accumulator_identity
             .defining_op()
             .and_then(|operation| operation.deref(ctx).get_parent_block())
             .is_some_and(|block| r#loop.blocks.contains(&block))
@@ -836,7 +892,9 @@ fn match_counted_loop(
         exit,
         commit,
         wait,
-        accumulator,
+        // The typed reborrow may be defined in the removed loop body. The
+        // canonical storage address dominates the preheader rewrite.
+        accumulator: accumulator_identity,
         kind: *kind,
         desc_a_base,
         desc_b_base,
@@ -1511,6 +1569,61 @@ fn is_ignorable(ctx: &Context, op: Ptr<Operation>) -> bool {
         || Operation::get_op::<MirStorageLiveOp>(op, ctx).is_some()
         || Operation::get_op::<MirStorageDeadOp>(op, ctx).is_some()
         || Operation::get_op::<MirGotoOp>(op, ctx).is_some()
+        || is_representation_only_ptr_retype(ctx, op)
+}
+
+/// A `mir.cast <PtrToPtr>` between thin MIR pointers with the same pointee and
+/// address space, differing only in pointer kind and/or mutability.
+///
+/// Pointer kinds are a Rust semantic distinction erased at lowering, so such a
+/// cast produces no instruction and cannot introduce a spill boundary inside a
+/// fused WGMMA region. The importer emits one whenever a Rust-typed boundary
+/// such as `Rvalue::Ref` retypes the accumulator address between the fence and
+/// the MMA.
+fn is_representation_only_ptr_retype(ctx: &Context, op: Ptr<Operation>) -> bool {
+    let Some(cast_op) = Operation::get_op::<MirCastOp>(op, ctx) else {
+        return false;
+    };
+    let is_ptr_to_ptr = cast_op
+        .get_attr_cast_kind(ctx)
+        .is_some_and(|kind| *kind == MirCastKindAttr::PtrToPtr);
+    if !is_ptr_to_ptr {
+        return false;
+    }
+    let op_ref = op.deref(ctx);
+    if op_ref.get_num_operands() != 1 || op_ref.get_num_results() != 1 {
+        return false;
+    }
+    let src_ty = op_ref.get_operand(0).get_type(ctx);
+    let dst_ty = op_ref.get_result(0).get_type(ctx);
+    let src_ref = src_ty.deref(ctx);
+    let dst_ref = dst_ty.deref(ctx);
+    match (
+        src_ref.downcast_ref::<MirPtrType>(),
+        dst_ref.downcast_ref::<MirPtrType>(),
+    ) {
+        (Some(src_ptr), Some(dst_ptr)) => {
+            src_ptr.pointee == dst_ptr.pointee && src_ptr.address_space() == dst_ptr.address_space()
+        }
+        _ => false,
+    }
+}
+
+/// Return the storage identity behind any chain of representation-only MIR
+/// pointer retypes.
+///
+/// Rust creates a fresh `&mut` value for each reborrow, so two WGMMA calls on
+/// the same accumulator can have different SSA operands even though they name
+/// the same storage. Pointer kind and mutability are erased during lowering;
+/// neither changes the identity used by WGMMA lifetime and slot checks.
+fn canonical_accumulator_identity(ctx: &Context, mut accumulator: Value) -> Value {
+    while let Some(defining_op) = accumulator.defining_op() {
+        if !is_representation_only_ptr_retype(ctx, defining_op) {
+            break;
+        }
+        accumulator = defining_op.deref(ctx).get_operand(0);
+    }
+    accumulator
 }
 
 fn next_linear_block(
@@ -1778,7 +1891,15 @@ fn validate_pipeline_events(
         );
     }
 
+    // Keep the first typed operand for each slot: it dominates the final wait
+    // where the value adapter is inserted. Use canonical storage identities
+    // only for distinctness and round-robin ownership checks.
     let accumulators = group_accumulators[..slot_count].to_vec();
+    let accumulator_identities = accumulators
+        .iter()
+        .copied()
+        .map(|accumulator| canonical_accumulator_identity(ctx, accumulator))
+        .collect::<Vec<_>>();
     for left in 0..accumulators.len() {
         if value_accumulator_shape(ctx, accumulators[left]).is_none() {
             return pliron::input_err_noloc!(
@@ -1786,7 +1907,7 @@ fn validate_pipeline_events(
             );
         }
         for right in (left + 1)..accumulators.len() {
-            if accumulators[left] == accumulators[right] {
+            if accumulator_identities[left] == accumulator_identities[right] {
                 return pliron::input_err_noloc!(
                     "WGMMA partial-wait pipeline requires max_pending_groups + 1 distinct accumulator slots"
                 );
@@ -1795,8 +1916,8 @@ fn validate_pipeline_events(
     }
 
     for (group_index, accumulator) in group_accumulators.iter().copied().enumerate() {
-        let expected = accumulators[group_index % slot_count];
-        if accumulator != expected {
+        let expected_identity = accumulator_identities[group_index % slot_count];
+        if canonical_accumulator_identity(ctx, accumulator) != expected_identity {
             return pliron::input_err_noloc!(
                 "WGMMA partial-wait pipeline must reuse accumulator slots in round-robin order only after wait_group<N> makes the slot safe"
             );
@@ -1839,6 +1960,7 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
     let mut mmas = Vec::new();
     let mut commit = None;
     let mut accumulator = None;
+    let mut accumulator_identity = None;
     let mut descriptors = Vec::new();
     let mut kind = None;
 
@@ -1894,13 +2016,18 @@ fn match_sequence(ctx: &Context, fence: Ptr<Operation>) -> Result<Option<FusionP
                         "WGMMA linear full-drain lowering for this variant requires a canonical {expected} accumulator"
                     );
                 }
-                match accumulator {
-                    Some(expected) if expected != current_accumulator => {
+                let current_accumulator_identity =
+                    canonical_accumulator_identity(ctx, current_accumulator);
+                match accumulator_identity {
+                    Some(expected) if expected != current_accumulator_identity => {
                         return pliron::input_err_noloc!(
                             "WGMMA deferred accumulator region uses more than one accumulator"
                         );
                     }
-                    None => accumulator = Some(current_accumulator),
+                    None => {
+                        accumulator = Some(current_accumulator);
+                        accumulator_identity = Some(current_accumulator_identity);
+                    }
                     _ => {}
                 }
                 descriptors.push(operation_ref.get_operand(1));
@@ -2198,4 +2325,188 @@ pub(crate) fn fuse_deferred_accumulators(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+// Tests build kinded fixture types directly; production minting lives in mir-importer's facts.rs.
+#[allow(clippy::disallowed_methods)]
+mod tests {
+    use super::*;
+    use dialect_mir::attributes::MirPointerKindAuthorityAttr;
+    use dialect_mir::types::MirPointerKind;
+    use pliron::builtin::ops::ModuleOp;
+
+    fn test_region(ctx: &mut Context, name: &str) -> Ptr<Region> {
+        let module = ModuleOp::new(ctx, name.try_into().unwrap());
+        module.get_operation().deref(ctx).get_region(0)
+    }
+
+    fn append_goto(ctx: &mut Context, from: Ptr<BasicBlock>, to: Ptr<BasicBlock>) {
+        Operation::new(
+            ctx,
+            MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![to],
+            0,
+        )
+        .insert_at_back(from, ctx);
+    }
+
+    #[test]
+    fn linear_plan_retains_first_typed_reborrow() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        dialect_nvvm::register(&mut ctx);
+
+        let f32_type = FP32Type::get(&ctx);
+        let row_type = MirArrayType::get(&mut ctx, f32_type.into(), ACCUMULATOR_COLUMNS as u64);
+        let accumulator_type =
+            MirArrayType::get(&mut ctx, row_type.into(), ACCUMULATOR_ROWS as u64);
+        let erased_pointer = MirPtrType::get_generic(&mut ctx, accumulator_type.into(), true);
+        let unique_pointer: TypeHandle = MirPtrType::get_generic_with_kind(
+            &mut ctx,
+            accumulator_type.into(),
+            true,
+            MirPointerKind::UniqueRef,
+        )
+        .into();
+        let u64_type = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+        let region = test_region(&mut ctx, "linear_reborrow_identity");
+        let block = BasicBlock::new(
+            &mut ctx,
+            None,
+            vec![erased_pointer.into(), u64_type.into(), u64_type.into()],
+        );
+        block.insert_at_back(region, &ctx);
+        let storage = block.deref(&ctx).get_argument(0);
+        let desc_a = block.deref(&ctx).get_argument(1);
+        let desc_b = block.deref(&ctx).get_argument(2);
+
+        let fence = WgmmaFenceSyncAlignedOp::build(&mut ctx);
+        fence.insert_at_back(block, &ctx);
+
+        let append_reborrow = |ctx: &mut Context| {
+            let retype = Operation::new(
+                ctx,
+                MirCastOp::get_concrete_op_info(),
+                vec![unique_pointer],
+                vec![storage],
+                vec![],
+                0,
+            );
+            MirCastOp::new(retype).set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+            MirCastOp::new(retype)
+                .set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
+            retype.insert_at_back(block, ctx);
+            retype.deref(ctx).get_result(0)
+        };
+
+        let first_reborrow = append_reborrow(&mut ctx);
+        Operation::new(
+            &mut ctx,
+            WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+            vec![],
+            vec![first_reborrow, desc_a, desc_b],
+            vec![],
+            0,
+        )
+        .insert_at_back(block, &ctx);
+
+        let second_reborrow = append_reborrow(&mut ctx);
+        Operation::new(
+            &mut ctx,
+            WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
+            vec![],
+            vec![second_reborrow, desc_a, desc_b],
+            vec![],
+            0,
+        )
+        .insert_at_back(block, &ctx);
+        WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(block, &ctx);
+
+        let zero_attr =
+            IntegerAttr::new(u64_type, APInt::from_i64(0, NonZeroUsize::new(64).unwrap()));
+        let zero = Operation::new(
+            &mut ctx,
+            MirConstantOp::get_concrete_op_info(),
+            vec![u64_type.into()],
+            vec![],
+            vec![],
+            0,
+        );
+        MirConstantOp::new(zero).set_attr_value(&ctx, zero_attr);
+        zero.insert_at_back(block, &ctx);
+        let zero = zero.deref(&ctx).get_result(0);
+        WgmmaWaitGroupSyncAlignedOp::build(&mut ctx, zero).insert_at_back(block, &ctx);
+
+        assert_ne!(first_reborrow, second_reborrow);
+        assert_eq!(
+            canonical_accumulator_identity(&ctx, first_reborrow),
+            storage
+        );
+        assert_eq!(
+            canonical_accumulator_identity(&ctx, second_reborrow),
+            storage
+        );
+
+        let plan = match_sequence(&ctx, fence)
+            .expect("linear region must be valid")
+            .expect("linear region must match");
+        assert_eq!(
+            plan.accumulator, first_reborrow,
+            "lowering must retain the first typed UniqueRef operand, not its Erased identity"
+        );
+    }
+
+    #[test]
+    fn counted_mma_predecessor_bypass_is_rejected() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+
+        let region = test_region(&mut ctx, "counted_mma_bypass");
+        let mma_block = BasicBlock::new(&mut ctx, None, vec![]);
+        mma_block.insert_at_back(region, &ctx);
+        let bypass_block = BasicBlock::new(&mut ctx, None, vec![]);
+        bypass_block.insert_at_back(region, &ctx);
+        let latch = BasicBlock::new(&mut ctx, None, vec![]);
+        latch.insert_at_back(region, &ctx);
+
+        append_goto(&mut ctx, mma_block, latch);
+        append_goto(&mut ctx, bypass_block, latch);
+
+        assert!(
+            !counted_loop_mma_is_mandatory(&ctx, region, mma_block, latch),
+            "a second predecessor could bypass the MMA"
+        );
+    }
+
+    #[test]
+    fn counted_commit_wait_control_flow_join_is_rejected() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        dialect_nvvm::register(&mut ctx);
+
+        let region = test_region(&mut ctx, "counted_commit_wait_join");
+        let exit = BasicBlock::new(&mut ctx, None, vec![]);
+        exit.insert_at_back(region, &ctx);
+        let alternate = BasicBlock::new(&mut ctx, None, vec![]);
+        alternate.insert_at_back(region, &ctx);
+        let wait_block = BasicBlock::new(&mut ctx, None, vec![]);
+        wait_block.insert_at_back(region, &ctx);
+
+        WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(exit, &ctx);
+        append_goto(&mut ctx, exit, wait_block);
+        append_goto(&mut ctx, alternate, wait_block);
+
+        let error = match find_exit_commit_wait(&ctx, exit) {
+            Ok(result) => panic!("control-flow join must be rejected, got {result:?}"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("control-flow join"),
+            "unexpected diagnostic: {error}"
+        );
+    }
 }

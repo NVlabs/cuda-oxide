@@ -74,6 +74,7 @@ pub fn emit_rust_exact_div_intrinsic(
         args,
         destination,
         return_type,
+        None,
         target,
         block_ptr,
         prev_op,

@@ -177,7 +177,7 @@ use syn::{
     Ident, Item, ItemFn, ItemForeignMod, ItemMod, LitStr, Pat, Path, PathArguments, Stmt, Token,
     Type, bracketed, parenthesized,
     parse::{Parse, ParseStream},
-    parse_macro_input, parse_quote,
+    parse_macro_input, parse_quote, parse_quote_spanned,
     punctuated::Punctuated,
     spanned::Spanned,
     visit::{self, Visit},
@@ -4664,11 +4664,18 @@ fn is_thread_index_path(path: &Path, name: &str) -> bool {
 /// ```text
 /// index_1d()                           →  ::cuda_device::thread::__internal::index_1d(&scope)
 /// ```
-fn internal_thread_path(user_path: &Path, name: &str, arguments: syn::PathArguments) -> Path {
-    let ident = format_ident!("{}", name);
+fn internal_thread_path(
+    user_path: &Path,
+    name: &str,
+    arguments: syn::PathArguments,
+    call_span: proc_macro2::Span,
+) -> Path {
+    let ident = Ident::new(name, call_span);
+    let internal = Ident::new("__internal", call_span);
 
     if user_path.segments.len() == 1 {
-        let mut absolute: Path = parse_quote! { ::cuda_device::thread::__internal::#ident };
+        let mut absolute: Path =
+            parse_quote_spanned! { call_span => ::cuda_device::thread::#internal::#ident };
         if let Some(last) = absolute.segments.last_mut() {
             last.arguments = arguments;
         }
@@ -4681,8 +4688,9 @@ fn internal_thread_path(user_path: &Path, name: &str, arguments: syn::PathArgume
         .iter()
         .take(user_path.segments.len() - 1)
         .collect();
-    let mut rewritten: Path =
-        parse_quote! { #leading_colon #(#prefix_segments)::* :: __internal :: #ident };
+    let mut rewritten: Path = parse_quote_spanned! {
+        call_span => #leading_colon #(#prefix_segments)::* :: #internal :: #ident
+    };
     if let Some(last) = rewritten.segments.last_mut() {
         last.arguments = arguments;
     }
@@ -4752,13 +4760,21 @@ struct ThreadIndexCallRewriter {
     rewrote_index_call: bool,
 }
 
+fn ident_located_at(ident: &Ident, location: proc_macro2::Span) -> Ident {
+    let mut relocated = ident.clone();
+    relocated.set_span(ident.span().located_at(location));
+    relocated
+}
+
 impl VisitMut for ThreadIndexCallRewriter {
     fn visit_expr_mut(&mut self, expr: &mut Expr) {
         visit_mut::visit_expr_mut(self, expr);
 
         match expr {
-            Expr::Call(ExprCall { func, args, .. }) => {
-                let Expr::Path(ExprPath { path, .. }) = &**func else {
+            Expr::Call(call) => {
+                let call_span = call.span();
+                let ExprCall { func, args, .. } = call;
+                let Expr::Path(ExprPath { path, .. }) = &mut **func else {
                     return;
                 };
                 let Some(intrinsic) = SCOPED_INTRINSICS
@@ -4778,30 +4794,36 @@ impl VisitMut for ThreadIndexCallRewriter {
                 } else {
                     syn::PathArguments::None
                 };
-                let internal_path = internal_thread_path(path, intrinsic.name, path_args);
-                let scope_ident = &self.scope_ident;
-                let scope_arg = if self.borrow_scope {
-                    quote! { &#scope_ident }
+                *path = internal_thread_path(path, intrinsic.name, path_args, call_span);
+                // Keep the binding's name-resolution hygiene, but make this
+                // generated reference part of the user's indexing expression
+                // for diagnostics and line-table purposes.
+                let scope_ident = ident_located_at(&self.scope_ident, call_span);
+                let scope_arg: Expr = if self.borrow_scope {
+                    parse_quote_spanned! { call_span => &#scope_ident }
                 } else {
-                    quote! { #scope_ident }
+                    parse_quote_spanned! { call_span => #scope_ident }
                 };
 
-                *expr = if intrinsic.forward_args {
-                    parse_quote! { #internal_path(#scope_arg, #args) }
+                if intrinsic.forward_args {
+                    args.insert(0, scope_arg);
                 } else {
-                    parse_quote! { #internal_path(#scope_arg) }
-                };
+                    args.clear();
+                    args.push(scope_arg);
+                }
                 self.rewrote_index_call = true;
             }
-            Expr::MethodCall(ExprMethodCall { method, args, .. }) => {
+            Expr::MethodCall(method_call) => {
+                let call_span = method_call.span();
+                let ExprMethodCall { method, args, .. } = method_call;
                 if !is_scoped_method(method) || !args.is_empty() {
                     return;
                 }
-                let scope_ident = &self.scope_ident;
+                let scope_ident = ident_located_at(&self.scope_ident, call_span);
                 if self.borrow_scope {
-                    args.push(parse_quote! { &#scope_ident });
+                    args.push(parse_quote_spanned! { call_span => &#scope_ident });
                 } else {
-                    args.push(parse_quote! { #scope_ident });
+                    args.push(parse_quote_spanned! { call_span => #scope_ident });
                 }
                 self.rewrote_index_call = true;
             }
@@ -8676,6 +8698,82 @@ mod tests {
             .splice(0..0, explicit_kernel_scope_bindings(&scope));
         let two_dimensional = quote!(#two_dimensional).to_string().replace(' ', "");
         assert!(two_dimensional.contains("make_kernel_scope::<::cuda_device::thread::__internal::Domain2,::cuda_device::thread::__internal::U32Coordinates>"));
+    }
+
+    #[test]
+    fn thread_index_rewrite_preserves_the_user_call_span_with_multiple_attributes() {
+        let mut input: ItemFn = syn::parse_str(
+            r#"
+/// The documentation and neighboring attributes must not become line-table
+/// locations for the first executable indexing expression.
+#[allow(dead_code)]
+#[launch_bounds(256, 2)]
+fn documented_kernel() {
+    let idx = thread::index_1d();
+    consume(idx);
+}
+"#,
+        )
+        .unwrap();
+        let source_attr_count = input.attrs.len();
+
+        let Stmt::Local(original_local) = &input.block.stmts[0] else {
+            panic!("fixture starts with a local")
+        };
+        let original_call = original_local
+            .init
+            .as_ref()
+            .map(|init| &*init.expr)
+            .and_then(|expr| match expr {
+                Expr::Call(call) => Some(call),
+                _ => None,
+            })
+            .expect("fixture local is initialized by a call");
+        let user_call_start = original_call.span().start();
+        assert!(
+            user_call_start.line > 5,
+            "fixture must distinguish attributes"
+        );
+
+        inject_thread_index_scope(&mut input);
+
+        assert_eq!(
+            input.attrs.len(),
+            source_attr_count,
+            "all source attributes stay on the item"
+        );
+        let Stmt::Local(rewritten_local) = &input.block.stmts[1] else {
+            panic!("the user local follows the generated scope binding")
+        };
+        let rewritten_call = rewritten_local
+            .init
+            .as_ref()
+            .map(|init| &*init.expr)
+            .and_then(|expr| match expr {
+                Expr::Call(call) => Some(call),
+                _ => None,
+            })
+            .expect("rewritten local remains a call expression");
+
+        assert_eq!(
+            rewritten_call.span().start(),
+            user_call_start,
+            "rewriting must not relocate the user expression onto an attribute"
+        );
+        let Expr::Path(path) = &*rewritten_call.func else {
+            panic!("rewritten callee remains a path")
+        };
+        assert!(
+            path.path
+                .segments
+                .iter()
+                .any(|segment| segment.ident == "__internal")
+        );
+        assert_eq!(
+            rewritten_call.args[0].span().start(),
+            user_call_start,
+            "the injected scope reference belongs to the user's call site"
+        );
     }
 
     #[test]

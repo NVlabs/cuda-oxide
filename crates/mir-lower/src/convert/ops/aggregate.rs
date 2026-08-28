@@ -63,6 +63,7 @@ use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
 use pliron::irbuild::inserter::Inserter;
 use pliron::irbuild::rewriter::Rewriter;
+use pliron::location::Located;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
@@ -578,7 +579,9 @@ pub(crate) fn convert_construct_tuple(
 /// `MirSliceType` lowers to the `{ ptr, i64 }` fat-pointer struct, where
 /// field 0 is the data pointer and field 1 is the element count by
 /// construction (the same layout the entry prologue's `reconstruct_slice`
-/// and the Unsize cast path build).
+/// and the Unsize cast path build). `MirSliceType::kind` is intentionally
+/// semantic-only: all reference/raw-pointer kinds share this physical layout
+/// and no LLVM alias metadata is inferred here.
 pub(crate) fn convert_construct_slice(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -1312,11 +1315,17 @@ fn enum_slot_map_of_operand(
 /// layout requires. Direct layouts write the declared discriminant; Niche
 /// layouts write wrapping `niche_start + range_offset`. Selecting the
 /// untagged Niche variant or an inhabited Single variant is a no-op.
+///
+/// The enum layout comes from the op's own `set_discriminant_enum_ty`
+/// attribute, stamped at build time. Operand type history is not usable
+/// here: a kind-only `mir.cast` lowers to a plain value forwarding, history
+/// does not follow that edge, and a stale hit would write the tag at the
+/// wrong offset.
 pub(crate) fn convert_set_discriminant(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    operands_info: &OperandsInfo,
+    _operands_info: &OperandsInfo,
 ) -> Result<()> {
     let enum_ptr = op.deref(ctx).get_operand(0);
     let target = MirSetDiscriminantOp::new(op)
@@ -1329,20 +1338,20 @@ pub(crate) fn convert_set_discriminant(
         })?;
 
     let enum_ty: MirEnumType = {
-        let mir_ptr_pointee =
-            match operands_info.lookup_most_recent_of_type::<MirPtrType>(ctx, enum_ptr) {
-                Some(r) => r.pointee,
-                None => {
-                    return pliron::input_err_noloc!(
-                        "MirSetDiscriminantOp operand must be pointer type"
-                    );
-                }
-            };
-        match mir_ptr_pointee.deref(ctx).downcast_ref::<MirEnumType>() {
+        let stamped_ty = MirSetDiscriminantOp::new(op)
+            .get_attr_set_discriminant_enum_ty(ctx)
+            .map(|attr| attr.get_type(ctx))
+            .ok_or_else(|| {
+                pliron::input_error_noloc!(
+                    "mir.set_discriminant missing enum type attribute; \
+                     discriminant write has no fact to derive from"
+                )
+            })?;
+        match stamped_ty.deref(ctx).downcast_ref::<MirEnumType>() {
             Some(et) => et.clone(),
             None => {
                 return pliron::input_err_noloc!(
-                    "MirSetDiscriminantOp pointer must point to enum type"
+                    "mir.set_discriminant enum type attribute must be an enum type"
                 );
             }
         }
@@ -1933,54 +1942,47 @@ fn stamp_field_address_alignment(
 
 /// Convert `mir.array_element_addr` to `llvm.getelementptr`.
 ///
-/// This computes the address of an array element using a runtime index.
-/// The operation is: `&arr[i]` → `getelementptr [N x T], ptr %arr_ptr, i64 0, i64 %i`
+/// ```text
+/// &arr[i]  ──►  getelementptr T, ptr %arr_ptr, i64 %i
+/// ```
+///
+/// - The element type `T` comes from the op's OWN result type
+///   (`mir.ptr<T>`), which the dialect verifier ties to the operand
+///   array's element type. Same address as the old two-index
+///   `[N x T]` GEP, minus the dead `[N x T]` base.
+/// - Operand type history is not usable here: a kind-only `mir.cast`
+///   lowers to a plain value forwarding, history does not follow that
+///   edge, and a stale hit would stride by the wrong element size.
 pub(crate) fn convert_array_element_addr(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    operands_info: &OperandsInfo,
+    _operands_info: &OperandsInfo,
 ) -> Result<()> {
+    let loc = op.deref(ctx).loc();
     let arr_ptr = op.deref(ctx).get_operand(0);
     let index = op.deref(ctx).get_operand(1);
 
-    let pointee_ty = {
-        let mir_ptr_pointee =
-            match operands_info.lookup_most_recent_of_type::<MirPtrType>(ctx, arr_ptr) {
-                Some(r) => r.pointee,
-                None => {
-                    return pliron::input_err_noloc!(
-                        "MirArrayElementAddrOp operand must be pointer type"
-                    );
-                }
-            };
+    let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    let element_ty = result_ty
+        .deref(ctx)
+        .downcast_ref::<MirPtrType>()
+        .map(|mir_ptr| mir_ptr.pointee)
+        .ok_or_else(|| {
+            pliron::input_error!(
+                loc.clone(),
+                "mir.array_element_addr result must be a MIR pointer type; \
+                 element sizing has no fact to derive from"
+            )
+        })?;
 
-        let pointee_ref = mir_ptr_pointee.deref(ctx);
-        if pointee_ref.downcast_ref::<MirArrayType>().is_none() {
-            return pliron::input_err_noloc!(
-                "MirArrayElementAddrOp pointer must point to array type"
-            );
-        }
-        mir_ptr_pointee
-    };
+    let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
 
-    let llvm_array_ty = convert_type(ctx, pointee_ty).map_err(anyhow_to_pliron)?;
-
-    // The typed GEP below strides by the allocation size of the converted
-    // element type. For packed Rust elements this is now the LLVM packed-struct
-    // size, so it matches rustc's stored stride. Keep the comparison as a
-    // fail-closed backstop for any future element representation whose LLVM
-    // allocation size still differs from rustc's stride.
+    // The typed GEP strides by the LLVM allocation size of the element type.
+    // Keep the rustc-stride comparison as a fail-closed backstop for any
+    // element representation whose LLVM allocation size differs.
     {
-        let element_ty = {
-            let pointee_ref = pointee_ty.deref(ctx);
-            pointee_ref
-                .downcast_ref::<MirArrayType>()
-                .expect("checked to be an array above")
-                .element_type()
-        };
         let rustc_stride = mir_element_stride(ctx, element_ty);
-        let llvm_element_ty = convert_type(ctx, element_ty).map_err(anyhow_to_pliron)?;
         let llvm_size = llvm_type_size_align(ctx, llvm_element_ty).map(|(size, _)| size);
         if let (Some(stride), Some(llvm_size)) = (rustc_stride, llvm_size)
             && stride != llvm_size
@@ -1996,11 +1998,11 @@ pub(crate) fn convert_array_element_addr(
     }
 
     use llvm_export::ops::GepIndex;
-    let gep_indices = vec![GepIndex::Constant(0), GepIndex::Value(index)];
+    let gep_indices = vec![GepIndex::Value(index)];
 
-    let element_align = element_address_provable_alignment(ctx, arr_ptr, pointee_ty, index);
+    let element_align = element_address_provable_alignment(ctx, arr_ptr, element_ty, index);
 
-    let gep_op = llvm::GetElementPtrOp::new(ctx, arr_ptr, gep_indices, llvm_array_ty);
+    let gep_op = llvm::GetElementPtrOp::new(ctx, arr_ptr, gep_indices, llvm_element_ty);
     rewriter.insert_operation(ctx, gep_op.get_operation());
     if let Some(align) = element_align {
         llvm_export::ops::set_address_alignment(ctx, gep_op.get_operation(), align);
@@ -2020,16 +2022,17 @@ pub(crate) fn convert_array_element_addr(
 /// the alignment comes from its type — so the cost depended on whether the
 /// source copied the element or read through it.
 ///
-/// Two facts combine. The array's own alignment is `abi_align`, and whatever the
-/// *base pointer* already proved is stronger when the array is itself a field of
-/// an over-aligned aggregate: `&table[i].lanes` carries the outer struct's
-/// alignment, which the array type alone does not know. Element `i` then sits at
-/// byte `i * stride`, so it is aligned to `gcd(base, i * stride)` — and to `base`
+/// Two facts combine. The element's `abi_align` equals the array's (a Rust
+/// array aligns to its element), and whatever the *base pointer* already
+/// proved is stronger when the array is itself a field of an over-aligned
+/// aggregate: `&table[i].lanes` carries the outer struct's alignment, which
+/// the element type alone does not know. Element `i` then sits at byte
+/// `i * stride`, so it is aligned to `gcd(base, i * stride)`, and to `base`
 /// itself at index zero. A runtime index can land on any element, so it gets
 /// `gcd(base, stride)`, which every element satisfies.
 ///
-/// Answers `None` — leaving the previous behaviour — when neither the base nor
-/// the array type records an alignment, or the stride is unknown. As on the
+/// Answers `None`, leaving the previous behaviour, when neither the base nor
+/// the element type records an alignment, or the stride is unknown. As on the
 /// field path, a wrong answer here is a miscompile, so every uncertain case
 /// declines rather than guesses. That is why the stride comes from
 /// [`mir_element_stride`], which is exact or `None`: an LLVM-level size
@@ -2039,27 +2042,24 @@ pub(crate) fn convert_array_element_addr(
 fn element_address_provable_alignment(
     ctx: &Context,
     arr_ptr: Value,
-    array_ty: TypeHandle,
+    element_ty: TypeHandle,
     index: Value,
 ) -> Option<u32> {
     const fn gcd(a: u64, b: u64) -> u64 {
         if b == 0 { a } else { gcd(b, a % b) }
     }
 
-    // What the base address already proved, else what the array type states.
+    // What the base address already proved, else what the element type
+    // states (identical to the array's own alignment).
     let base_align = arr_ptr
         .defining_op()
         .and_then(|def| llvm_export::ops::address_alignment(ctx, def))
         .map(u64::from)
-        .or_else(|| mir_type_abi_align(ctx, array_ty))?;
+        .or_else(|| mir_type_abi_align(ctx, element_ty))?;
     if base_align == 0 {
         return None;
     }
 
-    let element_ty = {
-        let array_ref = array_ty.deref(ctx);
-        array_ref.downcast_ref::<MirArrayType>()?.element_type()
-    };
     let stride = mir_element_stride(ctx, element_ty)?;
     if stride == 0 {
         return None;
@@ -2100,14 +2100,16 @@ fn constant_index_value(ctx: &Context, index: Value) -> Option<u64> {
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production minting lives in mir-importer's facts.rs.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use crate::convert::ops::test_util::*;
     use dialect_mir::attributes::{FieldIndexAttr, MirCastKindAttr, VariantIndexAttr};
     use dialect_mir::ops as mir;
     use dialect_mir::types::{
-        EnumEncoding, EnumVariant, MirArrayType, MirPtrType, MirSliceType, MirStructType,
-        MirTupleType,
+        EnumEncoding, EnumVariant, MirArrayType, MirPointerKind, MirPtrType, MirSliceType,
+        MirStructType, MirTupleType,
     };
     use llvm_export::types as llvm_types;
     use pliron::builtin::attributes::IntegerAttr;
@@ -2272,7 +2274,9 @@ mod tests {
 
         let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
         let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
-        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, true).into();
+        let ptr_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, f32_ty, true, MirPointerKind::RawMut)
+                .into();
         let slice_ty: TypeHandle = MirDisjointSliceType::get(&mut ctx, f32_ty).into();
 
         let (module_ptr, block) = build_kernel(&mut ctx, vec![ptr_ty, usize_ty], vec![]);
@@ -2326,7 +2330,9 @@ mod tests {
         let f32_ty: TypeHandle = pliron::builtin::types::FP32Type::get(&ctx).into();
         let usize_ty: TypeHandle = IntegerType::get(&ctx, 64, Signedness::Unsigned).into();
         let width_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
-        let ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, true).into();
+        let ptr_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, f32_ty, true, MirPointerKind::RawMut)
+                .into();
         let slice_ty: TypeHandle =
             MirDisjointSliceType::get_with_space(&mut ctx, f32_ty, vec![width_ty]).into();
 
@@ -2533,15 +2539,8 @@ mod tests {
         let base = block.deref(&ctx).get_argument(0);
 
         for (field_index, result_ty) in [(0u32, f_ptr_ty), (1, g_ptr_ty), (2, acc_ptr_ty)] {
-            let op = Operation::new(
-                &mut ctx,
-                MirFieldAddrOp::get_concrete_op_info(),
-                vec![result_ty],
-                vec![base],
-                vec![],
-                0,
-            );
-            MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+            let op = MirFieldAddrOp::build(&mut ctx, base, result_ty, field_index)
+                .expect("field_addr build");
             op.insert_at_back(block, &ctx);
         }
         append_mir_return(&mut ctx, block, vec![]);
@@ -2653,15 +2652,8 @@ mod tests {
         // Declaration field 0 (`.0`, u8) first, then declaration field 1
         // (`.1`, u32) -- source order, not memory order.
         for (field_index, result_ty) in [(0u32, u8_ptr_ty), (1, u32_ptr_ty)] {
-            let op = Operation::new(
-                &mut ctx,
-                MirFieldAddrOp::get_concrete_op_info(),
-                vec![result_ty],
-                vec![base],
-                vec![],
-                0,
-            );
-            MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+            let op = MirFieldAddrOp::build(&mut ctx, base, result_ty, field_index)
+                .expect("field_addr build");
             op.insert_at_back(block, &ctx);
         }
         append_mir_return(&mut ctx, block, vec![]);
@@ -2736,15 +2728,8 @@ mod tests {
         let (module, block) = build_kernel(&mut ctx, vec![base_ptr_ty], vec![]);
         let base = block.deref(&ctx).get_argument(0);
 
-        let field_addr = Operation::new(
-            &mut ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_ptr_ty],
-            vec![base],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(field_addr).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        let field_addr =
+            MirFieldAddrOp::build(&mut ctx, base, field_ptr_ty, 1).expect("field_addr build");
         field_addr.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -2777,15 +2762,8 @@ mod tests {
         let (module, block) = build_kernel(&mut ctx, vec![base_ptr_ty], vec![]);
         let base = block.deref(&ctx).get_argument(0);
 
-        let field_addr = Operation::new(
-            &mut ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_ptr_ty],
-            vec![base],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(field_addr).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        let field_addr =
+            MirFieldAddrOp::build(&mut ctx, base, field_ptr_ty, 1).expect("field_addr build");
         field_addr.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -2820,15 +2798,8 @@ mod tests {
         let (module, block) = build_kernel(&mut ctx, vec![base_ptr_ty], vec![]);
         let base = block.deref(&ctx).get_argument(0);
 
-        let field_addr = Operation::new(
-            &mut ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_ptr_ty],
-            vec![base],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(field_addr).set_attr_field_index(&ctx, FieldIndexAttr(2));
+        let field_addr =
+            MirFieldAddrOp::build(&mut ctx, base, field_ptr_ty, 2).expect("field_addr build");
         field_addr.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -3568,8 +3539,12 @@ mod tests {
             vec![],
             0,
         );
-        mir::MirSetDiscriminantOp::new(set)
-            .set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(1));
+        let set_op = mir::MirSetDiscriminantOp::new(set);
+        set_op.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(1));
+        set_op.set_attr_set_discriminant_enum_ty(
+            &ctx,
+            pliron::builtin::attributes::TypeAttr::new(enum_ty),
+        );
         set.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -3895,8 +3870,12 @@ mod tests {
                 vec![],
                 0,
             );
-            mir::MirSetDiscriminantOp::new(set)
-                .set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(target));
+            let set_op = mir::MirSetDiscriminantOp::new(set);
+            set_op.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(target));
+            set_op.set_attr_set_discriminant_enum_ty(
+                &ctx,
+                pliron::builtin::attributes::TypeAttr::new(enum_ty),
+            );
             set.insert_at_back(block, &ctx);
             append_mir_return(&mut ctx, block, vec![]);
 
@@ -4400,15 +4379,7 @@ mod tests {
 
         let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
         let base = block.deref(&ctx).get_argument(0);
-        let op = Operation::new(
-            &mut ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![bool_ptr_ty],
-            vec![base],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        let op = MirFieldAddrOp::build(&mut ctx, base, bool_ptr_ty, 0).expect("field_addr build");
         op.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -4462,15 +4433,8 @@ mod tests {
 
         let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
         let base = block.deref(&ctx).get_argument(0);
-        let op = Operation::new(
-            &mut ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![payload_ptr_ty],
-            vec![base],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        let op =
+            MirFieldAddrOp::build(&mut ctx, base, payload_ptr_ty, 0).expect("field_addr build");
         op.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -4520,15 +4484,7 @@ mod tests {
         let u32_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, u32_ty, true).into();
         let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![]);
         let base = block.deref(&ctx).get_argument(0);
-        let op = Operation::new(
-            &mut ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![u32_ptr_ty],
-            vec![base],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(op).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        let op = MirFieldAddrOp::build(&mut ctx, base, u32_ptr_ty, 1).expect("field_addr build");
         op.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -4601,15 +4557,7 @@ mod tests {
         let f32_ptr_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, f32_ty, false).into();
         let (module, block) = build_kernel(&mut ctx, vec![enum_ptr_ty], vec![f32_ty]);
         let base = block.deref(&ctx).get_argument(0);
-        let addr = Operation::new(
-            &mut ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![f32_ptr_ty],
-            vec![base],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(addr).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        let addr = MirFieldAddrOp::build(&mut ctx, base, f32_ptr_ty, 0).expect("field_addr build");
         addr.insert_at_back(block, &ctx);
         let payload_ptr = addr.deref(&ctx).get_result(0);
 
@@ -4721,8 +4669,12 @@ mod tests {
             vec![],
             0,
         );
-        mir::MirSetDiscriminantOp::new(set)
-            .set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(0));
+        let set_op = mir::MirSetDiscriminantOp::new(set);
+        set_op.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(0));
+        set_op.set_attr_set_discriminant_enum_ty(
+            &ctx,
+            pliron::builtin::attributes::TypeAttr::new(enum_ty),
+        );
         set.insert_at_back(block, &ctx);
         append_mir_return(&mut ctx, block, vec![]);
 
@@ -4749,21 +4701,41 @@ mod tests {
     #[test]
     fn get_niche_discriminant_adds_large_range_start_at_logical_width() {
         let mut ctx = make_ctx();
-        let enum_ty = unit_niche_enum(
-            &mut ctx,
-            (EnumCarrierKind::Integer, 8, 0),
-            0,
-            298..=299,
-            0,
-            {
-                let mut inhabited = vec![0; 300];
-                inhabited[0] = 1;
-                inhabited[298] = 1;
-                inhabited[299] = 1;
-                inhabited
-            },
-        );
         let logical_ty: TypeHandle = IntegerType::get(&ctx, 16, Signedness::Unsigned).into();
+        let carrier_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let mut variants = (0..300)
+            .map(|index| EnumVariant::unit(format!("V{index}")))
+            .collect::<Vec<_>>();
+        // A valid niche layout stores the carrier inside the untagged
+        // variant's payload. Keep the large logical-variant test realistic
+        // instead of relying on a carrier with no backing field.
+        variants[0] = EnumVariant::new_with_layout("V0".into(), vec![carrier_ty], vec![0], vec![1]);
+        let enum_ty: TypeHandle = MirEnumType::get_with_encoding(
+            &mut ctx,
+            "LargeNiche".into(),
+            logical_ty,
+            (0..300).collect(),
+            variants,
+            EnumEncoding {
+                total_size: 1,
+                abi_align: 1,
+                layout_kind: EnumLayoutKind::Niche,
+                carrier_kind: EnumCarrierKind::Integer,
+                carrier_width: 8,
+                niche_variant_start: 298,
+                niche_variant_end: 299,
+                untagged_variant: 0,
+                variant_inhabited: {
+                    let mut inhabited = vec![0; 300];
+                    inhabited[0] = 1;
+                    inhabited[298] = 1;
+                    inhabited[299] = 1;
+                    inhabited
+                },
+                ..EnumEncoding::default()
+            },
+        )
+        .into();
         let (module, block) = build_kernel(&mut ctx, vec![enum_ty], vec![logical_ty]);
         let value = block.deref(&ctx).get_argument(0);
         let get = Operation::new(

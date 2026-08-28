@@ -64,6 +64,8 @@ impl MirConvertibleType for MirSliceType {}
 #[type_interface_impl]
 impl MirTypeConversion for MirSliceType {
     fn converter(&self) -> ConvertMirTypeFn {
+        // `MirPointerKind` is semantic-only. `&[T]`, `&mut [T]`, and raw
+        // slice pointers all keep the same physical `{ptr, i64}` layout.
         |_ty, ctx| Ok(make_slice_struct(ctx))
     }
 }
@@ -75,6 +77,9 @@ impl MirConvertibleType for MirPtrType {}
 impl MirTypeConversion for MirPtrType {
     fn converter(&self) -> ConvertMirTypeFn {
         |ty, ctx| {
+            // Deliberately erase Rust pointer/reference kind here. It is not
+            // a physical LLVM pointer property and is not sufficient by
+            // itself to justify `noalias`, `readonly`, or related metadata.
             let address_space = ty
                 .deref(ctx)
                 .downcast_ref::<MirPtrType>()

@@ -19,15 +19,16 @@ use pliron::{
     operation::Operation,
     printable::Printable,
     result::Error,
-    r#type::Typed,
+    r#type::{TypeHandle, Typed},
+    value::Value,
     verify_err,
 };
 use pliron_derive::pliron_op;
 
 use crate::attributes::FieldIndexAttr;
 use crate::types::{
-    MirArrayType, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType, MirStructType,
-    MirTupleType, MirUnionType,
+    MirArrayType, MirDisjointSliceType, MirEnumType, MirPointerKind, MirPtrType, MirSliceType,
+    MirStructType, MirTupleType, MirUnionType, is_opaque_fn_pointer_type,
 };
 
 // ============================================================================
@@ -124,10 +125,36 @@ impl Verify for MirExtractFieldOp {
                 // Field 0: *T (ptr to element)
                 let res_ty_obj = res_ty.deref(ctx);
                 if let Some(ptr_ty) = res_ty_obj.downcast_ref::<MirPtrType>() {
+                    if is_opaque_fn_pointer_type(ctx, res_ty) {
+                        return verify_err!(
+                            op.loc(),
+                            "MirExtractFieldOp slice data address cannot produce the canonical function-pointer value carrier"
+                        );
+                    }
                     if ptr_ty.pointee != slice_ty.element_ty {
                         return verify_err!(
                             op.loc(),
                             "MirExtractFieldOp result type mismatch for slice ptr"
+                        );
+                    }
+                    if !slice_ty.kind.can_retype_generically_to(ptr_ty.kind) {
+                        return verify_err!(
+                            op.loc(),
+                            "MirExtractFieldOp cannot change slice pointer kind from {:?} to {:?}",
+                            slice_ty.kind,
+                            ptr_ty.kind
+                        );
+                    }
+                    if ptr_ty.address_space != crate::types::address_space::GENERIC {
+                        return verify_err!(
+                            op.loc(),
+                            "MirExtractFieldOp ordinary slice data pointer must use generic address space"
+                        );
+                    }
+                    if ptr_ty.is_mutable != slice_ty.is_mutable {
+                        return verify_err!(
+                            op.loc(),
+                            "MirExtractFieldOp ordinary slice data pointer must preserve carrier mutability"
                         );
                     }
                 } else {
@@ -159,6 +186,15 @@ impl Verify for MirExtractFieldOp {
                             "MirExtractFieldOp result type mismatch for disjoint slice ptr. Expected pointee: {}, Actual: {}",
                             slice_ty.element_ty.disp(ctx),
                             ptr_ty.pointee.disp(ctx)
+                        );
+                    }
+                    if ptr_ty.kind != MirPointerKind::RawMut
+                        || !ptr_ty.is_mutable
+                        || ptr_ty.address_space != crate::types::address_space::GENERIC
+                    {
+                        return verify_err!(
+                            op.loc(),
+                            "MirExtractFieldOp DisjointSlice data pointer must be mutable RawMut in generic address space"
                         );
                     }
                 } else {
@@ -740,6 +776,26 @@ impl Verify for MirConstructSliceOp {
                         ptr_ty.pointee.disp(ctx)
                     );
                 }
+                if !ptr_ty.kind.can_retype_generically_to(slice_ty.kind) {
+                    return verify_err!(
+                        op.loc(),
+                        "MirConstructSliceOp cannot change data pointer kind from {:?} to {:?}",
+                        ptr_ty.kind,
+                        slice_ty.kind
+                    );
+                }
+                if ptr_ty.address_space != crate::types::address_space::GENERIC {
+                    return verify_err!(
+                        op.loc(),
+                        "MirConstructSliceOp data pointer must use generic address space"
+                    );
+                }
+                if ptr_ty.is_mutable != slice_ty.is_mutable {
+                    return verify_err!(
+                        op.loc(),
+                        "MirConstructSliceOp data pointer mutability must match the slice carrier"
+                    );
+                }
             }
             None => {
                 return verify_err!(
@@ -884,6 +940,15 @@ impl Verify for MirConstructDisjointSliceOp {
                          Expected: {}, Actual: {}",
                         element_ty.disp(ctx),
                         ptr_ty_ref.pointee.disp(ctx)
+                    );
+                }
+                if ptr_ty_ref.kind != MirPointerKind::RawMut
+                    || !ptr_ty_ref.is_mutable
+                    || ptr_ty_ref.address_space != crate::types::address_space::GENERIC
+                {
+                    return verify_err!(
+                        op.loc(),
+                        "MirConstructDisjointSliceOp data pointer must be mutable RawMut in generic address space"
                     );
                 }
             }
@@ -1204,9 +1269,22 @@ impl Verify for MirExtractArrayElementOp {
 /// # Attributes
 ///
 /// ```text
-/// | Name          | Type           | Description              |
-/// |---------------|----------------|--------------------------|
-/// | `field_index` | FieldIndexAttr | Index of field to access |
+/// | Name           | Type           | Description                          |
+/// |----------------|----------------|--------------------------------------|
+/// | `field_index`  | FieldIndexAttr | Index of field to access             |
+/// | `aggregate_ty` | TypeAttr       | The aggregate being projected into,  |
+/// |                |                | stamped by [`Self::build`]           |
+/// ```
+///
+/// Why carry the aggregate type when the operand already points to it? The
+/// result type only names the FIELD, and at lowering time the operand is an
+/// opaque `llvm.ptr` whose type HISTORY breaks across value-forwarded
+/// kind-only casts. The attribute rides the op, so the slot map and offset
+/// always come from the right aggregate:
+///
+/// ```text
+/// build time:  ptr: mir.ptr<S> ──► aggregate_ty = S    (stamped once)
+/// lowering:    slot map / offset / align from S        (no history)
 /// ```
 ///
 /// # Results
@@ -1227,7 +1305,10 @@ impl Verify for MirExtractArrayElementOp {
     name = "mir.field_addr",
     format,
     interfaces = [NOpdsInterface<1>, OneOpdInterface, NResultsInterface<1>, OneResultInterface],
-    attributes = (field_index: FieldIndexAttr)
+    attributes = (
+        field_index: FieldIndexAttr,
+        aggregate_ty: pliron::builtin::attributes::TypeAttr
+    )
 )]
 pub struct MirFieldAddrOp;
 
@@ -1235,6 +1316,46 @@ impl MirFieldAddrOp {
     /// Create a new MirFieldAddrOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
         MirFieldAddrOp { op }
+    }
+
+    /// Build a `mir.field_addr` with both facts stamped.
+    ///
+    /// The one construction door: `aggregate_ty` comes from `base_ptr`'s
+    /// build-time pointer type, so it cannot drift from what `field_index`
+    /// was validated against. Fails if `base_ptr` is not a MIR pointer.
+    pub fn build(
+        ctx: &mut Context,
+        base_ptr: Value,
+        result_ty: TypeHandle,
+        field_index: u32,
+    ) -> Result<Ptr<Operation>, Error> {
+        let base_ty = base_ptr.get_type(ctx);
+        let aggregate_ty = {
+            let base_ty_ref = base_ty.deref(ctx);
+            base_ty_ref
+                .downcast_ref::<MirPtrType>()
+                .map(|ptr_ty| ptr_ty.pointee)
+        };
+        let Some(aggregate_ty) = aggregate_ty else {
+            return pliron::input_err_noloc!(
+                "mir.field_addr base must be a MirPtrType at build time"
+            );
+        };
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty],
+            vec![base_ptr],
+            vec![],
+            0,
+        );
+        let wrapper = MirFieldAddrOp::new(op);
+        wrapper.set_attr_field_index(ctx, FieldIndexAttr(field_index));
+        wrapper.set_attr_aggregate_ty(
+            ctx,
+            pliron::builtin::attributes::TypeAttr::new(aggregate_ty),
+        );
+        Ok(op)
     }
 }
 
@@ -1261,6 +1382,21 @@ impl Verify for MirFieldAddrOp {
         // Pointee must be a struct, tuple, union or enum type.
         let pointee_ty = ptr_type.pointee;
         let pointee_ty_obj = pointee_ty.deref(ctx);
+
+        // The stamped aggregate fact must match the operand's pointee, so
+        // lowering can trust the attribute without consulting the operand.
+        match self.get_attr_aggregate_ty(ctx) {
+            Some(attr) if attr.get_type(ctx) == pointee_ty => {}
+            Some(_) => {
+                return verify_err!(
+                    op.loc(),
+                    "MirFieldAddrOp aggregate_ty attribute must equal the operand pointee"
+                );
+            }
+            None => {
+                return verify_err!(op.loc(), "MirFieldAddrOp missing aggregate_ty attribute");
+            }
+        }
 
         let index = match self.get_attr_field_index(ctx) {
             Some(attr) => attr.0 as usize,
@@ -1312,6 +1448,13 @@ impl Verify for MirFieldAddrOp {
             }
         };
 
+        if is_opaque_fn_pointer_type(ctx, result_ty) {
+            return verify_err!(
+                op.loc(),
+                "MirFieldAddrOp cannot produce the canonical function-pointer value carrier"
+            );
+        }
+
         let expected_field_ty = field_types[index];
         if result_ptr_ty.pointee != expected_field_ty {
             return verify_err!(
@@ -1319,6 +1462,24 @@ impl Verify for MirFieldAddrOp {
                 "MirFieldAddrOp result pointer type mismatch. Expected pointer to: {}, got pointer to: {}",
                 expected_field_ty.disp(ctx),
                 result_ptr_ty.pointee.disp(ctx)
+            );
+        }
+
+        if !ptr_type.kind.can_retype_generically_to(result_ptr_ty.kind) {
+            return verify_err!(
+                op.loc(),
+                "MirFieldAddrOp cannot change pointer kind from {:?} to {:?}",
+                ptr_type.kind,
+                result_ptr_ty.kind
+            );
+        }
+        if result_ptr_ty.is_mutable != ptr_type.is_mutable {
+            return verify_err!(op.loc(), "MirFieldAddrOp must preserve pointer mutability");
+        }
+        if result_ptr_ty.address_space != ptr_type.address_space {
+            return verify_err!(
+                op.loc(),
+                "MirFieldAddrOp must preserve pointer address space"
             );
         }
 
@@ -1450,6 +1611,13 @@ impl Verify for MirArrayElementAddrOp {
             }
         };
 
+        if is_opaque_fn_pointer_type(ctx, result_ty) {
+            return verify_err!(
+                op.loc(),
+                "MirArrayElementAddrOp cannot produce the canonical function-pointer value carrier"
+            );
+        }
+
         let expected_elem_ty = array_ty.element_type();
         if result_ptr_ty.pointee != expected_elem_ty {
             return verify_err!(
@@ -1467,6 +1635,20 @@ impl Verify for MirArrayElementAddrOp {
                 "MirArrayElementAddrOp address space mismatch. Expected: {:?}, got: {:?}",
                 ptr_type.address_space,
                 result_ptr_ty.address_space
+            );
+        }
+        if !ptr_type.kind.can_retype_generically_to(result_ptr_ty.kind) {
+            return verify_err!(
+                op.loc(),
+                "MirArrayElementAddrOp cannot change pointer kind from {:?} to {:?}",
+                ptr_type.kind,
+                result_ptr_ty.kind
+            );
+        }
+        if result_ptr_ty.is_mutable != ptr_type.is_mutable {
+            return verify_err!(
+                op.loc(),
+                "MirArrayElementAddrOp must preserve pointer mutability"
             );
         }
 

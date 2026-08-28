@@ -1,7 +1,8 @@
-error[E0515]: cannot return reference to temporary value
- --> tests/compile_fail/thread_index_device_return.rs:8:1
-  |
-8 | #[device]
-  | ^^^^^^^^^ returns a reference to data owned by the current function
-  |
-  = note: this error originates in the attribute macro `device` (in Nightly builds, run with -Z macro-backtrace for more info)
+error[E0515]: cannot return value referencing temporary value
+  --> tests/compile_fail/thread_index_device_return.rs:10:5
+   |
+ 8 | #[device]
+   | --------- temporary value created here
+ 9 | pub fn bad_device_return<'a>() -> cuda_device::thread::ThreadIndex<'a> {
+10 |     cuda_device::thread::index_1d()
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returns a value referencing data owned by the current function

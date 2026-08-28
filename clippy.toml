@@ -1,0 +1,13 @@
+# Concrete Rust pointer kinds (&T / &mut T / *const T / *mut T) may only be
+# minted from a rustc-witnessed fact. The importer funnels every mint through
+# mir-importer's translator::facts::PointerOrigin; the raw kinded constructors
+# are banned everywhere else so a kind cannot be conjured out of thin air.
+disallowed-methods = [
+    { path = "dialect_mir::types::MirPointerKind::from_reference_mutability", reason = "mint kinded pointers through mir-importer translator::facts::PointerOrigin" },
+    { path = "dialect_mir::types::MirPointerKind::from_raw_mutability", reason = "mint kinded pointers through mir-importer translator::facts::PointerOrigin" },
+    { path = "dialect_mir::types::MirPtrType::get_with_kind", reason = "mint kinded pointers through mir-importer translator::facts::PointerOrigin" },
+    { path = "dialect_mir::types::MirPtrType::get_generic_with_kind", reason = "mint kinded pointers through mir-importer translator::facts::PointerOrigin" },
+    { path = "dialect_mir::types::MirPtrType::get_shared_with_kind", reason = "mint kinded pointers through mir-importer translator::facts::PointerOrigin" },
+    { path = "dialect_mir::types::MirSliceType::get_with_kind", reason = "mint kinded pointers through mir-importer translator::facts::PointerOrigin" },
+    { path = "dialect_mir::types::MirSliceType::get_with_mutability_and_kind", reason = "mint kinded pointers through mir-importer translator::facts::PointerOrigin" },
+]

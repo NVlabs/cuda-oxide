@@ -981,13 +981,26 @@ pub(crate) fn build_struct_slot_map(
         llvm_fields.push(llvm_ty);
 
         if has_explicit_layout {
-            // Prefer rustc's stored size for the field over the LLVM-level
-            // approximation: nested aggregates carry interior/trailing
-            // padding the converted type cannot always reproduce, and a
-            // wrong advance here either forces interior padding where
-            // rustc has none or overshoots the next field's offset.
-            current_offset += mir_stored_size(ctx, layout.field_types[decl_idx])
-                .unwrap_or_else(|| get_type_size(ctx, llvm_ty));
+            // Offset advance is exact or an error, never guessed. Prefer
+            // rustc's stored size for the field: nested aggregates carry
+            // interior/trailing padding the converted type cannot always
+            // reproduce, and a wrong advance here either forces interior
+            // padding where rustc has none or overshoots the next field's
+            // offset. Scalars and other rustc-silent types fall back to the
+            // LLVM natural size.
+            let advance = match mir_stored_size(ctx, layout.field_types[decl_idx]) {
+                Some(size) => size,
+                None => llvm_type_size_align(ctx, llvm_ty)
+                    .map(|(size, _)| size)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "struct slot map: field {decl_idx} lowers to `{}`, which has no \
+                             exact size; refusing to guess the next field offset",
+                            llvm_ty.deref(ctx).disp(ctx)
+                        )
+                    })?,
+            };
+            current_offset += advance;
         }
     }
 
@@ -1829,9 +1842,7 @@ fn mir_stored_size(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
 /// sizes; MIR aggregates answer with rustc's stored size (interior and
 /// trailing padding included) via [`mir_stored_size`]; arrays of scalars
 /// multiply out. Everything else answers `None` so the caller declines
-/// instead of guessing. In particular [`get_type_size`] is not a
-/// substitute here: it falls back to 8 for the MIR aggregate types it
-/// does not model.
+/// instead of guessing.
 pub(crate) fn mir_element_stride(ctx: &Context, mir_ty: TypeHandle) -> Option<u64> {
     if let Some(size) = mir_stored_size(ctx, mir_ty) {
         return Some(size);
@@ -1903,9 +1914,9 @@ pub(crate) fn mir_type_abi_align(ctx: &Context, mir_ty: TypeHandle) -> Option<u6
 ///
 /// Mirrors LLVM's default data layout for nvptx64 (scalars align to their
 /// size, arrays to their element, non-packed structs to their widest field).
-/// Unlike [`get_type_size`], which sums struct fields without alignment,
-/// this computes the real allocation size, which is what GEP striding and
-/// the enum size check below need.
+/// Computes the real allocation size (interior and trailing padding
+/// included), which is what GEP striding and the enum size check below
+/// need. Answers `None` rather than guess: sizes here are exact or absent.
 pub(crate) fn llvm_type_size_align(ctx: &Context, ty: TypeHandle) -> Option<(u64, u64)> {
     let ty_ref = ty.deref(ctx);
 
@@ -2870,7 +2881,7 @@ fn validate_initialized_global_type(
         Struct(MirStructType),
         Tuple(MirTupleType),
         Enum(MirEnumType),
-        Array(TypeHandle),
+        Array { element_ty: TypeHandle, size: u64 },
         Leaf,
     }
 
@@ -2883,7 +2894,10 @@ fn validate_initialized_global_type(
         } else if let Some(enum_ty) = ty_ref.downcast_ref::<MirEnumType>() {
             Kind::Enum(enum_ty.clone())
         } else if let Some(array_ty) = ty_ref.downcast_ref::<dialect_mir::types::MirArrayType>() {
-            Kind::Array(array_ty.element_ty)
+            Kind::Array {
+                element_ty: array_ty.element_ty,
+                size: array_ty.size,
+            }
         } else {
             Kind::Leaf
         }
@@ -2940,8 +2954,15 @@ fn validate_initialized_global_type(
                 validate_initialized_global_type(ctx, field_ty, visited)?;
             }
         }
-        Kind::Array(element_ty) => {
-            validate_initialized_global_type(ctx, element_ty, visited)?;
+        Kind::Array { element_ty, size } => {
+            // A zero-length array contributes no element bytes. Its outer LLVM
+            // size/alignment is still checked by
+            // `validate_initialized_global_layout`, but recursively rejecting
+            // an element layout would incorrectly reject valid promoted
+            // `&mut [Packed; 0]` constants whose physical allocation is empty.
+            if size != 0 {
+                validate_initialized_global_type(ctx, element_ty, visited)?;
+            }
         }
         Kind::Leaf => {}
     }
@@ -3074,53 +3095,6 @@ fn validate_initialized_aggregate_layout(
     }
 
     Ok(())
-}
-
-/// Get the size of an LLVM type in bytes (approximate).
-///
-/// This is used for computing padding. For most types we know the exact
-/// size. For structs the sum of field sizes is exact when the struct was
-/// built with explicit padding (the pads are real fields) but an
-/// approximation otherwise; prefer [`mir_stored_size`] whenever the MIR
-/// type is at hand.
-pub(crate) fn get_type_size(ctx: &Context, ty: TypeHandle) -> u64 {
-    let ty_ref = ty.deref(ctx);
-
-    // Integer types
-    if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
-        return (int_ty.width() as u64).div_ceil(8); // Round up to bytes
-    }
-
-    // Float types
-    if ty_ref.is::<llvm_types::HalfType>() {
-        return 2;
-    }
-    if ty_ref.is::<FP32Type>() {
-        return 4;
-    }
-    if ty_ref.is::<FP64Type>() {
-        return 8;
-    }
-
-    // Pointer types (64-bit)
-    if ty_ref.is::<llvm_types::PointerType>() {
-        return 8;
-    }
-
-    // Array types
-    if let Some(arr_ty) = ty_ref.downcast_ref::<llvm_types::ArrayType>() {
-        let elem_size = get_type_size(ctx, arr_ty.elem_type());
-        return elem_size * arr_ty.size();
-    }
-
-    // Struct types: sum of field sizes. Exact for explicitly-padded
-    // structs (pads are real [N x i8] fields); an approximation otherwise.
-    if let Some(struct_ty) = ty_ref.downcast_ref::<llvm_types::StructType>() {
-        return struct_ty.fields().map(|f| get_type_size(ctx, f)).sum();
-    }
-
-    // Default fallback - shouldn't happen for well-formed types
-    8
 }
 
 /// Create the LLVM struct type used for slice representations.
@@ -5576,6 +5550,10 @@ mod tests {
             1,
         )
         .into();
+
+        let empty_packed: TypeHandle = MirArrayType::get(&mut ctx, packed, 0).into();
+        validate_initialized_global_layout(&mut ctx, empty_packed, 0, 1)
+            .expect("[Packed; 0] has no element bytes whose field layout can diverge");
 
         let err = validate_initialized_global_layout(&mut ctx, packed, 5, 1).unwrap_err();
         assert!(err.to_string().contains("field 1 lowers at byte 4"));

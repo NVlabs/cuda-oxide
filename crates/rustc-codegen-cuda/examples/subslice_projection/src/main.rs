@@ -32,12 +32,6 @@ fn array_middle_value(values: [u32; 4]) -> [u32; 2] {
 }
 
 #[inline(never)]
-fn array_middle_ref(values: &[u32; 4]) -> &[u32; 2] {
-    let [_, middle @ .., _] = values;
-    middle
-}
-
-#[inline(never)]
 fn array_middle_mut(values: &mut [u32; 4]) -> &mut [u32; 2] {
     let [_, middle @ .., _] = values;
     middle
@@ -84,8 +78,11 @@ mod kernels {
             return;
         }
 
+        // Keep this pattern directly on local storage. The local address is
+        // an Erased+writable compiler carrier; the Subslice projection must
+        // preserve that carrier until the final shared Reborrow boundary.
         let values = input[i];
-        let middle = array_middle_ref(&values);
+        let [_, ref middle @ .., _] = values;
         if let Some(slot) = out.get_mut(idx) {
             *slot = middle[0] + middle[1];
         }

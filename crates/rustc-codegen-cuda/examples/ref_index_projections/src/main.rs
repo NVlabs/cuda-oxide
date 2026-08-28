@@ -902,11 +902,14 @@ mod kernels {
             return;
         }
 
-        let concrete = SliceTail {
+        let mut concrete = SliceTail {
             head: u32::MAX,
             tail: input[i],
         };
-        let value: &SliceTail<[f32]> = &concrete;
+        // Reborrow shared references from a writable fat-DST base. Internal
+        // tail reconstruction keeps the base carrier writable; only the
+        // final Reborrow establishes SharedRef/immutable.
+        let value: &mut SliceTail<[f32]> = &mut concrete;
 
         let r0: &f32 = &value.tail[0];
         let r1: &f32 = &value.tail[1];

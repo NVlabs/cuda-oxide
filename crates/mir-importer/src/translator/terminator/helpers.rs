@@ -18,18 +18,21 @@
 
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
-use crate::translator::values::ValueMap;
+use crate::translator::values::{ValueMap, establish_declared_pointer_type};
 use dialect_mir::{
+    attributes::MirPointerKindAuthorityAttr,
     ops::{MirCallOp, MirConstructArrayOp, MirGotoOp},
-    types::MirArrayType,
+    types::{MirArrayType, MirPtrType},
 };
 use pliron::basic_block::BasicBlock;
+use pliron::builtin::type_interfaces::FunctionTypeInterface;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::input_err;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 use rustc_public::mir;
 
@@ -142,19 +145,8 @@ pub fn store_result_to_place(
                 pointer_address_space(ctx, slot),
             )
             .into();
-            let field_addr_op = Operation::new(
-                ctx,
-                MirFieldAddrOp::get_concrete_op_info(),
-                vec![field_ptr_ty],
-                vec![slot],
-                vec![],
-                0,
-            );
+            let field_addr_op = MirFieldAddrOp::build(ctx, slot, field_ptr_ty, *field_idx as u32)?;
             field_addr_op.deref_mut(ctx).set_loc(loc.clone());
-            MirFieldAddrOp::new(field_addr_op).set_attr_field_index(
-                ctx,
-                dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-            );
             field_addr_op.insert_after(ctx, prev_op);
             let field_ptr = field_addr_op.deref(ctx).get_result(0);
 
@@ -314,6 +306,10 @@ pub fn emit_store_result_and_goto(
         );
     }
 
+    // Every pointer-producing intrinsic must establish its exact Rust result
+    // kind at the producer. This shared epilogue is intentionally ordinary
+    // local storage: it may preserve or erase provenance, but it must never
+    // manufacture a concrete pointer/reference kind for an emitter.
     let goto_prev = value_map
         .store_local(
             ctx,
@@ -411,9 +407,11 @@ pub fn bundle_generated_u32_results_as_array(
 /// # Process
 ///
 /// 1. Translate all MIR arguments to Pliron IR values
-/// 2. Create a `mir.call` operation carrying the callee's name attribute
-/// 3. Store the result into the destination local's slot
-/// 4. Emit a zero-operand goto to the call's success target
+/// 2. At a foreign ABI boundary, adapt pointer address spaces to the exact
+///    declared parameter types without changing pointer kind or mutability
+/// 3. Create a `mir.call` operation carrying the callee's name attribute
+/// 4. Store the result into the destination local's slot
+/// 5. Emit a zero-operand goto to the call's success target
 ///
 /// Reference arguments (`&mut local`) are handed the local's alloca slot
 /// pointer directly, so callee writes through the reference are observed by
@@ -425,7 +423,8 @@ pub fn emit_function_call(
     callee_name: &str,
     args: &[mir::Operand],
     destination: &mir::Place,
-    return_type: pliron::r#type::TypeHandle,
+    return_type: TypeHandle,
+    external_callee_type: Option<TypeHandle>,
     target: &Option<usize>,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
@@ -441,6 +440,39 @@ pub fn emit_function_call(
             rvalue::translate_operand(ctx, body, arg, value_map, block_ptr, last_op, loc.clone())?;
         arg_values.push(arg_value);
         last_op = arg_last_op;
+    }
+
+    // A Rust foreign declaration uses generic pointers at its ABI surface,
+    // while an argument may retain a concrete GPU address space internally
+    // (for example, `*mut T` in shared memory). Adapt that representation at
+    // the frozen declaration boundary, but only when pointee, mutability, and
+    // source pointer kind already agree exactly. This is not authority to turn
+    // a raw pointer into a reference or otherwise manufacture provenance.
+    if let Some(signature) = external_callee_type {
+        let expected_arguments = {
+            let signature_ref = signature.deref(ctx);
+            let signature = signature_ref
+                .downcast_ref::<pliron::builtin::types::FunctionType>()
+                .expect("foreign callee type must be a builtin FunctionType");
+            signature.arg_types()
+        };
+
+        // Variadic declarations are rejected before this point, so unequal
+        // arity is invalid and must remain visible to MirCallOp verification.
+        if arg_values.len() == expected_arguments.len() {
+            for (argument, expected) in arg_values.iter_mut().zip(expected_arguments) {
+                let (normalized, normalized_last_op) = normalize_foreign_pointer_argument(
+                    ctx,
+                    *argument,
+                    expected,
+                    block_ptr,
+                    last_op,
+                    loc.clone(),
+                );
+                *argument = normalized;
+                last_op = normalized_last_op;
+            }
+        }
     }
 
     use pliron::builtin::attributes::StringAttr;
@@ -460,6 +492,9 @@ pub fn emit_function_call(
         pliron::identifier::Identifier::try_from("callee").unwrap(),
         callee_attr,
     );
+    if let Some(signature) = external_callee_type {
+        MirCallOp::new(call_op).set_external_callee_signature(ctx, signature);
+    }
 
     let call_op = if let Some(prev) = last_op {
         call_op.insert_after(ctx, prev);
@@ -490,6 +525,52 @@ pub fn emit_function_call(
             TranslationErr::unsupported("Call terminator without target not supported".to_string(),)
         )
     }
+}
+
+/// Adapt a foreign-call pointer argument only when the address space is the
+/// sole difference from its declared ABI parameter type.
+fn normalize_foreign_pointer_argument(
+    ctx: &mut Context,
+    value: Value,
+    declared_type: TypeHandle,
+    block: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> (Value, Option<Ptr<Operation>>) {
+    let value_type = value.get_type(ctx);
+    let address_space_only_difference = {
+        let value_type_ref = value_type.deref(ctx);
+        let declared_type_ref = declared_type.deref(ctx);
+        match (
+            value_type_ref.downcast_ref::<MirPtrType>(),
+            declared_type_ref.downcast_ref::<MirPtrType>(),
+        ) {
+            (Some(value_ptr), Some(declared_ptr)) => {
+                value_ptr.pointee == declared_ptr.pointee
+                    && value_ptr.is_mutable == declared_ptr.is_mutable
+                    && value_ptr.kind == declared_ptr.kind
+                    && value_ptr.address_space != declared_ptr.address_space
+            }
+            _ => false,
+        }
+    };
+
+    if !address_space_only_difference {
+        return (value, prev_op);
+    }
+
+    let (value, cast_op) = establish_declared_pointer_type(
+        ctx,
+        value,
+        declared_type,
+        block,
+        prev_op,
+        MirPointerKindAuthorityAttr::AbiBoundary,
+    );
+    if let Some(cast_op) = cast_op {
+        cast_op.deref_mut(ctx).set_loc(loc);
+    }
+    (value, cast_op)
 }
 
 /// Emits a generated zero-operand NVVM operation returning `u32` and attaches
@@ -661,11 +742,14 @@ pub fn emit_unit_noop_intrinsic(
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production code mints via facts::PointerOrigin.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use dialect_mir::{
-        attributes::{COMPILER_RESULT_BUNDLE_ATTR_KEY, CompilerResultBundleAttr},
-        ops::MirFuncOp,
+        attributes::{COMPILER_RESULT_BUNDLE_ATTR_KEY, CompilerResultBundleAttr, MirCastKindAttr},
+        ops::{MirCastOp, MirFuncOp},
+        types::{MirPointerKind, address_space},
     };
     use pliron::{
         builtin::{
@@ -738,6 +822,173 @@ mod tests {
         assert_eq!(
             bundle.deref(&ctx).get_operand(1),
             producer.deref(&ctx).get_result(1)
+        );
+    }
+
+    #[test]
+    fn foreign_pointer_argument_adapts_only_its_address_space() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared_raw_mut: TypeHandle = MirPtrType::get_with_kind(
+            &mut ctx,
+            pointee,
+            true,
+            address_space::SHARED,
+            MirPointerKind::RawMut,
+        )
+        .into();
+        let abi_raw_mut: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::RawMut)
+                .into();
+        let block = BasicBlock::new(&mut ctx, None, vec![shared_raw_mut]);
+        let argument = block.deref(&ctx).get_argument(0);
+
+        let (normalized, cast_op) = normalize_foreign_pointer_argument(
+            &mut ctx,
+            argument,
+            abi_raw_mut,
+            block,
+            None,
+            Location::Unknown,
+        );
+
+        assert_eq!(normalized.get_type(&ctx), abi_raw_mut);
+        let cast = MirCastOp::new(cast_op.expect("address-space adaptation must be explicit"));
+        assert_eq!(
+            cast.get_attr_cast_kind(&ctx).as_deref(),
+            Some(&MirCastKindAttr::PtrToPtr)
+        );
+        assert_eq!(
+            cast.get_attr_pointer_kind_authority(&ctx).as_deref(),
+            Some(&MirPointerKindAuthorityAttr::AbiBoundary)
+        );
+    }
+
+    #[test]
+    fn foreign_pointer_argument_does_not_change_pointer_kind() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let shared_raw_mut: TypeHandle = MirPtrType::get_with_kind(
+            &mut ctx,
+            pointee,
+            true,
+            address_space::SHARED,
+            MirPointerKind::RawMut,
+        )
+        .into();
+        let abi_unique_ref: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::UniqueRef)
+                .into();
+        let block = BasicBlock::new(&mut ctx, None, vec![shared_raw_mut]);
+        let argument = block.deref(&ctx).get_argument(0);
+
+        let (unchanged, cast_op) = normalize_foreign_pointer_argument(
+            &mut ctx,
+            argument,
+            abi_unique_ref,
+            block,
+            None,
+            Location::Unknown,
+        );
+
+        assert_eq!(unchanged.get_type(&ctx), shared_raw_mut);
+        assert!(
+            cast_op.is_none(),
+            "foreign ABI normalization must not turn *mut T into &mut T"
+        );
+    }
+
+    #[test]
+    fn foreign_pointer_argument_with_exact_type_is_a_noop() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let abi_raw_mut: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, pointee, true, MirPointerKind::RawMut)
+                .into();
+        let block = BasicBlock::new(&mut ctx, None, vec![abi_raw_mut]);
+        let argument = block.deref(&ctx).get_argument(0);
+
+        let (unchanged, cast_op) = normalize_foreign_pointer_argument(
+            &mut ctx,
+            argument,
+            abi_raw_mut,
+            block,
+            None,
+            Location::Unknown,
+        );
+
+        assert_eq!(unchanged, argument);
+        assert!(cast_op.is_none(), "an exact ABI type needs no cast");
+    }
+
+    #[test]
+    fn foreign_pointer_argument_does_not_hide_shape_or_mutability_mismatches() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let i8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let shared_raw_mut: TypeHandle = MirPtrType::get_with_kind(
+            &mut ctx,
+            i32_ty,
+            true,
+            address_space::SHARED,
+            MirPointerKind::RawMut,
+        )
+        .into();
+        let wrong_pointee: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, i8_ty, true, MirPointerKind::RawMut).into();
+        let block = BasicBlock::new(&mut ctx, None, vec![shared_raw_mut]);
+        let argument = block.deref(&ctx).get_argument(0);
+
+        let (unchanged, cast_op) = normalize_foreign_pointer_argument(
+            &mut ctx,
+            argument,
+            wrong_pointee,
+            block,
+            None,
+            Location::Unknown,
+        );
+        assert_eq!(unchanged, argument);
+        assert!(cast_op.is_none(), "a pointee mismatch must remain visible");
+
+        let mutable_erased: TypeHandle = MirPtrType::get_with_kind(
+            &mut ctx,
+            i32_ty,
+            true,
+            address_space::SHARED,
+            MirPointerKind::Erased,
+        )
+        .into();
+        let immutable_erased: TypeHandle = MirPtrType::get_with_kind(
+            &mut ctx,
+            i32_ty,
+            false,
+            address_space::GENERIC,
+            MirPointerKind::Erased,
+        )
+        .into();
+        let erased_block = BasicBlock::new(&mut ctx, None, vec![mutable_erased]);
+        let erased_argument = erased_block.deref(&ctx).get_argument(0);
+
+        let (unchanged, cast_op) = normalize_foreign_pointer_argument(
+            &mut ctx,
+            erased_argument,
+            immutable_erased,
+            erased_block,
+            None,
+            Location::Unknown,
+        );
+        assert_eq!(unchanged, erased_argument);
+        assert!(
+            cast_op.is_none(),
+            "an ABI address-space cast must not change mutability"
         );
     }
 }

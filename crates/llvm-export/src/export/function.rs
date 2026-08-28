@@ -57,6 +57,19 @@ fn sanitize_comment(text: &str) -> String {
         .collect()
 }
 
+/// Final LLVM spelling of a pliron function symbol.
+///
+/// Shared-global owner attributes carry the raw symbol, so the module prepass,
+/// function definition, and global attachment must all normalize it exactly
+/// once through the same helper.
+pub(super) fn exported_function_name(raw_name: &str) -> String {
+    if raw_name.starts_with("llvm_") {
+        decode_intrinsic_identifier(raw_name)
+    } else {
+        strip_device_prefix(raw_name)
+    }
+}
+
 impl<'a> ModuleExportState<'a> {
     /// Export a global variable (typically shared memory for GPU kernels).
     pub(super) fn export_global(
@@ -124,6 +137,36 @@ impl<'a> ModuleExportState<'a> {
                 8 // Default alignment
             }
         });
+        let debug_attachment = if !is_external
+            && matches!(
+                address_space,
+                crate::types::address_space::GLOBAL | crate::types::address_space::SHARED
+            ) {
+            match ops::debug_global_variable(self.ctx, global.get_operation()) {
+                Some(info) => {
+                    let owner = ops::debug_global_owner_function(self.ctx, global.get_operation())
+                        .and_then(|raw| {
+                            let exported = exported_function_name(&raw);
+                            self.function_source_names
+                                .get(&exported)
+                                .is_some_and(|indexed| indexed == &raw)
+                                .then_some(exported)
+                        });
+                    self.debug_global_variable(
+                        name.as_ref(),
+                        Some(alignment),
+                        address_space,
+                        owner.as_deref(),
+                        &info,
+                    )?
+                    .map(|id| format!(", !dbg !{id}"))
+                    .unwrap_or_default()
+                }
+                None => String::new(),
+            }
+        } else {
+            String::new()
+        };
 
         if is_external {
             // External linkage: declaration with size determined elsewhere.
@@ -133,7 +176,7 @@ impl<'a> ModuleExportState<'a> {
             )
             .unwrap();
             self.export_type(ty, output)?;
-            writeln!(output, ", align {alignment}").unwrap();
+            writeln!(output, ", align {alignment}{debug_attachment}").unwrap();
         } else {
             self.public_globals.push(name.to_string());
             // Defined static storage in the global's address space. The LLVM
@@ -166,12 +209,12 @@ impl<'a> ModuleExportState<'a> {
                 let bytes = decode_hex_initializer(&hex)?;
                 write!(output, " ").unwrap();
                 self.export_relocated_initializer(ty, &bytes, &encoded, output)?;
-                writeln!(output, ", align {alignment}").unwrap();
+                writeln!(output, ", align {alignment}{debug_attachment}").unwrap();
             } else if let Some(hex) = global.initializer_hex(self.ctx) {
                 let bytes = decode_hex_initializer(&hex)?;
                 write!(output, " ").unwrap();
                 self.export_byte_initializer(ty, &bytes, output)?;
-                writeln!(output, ", align {alignment}").unwrap();
+                writeln!(output, ", align {alignment}{debug_attachment}").unwrap();
             } else {
                 // NVVM forbids initialized shared variables. `undef` denotes
                 // uninitialized shared storage and is required by both legacy and
@@ -182,7 +225,11 @@ impl<'a> ModuleExportState<'a> {
                 } else {
                     "zeroinitializer"
                 };
-                writeln!(output, " {initializer}, align {alignment}").unwrap();
+                writeln!(
+                    output,
+                    " {initializer}, align {alignment}{debug_attachment}"
+                )
+                .unwrap();
             }
         }
 
@@ -517,14 +564,9 @@ impl<'a> ModuleExportState<'a> {
         let func_name_str: &str = func_name.as_ref();
         // LLVM intrinsics (NVVM and standard, e.g. llvm.fptosi.sat) use dots in IR
         // but Pliron IR identifiers use underscores; convert for export.
-        let fixed_func_name = if func_name_str.starts_with("llvm_") {
-            decode_intrinsic_identifier(func_name_str)
-        } else {
-            // Strip cuda_oxide_device_ prefix for clean export names.
-            // Internal MIR translation uses prefixed names; we strip at the final
-            // export layer so definitions and call targets are renamed consistently.
-            strip_device_prefix(func_name_str)
-        };
+        // Strip cuda_oxide_device_ prefixes and restore LLVM intrinsic dots at
+        // the final export boundary. Calls and AS3 owner scopes share this map.
+        let fixed_func_name = exported_function_name(func_name_str);
 
         // Check for kernel attribute
         let kernel_key: pliron::identifier::Identifier = "gpu_kernel".try_into().unwrap();
@@ -779,7 +821,10 @@ impl<'a> ModuleExportState<'a> {
 
         if let Some(entry_block) = entry_block_opt {
             let func_loc = func.get_operation().deref(self.ctx).loc();
-            let debug_scope = self.debug_subprogram_for_function(&fixed_func_name, &func_loc);
+            let debug_name = ops::debug_function_name(self.ctx, func.get_operation())
+                .unwrap_or_else(|| fixed_func_name.clone());
+            let debug_scope =
+                self.debug_subprogram_for_function(&debug_name, &fixed_func_name, &func_loc);
             if let Some(scope_id) = debug_scope {
                 self.register_debug_source_scopes_for_function(scope_id, func.get_operation());
             }

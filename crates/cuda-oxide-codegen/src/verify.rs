@@ -25,6 +25,14 @@ pub fn verify_operation(
     op_ptr: Ptr<Operation>,
     name: &str,
 ) -> Result<(), PipelineError> {
+    if let Err(error) = dialect_mir::verification::verify_pointer_kind_producers(ctx, op_ptr) {
+        return Err(PipelineError::Verification {
+            name: name.to_string(),
+            message: error.disp(ctx).to_string(),
+            operation: None,
+        });
+    }
+
     if let Err(e) = op_ptr.deref(ctx).verify(ctx) {
         // Try to find specific failing operation
         if let Some((err_op, err_msg)) = find_inner_verification_error(ctx, op_ptr) {
@@ -93,18 +101,23 @@ fn find_inner_verification_error(
 }
 
 #[cfg(test)]
+// Tests build kinded fixture types directly; production minting lives in mir-importer's facts.rs.
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use dialect_mir::attributes::FieldIndexAttr;
     use dialect_mir::ops::{MirFieldAddrOp, MirFuncOp};
     use dialect_mir::types::{MirPtrType, MirStructType};
     use pliron::basic_block::BasicBlock;
-    use pliron::builtin::attributes::TypeAttr;
+    use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
     use pliron::builtin::op_interfaces::{OneRegionInterface, SymbolOpInterface};
+    use pliron::builtin::ops::ConstantOp;
     use pliron::builtin::ops::ModuleOp;
     use pliron::builtin::types::{FunctionType, IntegerType, Signedness};
     use pliron::op::Op;
     use pliron::r#type::TypeHandle;
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
 
     /// A `struct { a: u8, b: u32 }` type and its two field pointer types,
     /// precomputed so `struct_field_addr` can hand an in-bounds op exactly
@@ -161,6 +174,16 @@ mod tests {
             .copied()
             .unwrap_or(types.struct_ptr);
         let base = block.deref(ctx).get_argument(0);
+        // The verifier requires the stamped aggregate fact to equal the
+        // operand pointee, so the fixture stamps the real struct type; the
+        // out-of-bounds case must still fail on the bounds check, not here.
+        let aggregate_ty = {
+            let ptr_ref = types.struct_ptr.deref(ctx);
+            ptr_ref
+                .downcast_ref::<MirPtrType>()
+                .expect("fixture struct_ptr is a MirPtrType")
+                .pointee
+        };
         let op = Operation::new(
             ctx,
             MirFieldAddrOp::get_concrete_op_info(),
@@ -170,6 +193,7 @@ mod tests {
             0,
         );
         MirFieldAddrOp::new(op).set_attr_field_index(ctx, FieldIndexAttr(field_index));
+        MirFieldAddrOp::new(op).set_attr_aggregate_ty(ctx, TypeAttr::new(aggregate_ty));
         op
     }
 
@@ -200,6 +224,36 @@ mod tests {
         struct_field_addr(&mut ctx, &types, block, 1).insert_at_back(block, &ctx);
 
         assert!(verify_operation(&ctx, module.get_operation(), "m").is_ok());
+    }
+
+    #[test]
+    fn verify_operation_rejects_builtin_constant_pointer_results() {
+        use dialect_mir::types::MirPointerKind;
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let pointer_ty = MirPtrType::get_generic_with_kind(
+            &mut ctx,
+            u32_ty.into(),
+            true,
+            MirPointerKind::UniqueRef,
+        );
+        let value = APInt::from_u64(0, NonZeroUsize::new(32).unwrap());
+        let constant = ConstantOp::new(&mut ctx, IntegerAttr::new(u32_ty, value).into());
+        let result = constant.get_operation().deref(&ctx).get_result(0);
+        result.set_type(&ctx, pointer_ty.into());
+
+        let types = struct_types(&mut ctx);
+        let (module, block) = module_with_one_block(&mut ctx, &types);
+        constant.get_operation().insert_at_back(block, &ctx);
+
+        let error = verify_operation(&ctx, module.get_operation(), "m").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("builtin.constant cannot produce")
+        );
     }
 
     #[test]

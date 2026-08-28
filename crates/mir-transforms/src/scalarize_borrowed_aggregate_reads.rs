@@ -34,10 +34,12 @@
 //! the ordinary memory fallback.
 //!
 //! The pre-mem2reg phase fails closed on pointer provenance and mutation. It
-//! rejects additional stores, volatile loads, mutable derived pointers, calls,
-//! pointer casts, pointer PHIs/selects, unknown users, non-array fields, and
-//! projections in the entry block before the initializer can be proven to
-//! dominate them.
+//! rejects additional stores, volatile loads, calls, pointer casts, pointer
+//! PHIs/selects, unknown users, non-array fields, and projections in the entry
+//! block before the initializer can be proven to dominate them. Derived
+//! pointers remain mutable `Erased` storage addresses because projections
+//! preserve the alloca's carrier; the complete use-graph proof, rather than a
+//! false immutable type, establishes that this particular access is read-only.
 //!
 //! A second, post-mem2reg phase handles immutable aggregate pointer arguments
 //! such as an `&self` device helper. It accepts only an exact single-use chain:
@@ -79,7 +81,7 @@ use dialect_mir::{
         MirCastOp, MirConstantOp, MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp,
         MirFuncOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
     },
-    types::{MirArrayType, MirPtrType, MirStructType},
+    types::{MirArrayType, MirPointerKind, MirPtrType, MirStructType, address_space},
 };
 use pliron::{
     builtin::op_interfaces::SymbolOpInterface,
@@ -227,7 +229,7 @@ fn analyze_field_path(
     let field_pointer_type = field_pointer.get_type(ctx);
     let field_pointer_type_ref = field_pointer_type.deref(ctx);
     let field_pointer_type = field_pointer_type_ref.downcast_ref::<MirPtrType>()?;
-    if field_pointer_type.is_mutable {
+    if !is_mutable_erased_alloca_projection(field_pointer_type) {
         return None;
     }
 
@@ -252,7 +254,7 @@ fn analyze_field_path(
         let array_pointer_type = array_pointer.get_type(ctx);
         let array_pointer_type_ref = array_pointer_type.deref(ctx);
         let array_pointer_type = array_pointer_type_ref.downcast_ref::<MirPtrType>()?;
-        if array_pointer_type.is_mutable {
+        if !is_mutable_erased_alloca_projection(array_pointer_type) {
             return None;
         }
 
@@ -292,6 +294,17 @@ fn analyze_field_path(
     array_addrs.extend(local_array_addrs);
     loads.extend(local_loads);
     Some(())
+}
+
+/// The pre-mem2reg path starts from a verified `mir.alloca`, whose address is
+/// mutable compiler storage in generic address space. Field/element address
+/// operations preserve that carrier exactly. Read-only-ness is proven from
+/// the closed use graph; it must not be encoded by relabelling the projection
+/// as an immutable pointer.
+fn is_mutable_erased_alloca_projection(pointer: &MirPtrType) -> bool {
+    pointer.is_mutable
+        && pointer.kind == MirPointerKind::Erased
+        && pointer.address_space == address_space::GENERIC
 }
 
 fn rewrite_plan(ctx: &mut Context, plan: AllocaPlan) -> usize {
@@ -756,6 +769,7 @@ mod tests {
             ops::ModuleOp,
             types::FunctionType,
         },
+        common_traits::Verify,
         region::Region,
         utils::apint::APInt,
     };
@@ -772,6 +786,7 @@ mod tests {
         divisor: Option<u64>,
         additional_store: bool,
         volatile_load: bool,
+        derived_store: bool,
     ) -> Fixture {
         dialect_mir::register(ctx);
 
@@ -890,20 +905,17 @@ mod tests {
             raw_index
         };
 
-        let field_pointer: TypeHandle = MirPtrType::get_generic(ctx, array_type, false).into();
-        let field = Operation::new(
-            ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_pointer],
-            vec![slot],
-            vec![],
-            0,
+        let field_pointer: TypeHandle = MirPtrType::get_generic(ctx, array_type, true).into();
+        let field = MirFieldAddrOp::build(ctx, slot, field_pointer, 0)
+            .expect("fixture slot is a MIR pointer");
+        assert!(
+            MirFieldAddrOp::new(field).verify(ctx).is_ok(),
+            "alloca field projection must preserve mutable Erased storage"
         );
-        MirFieldAddrOp::new(field).set_attr_field_index(ctx, FieldIndexAttr(0));
         field.insert_at_back(body, ctx);
         let field_value = field.deref(ctx).get_result(0);
 
-        let element_pointer: TypeHandle = MirPtrType::get_generic(ctx, element_type, false).into();
+        let element_pointer: TypeHandle = MirPtrType::get_generic(ctx, element_type, true).into();
         let element_address = Operation::new(
             ctx,
             MirArrayElementAddrOp::get_concrete_op_info(),
@@ -911,6 +923,12 @@ mod tests {
             vec![field_value, index],
             vec![],
             0,
+        );
+        assert!(
+            MirArrayElementAddrOp::new(element_address)
+                .verify(ctx)
+                .is_ok(),
+            "alloca element projection must preserve mutable Erased storage"
         );
         element_address.insert_at_back(body, ctx);
         let element_pointer_value = element_address.deref(ctx).get_result(0);
@@ -927,6 +945,19 @@ mod tests {
             MirLoadOp::new(load).set_volatile(ctx, true);
         }
         load.insert_at_back(body, ctx);
+
+        if derived_store {
+            let loaded_value = load.deref(ctx).get_result(0);
+            let store = Operation::new(
+                ctx,
+                MirStoreOp::get_concrete_op_info(),
+                vec![],
+                vec![element_pointer_value, loaded_value],
+                vec![],
+                0,
+            );
+            store.insert_at_back(body, ctx);
+        }
 
         let return_op = Operation::new(
             ctx,
@@ -956,7 +987,7 @@ mod tests {
     #[test]
     fn bounded_rem_rewrites_large_array_with_small_candidate_set() {
         let mut ctx = Context::new();
-        let fixture = build_fixture(&mut ctx, 64, Some(3), false, false);
+        let fixture = build_fixture(&mut ctx, 64, Some(3), false, false, false);
 
         canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
@@ -974,7 +1005,7 @@ mod tests {
     #[test]
     fn unbounded_index_is_canonicalized_for_lowering_fallback() {
         let mut ctx = Context::new();
-        let fixture = build_fixture(&mut ctx, 3, None, false, false);
+        let fixture = build_fixture(&mut ctx, 3, None, false, false, false);
 
         canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
@@ -988,7 +1019,7 @@ mod tests {
     #[test]
     fn oversized_candidate_set_is_canonicalized_for_lowering_fallback() {
         let mut ctx = Context::new();
-        let fixture = build_fixture(&mut ctx, 64, Some(17), false, false);
+        let fixture = build_fixture(&mut ctx, 64, Some(17), false, false, false);
 
         canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
@@ -1002,7 +1033,7 @@ mod tests {
     #[test]
     fn additional_store_rejects_the_entire_slot() {
         let mut ctx = Context::new();
-        let fixture = build_fixture(&mut ctx, 3, Some(3), true, false);
+        let fixture = build_fixture(&mut ctx, 3, Some(3), true, false, false);
 
         canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
@@ -1013,12 +1044,24 @@ mod tests {
     #[test]
     fn volatile_load_rejects_the_entire_slot() {
         let mut ctx = Context::new();
-        let fixture = build_fixture(&mut ctx, 3, Some(3), false, true);
+        let fixture = build_fixture(&mut ctx, 3, Some(3), false, true, false);
 
         canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
 
         assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
         assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+    }
+
+    #[test]
+    fn store_through_derived_pointer_rejects_the_entire_slot() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture(&mut ctx, 3, Some(3), false, false, true);
+
+        canonicalize_read_only_aggregate_arguments(fixture.module, &mut ctx, false);
+
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirStoreOp>(&ctx, fixture.module), 2);
     }
 
     struct BorrowedPointerFixture {
@@ -1307,15 +1350,8 @@ mod tests {
         }
 
         let field_pointer: TypeHandle = MirPtrType::get_generic(ctx, array_type, false).into();
-        let field = Operation::new(
-            ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_pointer],
-            vec![aggregate_argument],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(field).set_attr_field_index(ctx, FieldIndexAttr(0));
+        let field = MirFieldAddrOp::build(ctx, aggregate_argument, field_pointer, 0)
+            .expect("fixture aggregate argument is a MIR pointer");
         field.insert_at_back(body, ctx);
         let field_value = field.deref(ctx).get_result(0);
 

@@ -135,6 +135,25 @@ mod view_kernels {
     use cuda_device::vector::{self, F32x4};
     use cuda_device::{DisjointSlice, kernel, thread};
 
+    #[repr(C, packed)]
+    #[allow(dead_code)]
+    struct PackedEmptyElement {
+        tag: u8,
+        value: u32,
+    }
+
+    #[allow(dead_code)]
+    union UnionEmptyElement {
+        pointer: *mut u32,
+        bits: u64,
+    }
+
+    #[inline(never)]
+    fn promoted_empty_ptr<T>() -> *mut T {
+        let empty: &mut [T; 0] = &mut [];
+        empty.as_mut_ptr()
+    }
+
     /// Copy one `F32x4` quad per thread between flat `f32` buffers through
     /// checked [`vector::as_vectors`] views. The quad is moved whole, never
     /// decomposed into lanes, so both the load and the store fuse into
@@ -155,6 +174,22 @@ mod view_kernels {
         if i < quads.len() && i < out_quads.len() {
             out_quads[i] = quads[i];
         }
+    }
+
+    /// Compile-only coverage for rustc-promoted `&mut [T; 0]` when `T` has a
+    /// packed layout, a union, a unit, or a fat-pointer value. No element
+    /// storage exists, but the promoted pointer must retain `T`'s alignment
+    /// and exact semantic type.
+    #[kernel]
+    pub fn promoted_empty_array_kinds(mut output: DisjointSlice<usize>) {
+        let Some(slot) = output.get_mut(thread::index_1d()) else {
+            return;
+        };
+        let packed = promoted_empty_ptr::<PackedEmptyElement>() as usize;
+        let union = promoted_empty_ptr::<UnionEmptyElement>() as usize;
+        let unit = promoted_empty_ptr::<()>() as usize;
+        let slice_value = promoted_empty_ptr::<&'static [u8]>() as usize;
+        *slot = packed ^ union ^ unit ^ slice_value;
     }
 }
 

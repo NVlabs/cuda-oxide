@@ -187,10 +187,101 @@ pub mod address_space {
     pub const CLUSTER_SHARED: u32 = 7;
 }
 
-/// A pointer type with mutability and address space tracking.
+/// Source-level pointer/reference category retained by `dialect-mir`.
+///
+/// This is a source-level classification, not a physical representation,
+/// dynamic borrow tag/epoch, or optimizer alias capability. In particular,
+/// [`MirPointerKind::RawMut`] and [`MirPointerKind::UniqueRef`] are both mutable
+/// pointers at the machine level, but only the latter came from an `&mut T`-
+/// typed Rust value. [`MirPointerKind::Erased`] is used for compiler-generated
+/// storage and temporary addresses that must not acquire Rust aliasing
+/// guarantees merely because they are mutable.
+///
+/// The MIR dialect deliberately does not translate this enum directly into
+/// LLVM `noalias`, `readonly`, or related attributes. It exists so any future
+/// use of Rust aliasing facts has an explicit, auditable source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[format]
+pub enum MirPointerKind {
+    /// Compiler-generated or intentionally forgotten pointer provenance.
+    /// Generic normalization must not recover a stronger concrete Rust kind
+    /// from this state; only a new rustc-declared semantic boundary may do so.
+    #[default]
+    Erased,
+    /// Shared Rust reference: `&T`.
+    SharedRef,
+    /// Mutable/unique Rust reference: `&mut T`.
+    UniqueRef,
+    /// Immutable raw pointer: `*const T`.
+    RawConst,
+    /// Mutable raw pointer: `*mut T`.
+    RawMut,
+}
+
+impl MirPointerKind {
+    /// Kind for a Rust reference with the supplied source mutability.
+    pub fn from_reference_mutability(is_mutable: bool) -> Self {
+        if is_mutable {
+            Self::UniqueRef
+        } else {
+            Self::SharedRef
+        }
+    }
+
+    /// Kind for a Rust raw pointer with the supplied source mutability.
+    pub fn from_raw_mutability(is_mutable: bool) -> Self {
+        if is_mutable {
+            Self::RawMut
+        } else {
+            Self::RawConst
+        }
+    }
+
+    /// Whether the kind represents a Rust reference rather than a raw or
+    /// compiler-generated pointer.
+    pub fn is_reference(self) -> bool {
+        matches!(self, Self::SharedRef | Self::UniqueRef)
+    }
+
+    /// Whether the kind originated from `&mut T`.
+    ///
+    /// This is intentionally only a classification query. Downstream code
+    /// must not turn it into LLVM alias metadata without a separate, audited
+    /// policy for the operation/function boundary where the value is used.
+    pub fn is_unique_reference(self) -> bool {
+        self == Self::UniqueRef
+    }
+
+    /// Whether a representation-only operation may retype this kind to
+    /// `target` without crossing a Rust semantic boundary.
+    ///
+    /// Generic operations may retain provenance or forget it. They may never
+    /// recover a concrete category from [`Self::Erased`] or switch between
+    /// distinct concrete categories.
+    pub fn can_retype_generically_to(self, target: Self) -> bool {
+        self == target || target == Self::Erased
+    }
+
+    /// Required `MirPtrType::is_mutable` value for source-level kinds.
+    /// `Erased` accepts either mutability because storage pointers may be
+    /// mutable even when they do not represent a Rust `&mut`/`*mut` value.
+    pub fn expected_mutability(self) -> Option<bool> {
+        match self {
+            Self::Erased => None,
+            Self::SharedRef | Self::RawConst => Some(false),
+            Self::UniqueRef | Self::RawMut => Some(true),
+        }
+    }
+}
+
+/// A pointer type with mutability, address space, and Rust pointer kind tracking.
 ///
 /// Represents a pointer to a value of a specific type in a specific memory space.
-/// Syntax: `mir.ptr <type, mutable: bool, addrspace: u32>`
+/// Syntax: `mir.ptr <type, mutable: bool, addrspace: u32, kind: MirPointerKind>`
+///
+/// `is_mutable` is a machine-level/source-mutability property only. It is not
+/// proof of uniqueness: `*mut T` is mutable but can alias, while `&mut T` is
+/// represented by the distinct [`MirPointerKind::UniqueRef`] kind.
 ///
 /// Address spaces are critical for GPU memory:
 /// - 0 (generic): Can point to any memory, resolved at runtime
@@ -203,36 +294,62 @@ pub mod address_space {
 ///
 /// # Verification
 /// * Pointee type must be valid.
+/// * Non-erased pointer kinds must agree with `is_mutable`.
 #[pliron_type(
     name = "mir.ptr",
-    format = "`<` $pointee `,` `mutable:` $is_mutable `,` `addrspace:` $address_space `>`"
+    format = "`<` $pointee `,` `mutable:` $is_mutable `,` `addrspace:` $address_space `,` `kind:` $kind `>`"
 )]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirPtrType {
     pub pointee: TypeHandle,
     pub is_mutable: bool,
     pub address_space: u32,
+    pub kind: MirPointerKind,
 }
 
 impl MirPtrType {
-    /// Create a pointer type with explicit address space.
+    /// Create a compiler/internal pointer with explicit address space.
+    ///
+    /// Existing synthetic-pointer call sites intentionally route through this
+    /// constructor and therefore receive `Erased` provenance. Rust-originated
+    /// pointers should use [`Self::get_with_kind`].
+    // Internal delegation: passes only Erased, never a concrete kind.
+    #[allow(clippy::disallowed_methods)]
     pub fn get(
         ctx: &mut Context,
         pointee: TypeHandle,
         is_mutable: bool,
         address_space: u32,
     ) -> TypedHandle<Self> {
+        Self::get_with_kind(
+            ctx,
+            pointee,
+            is_mutable,
+            address_space,
+            MirPointerKind::Erased,
+        )
+    }
+
+    /// Create a pointer with explicit Rust/source-level pointer kind.
+    pub fn get_with_kind(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        is_mutable: bool,
+        address_space: u32,
+        kind: MirPointerKind,
+    ) -> TypedHandle<Self> {
         Type::instantiate(
             MirPtrType {
                 pointee,
                 is_mutable,
                 address_space,
+                kind,
             },
             ctx,
         )
     }
 
-    /// Create a pointer in generic address space (0).
+    /// Create a compiler/internal pointer in generic address space (0).
     pub fn get_generic(
         ctx: &mut Context,
         pointee: TypeHandle,
@@ -241,13 +358,37 @@ impl MirPtrType {
         Self::get(ctx, pointee, is_mutable, address_space::GENERIC)
     }
 
-    /// Create a pointer in shared memory address space (3).
+    /// Create a Rust/source-level pointer in generic address space (0).
+    // Internal delegation between the (banned) kinded constructors.
+    #[allow(clippy::disallowed_methods)]
+    pub fn get_generic_with_kind(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        is_mutable: bool,
+        kind: MirPointerKind,
+    ) -> TypedHandle<Self> {
+        Self::get_with_kind(ctx, pointee, is_mutable, address_space::GENERIC, kind)
+    }
+
+    /// Create a compiler/internal pointer in shared memory address space (3).
     pub fn get_shared(
         ctx: &mut Context,
         pointee: TypeHandle,
         is_mutable: bool,
     ) -> TypedHandle<Self> {
         Self::get(ctx, pointee, is_mutable, address_space::SHARED)
+    }
+
+    /// Create a Rust/source-level pointer in shared memory address space (3).
+    // Internal delegation between the (banned) kinded constructors.
+    #[allow(clippy::disallowed_methods)]
+    pub fn get_shared_with_kind(
+        ctx: &mut Context,
+        pointee: TypeHandle,
+        is_mutable: bool,
+        kind: MirPointerKind,
+    ) -> TypedHandle<Self> {
+        Self::get_with_kind(ctx, pointee, is_mutable, address_space::SHARED, kind)
     }
 
     /// Create a pointer in global memory address space (1).
@@ -290,6 +431,10 @@ impl MirPtrType {
         self.address_space
     }
 
+    pub fn pointer_kind(&self) -> MirPointerKind {
+        self.kind
+    }
+
     /// Check if this pointer is in shared memory (addrspace 3).
     pub fn is_shared(&self) -> bool {
         self.address_space == address_space::SHARED
@@ -308,36 +453,119 @@ impl MirPtrType {
 
 impl Verify for MirPtrType {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
-        // Pointer types are valid if their pointee type is valid.
+        if let Some(expected) = self.kind.expected_mutability()
+            && expected != self.is_mutable
+        {
+            return verify_err!(
+                Location::Unknown,
+                "MirPtrType pointer kind {:?} is inconsistent with mutable: {}",
+                self.kind,
+                self.is_mutable
+            );
+        }
         Ok(())
     }
 }
 
-/// A slice type: { ptr: *T, len: usize }
+/// A slice/fat-pointer type: `{ ptr: *T, len: usize }` plus source pointer kind.
 ///
-/// Represents a view into a contiguous sequence of elements.
-/// Syntax: `mir.slice <type>`
+/// Represents a view into a contiguous sequence of elements. References and
+/// raw pointers to `[T]` share the same physical `{ptr, len}` layout, but their
+/// Rust pointer category remains distinct in the MIR type.
+/// Syntax: `mir.slice <type, mutable: bool, kind: MirPointerKind>`
+///
+/// Bare `[T]` carriers and compiler-generated fat pointers use
+/// [`MirPointerKind::Erased`].
 ///
 /// # Verification
 /// * Element type must be valid.
-#[pliron_type(name = "mir.slice", format = "`<` $element_ty `>`")]
+/// * Non-erased pointer kinds must agree with `is_mutable`.
+#[pliron_type(
+    name = "mir.slice",
+    format = "`<` $element_ty `,` `mutable:` $is_mutable `,` `kind:` $kind `>`"
+)]
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
 pub struct MirSliceType {
     pub element_ty: TypeHandle,
+    pub is_mutable: bool,
+    pub kind: MirPointerKind,
 }
 
 impl MirSliceType {
+    /// Create an immutable slice carrier with intentionally erased pointer provenance.
     pub fn get(ctx: &mut Context, element_ty: TypeHandle) -> TypedHandle<Self> {
-        Type::instantiate(MirSliceType { element_ty }, ctx)
+        Self::get_with_mutability(ctx, element_ty, false)
+    }
+
+    /// Create a compiler/internal slice carrier with explicit machine mutability.
+    // Internal delegation: passes only Erased, never a concrete kind.
+    #[allow(clippy::disallowed_methods)]
+    pub fn get_with_mutability(
+        ctx: &mut Context,
+        element_ty: TypeHandle,
+        is_mutable: bool,
+    ) -> TypedHandle<Self> {
+        Self::get_with_mutability_and_kind(ctx, element_ty, is_mutable, MirPointerKind::Erased)
+    }
+
+    /// Create a slice/fat-pointer retaining its Rust/source-level pointer kind.
+    // Internal delegation between the (banned) kinded constructors.
+    #[allow(clippy::disallowed_methods)]
+    pub fn get_with_kind(
+        ctx: &mut Context,
+        element_ty: TypeHandle,
+        kind: MirPointerKind,
+    ) -> TypedHandle<Self> {
+        Self::get_with_mutability_and_kind(
+            ctx,
+            element_ty,
+            kind.expected_mutability().unwrap_or(false),
+            kind,
+        )
+    }
+
+    /// Create a slice/fat-pointer with explicit carrier mutability and kind.
+    pub fn get_with_mutability_and_kind(
+        ctx: &mut Context,
+        element_ty: TypeHandle,
+        is_mutable: bool,
+        kind: MirPointerKind,
+    ) -> TypedHandle<Self> {
+        Type::instantiate(
+            MirSliceType {
+                element_ty,
+                is_mutable,
+                kind,
+            },
+            ctx,
+        )
     }
 
     pub fn element_type(&self) -> TypeHandle {
         self.element_ty
     }
+
+    pub fn pointer_kind(&self) -> MirPointerKind {
+        self.kind
+    }
+
+    pub fn is_mutable(&self) -> bool {
+        self.is_mutable
+    }
 }
 
 impl Verify for MirSliceType {
     fn verify(&self, _ctx: &Context) -> Result<(), Error> {
+        if let Some(expected) = self.kind.expected_mutability()
+            && expected != self.is_mutable
+        {
+            return verify_err!(
+                Location::Unknown,
+                "MirSliceType pointer kind {:?} is inconsistent with mutable: {}",
+                self.kind,
+                self.is_mutable
+            );
+        }
         Ok(())
     }
 }
@@ -1826,6 +2054,120 @@ impl Verify for MirEnumType {
         }
         Ok(())
     }
+}
+
+/// A pointer carrier embedded directly or recursively in a MIR value type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MirPointerCarrier {
+    pub kind: MirPointerKind,
+    pub is_mutable: bool,
+}
+
+/// Recognize the dialect's canonical opaque function-pointer value carrier.
+///
+/// Function pointers intentionally use an immutable Erased pointer to a
+/// zero-sized `FnPtrTarget` marker. This exact shape is a capability: generic
+/// data-address producers must not be able to manufacture it merely because
+/// they are also allowed to return Erased pointers.
+pub fn is_opaque_fn_pointer_type(ctx: &Context, ty: TypeHandle) -> bool {
+    let ty = ty.deref(ctx);
+    let Some(pointer) = ty.downcast_ref::<MirPtrType>() else {
+        return false;
+    };
+    if pointer.kind != MirPointerKind::Erased
+        || pointer.is_mutable
+        || pointer.address_space != address_space::GENERIC
+    {
+        return false;
+    }
+
+    let pointee = pointer.pointee.deref(ctx);
+    let Some(marker) = pointee.downcast_ref::<MirStructType>() else {
+        return false;
+    };
+    marker.name == "FnPtrTarget"
+        && marker.field_names.is_empty()
+        && marker.field_types.is_empty()
+        && marker.mem_to_decl.is_empty()
+        && marker.field_offsets.is_empty()
+        && marker.total_size == 0
+        && marker.abi_align == 0
+        && marker.abi_kind == StructAbiKind::Aggregate
+}
+
+/// Return every pointer carrier directly or recursively embedded in a MIR type.
+///
+/// Pointer pointees are deliberately not traversed: their values live in a
+/// different allocation and are not retyped when the pointer value itself is
+/// cast. `MirDisjointSliceType` contributes its fixed `RawMut` data-pointer
+/// carrier even though that kind is implicit in the type's spelling.
+pub fn pointer_carriers_in_type(ctx: &Context, ty: TypeHandle) -> Vec<MirPointerCarrier> {
+    fn visit(
+        ctx: &Context,
+        ty: TypeHandle,
+        visited: &mut Vec<TypeHandle>,
+        carriers: &mut Vec<MirPointerCarrier>,
+    ) {
+        if visited.contains(&ty) {
+            return;
+        }
+        visited.push(ty);
+
+        let ty_obj = ty.deref(ctx);
+        if let Some(pointer) = ty_obj.downcast_ref::<MirPtrType>() {
+            carriers.push(MirPointerCarrier {
+                kind: pointer.kind,
+                is_mutable: pointer.is_mutable,
+            });
+        } else if let Some(slice) = ty_obj.downcast_ref::<MirSliceType>() {
+            carriers.push(MirPointerCarrier {
+                kind: slice.kind,
+                is_mutable: slice.is_mutable,
+            });
+        } else if ty_obj.downcast_ref::<MirDisjointSliceType>().is_some() {
+            carriers.push(MirPointerCarrier {
+                kind: MirPointerKind::RawMut,
+                is_mutable: true,
+            });
+        } else if let Some(array) = ty_obj.downcast_ref::<MirArrayType>() {
+            visit(ctx, array.element_ty, visited, carriers);
+        } else if let Some(tuple) = ty_obj.downcast_ref::<MirTupleType>() {
+            for field in &tuple.types {
+                visit(ctx, *field, visited, carriers);
+            }
+        } else if let Some(struct_ty) = ty_obj.downcast_ref::<MirStructType>() {
+            for field in &struct_ty.field_types {
+                visit(ctx, *field, visited, carriers);
+            }
+        } else if let Some(union_ty) = ty_obj.downcast_ref::<MirUnionType>() {
+            for field in &union_ty.field_types {
+                visit(ctx, *field, visited, carriers);
+            }
+        } else if let Some(enum_ty) = ty_obj.downcast_ref::<MirEnumType>() {
+            for field in &enum_ty.all_field_types {
+                visit(ctx, *field, visited, carriers);
+            }
+        }
+    }
+
+    let mut carriers = Vec::new();
+    visit(ctx, ty, &mut Vec::new(), &mut carriers);
+    carriers
+}
+
+/// Return every pointer kind carried directly or inside a MIR aggregate type.
+pub fn pointer_kinds_in_type(ctx: &Context, ty: TypeHandle) -> Vec<MirPointerKind> {
+    pointer_carriers_in_type(ctx, ty)
+        .into_iter()
+        .map(|carrier| carrier.kind)
+        .collect()
+}
+
+/// Whether a MIR type carries any non-erased Rust pointer category.
+pub fn type_contains_concrete_pointer_kind(ctx: &Context, ty: TypeHandle) -> bool {
+    pointer_kinds_in_type(ctx, ty)
+        .into_iter()
+        .any(|kind| kind != MirPointerKind::Erased)
 }
 
 /// Register dialect types.

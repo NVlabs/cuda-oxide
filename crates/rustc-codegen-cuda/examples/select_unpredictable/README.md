@@ -26,3 +26,7 @@ cargo oxide run select_unpredictable
 
 The kernels compute elementwise `max` and `min` two ways — with
 `select_unpredictable` and with a plain `if` — and the host asserts they agree.
+The module also includes a compile-only raw-pointer kernel. That case makes
+libcore instantiate both its raw-pointer selects and its final
+`MaybeUninit<*mut T>` select, so the pipeline checks nested pointer-kind
+preservation rather than only equal-width machine values.

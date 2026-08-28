@@ -15,11 +15,12 @@ use llvm_export::{
     ops::{
         AddrSpaceCastOp, AddressOfOp, AllocaOp, BitcastOp, BrOp, CallOp, CondBrOp, ConstantOp,
         DebugEnumDiscriminant, DebugEnumVariant, DebugFragment, DebugFragmentVariableInfo,
-        DebugLocalTypeKind, DebugLocalVariableInfo, DebugProjectedVariableInfo,
-        DebugSourcePosition, DebugSourceScope, DebugSourceScopeLocation, DebugSourceScopeMap,
-        DebugValueExpression, DebugValueExpressionOp, DebugValueListOp, DebugValueOp, FuncOp,
-        GepIndex, GetElementPtrOp, GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp,
-        LoadOp, ReturnOp, SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
+        DebugGlobalVariableInfo, DebugLocalTypeKind, DebugLocalVariableInfo,
+        DebugProjectedVariableInfo, DebugSourcePosition, DebugSourceScope,
+        DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueExpression,
+        DebugValueExpressionOp, DebugValueListOp, DebugValueOp, FuncOp, GepIndex, GetElementPtrOp,
+        GlobalInitializerRelocation, GlobalOp, GlobalOpExt, InlineAsmOp, LoadOp, ReturnOp,
+        SelectOp, StoreOp, UndefOp, encode_global_initializer_relocations,
     },
     types::{ArrayType, FuncType, HalfType, PointerType, StructLayout, StructType, VoidType},
 };
@@ -99,6 +100,13 @@ fn module_top_block(ctx: &mut Context, module: &ModuleOp) -> Ptr<BasicBlock> {
     let block = BasicBlock::new(ctx, None, vec![]);
     block.insert_at_back(module_region, ctx);
     block
+}
+
+fn metadata_id<'a>(ir: &'a str, needle: &str) -> &'a str {
+    ir.lines()
+        .find(|line| line.contains(needle))
+        .and_then(|line| line.split_once(" = ").map(|(id, _)| id))
+        .unwrap_or_else(|| panic!("missing metadata node containing {needle:?}:\n{ir}"))
 }
 
 #[test]
@@ -2243,6 +2251,11 @@ fn line_table_debug_metadata_emits_function_scope_and_instruction_locations() {
     let void_ty = VoidType::get(&ctx);
     let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
     let func = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), func_ty);
+    llvm_export::ops::set_debug_function_name(
+        &mut ctx,
+        func.get_operation(),
+        "source_crate::debug_kernel",
+    );
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 7, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
 
@@ -2296,12 +2309,57 @@ fn line_table_debug_metadata_emits_function_scope_and_instruction_locations() {
         "debug export should describe the Rust compile unit:\n{ir}"
     );
     assert!(
-        ir.contains("distinct !DISubprogram(name: \"debug_kernel\""),
-        "function definition should get a DISubprogram:\n{ir}"
+        ir.contains(
+            "distinct !DISubprogram(name: \"source_crate::debug_kernel\", linkageName: \"debug_kernel\""
+        ),
+        "function definition should separate its source name from its physical linkage name:\n{ir}"
     );
     assert!(
         ir.contains("!DILocation(line: 8, column: 5, scope: !"),
         "instruction location should preserve the source line and column:\n{ir}"
+    );
+}
+
+#[test]
+fn full_debug_metadata_keeps_generic_source_name_separate_from_mangled_symbol() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let linkage_name = "_RNvMCexampleINtCsource7WrapperjE7get_mut";
+    let func = FuncOp::new(&mut ctx, linkage_name.try_into().unwrap(), func_ty);
+    llvm_export::ops::set_debug_function_name(
+        &mut ctx,
+        func.get_operation(),
+        "source_crate::Wrapper::<u16>::get_mut",
+    );
+    let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/generic.rs", 19, 1);
+    func.get_operation().deref_mut(&ctx).set_loc(func_loc);
+
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = DebugConfig {
+        inner: PtxExportConfig,
+        debug_kind: DebugKind::Full,
+    };
+    let ir =
+        export_module_to_string_with_config(&ctx, &module, &config).expect("debug export succeeds");
+
+    assert!(
+        ir.contains(&format!("define void @{linkage_name}()")),
+        "debug naming must not change the physical function symbol:\n{ir}"
+    );
+    assert!(
+        ir.contains(&format!(
+            "distinct !DISubprogram(name: \"source_crate::Wrapper::<u16>::get_mut\", linkageName: \"{linkage_name}\""
+        )),
+        "generic debug metadata must carry both source and linkage spellings:\n{ir}"
     );
 }
 
@@ -2707,16 +2765,100 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
         DebugLocalVariableInfo {
             name: "ptr".to_string(),
             argument_index: None,
-            ty: DebugLocalTypeKind::Pointer {
+            ty: DebugLocalTypeKind::TypedPointer {
                 name: "*mut f32".to_string(),
                 size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::Basic {
+                    name: "f32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_float",
+                }),
             },
         },
     );
     ptr.get_operation().insert_at_back(entry, &ctx);
 
+    let nested_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let nested_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 33, 9);
+    nested_ptr
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(nested_ptr_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        nested_ptr.get_operation(),
+        DebugLocalVariableInfo {
+            name: "nested_ptr".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::TypedPointer {
+                name: "*const *mut i32".to_string(),
+                size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::TypedPointer {
+                    name: "*mut i32".to_string(),
+                    size_bits: 64,
+                    pointee: Box::new(DebugLocalTypeKind::Basic {
+                        name: "i32".to_string(),
+                        size_bits: 32,
+                        encoding: "DW_ATE_signed",
+                    }),
+                }),
+            },
+        },
+    );
+    nested_ptr.get_operation().insert_at_back(entry, &ctx);
+
+    let array_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let array_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 34, 9);
+    array_ptr
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(array_ptr_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        array_ptr.get_operation(),
+        DebugLocalVariableInfo {
+            name: "array_ptr".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::TypedPointer {
+                name: "*const [u16; 4]".to_string(),
+                size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::Array {
+                    name: "[u16; 4]".to_string(),
+                    size_bits: 64,
+                    element: Box::new(DebugLocalTypeKind::Basic {
+                        name: "u16".to_string(),
+                        size_bits: 16,
+                        encoding: "DW_ATE_unsigned",
+                    }),
+                    count: 4,
+                }),
+            },
+        },
+    );
+    array_ptr.get_operation().insert_at_back(entry, &ctx);
+
+    let opaque_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let opaque_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 35, 9);
+    opaque_ptr
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(opaque_ptr_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        opaque_ptr.get_operation(),
+        DebugLocalVariableInfo {
+            name: "opaque_ptr".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::Pointer {
+                name: "*const _".to_string(),
+                size_bits: 64,
+            },
+        },
+    );
+    opaque_ptr.get_operation().insert_at_back(entry, &ctx);
+
     let ret = ReturnOp::new(&mut ctx, None);
-    let ret_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 33, 1);
+    let ret_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 36, 1);
     ret.get_operation().deref_mut(&ctx).set_loc(ret_loc);
     ret.get_operation().insert_at_back(entry, &ctx);
 
@@ -2757,11 +2899,771 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
         ir.contains("!DIBasicType(name: \"u32\", size: 32, encoding: DW_ATE_unsigned)"),
         "basic integer variables should get DIBasicType metadata:\n{ir}"
     );
+    let f32_id = metadata_id(
+        &ir,
+        "!DIBasicType(name: \"f32\", size: 32, encoding: DW_ATE_float)",
+    );
+    assert!(
+        ir.contains(&format!(
+            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*mut f32\", baseType: {f32_id}, size: 64)"
+        )),
+        "pointer variables should reference their pointee DIType:\n{ir}"
+    );
+    let i32_id = metadata_id(
+        &ir,
+        "!DIBasicType(name: \"i32\", size: 32, encoding: DW_ATE_signed)",
+    );
+    let inner_pointer = format!(
+        "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*mut i32\", baseType: {i32_id}, size: 64)"
+    );
+    let inner_pointer_id = metadata_id(&ir, &inner_pointer);
+    assert!(
+        ir.contains(&format!(
+            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*const *mut i32\", baseType: {inner_pointer_id}, size: 64)"
+        )),
+        "nested pointer metadata must preserve the complete base-type chain:\n{ir}"
+    );
+
+    let u16_id = metadata_id(
+        &ir,
+        "!DIBasicType(name: \"u16\", size: 16, encoding: DW_ATE_unsigned)",
+    );
+    let subrange_id = metadata_id(&ir, "!DISubrange(count: 4)");
+    let subrange_tuple_id = metadata_id(&ir, &format!("!{{{subrange_id}}}"));
+    let array_type = format!(
+        "!DICompositeType(tag: DW_TAG_array_type, baseType: {u16_id}, size: 64, elements: {subrange_tuple_id})"
+    );
+    let array_type_id = metadata_id(&ir, &array_type);
+    assert!(
+        ir.contains(&format!(
+            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*const [u16; 4]\", baseType: {array_type_id}, size: 64)"
+        )),
+        "array pointer metadata must reference the exact element/subrange graph:\n{ir}"
+    );
+
+    assert!(
+        ir.contains("!DILocalVariable(name: \"opaque_ptr\", scope: !"),
+        "unsupported pointers must remain visible as source variables:\n{ir}"
+    );
     assert!(
         ir.contains(
-            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*mut f32\", baseType: null, size: 64)"
+            "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"*const _\", baseType: null, size: 64)"
         ),
-        "pointer variables should get a pointer DIType:\n{ir}"
+        "the compatibility pointer must retain its legacy null-base metadata:\n{ir}"
+    );
+    let null_base_pointer_count = ir
+        .lines()
+        .filter(|line| line.contains("DW_TAG_pointer_type") && line.contains("baseType: null"))
+        .count();
+    assert!(
+        null_base_pointer_count == 1,
+        "only the explicit opaque compatibility pointer may have a null baseType:\n{ir}"
+    );
+
+    let Some(llvm_as) = ["llvm-as-22", "llvm-as-21", "llvm-as"]
+        .into_iter()
+        .find(|tool| {
+            std::process::Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+    else {
+        eprintln!("skipping pointer-debug llvm-as parse gate: no supported llvm-as on PATH");
+        return;
+    };
+    let ll_path = std::env::temp_dir().join(format!(
+        "cuda_oxide_pointer_debug_parse_gate_{}.ll",
+        std::process::id()
+    ));
+    std::fs::write(&ll_path, &ir).expect("write pointer-debug temp .ll");
+    let output = std::process::Command::new(llvm_as)
+        .arg("-o")
+        .arg("/dev/null")
+        .arg(&ll_path)
+        .output()
+        .expect("run llvm-as for pointer debug metadata");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = std::fs::remove_file(&ll_path);
+    assert!(
+        output.status.success(),
+        "{llvm_as} rejected pointer debug metadata:\n{stderr}\n--- module ---\n{ir}"
+    );
+}
+
+#[test]
+fn full_debug_metadata_describes_as1_global_with_semantic_rust_type() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let storage_ty = ArrayType::get(&ctx, i8_ty.into(), 8);
+    let global = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__device_global_7".try_into().unwrap(),
+        storage_ty.into(),
+        8,
+    );
+    global.set_address_space(&mut ctx, llvm_export::types::address_space::GLOBAL);
+    global.set_initializer_hex(&mut ctx, "0000000000000000");
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        global.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "GLOBAL_COUNTER".to_string(),
+            namespace: vec!["debuginfo".to_string(), "state".to_string()],
+            ty: DebugLocalTypeKind::Basic {
+                name: "u64".to_string(),
+                size_bits: 64,
+                encoding: "DW_ATE_unsigned",
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/kernel.rs"),
+                line: 90,
+                column: 1,
+            },
+            is_local_to_unit: true,
+            is_function_local: false,
+        },
+    );
+    global.get_operation().insert_at_back(module_block, &ctx);
+
+    let full = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &DebugConfig {
+            inner: PtxExportConfig,
+            debug_kind: DebugKind::Full,
+        },
+    )
+    .expect("full debug export succeeds");
+
+    let definition = full
+        .lines()
+        .find(|line| line.starts_with("@__device_global_7 = "))
+        .expect("device-global definition");
+    assert!(
+        definition.contains("addrspace(1) global [8 x i8] c\"\\00\\00\\00\\00\\00\\00\\00\\00\"")
+            && definition.contains(", align 8, !dbg !"),
+        "the physical byte storage should retain a global debug attachment:\n{full}"
+    );
+    assert!(
+        full.contains(
+            "distinct !DIGlobalVariable(name: \"GLOBAL_COUNTER\", linkageName: \"__device_global_7\""
+        ),
+        "DWARF should separate the source name from the generated linkage name:\n{full}"
+    );
+    assert!(
+        full.contains("!DINamespace(name: \"debuginfo\", scope: null)")
+            && full.contains("!DINamespace(name: \"state\", scope: !")
+            && full.contains("scope: !"),
+        "the source crate/module hierarchy should scope the leaf name:\n{full}"
+    );
+    assert!(
+        full.contains("isLocal: true, isDefinition: true"),
+        "private Rust statics should remain local to the compile unit:\n{full}"
+    );
+    assert!(
+        full.contains("file: !")
+            && full.contains("line: 90, type: !")
+            && full.contains("align: 64)"),
+        "the declaration location and source alignment should be retained:\n{full}"
+    );
+    assert!(
+        full.contains("!DIBasicType(name: \"u64\", size: 64, encoding: DW_ATE_unsigned)"),
+        "the debug type must be semantic u64, not the physical [8 x i8] storage:\n{full}"
+    );
+    assert!(
+        full.contains("!DIGlobalVariableExpression(var: !")
+            && full.contains("expr: !DIExpression())")
+            && full.contains("emissionKind: FullDebug, globals: !"),
+        "the global expression should be retained by the compile unit:\n{full}"
+    );
+
+    let off = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &DebugConfig {
+            inner: PtxExportConfig,
+            debug_kind: DebugKind::Off,
+        },
+    )
+    .expect("non-debug export succeeds");
+    let line_tables = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &DebugConfig {
+            inner: PtxExportConfig,
+            debug_kind: DebugKind::LineTables,
+        },
+    )
+    .expect("line-table export succeeds");
+    assert_eq!(
+        line_tables, off,
+        "a global-only module must not gain variable metadata outside full debug"
+    );
+}
+
+#[test]
+fn full_debug_metadata_describes_function_local_as3_array_with_shared_address_class() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "shared_debug".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let raw_owner = reserved_oxide_symbols::device_symbol("shared_kernel");
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let storage_ty = ArrayType::get(&ctx, i32_ty.into(), 32);
+    let global = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__shared_mem_0".try_into().unwrap(),
+        storage_ty.into(),
+        4,
+    );
+    global.set_address_space(&mut ctx, llvm_export::types::address_space::SHARED);
+    let info = DebugGlobalVariableInfo {
+        name: "TILE".to_string(),
+        namespace: vec![
+            "debuginfo".to_string(),
+            "kernels".to_string(),
+            "shared_kernel".to_string(),
+        ],
+        ty: DebugLocalTypeKind::Array {
+            name: "[i32; 32]".to_string(),
+            size_bits: 1024,
+            element: Box::new(DebugLocalTypeKind::Basic {
+                name: "i32".to_string(),
+                size_bits: 32,
+                encoding: "DW_ATE_signed",
+            }),
+            count: 32,
+        },
+        declaration: DebugSourcePosition {
+            file: PathBuf::from("/tmp/cuda-oxide/tests/shared.rs"),
+            line: 40,
+            column: 9,
+        },
+        is_local_to_unit: true,
+        is_function_local: true,
+    };
+    llvm_export::ops::set_debug_global_variable(&mut ctx, global.get_operation(), &info);
+    llvm_export::ops::set_debug_global_owner_function(&mut ctx, global.get_operation(), &raw_owner);
+    global.get_operation().insert_at_back(module_block, &ctx);
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let function = FuncOp::new(&mut ctx, raw_owner.as_str().try_into().unwrap(), func_ty);
+    let function_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/shared.rs", 35, 1);
+    function
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(function_loc);
+    let entry = function.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    function.get_operation().insert_at_back(module_block, &ctx);
+
+    let full = export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &DebugConfig {
+            inner: PtxExportConfig,
+            debug_kind: DebugKind::Full,
+        },
+    )
+    .expect("full shared debug export succeeds");
+
+    let definition = full
+        .lines()
+        .find(|line| line.starts_with("@__shared_mem_0 = "))
+        .expect("shared definition");
+    assert!(
+        definition.contains("addrspace(3) global [32 x i32]")
+            && definition.contains(", align 4, !dbg !"),
+        "physical AS3 array must retain the debug attachment:\n{full}"
+    );
+    assert!(
+        full.contains("!DIExpression(DW_OP_constu, 8, DW_OP_swap, DW_OP_xderef)"),
+        "AS3 must carry CUDA DWARF shared address class 8:\n{full}"
+    );
+    assert!(
+        full.contains("!DINamespace(name: \"debuginfo\", scope: null)")
+            && full.contains("!DINamespace(name: \"kernels\", scope: !")
+            && full.contains(
+                "distinct !DISubprogram(name: \"shared_kernel\", \
+                 linkageName: \"shared_kernel\", scope: !"
+            ),
+        "the owning subprogram must be nested under the structured namespace:\n{full}"
+    );
+    assert_eq!(
+        full.matches("distinct !DISubprogram(name: \"shared_kernel\"")
+            .count(),
+        1,
+        "pre-reservation and function export must reuse one DISubprogram:\n{full}"
+    );
+    assert!(
+        full.contains("distinct !DIGlobalVariable(name: \"TILE\", linkageName: \"__shared_mem_0\"")
+            && full.contains("!DISubrange(count: 32)")
+            && full.contains("!DICompositeType(tag: DW_TAG_array_type, baseType: !")
+            && full.contains("size: 1024, elements: !"),
+        "the DIE must keep leaf/linkage and the logical array type:\n{full}"
+    );
+    assert!(
+        full.contains("emissionKind: FullDebug, globals: !"),
+        "the CU must retain the one shared expression:\n{full}"
+    );
+}
+
+fn export_mixed_shared_owner_order(malformed_first: bool) -> String {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "shared_owner_validation".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let raw_owner = reserved_oxide_symbols::device_symbol("shared_kernel");
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let storage_ty = ArrayType::get(&ctx, i32_ty.into(), 4);
+
+    let valid = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__shared_mem_valid".try_into().unwrap(),
+        storage_ty.into(),
+        4,
+    );
+    valid.set_address_space(&mut ctx, llvm_export::types::address_space::SHARED);
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        valid.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "VALID".to_string(),
+            namespace: vec!["owner_fixture".to_string(), "shared_kernel".to_string()],
+            ty: DebugLocalTypeKind::Array {
+                name: "[i32; 4]".to_string(),
+                size_bits: 128,
+                element: Box::new(DebugLocalTypeKind::Basic {
+                    name: "i32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_signed",
+                }),
+                count: 4,
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/shared-owner.rs"),
+                line: 20,
+                column: 5,
+            },
+            is_local_to_unit: true,
+            is_function_local: true,
+        },
+    );
+    llvm_export::ops::set_debug_global_owner_function(&mut ctx, valid.get_operation(), &raw_owner);
+
+    let malformed = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__shared_mem_malformed".try_into().unwrap(),
+        storage_ty.into(),
+        4,
+    );
+    malformed.set_address_space(&mut ctx, llvm_export::types::address_space::SHARED);
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        malformed.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "MALFORMED".to_string(),
+            namespace: vec!["owner_fixture".to_string(), "shared_kernel".to_string()],
+            ty: DebugLocalTypeKind::Array {
+                name: "[i32; 4]".to_string(),
+                size_bits: 128,
+                element: Box::new(DebugLocalTypeKind::Basic {
+                    name: "i32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_signed",
+                }),
+                count: 4,
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/shared-owner.rs"),
+                line: 24,
+                column: 5,
+            },
+            is_local_to_unit: true,
+            is_function_local: true,
+        },
+    );
+    // This raw spelling normalizes to `shared_kernel`, but it is not the raw
+    // symbol indexed for that function definition. It must not borrow the
+    // valid sibling's pre-reserved DISubprogram.
+    llvm_export::ops::set_debug_global_owner_function(
+        &mut ctx,
+        malformed.get_operation(),
+        "shared_kernel",
+    );
+
+    if malformed_first {
+        malformed.get_operation().insert_at_back(module_block, &ctx);
+        valid.get_operation().insert_at_back(module_block, &ctx);
+    } else {
+        valid.get_operation().insert_at_back(module_block, &ctx);
+        malformed.get_operation().insert_at_back(module_block, &ctx);
+    }
+
+    let void_ty = VoidType::get(&ctx);
+    let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let function = FuncOp::new(&mut ctx, raw_owner.as_str().try_into().unwrap(), func_ty);
+    let function_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/shared-owner.rs", 16, 1);
+    function
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(function_loc);
+    let entry = function.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+    function.get_operation().insert_at_back(module_block, &ctx);
+
+    export_module_to_string_with_config(
+        &ctx,
+        &module,
+        &DebugConfig {
+            inner: PtxExportConfig,
+            debug_kind: DebugKind::Full,
+        },
+    )
+    .expect("a malformed shared owner must not break its valid sibling")
+}
+
+fn assert_malformed_shared_owner_fails_closed(full: &str) {
+    let valid_definition = full
+        .lines()
+        .find(|line| line.starts_with("@__shared_mem_valid = "))
+        .expect("valid shared definition");
+    let malformed_definition = full
+        .lines()
+        .find(|line| line.starts_with("@__shared_mem_malformed = "))
+        .expect("malformed-owner shared definition");
+    assert!(
+        valid_definition.contains(", !dbg !"),
+        "the valid sibling must retain its debug attachment:\n{full}"
+    );
+    assert!(
+        !malformed_definition.contains(", !dbg !"),
+        "the malformed owner must not borrow the valid sibling's scope:\n{full}"
+    );
+    assert!(
+        full.contains("distinct !DIGlobalVariable(name: \"VALID\"")
+            && !full.contains("distinct !DIGlobalVariable(name: \"MALFORMED\""),
+        "only the valid shared source identity may become a DIE:\n{full}"
+    );
+    assert_eq!(
+        full.matches("!DIGlobalVariableExpression(var:").count(),
+        1,
+        "only the valid sibling may be retained by the compile unit:\n{full}"
+    );
+    assert_eq!(
+        full.matches("distinct !DISubprogram(name: \"shared_kernel\"")
+            .count(),
+        1,
+        "the valid owner must still reuse exactly one DISubprogram:\n{full}"
+    );
+}
+
+#[test]
+fn malformed_shared_owner_before_valid_sibling_cannot_borrow_its_scope() {
+    assert_malformed_shared_owner_fails_closed(&export_mixed_shared_owner_order(true));
+}
+
+#[test]
+fn malformed_shared_owner_after_valid_sibling_cannot_borrow_its_scope() {
+    assert_malformed_shared_owner_fails_closed(&export_mixed_shared_owner_order(false));
+}
+
+#[test]
+fn full_debug_globals_preserve_qualified_identity_visibility_and_relocations() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "global_debug_adversarial".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
+
+    let left_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+    let left = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__device_global_20".try_into().unwrap(),
+        left_ty.into(),
+        4,
+    );
+    left.set_address_space(&mut ctx, llvm_export::types::address_space::GLOBAL);
+    left.set_initializer_hex(&mut ctx, "01000000");
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        left.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "SAME_LEAF".to_string(),
+            namespace: vec!["qualified_fixture".to_string(), "left".to_string()],
+            ty: DebugLocalTypeKind::Basic {
+                name: "u32".to_string(),
+                size_bits: 32,
+                encoding: "DW_ATE_unsigned",
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/qualified.rs"),
+                line: 20,
+                column: 5,
+            },
+            is_local_to_unit: true,
+            is_function_local: false,
+        },
+    );
+    left.get_operation().insert_at_back(module_block, &ctx);
+
+    let right_ty = ArrayType::get(&ctx, i8_ty.into(), 8);
+    let right = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__device_global_21".try_into().unwrap(),
+        right_ty.into(),
+        8,
+    );
+    right.set_address_space(&mut ctx, llvm_export::types::address_space::GLOBAL);
+    right.set_initializer_hex(&mut ctx, "0200000000000000");
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        right.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "SAME_LEAF".to_string(),
+            namespace: vec!["qualified_fixture".to_string(), "right".to_string()],
+            ty: DebugLocalTypeKind::Basic {
+                name: "u64".to_string(),
+                size_bits: 64,
+                encoding: "DW_ATE_unsigned",
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/qualified.rs"),
+                line: 24,
+                column: 5,
+            },
+            is_local_to_unit: false,
+            is_function_local: false,
+        },
+    );
+    right.get_operation().insert_at_back(module_block, &ctx);
+
+    let target_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
+    let target = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__device_global_22".try_into().unwrap(),
+        target_ty.into(),
+        4,
+    );
+    target.set_address_space(&mut ctx, llvm_export::types::address_space::GLOBAL);
+    target.set_source_global_key(&mut ctx, "qualified_fixture::RELOCATION_TARGET");
+    target.set_initializer_hex(&mut ctx, "78563412");
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        target.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "RELOCATION_TARGET".to_string(),
+            namespace: vec!["qualified_fixture".to_string()],
+            ty: DebugLocalTypeKind::Basic {
+                name: "u32".to_string(),
+                size_bits: 32,
+                encoding: "DW_ATE_unsigned",
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/qualified.rs"),
+                line: 30,
+                column: 1,
+            },
+            is_local_to_unit: true,
+            is_function_local: false,
+        },
+    );
+    target.get_operation().insert_at_back(module_block, &ctx);
+
+    let references_ty = StructType::get_unnamed(
+        &ctx,
+        (vec![i64_ty.into(), i64_ty.into()], StructLayout::Unpacked),
+    );
+    let references = GlobalOp::new_with_alignment(
+        &mut ctx,
+        "__device_global_23".try_into().unwrap(),
+        references_ty.into(),
+        8,
+    );
+    references.set_address_space(&mut ctx, llvm_export::types::address_space::GLOBAL);
+    references.set_source_global_key(&mut ctx, "qualified_fixture::REFERENCES");
+    references.set_initializer_hex(&mut ctx, "00000000000000000000000000000000");
+    references.set_initializer_relocations(
+        &mut ctx,
+        &encode_global_initializer_relocations(&[
+            GlobalInitializerRelocation {
+                source_offset: 0,
+                width_bytes: 8,
+                target_address_space: llvm_export::types::address_space::GLOBAL,
+                target_addend: 0,
+                target_key: "qualified_fixture::RELOCATION_TARGET".to_string(),
+            },
+            GlobalInitializerRelocation {
+                source_offset: 8,
+                width_bytes: 8,
+                target_address_space: llvm_export::types::address_space::GLOBAL,
+                target_addend: 0,
+                target_key: "qualified_fixture::RELOCATION_TARGET".to_string(),
+            },
+        ]),
+    );
+    llvm_export::ops::set_debug_global_variable(
+        &mut ctx,
+        references.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "REFERENCES".to_string(),
+            namespace: vec!["qualified_fixture".to_string()],
+            ty: DebugLocalTypeKind::Array {
+                name: "[&u32; 2]".to_string(),
+                size_bits: 128,
+                element: Box::new(DebugLocalTypeKind::Pointer {
+                    name: "&u32".to_string(),
+                    size_bits: 64,
+                }),
+                count: 2,
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/qualified.rs"),
+                line: 31,
+                column: 1,
+            },
+            is_local_to_unit: true,
+            is_function_local: false,
+        },
+    );
+    references
+        .get_operation()
+        .insert_at_back(module_block, &ctx);
+
+    let export = |debug_kind| {
+        export_module_to_string_with_config(
+            &ctx,
+            &module,
+            &DebugConfig {
+                inner: PtxExportConfig,
+                debug_kind,
+            },
+        )
+        .expect("global debug export succeeds")
+    };
+    let full = export(DebugKind::Full);
+
+    let metadata_id = |needle: &str| {
+        full.lines()
+            .find(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("missing `{needle}` in:\n{full}"))
+            .split_once(" = ")
+            .expect("metadata definition")
+            .0
+            .trim_start_matches('!')
+            .to_string()
+    };
+    let left_scope = metadata_id("!DINamespace(name: \"left\"");
+    let right_scope = metadata_id("!DINamespace(name: \"right\"");
+    let left_variable = full
+        .lines()
+        .find(|line| {
+            line.contains("!DIGlobalVariable(name: \"SAME_LEAF\"")
+                && line.contains("linkageName: \"__device_global_20\"")
+        })
+        .expect("left source global");
+    let right_variable = full
+        .lines()
+        .find(|line| {
+            line.contains("!DIGlobalVariable(name: \"SAME_LEAF\"")
+                && line.contains("linkageName: \"__device_global_21\"")
+        })
+        .expect("right source global");
+    assert!(left_variable.contains(&format!("scope: !{left_scope}")));
+    assert!(left_variable.contains("line: 20") && left_variable.contains("isLocal: true"));
+    assert!(right_variable.contains(&format!("scope: !{right_scope}")));
+    assert!(right_variable.contains("line: 24") && right_variable.contains("isLocal: false"));
+
+    let target_definition = full
+        .lines()
+        .find(|line| line.starts_with("@__device_global_22 = "))
+        .expect("relocation-only target definition");
+    assert!(target_definition.contains("[4 x i8]") && target_definition.contains("!dbg !"));
+    let target_variable = full
+        .lines()
+        .find(|line| line.contains("!DIGlobalVariable(name: \"RELOCATION_TARGET\""))
+        .expect("relocation-only target source identity");
+    assert!(
+        target_variable.contains("linkageName: \"__device_global_22\"")
+            && target_variable.contains("line: 30")
+    );
+
+    let reference_definition = full
+        .lines()
+        .find(|line| line.starts_with("@__device_global_23 = "))
+        .expect("relocation-backed definition");
+    assert_eq!(
+        reference_definition.matches("@__device_global_22").count(),
+        2,
+        "both initializer references must target the same one physical global"
+    );
+    assert!(
+        full.contains("!DICompositeType(tag: DW_TAG_array_type, baseType: !")
+            && full.contains("size: 128, elements: !")
+            && full.contains("!DIDerivedType(tag: DW_TAG_pointer_type, name: \"&u32\"")
+    );
+
+    assert_eq!(
+        full.matches("!DIGlobalVariableExpression(var:").count(),
+        4,
+        "one expression per physical source global, despite repeated relocations"
+    );
+    let compile_unit = full
+        .lines()
+        .find(|line| line.contains("!DICompileUnit("))
+        .expect("debug compile unit");
+    let globals_id = compile_unit
+        .split("globals: !")
+        .nth(1)
+        .and_then(|tail| tail.strip_suffix(')'))
+        .expect("compile-unit globals tuple");
+    let globals_tuple = full
+        .lines()
+        .find(|line| line.starts_with(&format!("!{globals_id} = !{{")))
+        .expect("compile-unit globals tuple definition");
+    assert_eq!(globals_tuple.matches('!').count() - 2, 4, "{globals_tuple}");
+
+    assert_eq!(
+        export(DebugKind::LineTables),
+        export(DebugKind::Off),
+        "initialized and relocation-backed globals must not gain metadata outside Full debug"
+    );
+
+    let Some(llvm_as) = ["llvm-as-22", "llvm-as-21", "llvm-as"]
+        .into_iter()
+        .find(|tool| {
+            std::process::Command::new(tool)
+                .arg("--version")
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+    else {
+        eprintln!("skipping global-debug parse gate: no llvm-as on PATH");
+        return;
+    };
+    let ll_path = std::env::temp_dir().join(format!(
+        "cuda_oxide_global_debug_parse_gate_{}.ll",
+        std::process::id()
+    ));
+    std::fs::write(&ll_path, &full).expect("write temp .ll");
+    let output = std::process::Command::new(llvm_as)
+        .arg("-o")
+        .arg("/dev/null")
+        .arg(&ll_path)
+        .output()
+        .expect("run llvm-as");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let _ = std::fs::remove_file(&ll_path);
+    assert!(
+        output.status.success(),
+        "{llvm_as} rejected global debug metadata:\n{stderr}\n--- module ---\n{full}"
     );
 }
 
@@ -2863,9 +3765,14 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
                         members: vec![llvm_export::ops::DebugTypeMember {
                             name: "0".to_string(),
                             offset_bits: 0,
-                            ty: DebugLocalTypeKind::Pointer {
+                            ty: DebugLocalTypeKind::TypedPointer {
                                 name: "&u32".to_string(),
                                 size_bits: 64,
+                                pointee: Box::new(DebugLocalTypeKind::Basic {
+                                    name: "u32".to_string(),
+                                    size_bits: 32,
+                                    encoding: "DW_ATE_unsigned",
+                                }),
                             },
                         }],
                     },
@@ -3522,6 +4429,66 @@ fn line_table_debug_metadata_adds_fallback_locations_to_calls() {
     assert!(
         ir.contains("!DILocation(line: 20, column: 3, scope: !"),
         "fallback call location should point at the caller's function line:\n{ir}"
+    );
+}
+
+#[test]
+fn line_table_debug_metadata_emits_explicit_artificial_calls_at_line_zero() {
+    let mut ctx = Context::new();
+
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_region = module.get_operation().deref(&ctx).get_region(0);
+    let module_block = {
+        let region = module_region.deref(&ctx);
+        region.iter(&ctx).next().unwrap()
+    };
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let void_ty = VoidType::get(&ctx);
+    let helper_ty = FuncType::get(&ctx, i32_ty.to_handle(), vec![], false);
+    let helper = FuncOp::new(&mut ctx, "helper".try_into().unwrap(), helper_ty);
+    helper.get_operation().insert_at_back(module_block, &ctx);
+
+    let caller_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+    let caller = FuncOp::new(&mut ctx, "debug_kernel".try_into().unwrap(), caller_ty);
+    let caller_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 20, 3);
+    caller.get_operation().deref_mut(&ctx).set_loc(caller_loc);
+
+    let entry = caller.get_or_create_entry_block(&mut ctx);
+    let call = CallOp::new(
+        &mut ctx,
+        CallOpCallable::Direct("helper".try_into().unwrap()),
+        helper_ty,
+        vec![],
+    );
+    call.get_operation()
+        .deref_mut(&ctx)
+        .set_loc(llvm_export::artificial_debug_location());
+    call.get_operation().insert_at_back(entry, &ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+
+    caller.get_operation().insert_at_back(module_block, &ctx);
+
+    let config = DebugConfig {
+        inner: PtxExportConfig,
+        debug_kind: DebugKind::LineTables,
+    };
+    let ir =
+        export_module_to_string_with_config(&ctx, &module, &config).expect("debug export succeeds");
+
+    let call_line = ir
+        .lines()
+        .find(|line| line.contains("call i32 @helper()"))
+        .expect("call instruction");
+    assert!(
+        call_line.contains(", !dbg !"),
+        "LLVM still requires an artificial call location:\n{ir}"
+    );
+    assert!(
+        ir.contains("!DILocation(line: 0, column: 0, scope: !"),
+        "artificial setup must not reuse the caller's user line:\n{ir}"
     );
 }
 

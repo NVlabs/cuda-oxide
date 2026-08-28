@@ -31,10 +31,10 @@ use pliron::{
 };
 use pliron_derive::pliron_op;
 
-use crate::attributes::MutabilityAttr;
+use crate::attributes::{MirPointerKindAuthorityAttr, MutabilityAttr};
 use crate::ops::constants::MirUndefOp;
 use crate::ops::debug::debug_value_for_promoted_slot;
-use crate::types::MirPtrType;
+use crate::types::{MirPointerKind, MirPtrType, is_opaque_fn_pointer_type};
 
 type PlironResult<T> = pliron::result::Result<T>;
 
@@ -80,7 +80,8 @@ fn bool_integer_attr(ctx: &mut Context, value: bool) -> IntegerAttr {
 ///
 /// # Verification
 ///
-/// - Result must be a `MirPtrType`.
+/// - Result must be a mutable, generic-address-space `MirPtrType` with Erased
+///   provenance.
 #[pliron_op(
     name = "mir.alloca",
     format,
@@ -109,8 +110,18 @@ impl Verify for MirAllocaOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = &*self.get_operation().deref(ctx);
         let res_ty = op.get_result(0).get_type(ctx);
-        if res_ty.deref(ctx).downcast_ref::<MirPtrType>().is_none() {
+        let res_ty_obj = res_ty.deref(ctx);
+        let Some(ptr_ty) = res_ty_obj.downcast_ref::<MirPtrType>() else {
             return verify_err!(op.loc(), "MirAllocaOp result must be a MirPtrType");
+        };
+        if ptr_ty.kind != MirPointerKind::Erased
+            || !ptr_ty.is_mutable
+            || ptr_ty.address_space != crate::types::address_space::GENERIC
+        {
+            return verify_err!(
+                op.loc(),
+                "MirAllocaOp must return a mutable Erased pointer in generic address space"
+            );
         }
         Ok(())
     }
@@ -355,15 +366,35 @@ impl PromotableOpInterface for MirStoreOp {
 /// | `count` | Integer      | Number of pointee elements to copy  |
 /// ```
 ///
+/// # Attributes
+///
+/// ```text
+/// | Name        | Type     | Description                                  |
+/// |-------------|----------|----------------------------------------------|
+/// | `memcpy_elem_type` | TypeAttr | The pointee type, stamped by [`Self::build`] |
+/// ```
+///
+/// Why an attribute when the operands are typed? Lowering runs after the
+/// operands are converted to opaque `llvm.ptr`, and operand type HISTORY
+/// breaks across value-forwarded kind-only casts. The attribute rides the
+/// op itself, so the byte count always scales by the right element:
+///
+/// ```text
+/// build time:  dst: mir.ptr<T> ──► memcpy_elem_type = T  (stamped once)
+/// lowering:    bytes = count * size_of(elem_type)  (no history lookup)
+/// ```
+///
 /// # Verification
 ///
 /// - Destination and source operands must be `MirPtrType`.
 /// - Destination and source pointee types must match.
+/// - The elem-type attribute must be present and equal that shared pointee.
 /// - Count operand must be an integer.
 #[pliron_op(
     name = "mir.memcpy",
     format,
-    interfaces = [NOpdsInterface<3>, NResultsInterface<0>]
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+    attributes = (memcpy_elem_type: pliron::builtin::attributes::TypeAttr)
 )]
 pub struct MirMemcpyOp;
 
@@ -372,35 +403,109 @@ impl MirMemcpyOp {
     pub fn new(op: Ptr<Operation>) -> Self {
         MirMemcpyOp { op }
     }
+
+    /// Build a `mir.memcpy` with its element-type fact stamped from `dst`.
+    ///
+    /// The one construction door: callers cannot forget the fact, and the
+    /// verifier keeps it equal to the pointee. Fails if `dst` is not a MIR
+    /// pointer at build time.
+    pub fn build(
+        ctx: &mut Context,
+        dst: Value,
+        src: Value,
+        count: Value,
+    ) -> Result<Ptr<Operation>, Error> {
+        build_mem_transfer::<Self>(ctx, dst, src, count, "mir.memcpy", "memcpy_elem_type")
+    }
 }
 
 impl Verify for MirMemcpyOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        let op = &*self.get_operation().deref(ctx);
-        let dst_ty = op.get_operand(0).get_type(ctx);
-        let src_ty = op.get_operand(1).get_type(ctx);
-        let count_ty = op.get_operand(2).get_type(ctx);
-
-        let dst_ty_ref = dst_ty.deref(ctx);
-        let Some(dst_ptr_ty) = dst_ty_ref.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "MirMemcpyOp destination must be a MirPtrType");
-        };
-        let src_ty_ref = src_ty.deref(ctx);
-        let Some(src_ptr_ty) = src_ty_ref.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "MirMemcpyOp source must be a MirPtrType");
-        };
-        if dst_ptr_ty.pointee != src_ptr_ty.pointee {
-            return verify_err!(
-                op.loc(),
-                "MirMemcpyOp source and destination pointee types must match"
-            );
-        }
-        if count_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
-            return verify_err!(op.loc(), "MirMemcpyOp count must be an integer");
-        }
-
-        Ok(())
+        verify_mem_transfer(
+            ctx,
+            self.get_operation(),
+            self.get_attr_memcpy_elem_type(ctx).map(|a| a.get_type(ctx)),
+            "MirMemcpyOp",
+        )
     }
+}
+
+/// Shared builder for `mir.memcpy` / `mir.memmove`: stamp `elem_type` from
+/// `dst`'s build-time pointer type.
+fn build_mem_transfer<OpT: Op>(
+    ctx: &mut Context,
+    dst: Value,
+    src: Value,
+    count: Value,
+    op_name: &str,
+    elem_type_key: &str,
+) -> Result<Ptr<Operation>, Error> {
+    let dst_ty = dst.get_type(ctx);
+    let pointee = {
+        let dst_ty_ref = dst_ty.deref(ctx);
+        dst_ty_ref
+            .downcast_ref::<MirPtrType>()
+            .map(|ptr_ty| ptr_ty.pointee)
+    };
+    let Some(pointee) = pointee else {
+        return pliron::input_err_noloc!(
+            "{op_name} destination must be a MirPtrType at build time"
+        );
+    };
+    let op = Operation::new(
+        ctx,
+        OpT::get_concrete_op_info(),
+        vec![],
+        vec![dst, src, count],
+        vec![],
+        0,
+    );
+    let elem_attr = pliron::builtin::attributes::TypeAttr::new(pointee);
+    let key: pliron::identifier::Identifier = elem_type_key.try_into().expect("valid identifier");
+    op.deref_mut(ctx).attributes.set(key, elem_attr);
+    Ok(op)
+}
+
+/// Shared verifier body for `mir.memcpy` / `mir.memmove`.
+fn verify_mem_transfer(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    elem_type: Option<pliron::r#type::TypeHandle>,
+    op_name: &str,
+) -> Result<(), Error> {
+    let op = &*op.deref(ctx);
+    let dst_ty = op.get_operand(0).get_type(ctx);
+    let src_ty = op.get_operand(1).get_type(ctx);
+    let count_ty = op.get_operand(2).get_type(ctx);
+
+    let dst_ty_ref = dst_ty.deref(ctx);
+    let Some(dst_ptr_ty) = dst_ty_ref.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "{op_name} destination must be a MirPtrType");
+    };
+    let src_ty_ref = src_ty.deref(ctx);
+    let Some(src_ptr_ty) = src_ty_ref.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "{op_name} source must be a MirPtrType");
+    };
+    if dst_ptr_ty.pointee != src_ptr_ty.pointee {
+        return verify_err!(
+            op.loc(),
+            "{op_name} source and destination pointee types must match"
+        );
+    }
+    let Some(elem_type) = elem_type else {
+        return verify_err!(op.loc(), "{op_name} missing elem_type attribute");
+    };
+    if elem_type != dst_ptr_ty.pointee {
+        return verify_err!(
+            op.loc(),
+            "{op_name} elem_type must equal the dst/src pointee"
+        );
+    }
+    if count_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
+        return verify_err!(op.loc(), "{op_name} count must be an integer");
+    }
+
+    Ok(())
 }
 
 // ============================================================================
@@ -424,15 +529,22 @@ impl Verify for MirMemcpyOp {
 /// | `count` | Integer      | Number of pointee elements to move  |
 /// ```
 ///
+/// # Attributes
+///
+/// Same element-type fact as [`MirMemcpyOp`] (`memmove_elem_type`), stamped by [`Self::build`],
+/// read by lowering for the byte count. See the memcpy doc for the why.
+///
 /// # Verification
 ///
 /// - Destination and source operands must be `MirPtrType`.
 /// - Destination and source pointee types must match.
+/// - The elem-type attribute must be present and equal that shared pointee.
 /// - Count operand must be an integer.
 #[pliron_op(
     name = "mir.memmove",
     format,
-    interfaces = [NOpdsInterface<3>, NResultsInterface<0>]
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+    attributes = (memmove_elem_type: pliron::builtin::attributes::TypeAttr)
 )]
 pub struct MirMemmoveOp;
 
@@ -441,34 +553,28 @@ impl MirMemmoveOp {
     pub fn new(op: Ptr<Operation>) -> Self {
         MirMemmoveOp { op }
     }
+
+    /// Build a `mir.memmove` with its element-type fact stamped from `dst`.
+    /// See [`MirMemcpyOp::build`].
+    pub fn build(
+        ctx: &mut Context,
+        dst: Value,
+        src: Value,
+        count: Value,
+    ) -> Result<Ptr<Operation>, Error> {
+        build_mem_transfer::<Self>(ctx, dst, src, count, "mir.memmove", "memmove_elem_type")
+    }
 }
 
 impl Verify for MirMemmoveOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        let op = &*self.get_operation().deref(ctx);
-        let dst_ty = op.get_operand(0).get_type(ctx);
-        let src_ty = op.get_operand(1).get_type(ctx);
-        let count_ty = op.get_operand(2).get_type(ctx);
-
-        let dst_ty_ref = dst_ty.deref(ctx);
-        let Some(dst_ptr_ty) = dst_ty_ref.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "MirMemmoveOp destination must be a MirPtrType");
-        };
-        let src_ty_ref = src_ty.deref(ctx);
-        let Some(src_ptr_ty) = src_ty_ref.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "MirMemmoveOp source must be a MirPtrType");
-        };
-        if dst_ptr_ty.pointee != src_ptr_ty.pointee {
-            return verify_err!(
-                op.loc(),
-                "MirMemmoveOp source and destination pointee types must match"
-            );
-        }
-        if count_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
-            return verify_err!(op.loc(), "MirMemmoveOp count must be an integer");
-        }
-
-        Ok(())
+        verify_mem_transfer(
+            ctx,
+            self.get_operation(),
+            self.get_attr_memmove_elem_type(ctx)
+                .map(|a| a.get_type(ctx)),
+            "MirMemmoveOp",
+        )
     }
 }
 
@@ -626,6 +732,7 @@ impl PromotableOpInterface for MirLoadOp {
 /// | Name      | Type            | Description                              |
 /// |-----------|-----------------|------------------------------------------|
 /// | `mutable` | MutabilityAttr  | Boolean: true for &mut, false for &      |
+/// | `ref_pointer_kind_authority` | MirPointerKindAuthorityAttr | `Reborrow` for a Rust reference, `RawAddress` for a raw address, or `StaticAddress` for a typed constant/promoted address |
 /// ```
 ///
 /// # Results
@@ -640,11 +747,19 @@ impl PromotableOpInterface for MirLoadOp {
 ///
 /// - Result must be a `MirPtrType`.
 /// - Result pointee type must match operand type.
+/// - Result must be in generic address space.
+/// - `Reborrow` produces exactly `SharedRef` / `UniqueRef` according to
+///   `mutable`; `RawAddress` produces exactly `RawConst` / `RawMut`;
+///   `StaticAddress` may produce `SharedRef` or a raw kind, but never
+///   `UniqueRef`.
 #[pliron_op(
     name = "mir.ref",
     format,
     interfaces = [NOpdsInterface<1>, OneOpdInterface, NResultsInterface<1>, OneResultInterface],
-    attributes = (mutable: MutabilityAttr)
+    attributes = (
+        mutable: MutabilityAttr,
+        ref_pointer_kind_authority: MirPointerKindAuthorityAttr
+    )
 )]
 pub struct MirRefOp;
 
@@ -664,6 +779,15 @@ impl MirRefOp {
     /// Set the mutable attribute.
     pub fn set_mutable(&self, ctx: &mut Context, mutable: bool) {
         self.set_attr_mutable(ctx, MutabilityAttr(mutable));
+    }
+
+    /// Classify the Rust address-creation boundary represented by this op.
+    pub fn set_pointer_kind_authority(
+        &self,
+        ctx: &mut Context,
+        authority: MirPointerKindAuthorityAttr,
+    ) {
+        self.set_attr_ref_pointer_kind_authority(ctx, authority);
     }
 }
 
@@ -690,6 +814,64 @@ impl Verify for MirRefOp {
             return verify_err!(
                 op.loc(),
                 "MirRefOp result pointee type must match operand type"
+            );
+        }
+
+        let Some(mutable) = self.get_attr_mutable(ctx) else {
+            return verify_err!(op.loc(), "MirRefOp must have a mutable attribute");
+        };
+        if ptr_ty.is_mutable != mutable.0 {
+            return verify_err!(
+                op.loc(),
+                "MirRefOp mutable attribute must match its result pointer mutability"
+            );
+        }
+
+        let authority = self
+            .get_attr_ref_pointer_kind_authority(ctx)
+            .map(|authority| authority.clone());
+        // Verifier read-back: recomputes the expected kind from the op's own
+        // mutability evidence to CHECK a mint, not to create one.
+        #[allow(clippy::disallowed_methods)]
+        let kind_is_authorized = match authority.as_ref() {
+            Some(MirPointerKindAuthorityAttr::Reborrow) => {
+                ptr_ty.kind == MirPointerKind::from_reference_mutability(mutable.0)
+            }
+            Some(MirPointerKindAuthorityAttr::RawAddress) => {
+                ptr_ty.kind == MirPointerKind::from_raw_mutability(mutable.0)
+            }
+            Some(MirPointerKindAuthorityAttr::StaticAddress) => match ptr_ty.kind {
+                MirPointerKind::SharedRef | MirPointerKind::RawConst => !mutable.0,
+                MirPointerKind::RawMut => mutable.0,
+                MirPointerKind::UniqueRef | MirPointerKind::Erased => false,
+            },
+            Some(authority) => {
+                return verify_err!(
+                    op.loc(),
+                    "MirRefOp cannot use pointer-kind authority {:?}",
+                    authority
+                );
+            }
+            None => {
+                return verify_err!(
+                    op.loc(),
+                    "MirRefOp requires Reborrow, RawAddress, or StaticAddress pointer-kind authority"
+                );
+            }
+        };
+        if !kind_is_authorized {
+            return verify_err!(
+                op.loc(),
+                "MirRefOp authority {:?} with mutable: {} cannot produce result kind {:?}",
+                authority,
+                mutable.0,
+                ptr_ty.kind
+            );
+        }
+        if ptr_ty.address_space != crate::types::address_space::GENERIC {
+            return verify_err!(
+                op.loc(),
+                "MirRefOp materializes stack storage and requires generic address space"
             );
         }
 
@@ -801,10 +983,35 @@ impl Verify for MirPtrOffsetOp {
             None => return verify_err!(op.loc(), "MirPtrOffsetOp result must be MirPtrType"),
         };
 
+        if is_opaque_fn_pointer_type(ctx, res_ty) {
+            return verify_err!(
+                op.loc(),
+                "MirPtrOffsetOp cannot produce the canonical function-pointer value carrier"
+            );
+        }
+
         if ptr_ty.pointee != res_ptr_ty.pointee {
             return verify_err!(
                 op.loc(),
                 "MirPtrOffsetOp result pointee type must match base pointee type"
+            );
+        }
+
+        if !ptr_ty.kind.can_retype_generically_to(res_ptr_ty.kind) {
+            return verify_err!(
+                op.loc(),
+                "MirPtrOffsetOp cannot change pointer kind from {:?} to {:?}",
+                ptr_ty.kind,
+                res_ptr_ty.kind
+            );
+        }
+        if ptr_ty.is_mutable != res_ptr_ty.is_mutable {
+            return verify_err!(op.loc(), "MirPtrOffsetOp must preserve pointer mutability");
+        }
+        if ptr_ty.address_space != res_ptr_ty.address_space {
+            return verify_err!(
+                op.loc(),
+                "MirPtrOffsetOp must preserve pointer address space"
             );
         }
 
@@ -830,6 +1037,7 @@ impl Verify for MirPtrOffsetOp {
 /// | `size`          | IntegerAttr | Number of elements                 |
 /// | `alloc_key`     | StringAttr  | Unique key for deduplication       |
 /// | `source_name`   | StringAttr  | Optional Rust path of the originating `static` |
+/// | `source_key`    | StringAttr  | Optional unique mangled identity of that `static` |
 /// | `mir_alignment` | IntegerAttr | Optional alignment (natural if not set) |
 /// ```
 ///
@@ -853,6 +1061,7 @@ impl Verify for MirPtrOffsetOp {
 ///
 /// - Must have `elem_type` and `size` attributes.
 /// - Result must be a pointer type with shared address space (3).
+/// - Result pointee type must exactly match `elem_type`.
 #[pliron_op(
     name = "mir.shared_alloc",
     format,
@@ -862,6 +1071,7 @@ impl Verify for MirPtrOffsetOp {
         size: IntegerAttr,
         alloc_key: pliron::builtin::attributes::StringAttr,
         source_name: pliron::builtin::attributes::StringAttr,
+        source_key: pliron::builtin::attributes::StringAttr,
         mir_alignment: IntegerAttr
     )
 )]
@@ -899,9 +1109,10 @@ impl Verify for MirSharedAllocOp {
         let op = &*self.get_operation().deref(ctx);
 
         // Check required attributes
-        if self.get_attr_elem_type(ctx).is_none() {
+        let Some(elem_type_attr) = self.get_attr_elem_type(ctx) else {
             return verify_err!(op.loc(), "MirSharedAllocOp missing elem_type attribute");
-        }
+        };
+        let elem_type = elem_type_attr.get_type(ctx);
         if self.get_attr_size(ctx).is_none() {
             return verify_err!(op.loc(), "MirSharedAllocOp missing size attribute");
         }
@@ -918,6 +1129,18 @@ impl Verify for MirSharedAllocOp {
                     "MirSharedAllocOp result must be in shared address space (3)"
                 );
             }
+            if ptr_ty.kind != MirPointerKind::Erased {
+                return verify_err!(
+                    op.loc(),
+                    "MirSharedAllocOp creates storage and must return an Erased pointer kind"
+                );
+            }
+            if ptr_ty.pointee != elem_type {
+                return verify_err!(
+                    op.loc(),
+                    "MirSharedAllocOp result pointee type must match elem_type"
+                );
+            }
         } else {
             return verify_err!(op.loc(), "MirSharedAllocOp result must be a pointer type");
         }
@@ -929,6 +1152,39 @@ impl Verify for MirSharedAllocOp {
 // ============================================================================
 // MirGlobalAllocOp
 // ============================================================================
+
+const RUST_STATIC_GLOBAL_KEY_PREFIX: &str = "cuda-oxide:rust-static:v1:";
+const PROMOTED_GLOBAL_KEY_PREFIX: &str = "cuda-oxide:promoted:v1:";
+
+fn encode_device_global_key(prefix: &str, payload: &str) -> String {
+    format!("{prefix}{}:{payload}", payload.len())
+}
+
+/// Encode rustc's opaque static symbol as a domain-tagged lowering key.
+///
+/// The tag keeps a user-controlled `#[export_name]` from aliasing a
+/// compiler-made promoted allocation with the same string fingerprint. The
+/// length prefix makes the symbol payload unambiguous even when it contains
+/// punctuation.
+pub fn encode_rust_static_global_key(symbol: &str) -> String {
+    encode_device_global_key(RUST_STATIC_GLOBAL_KEY_PREFIX, symbol)
+}
+
+/// Encode one compiler-made promoted allocation fingerprint.
+pub fn encode_promoted_global_key(fingerprint: &str) -> String {
+    encode_device_global_key(PROMOTED_GLOBAL_KEY_PREFIX, fingerprint)
+}
+
+/// Recover the exact rustc symbol payload from a tagged static key.
+///
+/// Constant-memory globals use the payload as their externally visible
+/// linkage name; the tagged key itself remains internal to lowering and
+/// relocation lookup.
+pub fn rust_static_symbol_from_global_key(key: &str) -> Option<&str> {
+    let encoded = key.strip_prefix(RUST_STATIC_GLOBAL_KEY_PREFIX)?;
+    let (length, symbol) = encoded.split_once(':')?;
+    (length.parse::<usize>().ok()? == symbol.len()).then_some(symbol)
+}
 
 /// MIR device-global address operation.
 ///
@@ -944,7 +1200,7 @@ impl Verify for MirSharedAllocOp {
 /// | Name            | Type        | Description                      |
 /// |-----------------|-------------|----------------------------------|
 /// | `global_type`   | TypeAttr    | Type stored in the global        |
-/// | `global_key`    | StringAttr  | Stable key for deduplication     |
+/// | `global_key`    | StringAttr  | Domain-tagged deduplication key  |
 /// | `global_alignment` | IntegerAttr | Optional alignment            |
 /// | `global_immutable` | UnitAttr | Storage is never written         |
 /// ```
@@ -1041,11 +1297,47 @@ impl Verify for MirGlobalAllocOp {
                     "MirGlobalAllocOp result must be in global (1) or constant (4) address space"
                 );
             }
+            if ptr_ty.kind != MirPointerKind::Erased {
+                return verify_err!(
+                    op.loc(),
+                    "MirGlobalAllocOp creates storage and must return an Erased pointer kind"
+                );
+            }
         } else {
             return verify_err!(op.loc(), "MirGlobalAllocOp result must be a pointer type");
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod device_global_key_tests {
+    use super::{
+        encode_promoted_global_key, encode_rust_static_global_key,
+        rust_static_symbol_from_global_key,
+    };
+
+    #[test]
+    fn static_and_promoted_key_domains_cannot_alias() {
+        let adversarial = "__cuda_oxide_promoted_type_collision:with:punctuation";
+        let static_key = encode_rust_static_global_key(adversarial);
+        let promoted_key = encode_promoted_global_key(adversarial);
+
+        assert_ne!(static_key, promoted_key);
+        assert_eq!(
+            rust_static_symbol_from_global_key(&static_key),
+            Some(adversarial)
+        );
+        assert_eq!(rust_static_symbol_from_global_key(&promoted_key), None);
+    }
+
+    #[test]
+    fn malformed_static_key_length_fails_closed() {
+        assert_eq!(
+            rust_static_symbol_from_global_key("cuda-oxide:rust-static:v1:999:short"),
+            None
+        );
     }
 }
 
@@ -1161,6 +1453,12 @@ impl Verify for MirExternSharedOp {
                 return verify_err!(
                     op.loc(),
                     "MirExternSharedOp result must be in shared address space (3)"
+                );
+            }
+            if ptr_ty.kind != MirPointerKind::Erased {
+                return verify_err!(
+                    op.loc(),
+                    "MirExternSharedOp creates storage and must return an Erased pointer kind"
                 );
             }
         } else {

@@ -3,21 +3,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use dialect_mir::types::{MirPtrType, address_space};
+// Tests build kinded fixture types directly; production minting lives in
+// mir-importer's facts.rs (see the workspace clippy.toml disallowed-methods).
+#![allow(clippy::disallowed_methods)]
+
+use dialect_mir::{
+    attributes::MirPointerKindAuthorityAttr,
+    types::{MirPointerKind, MirPtrType, MirTupleType, address_space},
+};
 use dialect_nvvm::ops::{
     ActiveMaskOp, AssertFailOp, AtomicOrdering, AtomicRmwKind, AtomicScope, BarWarpSyncOp,
-    Barrier0Op, ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
-    CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
-    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, CvtaGenericToSharedOffsetOp, Dp2aS32Op,
-    Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp, FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr,
-    LdmatrixLayoutAttr, LdmatrixMultiplicityAttr, LdmatrixOp, LdmatrixShapeAttr,
-    LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp, LdmatrixX2Op, LdmatrixX2TransOp,
-    LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op, MatchAllSyncI64Op, MatchAnySyncI32Op,
-    MatchAnySyncI64Op, MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp,
-    MbarrierTestWaitSharedOp, MmaM8N8K4F64Op, MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op,
-    MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op, MovmatrixTransB16Op, NvvmAtomAddBf16x2Op,
-    NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp, NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp,
-    PackedAtomicAddOp, PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
+    Barrier0Op, ClcQueryIsCanceledOp, ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op,
+    CpAsyncCaZfill4Op, CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp,
+    CpAsyncMbarrierArriveOp, CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp,
+    CvtaGenericToSharedOffsetOp, Dp2aS32Op, Dp2aU32Op, Dp4aS32Op, Dp4aU32Op, ElectSyncOp,
+    FmaBf16x2Op, InlinePtxOp, LdmatrixElementAttr, LdmatrixLayoutAttr, LdmatrixMultiplicityAttr,
+    LdmatrixOp, LdmatrixShapeAttr, LdmatrixStateSpaceAttr, LdmatrixX1Op, LdmatrixX1TransOp,
+    LdmatrixX2Op, LdmatrixX2TransOp, LdmatrixX4Op, LdmatrixX4TransOp, MatchAllSyncI32Op,
+    MatchAllSyncI64Op, MatchAnySyncI32Op, MatchAnySyncI64Op, MbarrierArriveSharedOp,
+    MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, MmaM8N8K4F64Op,
+    MmaM16N8K8F32Tf32Op, MmaM16N8K16F32Bf16Op, MmaM16N8K16F32F16Op, MmaM16N8K32S32S8Op,
+    MovmatrixTransB16Op, NvvmAtomAddBf16x2Op, NvvmAtomAddF16x2Op, NvvmAtomicCmpxchgOp,
+    NvvmAtomicLoadOp, NvvmAtomicRmwOp, NvvmAtomicStoreOp, PackedAtomicAddOp,
+    PackedAtomicAtomicityAttr, PackedAtomicFormatAttr, PackedAtomicOrderingAttr,
     PackedAtomicRoundingAttr, PackedAtomicScopeAttr, PackedAtomicStateSpaceAttr,
     PackedAtomicSubnormalAttr, ReadPtxSregClusterIdxOp, ReadPtxSregDynamicSmemSizeOp,
     ReadPtxSregGridIdOp, ReadPtxSregLaneIdOp, ReadPtxSregLanemaskEqOp, ReadPtxSregLanemaskGeOp,
@@ -144,6 +152,128 @@ fn cluster_grid_compatibility_ops_keep_names_and_i32_shape() {
         let op = Operation::new(&mut ctx, op_info, vec![i32_type.into()], vec![], vec![], 0);
         assert!(op.deref(&ctx).verify(&ctx).is_ok());
     }
+}
+
+#[test]
+fn mapa_shared_cluster_requires_and_preserves_raw_pointer_kind() {
+    use dialect_mir::types::{MirPointerKind, MirPtrType, address_space};
+    use dialect_nvvm::ops::MapaSharedClusterOp;
+    use pliron::{
+        basic_block::BasicBlock,
+        builtin::types::{IntegerType, Signedness},
+        common_traits::Verify,
+        context::Context,
+        op::Op,
+        operation::Operation,
+    };
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let raw_const_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), false, MirPointerKind::RawConst);
+    let raw_mut_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::RawMut);
+    let erased_ty = MirPtrType::get_generic(&mut ctx, i32_ty.into(), false);
+    let block = BasicBlock::new(
+        &mut ctx,
+        None,
+        vec![
+            raw_const_ty.into(),
+            raw_mut_ty.into(),
+            erased_ty.into(),
+            i32_ty.into(),
+        ],
+    );
+    let raw_const = block.deref(&ctx).get_argument(0);
+    let raw_mut = block.deref(&ctx).get_argument(1);
+    let erased = block.deref(&ctx).get_argument(2);
+    let rank = block.deref(&ctx).get_argument(3);
+
+    for (source, expected_kind) in [
+        (raw_const, MirPointerKind::RawConst),
+        (raw_mut, MirPointerKind::RawMut),
+    ] {
+        let operation = MapaSharedClusterOp::build(&mut ctx, source, rank);
+        let result_ty = operation.deref(&ctx).get_result(0).get_type(&ctx);
+        let result_ty = result_ty.deref(&ctx);
+        let result_ptr = result_ty
+            .downcast_ref::<MirPtrType>()
+            .expect("mapa result must be a MIR pointer");
+        assert_eq!(result_ptr.pointer_kind(), expected_kind);
+        assert_eq!(result_ptr.address_space(), address_space::CLUSTER_SHARED);
+        assert!(MapaSharedClusterOp::new(operation).verify(&ctx).is_ok());
+    }
+
+    let erased_result = MirPtrType::get_with_kind(
+        &mut ctx,
+        i32_ty.into(),
+        true,
+        address_space::CLUSTER_SHARED,
+        MirPointerKind::Erased,
+    );
+    let erasing = Operation::new(
+        &mut ctx,
+        MapaSharedClusterOp::get_concrete_op_info(),
+        vec![erased_result.into()],
+        vec![raw_mut, rank],
+        vec![],
+        0,
+    );
+    assert!(
+        MapaSharedClusterOp::new(erasing).verify(&ctx).is_err(),
+        "cluster address mapping must preserve the source raw-pointer kind"
+    );
+
+    let erased_source = MapaSharedClusterOp::build(&mut ctx, erased, rank);
+    assert!(
+        MapaSharedClusterOp::new(erased_source)
+            .verify(&ctx)
+            .is_err(),
+        "an Erased data/function carrier cannot enter the raw-pointer intrinsic ABI"
+    );
+
+    let invented_unique = MirPtrType::get_with_kind(
+        &mut ctx,
+        i32_ty.into(),
+        true,
+        address_space::CLUSTER_SHARED,
+        MirPointerKind::UniqueRef,
+    );
+    let laundering = Operation::new(
+        &mut ctx,
+        MapaSharedClusterOp::get_concrete_op_info(),
+        vec![invented_unique.into()],
+        vec![raw_mut, rank],
+        vec![],
+        0,
+    );
+    assert!(
+        MapaSharedClusterOp::new(laundering).verify(&ctx).is_err(),
+        "cluster address mapping must not turn RawMut into UniqueRef"
+    );
+
+    let invented_shared = MirPtrType::get_with_kind(
+        &mut ctx,
+        i32_ty.into(),
+        false,
+        address_space::CLUSTER_SHARED,
+        MirPointerKind::SharedRef,
+    );
+    let laundering = Operation::new(
+        &mut ctx,
+        MapaSharedClusterOp::get_concrete_op_info(),
+        vec![invented_shared.into()],
+        vec![raw_const, rank],
+        vec![],
+        0,
+    );
+    assert!(
+        MapaSharedClusterOp::new(laundering).verify(&ctx).is_err(),
+        "cluster address mapping must not turn RawConst into SharedRef"
+    );
 }
 
 #[test]
@@ -4027,6 +4157,57 @@ fn test_elect_sync_construct_and_verify() {
         0,
     );
     assert!(verify_op(&ElectSyncOp::new(bad_results), &ctx).is_err());
+
+    // Invalid: a correctly-sized result list still cannot use a pointer as
+    // either result and thereby manufacture a MIR pointer kind.
+    let pointer_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef);
+    let bad_result_type = Operation::new(
+        &mut ctx,
+        ElectSyncOp::get_concrete_op_info(),
+        vec![i32_ty.into(), pointer_ty.into()],
+        vec![mask],
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ElectSyncOp::new(bad_result_type), &ctx).is_err());
+}
+
+#[test]
+fn test_clc_query_rejects_pointer_results() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let block = BasicBlock::new(&mut ctx, None, vec![u64_ty.into(), u64_ty.into()]);
+    let operands = vec![
+        block.deref(&ctx).get_argument(0),
+        block.deref(&ctx).get_argument(1),
+    ];
+
+    let valid = Operation::new(
+        &mut ctx,
+        ClcQueryIsCanceledOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        operands.clone(),
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ClcQueryIsCanceledOp::new(valid), &ctx).is_ok());
+
+    let pointer_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, u32_ty.into(), true, MirPointerKind::UniqueRef);
+    let bad = Operation::new(
+        &mut ctx,
+        ClcQueryIsCanceledOp::get_concrete_op_info(),
+        vec![pointer_ty.into()],
+        operands,
+        vec![],
+        0,
+    );
+    assert!(verify_op(&ClcQueryIsCanceledOp::new(bad), &ctx).is_err());
 }
 
 #[test]
@@ -5310,6 +5491,77 @@ fn test_inline_ptx_results_must_match_output_constraints() {
         false,
     );
     assert!(verify_op(&InlinePtxOp::new(extra_result), &ctx).is_err());
+}
+
+#[test]
+fn test_inline_ptx_pointer_results_require_exact_inline_asm_authority() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
+    let unique_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::UniqueRef);
+    let erased_ty =
+        MirPtrType::get_generic_with_kind(&mut ctx, i32_ty.into(), true, MirPointerKind::Erased);
+    let nested_erased_ty = MirTupleType::get(&mut ctx, vec![erased_ty.into()]);
+
+    let build = |ctx: &mut Context, result_ty| {
+        InlinePtxOp::build(
+            ctx,
+            vec![result_ty],
+            vec![],
+            "mov.u64 $0, 0;",
+            "=l",
+            false,
+            false,
+        )
+    };
+
+    for (name, result_ty) in [
+        ("UniqueRef", unique_ty.into()),
+        ("Erased", erased_ty.into()),
+        ("nested Erased", nested_erased_ty.into()),
+    ] {
+        let unmarked = InlinePtxOp::new(build(&mut ctx, result_ty));
+        let error = verify_op(&unmarked, &ctx).unwrap_err();
+        assert!(
+            error
+                .err
+                .to_string()
+                .contains("pointer-carrying results require InlineAsm pointer-kind authority"),
+            "unexpected unmarked {name} error: {}",
+            error.err
+        );
+
+        let marked = InlinePtxOp::new(build(&mut ctx, result_ty));
+        marked.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::InlineAsm);
+        assert!(
+            verify_op(&marked, &ctx).is_ok(),
+            "marked {name} pointer result should verify"
+        );
+    }
+
+    let wrong_authority = InlinePtxOp::new(build(&mut ctx, unique_ty.into()));
+    wrong_authority.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::RustCast);
+    let wrong_error = verify_op(&wrong_authority, &ctx).unwrap_err();
+    assert!(
+        wrong_error.err.to_string().contains("found RustCast"),
+        "unexpected wrong-authority error: {}",
+        wrong_error.err
+    );
+
+    let spurious = InlinePtxOp::new(build(&mut ctx, i32_ty.into()));
+    spurious.set_pointer_kind_authority(&mut ctx, MirPointerKindAuthorityAttr::InlineAsm);
+    let spurious_error = verify_op(&spurious, &ctx).unwrap_err();
+    assert!(
+        spurious_error
+            .err
+            .to_string()
+            .contains("spurious for pointer-free results"),
+        "unexpected spurious-authority error: {}",
+        spurious_error.err
+    );
 }
 
 #[test]

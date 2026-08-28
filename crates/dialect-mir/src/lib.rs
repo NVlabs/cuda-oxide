@@ -11,6 +11,7 @@ pub mod ops;
 pub mod rust_intrinsics;
 pub mod side_effects;
 pub mod types;
+pub mod verification;
 
 use pliron::context::Context;
 use pliron::dialect::{Dialect, DialectName};
