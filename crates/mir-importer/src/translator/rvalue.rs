@@ -13687,35 +13687,15 @@ fn extract_shared_array_info(
 ) -> TranslationResult<(pliron::r#type::TypeHandle, usize, usize)> {
     use rustc_public::ty::{GenericArgKind, RigidTy, TyKind};
 
-    /// Parse a const generic value from debug string
-    fn parse_const_value(c: &rustc_public::ty::TyConst) -> Option<usize> {
-        let const_str = format!("{:?}", c);
-        // Parse the bytes from the debug string
-        if let Some(bytes_part) = const_str.split("bytes: [").nth(1)
-            && let Some(bytes_end) = bytes_part.split(']').next()
-        {
-            let mut bytes = Vec::new();
-            for byte_str in bytes_end.split(',') {
-                if bytes.len() >= 8 {
-                    break;
-                }
-                let b_str = byte_str.trim();
-                if let Some(num_str) = b_str
-                    .strip_prefix("Some(")
-                    .and_then(|s| s.strip_suffix(')'))
-                    && let Ok(byte) = num_str.parse::<u8>()
-                {
-                    bytes.push(byte);
-                }
-            }
-            // Convert bytes to usize (little-endian)
-            let mut value: usize = 0;
-            for (i, byte) in bytes.iter().enumerate() {
-                value |= (*byte as usize) << (i * 8);
-            }
-            return Some(value);
-        }
-        None
+    /// Evaluate a const generic to a target usize. Translation runs on
+    /// monomorphized bodies, so a const that doesn't evaluate means
+    /// polymorphic MIR reached codegen: hard error, never a guess.
+    fn eval_usize_const(c: &rustc_public::ty::TyConst, what: &str) -> TranslationResult<usize> {
+        c.eval_target_usize().map(|v| v as usize).map_err(|e| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "SharedArray {what} const generic did not evaluate to a target usize: {e:?}"
+            )))
+        })
     }
 
     match ty.kind() {
@@ -13731,37 +13711,54 @@ fn extract_shared_array_info(
 
                     let generic_args = &substs.0;
 
-                    // Find the element type (first Type arg)
-                    let elem_ty = generic_args
-                        .iter()
-                        .find_map(|arg| match arg {
-                            GenericArgKind::Type(t) => Some(t),
-                            _ => None,
-                        })
-                        .ok_or_else(|| {
-                            input_error_noloc!(TranslationErr::unsupported(
-                                "SharedArray missing element type"
-                            ))
-                        })?;
+                    // SharedArray substs arrive in declaration order, with
+                    // the ALIGN default already materialized by rustc:
+                    //
+                    //   SharedArray<T, N, ALIGN = 0>
+                    //     [0] T      type
+                    //     [1] N      const usize (element count)
+                    //     [2] ALIGN  const usize (0 = natural alignment)
+                    //
+                    // Reads are positional on purpose: if N fails to
+                    // evaluate that's an error, never "slide over and read
+                    // ALIGN as N". If cuda-device ever reorders these
+                    // generics, this read must change in the same commit.
+                    debug_assert!(
+                        generic_args.len() == 2 || generic_args.len() == 3,
+                        "SharedArray is declared <T, const N, const ALIGN = 0>; \
+                         got {} generic args",
+                        generic_args.len()
+                    );
 
-                    // Collect all const generic arguments (N, then ALIGN)
-                    let const_values: Vec<usize> = generic_args
-                        .iter()
-                        .filter_map(|arg| match arg {
-                            GenericArgKind::Const(c) => parse_const_value(c),
-                            _ => None,
-                        })
-                        .collect();
+                    let Some(GenericArgKind::Type(elem_ty)) = generic_args.first() else {
+                        return input_err_noloc!(TranslationErr::unsupported(
+                            "SharedArray substs missing the element type at position 0"
+                        ));
+                    };
 
-                    // First const is N (size), required
-                    let size = *const_values.first().ok_or_else(|| {
-                        input_error_noloc!(TranslationErr::unsupported(
-                            "SharedArray missing size const"
-                        ))
-                    })?;
+                    let Some(GenericArgKind::Const(n_const)) = generic_args.get(1) else {
+                        return input_err_noloc!(TranslationErr::unsupported(
+                            "SharedArray substs missing the N const generic at position 1"
+                        ));
+                    };
+                    let size = eval_usize_const(n_const, "N")?;
 
-                    // Second const is ALIGN (alignment), optional, defaults to 0
-                    let alignment = const_values.get(1).copied().unwrap_or(0);
+                    // ALIGN = 0 means natural alignment (the declaration
+                    // default). Only a genuinely two-generic SharedArray may
+                    // omit it; a present-but-unreadable position 2 is an
+                    // error, silently dropping a user-requested
+                    // over-alignment would miscompile.
+                    let alignment = match generic_args.get(2) {
+                        Some(GenericArgKind::Const(align_const)) => {
+                            eval_usize_const(align_const, "ALIGN")?
+                        }
+                        Some(_) => {
+                            return input_err_noloc!(TranslationErr::unsupported(
+                                "SharedArray substs position 2 is not the ALIGN const generic"
+                            ));
+                        }
+                        None => 0,
+                    };
 
                     let translated_elem_ty = types::translate_type(ctx, elem_ty)?;
                     Ok((translated_elem_ty, size, alignment))

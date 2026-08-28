@@ -972,11 +972,14 @@ fn translate_call(
     let target_usize = target.map(|t| t);
 
     // Extract function info
-    let (pattern_name, call_name, substs_str, type_substs) = extract_func_info(func, &loc)?;
+    let (pattern_name, call_name, substs_args, type_substs) = extract_func_info(func, &loc)?;
 
-    // Helper to check if substitutions contain a type
-    let substs_contains =
-        |pattern: &str| -> bool { substs_str.as_ref().is_some_and(|s| s.contains(pattern)) };
+    // Is the trait-method Self type SharedArray? Shared with
+    // `values::classify_call` so intrinsic dispatch and destination-slot
+    // classification can't drift.
+    let on_shared_array = substs_args
+        .as_ref()
+        .is_some_and(crate::translator::values::self_ty_is_shared_array);
 
     // Skip precondition_check calls - these are UB check assertions that are
     // dead code because we return false for RuntimeChecks(UbChecks).
@@ -1132,34 +1135,48 @@ fn translate_call(
         return Ok(helpers::emit_goto(ctx, target, hint, block_map, loc));
     }
 
-    // Handle DynamicSharedArray specially to extract the ALIGN const generic
+    // Handle DynamicSharedArray specially to extract the ALIGN const generic.
+    // The crate anchor tightens the name-substring gate: a user fn merely
+    // named like it falls through to ordinary call handling. Kept in
+    // lockstep with the classifier in `values::classify_call`.
     if let Some(ref name) = pattern_name
         && name.contains("DynamicSharedArray")
         && (name.contains("::get") || name.contains("::offset"))
+        && is_cuda_device_fn(func)
     {
-        // Extract the ALIGN const generic from the function type
-        // DynamicSharedArray<T, ALIGN> has T as first generic, ALIGN as second
-        let alignment = if let mir::Operand::Constant(const_op) = func {
-            if let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(_, substs)) =
-                const_op.const_.ty().kind()
-            {
-                // The ALIGN const generic is the second generic argument (index 1)
-                // First is T (type), second is ALIGN (const)
-                if let Some(rustc_public::ty::GenericArgKind::Const(c)) = substs.0.get(1) {
-                    use rustc_public::ty::TyConstKind;
-                    match c.kind() {
-                        TyConstKind::Value(_, alloc) => alloc.read_uint().unwrap_or(16) as u64,
-                        _ => c.eval_target_usize().unwrap_or(16),
-                    }
-                } else {
-                    16 // Default alignment (matches nvcc)
-                }
-            } else {
-                16
-            }
-        } else {
-            16
+        // DynamicSharedArray substs arrive in declaration order, with the
+        // ALIGN default already materialized by rustc:
+        //
+        //   DynamicSharedArray<T, ALIGN = 16>
+        //     [0] T      type
+        //     [1] ALIGN  const usize
+        //
+        // A read failure here must be an error, never a guessed 16: a
+        // silently 16-aligned extern smem symbol corrupts TMA at runtime.
+        let Some(substs) = substs_args.as_ref() else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(
+                    "DynamicSharedArray call carries no generic substitutions"
+                )
+            );
         };
+        let Some(rustc_public::ty::GenericArgKind::Const(c)) = substs.0.get(1) else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(
+                    "DynamicSharedArray substs missing the ALIGN const generic at position 1"
+                )
+            );
+        };
+        let alignment: u64 = c.eval_target_usize().map_err(|e| {
+            input_error!(
+                loc.clone(),
+                TranslationErr::unsupported(format!(
+                    "DynamicSharedArray ALIGN const generic did not evaluate to a target usize: {e:?}"
+                ))
+            )
+        })?;
 
         if name.contains("::get") {
             // Both get() and get_raw() use the same handler with offset 0
@@ -1272,7 +1289,7 @@ fn translate_call(
             value_map,
             block_map,
             loc.clone(),
-            &substs_contains,
+            on_shared_array,
             &type_substs,
         )?
     {
@@ -2226,12 +2243,30 @@ fn is_cuda_device_const_marker(func: &mir::Operand, expected_name: &str) -> bool
     definition_name == expected_name || definition_name.ends_with(&format!("::{expected_name}"))
 }
 
+/// `true` if `func` is an fn item defined in the `cuda_device` crate.
+///
+/// Anchors name-substring dispatch gates (e.g. `DynamicSharedArray::get`)
+/// so a user fn merely spelled like a cuda-device one can't hijack an
+/// intrinsic lowering; it falls through to ordinary call handling instead.
+fn is_cuda_device_fn(func: &mir::Operand) -> bool {
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    let mir::Operand::Constant(constant) = func else {
+        return false;
+    };
+    let TyKind::RigidTy(RigidTy::FnDef(definition, _)) = constant.const_.ty().kind() else {
+        return false;
+    };
+    definition.krate().name.as_str() == "cuda_device"
+}
+
 /// Extracts function metadata from a MIR function operand.
 ///
 /// Returns a tuple of:
 /// - `pattern_name`: The function's simple name (e.g., `"cuda_device::index_1d"`)
 /// - `call_name`: The name used for the call target in generated code
-/// - `substs_str`: Debug string of generic substitutions (for pattern matching)
+/// - `substs`: the callee's generic substitutions, in declaration order
+///   (`Self` first for trait methods)
 ///
 /// Deliberately NOT returned: the callee's declared return type. The
 /// declared `fn_sig` of a trait method is written against the trait, so its
@@ -2244,7 +2279,8 @@ fn is_cuda_device_const_marker(func: &mir::Operand, expected_name: &str) -> bool
 ///
 /// This information is used to:
 /// 1. Match intrinsic patterns by `pattern_name` (full FQDN, e.g. `cuda_device::thread::threadIdx_x`)
-/// 2. Check for closure types via `substs_str.contains("Closure")`
+/// 2. Read the trait-method `Self` type from the substs (Index/IndexMut on
+///    `SharedArray`) and const generics (`DynamicSharedArray`'s `ALIGN`)
 /// 3. Generate the correct call target name (FQDN for non-generic, mangled for generic)
 ///
 /// # Naming strategy
@@ -2274,7 +2310,7 @@ fn extract_func_info(
 ) -> TranslationResult<(
     Option<String>,
     Option<String>,
-    Option<String>,
+    Option<rustc_public::ty::GenericArgs>,
     Vec<rustc_public::ty::Ty>,
 )> {
     Ok(match func {
@@ -2310,7 +2346,6 @@ fn extract_func_info(
                             pattern_name.clone()
                         };
 
-                        let substs_debug = format!("{:?}", substs);
                         let type_substs = substs
                             .0
                             .iter()
@@ -2322,7 +2357,7 @@ fn extract_func_info(
                         (
                             Some(pattern_name),
                             Some(call_name),
-                            Some(substs_debug),
+                            Some(substs.clone()),
                             type_substs,
                         )
                     }
@@ -2608,7 +2643,7 @@ fn try_dispatch_intrinsic(
     value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
-    substs_contains: &impl Fn(&str) -> bool,
+    on_shared_array: bool,
     type_substs: &[rustc_public::ty::Ty],
 ) -> TranslationResult<Option<Ptr<Operation>>> {
     intrinsics::wgmma::reject_unsupported(name, loc.clone())?;
@@ -3164,11 +3199,9 @@ fn try_dispatch_intrinsic(
             loc,
         )?)),
 
-        // Trait method - check substs for SharedArray
+        // Trait method - check the substs' Self type for SharedArray
         // Note: Index/IndexMut can appear as either std::ops or core::ops
-        "std::ops::IndexMut::index_mut" | "core::ops::IndexMut::index_mut"
-            if substs_contains("SharedArray") =>
-        {
+        "std::ops::IndexMut::index_mut" | "core::ops::IndexMut::index_mut" if on_shared_array => {
             Ok(Some(intrinsics::memory::emit_shared_array_index(
                 ctx,
                 body,
@@ -3183,7 +3216,7 @@ fn try_dispatch_intrinsic(
                 true,
             )?))
         }
-        "std::ops::Index::index" | "core::ops::Index::index" if substs_contains("SharedArray") => {
+        "std::ops::Index::index" | "core::ops::Index::index" if on_shared_array => {
             Ok(Some(intrinsics::memory::emit_shared_array_index(
                 ctx,
                 body,

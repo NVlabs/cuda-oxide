@@ -664,6 +664,31 @@ pub(super) fn is_constant_wrapper_type(ty: &rustc_public::ty::Ty) -> bool {
         && adt_def.trimmed_name().as_str() == "ConstantMemory"
 }
 
+/// `true` if a trait-method call's `Self` type is `cuda_device::SharedArray`.
+///
+/// rustc puts a trait method's substs in declaration order, `Self` first:
+///
+/// ```text
+/// Index::index on SharedArray<f32, 256>
+///   substs = [ SharedArray<f32, 256, 0>,  usize ]
+///              ^ Self at position 0       ^ Idx
+/// ```
+///
+/// A miss is a legitimate fall-through (indexing some other type), not an
+/// error. Used by both `classify_call` below and the Index/IndexMut dispatch
+/// in `translator::terminator` -- one helper, so the two can't drift.
+pub(crate) fn self_ty_is_shared_array(substs: &rustc_public::ty::GenericArgs) -> bool {
+    use rustc_public::ty::GenericArgKind;
+    let Some(GenericArgKind::Type(ty)) = substs.0.first() else {
+        return false;
+    };
+    let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = ty.kind() else {
+        return false;
+    };
+    adt_def.krate().name.as_str() == "cuda_device"
+        && adt_def.trimmed_name().as_str() == "SharedArray"
+}
+
 /// Classify the write produced by a `Call` terminator's destination.
 ///
 /// Mirrors the intrinsic dispatch table in
@@ -682,8 +707,7 @@ fn classify_call(func: &mir::Operand) -> WriteClass {
         return WriteClass::Unclassified;
     };
     let path = fn_def.name();
-    let substs_str = format!("{substs:?}");
-    let on_shared_array = substs_str.contains("SharedArray");
+    let on_shared_array = self_ty_is_shared_array(&substs);
 
     // --- addrspace 3 (shared) producers -------------------------------------
     //
@@ -703,8 +727,12 @@ fn classify_call(func: &mir::Operand) -> WriteClass {
     }
 
     // `DynamicSharedArray::<T, ALIGN>::{get, get_raw, offset}` all hand back
-    // pointers into the extern-shared region (`addrspace(3)`).
-    if path.contains("DynamicSharedArray") && (path.contains("::get") || path.contains("::offset"))
+    // pointers into the extern-shared region (`addrspace(3)`). The crate
+    // anchor keeps a user type merely named like it from being classified;
+    // the dispatch gate in `translator::terminator` applies the same anchor.
+    if fn_def.krate().name.as_str() == "cuda_device"
+        && path.contains("DynamicSharedArray")
+        && (path.contains("::get") || path.contains("::offset"))
     {
         return WriteClass::Classified(address_space::SHARED);
     }
