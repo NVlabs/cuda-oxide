@@ -10,12 +10,30 @@ Run with:
 cargo oxide run device_global
 ```
 
+To validate the emitted AS1 DWARF shape (including same-path block statics,
+duplicate leaf names, reachability, relocation-only targets, semantic types,
+CU retention, and LLVM verification), build with full device debug and run the
+shape gate:
+
+```bash
+CUDA_OXIDE_DEBUG=full cargo oxide build device_global --arch sm_120
+./crates/rustc-codegen-cuda/examples/device_global/verify-debug-info.sh
+```
+
 The first kernel updates two ordinary device statics:
 
 ```rust
 static mut DEVICE_COUNTER: u64 = 0;
 static mut DEVICE_MARKER: u32 = 0;
 ```
+
+The block-local identity kernel calls a non-inlined device helper that places
+`static VALUE` and `static VALUE_REF` in opposite blocks of one function. The
+two definitions of each leaf have the same source display path but different
+rustc DefPath disambiguators. Their values (11 and 29), addresses, physical
+globals, debug DIEs, and reference initializer relocations must stay distinct;
+repeated reads of each reference must still deduplicate to one physical
+definition.
 
 The other kernels read non-zero immutable statics. One reads both the base
 address and an interior constant pointer (`&STATIC_WEIGHTS[2]`, a 16-byte

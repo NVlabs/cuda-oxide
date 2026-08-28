@@ -963,6 +963,7 @@ pub fn convert_global_alloc_dc(
         initializer_hex,
         initializer_relocations,
         immutable,
+        debug_info,
     ) = {
         let global_op = dialect_mir::ops::MirGlobalAllocOp::new(op);
         let op_ref = op.deref(ctx);
@@ -996,6 +997,7 @@ pub fn convert_global_alloc_dc(
             .attributes
             .get::<StringAttr>(&"global_initializer_relocations".try_into().unwrap())
             .map(|attr| String::from((*attr).clone()));
+        let debug_info = llvm::debug_global_variable(ctx, op);
 
         // Read the address space the op's result already carries — set by
         // mir-importer based on the static's type (`ConstantMemory<T>` → 4,
@@ -1025,6 +1027,7 @@ pub fn convert_global_alloc_dc(
             initializer_hex,
             initializer_relocations,
             global_op.is_immutable(ctx),
+            debug_info,
         )
     };
 
@@ -1034,6 +1037,7 @@ pub fn convert_global_alloc_dc(
         addr_space,
         initializer_hex: initializer_hex.clone(),
         initializer_relocations: initializer_relocations.clone(),
+        debug_info: debug_info.clone(),
         immutable,
     };
 
@@ -1058,6 +1062,7 @@ pub fn convert_global_alloc_dc(
                 addr_space,
                 initializer_hex: initializer_hex.as_deref(),
                 initializer_relocations: initializer_relocations.as_deref(),
+                debug_info: debug_info.as_ref(),
                 immutable,
             },
         )?
@@ -1077,6 +1082,7 @@ struct DeviceGlobalSpec<'a> {
     addr_space: u32,
     initializer_hex: Option<&'a str>,
     initializer_relocations: Option<&'a str>,
+    debug_info: Option<&'a llvm::DebugGlobalVariableInfo>,
     /// Nothing writes this storage, so it exports as LLVM `constant`. Set only
     /// for the compiler's own promoted constants; see `MirGlobalAllocOp`.
     immutable: bool,
@@ -1137,10 +1143,17 @@ fn create_device_global(
     // are private to the kernel and get a counter-based unique name.
     let name: pliron::identifier::Identifier =
         if spec.addr_space == llvm_export::types::address_space::CONSTANT {
-            spec.key.try_into().map_err(|e| {
+            let symbol = dialect_mir::ops::rust_static_symbol_from_global_key(spec.key)
+                .ok_or_else(|| {
+                    anyhow_to_pliron(anyhow::anyhow!(
+                        "constant global_key {:?} is not a tagged Rust static identity",
+                        spec.key
+                    ))
+                })?;
+            symbol.try_into().map_err(|e| {
                 anyhow_to_pliron(anyhow::anyhow!(
-                    "constant global_key {:?} is not a valid identifier: {e:?}",
-                    spec.key
+                    "constant Rust static symbol {:?} is not a valid identifier: {e:?}",
+                    symbol
                 ))
             })?
         } else {
@@ -1156,6 +1169,11 @@ fn create_device_global(
     };
     global_op.set_address_space(ctx, spec.addr_space);
     global_op.set_source_global_key(ctx, spec.key);
+    if spec.addr_space == llvm_export::types::address_space::GLOBAL
+        && let Some(info) = spec.debug_info
+    {
+        llvm::set_debug_global_variable(ctx, global_op.get_operation(), info);
+    }
     if let Some(initializer_hex) = spec.initializer_hex {
         global_op.set_initializer_hex(ctx, initializer_hex);
     }
@@ -1189,6 +1207,7 @@ fn create_device_global(
                 addr_space: spec.addr_space,
                 initializer_hex: spec.initializer_hex.map(str::to_owned),
                 initializer_relocations: spec.initializer_relocations.map(str::to_owned),
+                debug_info: spec.debug_info.cloned(),
                 immutable: spec.immutable,
             },
         },
@@ -3971,6 +3990,7 @@ mod tests {
             addr_space: llvm_addr::GLOBAL,
             initializer_hex: Some("00000000".to_string()),
             initializer_relocations: Some("reloc-a".to_string()),
+            debug_info: None,
             immutable: true,
         };
 
@@ -3990,6 +4010,23 @@ mod tests {
         changed.initializer_relocations = Some("reloc-b".to_string());
         assert!(base != changed);
         changed = base.clone();
+        changed.debug_info = Some(llvm::DebugGlobalVariableInfo {
+            name: "COUNTER".to_string(),
+            namespace: vec!["my_crate".to_string()],
+            ty: llvm::DebugLocalTypeKind::Basic {
+                name: "u32".to_string(),
+                size_bits: 32,
+                encoding: "DW_ATE_unsigned",
+            },
+            declaration: llvm::DebugSourcePosition {
+                file: PathBuf::from("/tmp/global.rs"),
+                line: 7,
+                column: 1,
+            },
+            is_local_to_unit: true,
+        });
+        assert!(base != changed);
+        changed = base.clone();
         changed.immutable = false;
         assert!(base != changed);
     }
@@ -3999,7 +4036,8 @@ mod tests {
         let mut ctx = make_ctx();
         let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
         append_global_alloc(&mut ctx, block, "ordinary_static", false);
-        append_global_alloc(&mut ctx, block, "_ZN7my_mod3KEYE", true);
+        let constant_key = dialect_mir::ops::encode_rust_static_global_key("_ZN7my_mod3KEYE");
+        append_global_alloc(&mut ctx, block, &constant_key, true);
         append_mir_return(&mut ctx, block, vec![]);
 
         crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
@@ -4025,7 +4063,7 @@ mod tests {
         assert_eq!(
             global_addr_const.get_symbol_name(&ctx).to_string(),
             "_ZN7my_mod3KEYE",
-            "constant globals must keep the mangled global_key as symbol name"
+            "constant globals must keep the raw rustc symbol payload as their name"
         );
         assert!(
             global_addr_global
@@ -4033,6 +4071,63 @@ mod tests {
                 .to_string()
                 .starts_with("__device_global_"),
             "ordinary device globals get the __device_global_ prefix"
+        );
+    }
+
+    #[test]
+    fn ordinary_global_debug_info_survives_lowering_but_constant_memory_stays_out_of_scope() {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        let ordinary = append_global_alloc(&mut ctx, block, "crate::GLOBAL_COUNTER", false);
+        let constant_key = dialect_mir::ops::encode_rust_static_global_key("_ZN5crate5COEFFE");
+        let constant = append_global_alloc(&mut ctx, block, &constant_key, true);
+        let info = llvm::DebugGlobalVariableInfo {
+            name: "GLOBAL_COUNTER".to_string(),
+            namespace: vec!["crate".to_string(), "state".to_string()],
+            ty: llvm::DebugLocalTypeKind::Basic {
+                name: "u32".to_string(),
+                size_bits: 32,
+                encoding: "DW_ATE_unsigned",
+            },
+            declaration: llvm::DebugSourcePosition {
+                file: PathBuf::from("/tmp/global.rs"),
+                line: 7,
+                column: 1,
+            },
+            is_local_to_unit: true,
+        };
+        llvm::set_debug_global_variable(&mut ctx, ordinary, &info);
+        // Deliberately tag AS4 too: the AS1-only implementation must not
+        // accidentally expand its behavior merely because the generic debug
+        // carrier can be attached to any op.
+        llvm::set_debug_global_variable(&mut ctx, constant, &info);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+
+        let top = module_top_block(&ctx, module_ptr);
+        let globals: Vec<_> = top
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .collect();
+        let ordinary = globals
+            .iter()
+            .find(|global| global.address_space(&ctx) == llvm_addr::GLOBAL)
+            .expect("ordinary global");
+        let constant = globals
+            .iter()
+            .find(|global| global.address_space(&ctx) == llvm_addr::CONSTANT)
+            .expect("constant global");
+
+        assert_eq!(
+            llvm::debug_global_variable(&ctx, ordinary.get_operation()),
+            Some(info),
+            "source identity and semantic type must survive MIR-to-LLVM lowering"
+        );
+        assert!(
+            llvm::debug_global_variable(&ctx, constant.get_operation()).is_none(),
+            "AS4 debug metadata is a separate feature and must not leak into this AS1 change"
         );
     }
 
@@ -4073,6 +4168,26 @@ mod tests {
             !by_key("plain_static").is_immutable(&ctx),
             "lowering must not infer immutability; only the promoted-constant \
              sites may claim it"
+        );
+    }
+
+    #[test]
+    fn convert_global_alloc_rejects_conflicting_immutability() {
+        // A plain static and a promoted constant that end up sharing one key
+        // differ only in the immutable flag; that alone must fail closed
+        // instead of silently reusing the first allocation's storage.
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_global_alloc(&mut ctx, block, "collision", false);
+        let promoted = append_global_alloc(&mut ctx, block, "collision", false);
+        mir::MirGlobalAllocOp::new(promoted).mark_immutable(&mut ctx);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        let error = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .expect_err("a shared string with different origins must fail closed");
+        assert!(
+            error.to_string().contains("incompatible declaration"),
+            "{error}"
         );
     }
 

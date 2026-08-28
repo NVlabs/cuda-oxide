@@ -44,11 +44,16 @@ use cuda_oxide_codegen::__private::{
 pub use cuda_oxide_codegen::__private::{DeviceExternAttrs, DeviceExternDecl, PipelineError};
 use llvm_export::export::DebugKind;
 pub use llvm_export::export::DeviceExternType;
+use llvm_export::ops::{DebugGlobalVariableInfo, DebugSourcePosition};
 use pliron::context::Context;
 use pliron::identifier::Legaliser;
+use pliron::linked_list::ContainsLinkedList;
 use pliron::op::Op;
+use pliron::operation::Operation;
 use pliron::printable::Printable;
+use pliron::r#type::Typed;
 use rustc_public::mir::mono::Instance;
+use rustc_public::ty::Ty;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -181,6 +186,13 @@ pub struct PipelineConfig {
     pub device_arch_hint: Option<String>,
     /// Device debug metadata tier.
     pub debug_kind: DebugKind,
+    /// Source identities and semantic types for ordinary device statics,
+    /// keyed by [`device_static_global_key`].
+    ///
+    /// The rustc frontend populates this only for full debug builds. Keeping
+    /// the map module-scoped lets every per-function reference receive the
+    /// same identity before MIR lowering deduplicates physical globals.
+    pub debug_global_variables: BTreeMap<String, DebugGlobalVariableInfo>,
     /// Whether ordinary floating-point multiply/add or multiply/subtract
     /// expressions may contract into fused operations.
     ///
@@ -201,7 +213,109 @@ impl Default for PipelineConfig {
             target_arch_source: "PipelineConfig::target_arch",
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
+            debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+        }
+    }
+}
+
+/// Rustc-owned source identity for one static, captured before entering the
+/// stable-MIR closure. The semantic type is converted separately inside that
+/// closure so it remains the Rust type even when initialized storage later
+/// lowers to a physical byte array.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DebugGlobalVariableIdentity {
+    pub name: String,
+    pub namespace: Vec<String>,
+    pub declaration: DebugSourcePosition,
+    pub is_local_to_unit: bool,
+}
+
+/// Return the opaque, per-compilation identity used for one device static.
+///
+/// `StaticDef::name()` is a display path, not an identity: two same-named
+/// statics in sibling blocks can have the same path. For ordinary Rust
+/// symbols, rustc's codegen symbol includes the DefPath disambiguator needed
+/// to keep those allocations distinct and retains upstream crate identity. An
+/// explicit `#[export_name]` is preserved verbatim. The symbol is wrapped in a
+/// domain tag so neither form can alias a compiler-made promoted key, then used
+/// only as a join key within one compilation; source-facing debug names and
+/// namespaces are carried separately.
+pub fn device_static_global_key(static_def: &rustc_public::mir::mono::StaticDef) -> String {
+    let symbol = rustc_public::mir::mono::Instance::from(*static_def)
+        .mangled_name()
+        .to_string();
+    dialect_mir::ops::encode_rust_static_global_key(&symbol)
+}
+
+/// Combine rustc-owned identity with a stable-MIR semantic type.
+pub fn build_debug_global_variable_info(
+    identity: DebugGlobalVariableIdentity,
+    ty: &Ty,
+) -> Option<DebugGlobalVariableInfo> {
+    let debug_ty = crate::translator::body::debug_type_for_ty(ty)?;
+    let semantic_size_bits = ty.layout().ok()?.shape().size.bytes() as u64 * 8;
+    if debug_ty.size_bits() != semantic_size_bits {
+        // The shared local-variable type builder currently spells every
+        // reference as one machine pointer. That is exact for thin references,
+        // but not for slices/trait objects. A global DIE whose type size does
+        // not match rustc's semantic layout would be actively misleading, so
+        // omit it until the richer fat-pointer representation exists.
+        return None;
+    }
+    Some(DebugGlobalVariableInfo {
+        name: identity.name,
+        namespace: identity.namespace,
+        ty: debug_ty,
+        declaration: identity.declaration,
+        is_local_to_unit: identity.is_local_to_unit,
+    })
+}
+
+/// Attach module-owned static identities to every per-function materialization.
+/// MIR lowering subsequently uniques these operations by `global_key`.
+fn attach_debug_global_variables(
+    ctx: &mut Context,
+    func_op: pliron::context::Ptr<Operation>,
+    globals: &BTreeMap<String, DebugGlobalVariableInfo>,
+) {
+    if globals.is_empty() {
+        return;
+    }
+
+    let region = func_op.deref(ctx).get_region(0);
+    let blocks: Vec<_> = region.deref(ctx).iter(ctx).collect();
+    let operations: Vec<_> = blocks
+        .iter()
+        .flat_map(|block| block.deref(ctx).iter(ctx))
+        .collect();
+
+    for op in operations {
+        let Some(global) = Operation::get_op::<dialect_mir::ops::MirGlobalAllocOp>(op, ctx) else {
+            continue;
+        };
+        let result_ty = global
+            .get_operation()
+            .deref(ctx)
+            .get_result(0)
+            .get_type(ctx);
+        let is_as1 = result_ty
+            .deref(ctx)
+            .downcast_ref::<dialect_mir::types::MirPtrType>()
+            .is_some_and(|pointer| {
+                pointer.address_space == dialect_mir::types::address_space::GLOBAL
+            });
+        if !is_as1 {
+            continue;
+        }
+        let Some(key) = global
+            .get_attr_global_key(ctx)
+            .map(|key| String::from(key.clone()))
+        else {
+            continue;
+        };
+        if let Some(info) = globals.get(&key) {
+            llvm_export::ops::set_debug_global_variable(ctx, op, info);
         }
     }
 }
@@ -330,6 +444,10 @@ pub fn run_pipeline(
             // Use .disp(&ctx) for rich error formatting with location and backtrace
             PipelineError::Translation(format!("{}: {}", func.export_name, e.disp(&ctx)))
         })?;
+
+        if config.debug_kind.variables_enabled() {
+            attach_debug_global_variables(&mut ctx, func_op_ptr, &config.debug_global_variables);
+        }
 
         // Dump the per-function IR BEFORE verification so users can see
         // what the translator produced even when verification fails. If we
@@ -545,6 +663,261 @@ mod tests {
     }
 
     #[test]
+    fn global_debug_types_fail_closed_for_unions_and_fat_references() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_global_debug_types_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("global_debug_types.rs");
+        fs::write(
+            &fixture,
+            r#"
+#![allow(dead_code)]
+
+union Word {
+    value: u32,
+    bytes: [u8; 4],
+}
+
+static SCALAR: u64 = 7;
+static UNION_VALUE: Word = Word { value: 11 };
+static SLICE_VIEW: &[u8] = &[1, 2, 3];
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=global_debug_types".to_string(),
+            "--emit=metadata".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let supported = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    use rustc_public::CrateDef as _;
+
+                    let results = rustc_public::local_crate()
+                        .statics()
+                        .into_iter()
+                        .map(|static_def| {
+                            let qualified_name = static_def.name().to_string();
+                            let identity = DebugGlobalVariableIdentity {
+                                name: "FIXTURE_STATIC".to_string(),
+                                namespace: vec!["global_debug_types".to_string()],
+                                declaration: DebugSourcePosition {
+                                    file: std::path::PathBuf::from("global_debug_types.rs"),
+                                    line: 1,
+                                    column: 1,
+                                },
+                                is_local_to_unit: true,
+                            };
+                            (
+                                qualified_name,
+                                build_debug_global_variable_info(identity, &static_def.ty())
+                                    .is_some(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    std::ops::ControlFlow::<(), _>::Continue(results)
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        fs::remove_dir_all(&root).ok();
+        let status = |leaf: &str| {
+            supported
+                .iter()
+                .find(|(name, _)| name.ends_with(&format!("::{leaf}")))
+                .unwrap_or_else(|| panic!("fixture static `{leaf}` was not found"))
+                .1
+        };
+        assert!(status("SCALAR"), "a scalar semantic type is exact");
+        assert!(
+            !status("UNION_VALUE"),
+            "unsupported unions must not acquire a misleading byte-storage DIE"
+        );
+        assert!(
+            !status("SLICE_VIEW"),
+            "a fat reference must be omitted while the shared type builder describes only one pointer word"
+        );
+    }
+
+    #[test]
+    fn device_static_global_keys_distinguish_same_path_block_statics() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_static_global_keys_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("static_global_keys.rs");
+        fs::write(
+            &fixture,
+            r#"
+#![allow(dead_code)]
+
+fn opposite_blocks(select_left: bool) -> u64 {
+    if select_left {
+        static VALUE: u64 = 11;
+        VALUE + VALUE
+    } else {
+        static VALUE: u64 = 29;
+        VALUE + VALUE
+    }
+}
+
+fn adversarial_export_name() -> u64 {
+    #[unsafe(export_name = "__cuda_oxide_promoted_type_collision")]
+    static EXPORTED: u64 = 41;
+    EXPORTED
+}
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=static_global_keys".to_string(),
+            "--emit=metadata".to_string(),
+            "-Zmir-opt-level=0".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let (identities, exported) = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    use rustc_public::CrateDef as _;
+
+                    let statics = rustc_public::local_crate().statics();
+                    let results = statics
+                        .iter()
+                        .copied()
+                        .filter(|static_def| {
+                            static_def.name().ends_with("::opposite_blocks::VALUE")
+                        })
+                        .map(|static_def| {
+                            let source_name = static_def.name();
+                            let mangled = rustc_public::mir::mono::Instance::from(static_def)
+                                .mangled_name()
+                                .to_string();
+                            let key = device_static_global_key(&static_def);
+                            let repeated_key = device_static_global_key(&static_def);
+                            let initializer = static_def
+                                .eval_initializer()
+                                .expect("evaluate block-local static")
+                                .read_uint()
+                                .expect("read u64 block-local static");
+                            (source_name, mangled, key, repeated_key, initializer)
+                        })
+                        .collect::<Vec<_>>();
+                    let exported = statics
+                        .into_iter()
+                        .find(|static_def| static_def.name().ends_with("::EXPORTED"))
+                        .map(|static_def| {
+                            let symbol = rustc_public::mir::mono::Instance::from(static_def)
+                                .mangled_name()
+                                .to_string();
+                            let static_key = device_static_global_key(&static_def);
+                            let promoted_key =
+                                dialect_mir::ops::encode_promoted_global_key(&symbol);
+                            (symbol, static_key, promoted_key)
+                        })
+                        .expect("find adversarial exported static");
+                    std::ops::ControlFlow::<(), _>::Continue((results, exported))
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        fs::remove_dir_all(&root).ok();
+        assert_eq!(identities.len(), 2, "both block statics must be discovered");
+        assert_eq!(
+            identities[0].0, identities[1].0,
+            "the regression requires the two source display paths to collide"
+        );
+        let mut values = identities
+            .iter()
+            .map(|identity| identity.4)
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        assert_eq!(values, [11, 29], "the statics have distinct storage values");
+        for (_, mangled, key, repeated_key, _) in &identities {
+            assert_eq!(
+                dialect_mir::ops::rust_static_symbol_from_global_key(key),
+                Some(mangled.as_str()),
+                "the tagged carrier must preserve rustc's exact symbol identity"
+            );
+            assert_eq!(
+                repeated_key, key,
+                "repeated references to one definition must reuse its key"
+            );
+        }
+        assert_ne!(
+            identities[0].2, identities[1].2,
+            "DefPath disambiguators must keep same-path statics distinct"
+        );
+        assert_eq!(
+            exported.0, "__cuda_oxide_promoted_type_collision",
+            "rustc must expose the user-controlled export name as its symbol"
+        );
+        assert_eq!(
+            dialect_mir::ops::rust_static_symbol_from_global_key(&exported.1),
+            Some(exported.0.as_str())
+        );
+        assert_ne!(
+            exported.1, exported.2,
+            "static and promoted origins must remain distinct for an identical payload"
+        );
+    }
+
+    #[test]
     fn stale_artifact_invalidation_removes_every_competing_output() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -585,6 +958,7 @@ mod tests {
             target_arch_source: "PipelineConfig::target_arch",
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
+            debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
         };
         let result = run_pipeline(&[], &[], &config, Default::default()).expect("pipeline run");
@@ -637,6 +1011,7 @@ mod tests {
             target_arch_source: "PipelineConfig::target_arch",
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
+            debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
         };
 
@@ -727,6 +1102,7 @@ mod tests {
             target_arch_source: "PipelineConfig::target_arch",
             device_arch_hint: None,
             debug_kind: DebugKind::Off,
+            debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
         };
         let externs = [DeviceExternDecl {

@@ -124,6 +124,18 @@ impl<'a> ModuleExportState<'a> {
                 8 // Default alignment
             }
         });
+        let debug_attachment =
+            if !is_external && address_space == crate::types::address_space::GLOBAL {
+                match ops::debug_global_variable(self.ctx, global.get_operation()) {
+                    Some(info) => self
+                        .debug_global_variable(name.as_ref(), Some(alignment), &info)?
+                        .map(|id| format!(", !dbg !{id}"))
+                        .unwrap_or_default(),
+                    None => String::new(),
+                }
+            } else {
+                String::new()
+            };
 
         if is_external {
             // External linkage: declaration with size determined elsewhere.
@@ -133,7 +145,7 @@ impl<'a> ModuleExportState<'a> {
             )
             .unwrap();
             self.export_type(ty, output)?;
-            writeln!(output, ", align {alignment}").unwrap();
+            writeln!(output, ", align {alignment}{debug_attachment}").unwrap();
         } else {
             self.public_globals.push(name.to_string());
             // Defined static storage in the global's address space. The LLVM
@@ -166,12 +178,12 @@ impl<'a> ModuleExportState<'a> {
                 let bytes = decode_hex_initializer(&hex)?;
                 write!(output, " ").unwrap();
                 self.export_relocated_initializer(ty, &bytes, &encoded, output)?;
-                writeln!(output, ", align {alignment}").unwrap();
+                writeln!(output, ", align {alignment}{debug_attachment}").unwrap();
             } else if let Some(hex) = global.initializer_hex(self.ctx) {
                 let bytes = decode_hex_initializer(&hex)?;
                 write!(output, " ").unwrap();
                 self.export_byte_initializer(ty, &bytes, output)?;
-                writeln!(output, ", align {alignment}").unwrap();
+                writeln!(output, ", align {alignment}{debug_attachment}").unwrap();
             } else {
                 // NVVM forbids initialized shared variables. `undef` denotes
                 // uninitialized shared storage and is required by both legacy and
@@ -182,7 +194,11 @@ impl<'a> ModuleExportState<'a> {
                 } else {
                     "zeroinitializer"
                 };
-                writeln!(output, " {initializer}, align {alignment}").unwrap();
+                writeln!(
+                    output,
+                    " {initializer}, align {alignment}{debug_attachment}"
+                )
+                .unwrap();
             }
         }
 

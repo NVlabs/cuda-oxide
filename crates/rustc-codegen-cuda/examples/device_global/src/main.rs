@@ -14,6 +14,18 @@ use cuda_host::cuda_module;
 
 static mut DEVICE_COUNTER: u64 = 0;
 static mut DEVICE_MARKER: u32 = 0;
+
+mod debug_left {
+    pub(super) static mut SAME_LEAF: u32 = 1; // CUDA_OXIDE_DEBUG_GLOBAL_LEFT
+}
+
+mod debug_right {
+    pub(super) static mut SAME_LEAF: u64 = 2; // CUDA_OXIDE_DEBUG_GLOBAL_RIGHT
+}
+
+#[unsafe(no_mangle)]
+pub static mut DEBUG_REACHABLE: u32 = 3; // CUDA_OXIDE_DEBUG_GLOBAL_REACHABLE
+static mut DEBUG_PRIVATE: u32 = 4; // CUDA_OXIDE_DEBUG_GLOBAL_PRIVATE
 static STATIC_WEIGHTS: [[f32; 2]; 4] = [[0.25, 0.5], [1.0, 2.0], [4.0, 8.0], [16.0, 32.0]];
 static STATIC_NAN: f32 = f32::from_bits(0x7fc0_1234);
 
@@ -151,6 +163,25 @@ fn get_static_weights_end() -> *const [f32; 2] {
     STATIC_WEIGHTS_END
 }
 
+#[inline(never)]
+fn block_local_static_values(select_left: bool) -> (u64, u64) {
+    if select_left {
+        static VALUE: u64 = 11; // CUDA_OXIDE_DEBUG_BLOCK_LOCAL_LEFT_VALUE
+        static VALUE_REF: &u64 = &VALUE; // CUDA_OXIDE_DEBUG_BLOCK_LOCAL_LEFT_REFERENCE
+        (
+            *VALUE_REF + *VALUE_REF,
+            VALUE_REF as *const u64 as usize as u64,
+        )
+    } else {
+        static VALUE: u64 = 29; // CUDA_OXIDE_DEBUG_BLOCK_LOCAL_RIGHT_VALUE
+        static VALUE_REF: &u64 = &VALUE; // CUDA_OXIDE_DEBUG_BLOCK_LOCAL_RIGHT_REFERENCE
+        (
+            *VALUE_REF + *VALUE_REF,
+            VALUE_REF as *const u64 as usize as u64,
+        )
+    }
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -167,6 +198,46 @@ mod kernels {
             DEVICE_COUNTER += 1;
             DEVICE_MARKER = 0x00C0_FFEE;
             *out = DEVICE_COUNTER ^ (DEVICE_MARKER as u64);
+        }
+    }
+
+    /// Materialize adversarial source identities for the global-debug shape
+    /// verifier: duplicate leaves in distinct modules and reachable/private
+    /// definitions. A second read of the left static also checks that repeated
+    /// references still produce one physical global and one CU entry.
+    #[kernel]
+    pub unsafe fn debug_global_identity(out: *mut u64) {
+        unsafe {
+            let left = debug_left::SAME_LEAF;
+            let left_again = debug_left::SAME_LEAF;
+            let right = debug_right::SAME_LEAF;
+            DEBUG_REACHABLE += 1;
+            DEBUG_PRIVATE += 1;
+            *out = left as u64
+                + left_again as u64
+                + right
+                + DEBUG_REACHABLE as u64
+                + DEBUG_PRIVATE as u64;
+        }
+    }
+
+    /// Exercise two same-named block statics, and the relocations that point
+    /// to them, which must remain physically distinct. Their source display
+    /// paths are identical; only rustc's DefPath-disambiguated symbol identity
+    /// separates them.
+    #[kernel]
+    pub unsafe fn block_local_static_identity(out: *mut u64) {
+        let thread = cuda_device::thread::threadIdx_x();
+        if thread >= 2 {
+            return;
+        }
+
+        let (value, address) = block_local_static_values(thread == 0);
+        let offset = thread as usize * 2;
+
+        unsafe {
+            *out.add(offset) = value;
+            *out.add(offset + 1) = address;
         }
     }
 
@@ -323,6 +394,40 @@ fn main() {
             eprintln!("FAILED: expected {expected:#x}, got {result:#x}");
             std::process::exit(1);
         }
+    }
+
+    let block_local_out_dev = DeviceBuffer::<u64>::zeroed(&stream, 4)
+        .expect("Failed to allocate block-local static output");
+    unsafe {
+        module.block_local_static_identity(
+            &stream,
+            LaunchConfig {
+                grid_dim: (1, 1, 1),
+                block_dim: (2, 1, 1),
+                shared_mem_bytes: 0,
+            },
+            block_local_out_dev.cu_deviceptr() as *mut u64,
+        )
+    }
+    .expect("Block-local static identity kernel launch failed");
+    let block_local_result = block_local_out_dev
+        .to_host_vec(&stream)
+        .expect("Failed to copy block-local static output");
+
+    println!(
+        "Block-local statics: values = [{}, {}], addresses = [{:#x}, {:#x}]",
+        block_local_result[0], block_local_result[2], block_local_result[1], block_local_result[3]
+    );
+    if block_local_result[0] != 22
+        || block_local_result[2] != 58
+        || block_local_result[1] == 0
+        || block_local_result[3] == 0
+        || block_local_result[1] == block_local_result[3]
+    {
+        eprintln!(
+            "FAILED: expected distinct block-local values 22/58 and non-zero distinct addresses, got {block_local_result:?}"
+        );
+        std::process::exit(1);
     }
 
     let static_out_dev =
@@ -557,6 +662,6 @@ fn main() {
     }
 
     println!(
-        "\nSUCCESS: device globals preserved storage, initializer bytes, aligned, packed, nested packed, and union pointer relocations, slice relocations, pointer addends, and subobject addresses."
+        "\nSUCCESS: device globals preserved same-path static identities, storage, initializer bytes, aligned, packed, nested packed, and union pointer relocations, slice relocations, pointer addends, and subobject addresses."
     );
 }

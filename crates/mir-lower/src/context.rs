@@ -12,6 +12,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::LoweringOptions;
+use llvm_export::ops::DebugGlobalVariableInfo;
 use pliron::{context::Context, identifier::Identifier, r#type::TypeHandle};
 
 mod options_storage {
@@ -104,6 +105,8 @@ pub struct DeviceGlobalDeclaration {
     pub initializer_hex: Option<String>,
     /// Encoded symbolic relocations within the initializer, when present.
     pub initializer_relocations: Option<String>,
+    /// Source-level debug identity carried on the allocation, when present.
+    pub debug_info: Option<DebugGlobalVariableInfo>,
     /// Whether lowering exports the storage as immutable.
     pub immutable: bool,
 }
@@ -122,7 +125,8 @@ pub struct DeviceGlobalRecord {
 /// Ordinary Rust `static` / `static mut` values used from device code live in
 /// CUDA global memory (address space 1), not shared memory. A key names one
 /// allocation; conflicting declarations fail instead of silently reusing a
-/// symbol with the wrong type, alignment, address space, or initializer.
+/// symbol with the wrong type, alignment, address space, initializer, or
+/// debug identity.
 pub type DeviceGlobalsMap = FxHashMap<String, DeviceGlobalRecord>;
 
 /// Tracking for dynamic shared memory alignment per lowered function.

@@ -98,12 +98,18 @@ use llvm_export::ops::{
     DebugInlinedScope, DebugSourcePosition, DebugSourceScope, DebugSourceScopeLocation,
     DebugSourceScopeMap,
 };
+use rustc_hir::def::DefKind;
+use rustc_middle::mir::interpret::{AllocId, GlobalAlloc, Scalar};
+use rustc_middle::mir::mono::MonoItem;
+use rustc_middle::mir::visit::Visitor;
+use rustc_middle::mir::{ConstOperand, ConstValue, Location};
 use rustc_middle::ty::layout::{LayoutCx, LayoutOf};
-use rustc_middle::ty::{EarlyBinder, InstanceKind, TypingEnv};
+use rustc_middle::ty::{EarlyBinder, Instance, InstanceKind, TypingEnv};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_session::config::DebugInfo;
-use rustc_span::{Span, hygiene};
-use std::collections::BTreeMap;
+use rustc_span::def_id::DefId;
+use rustc_span::{DUMMY_SP, Span, hygiene};
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -445,13 +451,187 @@ fn debug_position_from_span(tcx: TyCtxt<'_>, span: Span) -> Option<DebugSourcePo
     })
 }
 
+#[derive(Clone, Debug)]
+struct OwnedStaticDebugIdentity {
+    def_id: DefId,
+    identity: mir_importer::DebugGlobalVariableIdentity,
+}
+
+/// Full-debug-only provenance walk for statics reachable by device code.
+///
+/// Every direct static reference begins as a constant in one of the already
+/// collected, monomorphized device instances. Following that constant's CTFE
+/// allocation graph finds both its static definition and targets reached only
+/// through initializer relocations. Unlike seeding from every host CGU static,
+/// this does not attempt to build debug types for unrelated host-only statics;
+/// it also covers upstream statics, which are intentionally absent from local
+/// CGUs when rustc decides they need not be codegenerated locally.
+struct StaticDebugProvenance<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    current_instance: Option<Instance<'tcx>>,
+    statics: HashSet<DefId>,
+    pending_allocations: Vec<AllocId>,
+    seen_allocations: HashSet<AllocId>,
+}
+
+impl<'tcx> StaticDebugProvenance<'tcx> {
+    fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self {
+            tcx,
+            current_instance: None,
+            statics: HashSet::new(),
+            pending_allocations: Vec::new(),
+            seen_allocations: HashSet::new(),
+        }
+    }
+
+    fn record_static(&mut self, def_id: DefId) {
+        if !self.statics.insert(def_id) {
+            return;
+        }
+        if let Ok(initializer) = self.tcx.eval_static_initializer(def_id) {
+            self.pending_allocations.extend(
+                initializer
+                    .inner()
+                    .provenance()
+                    .ptrs()
+                    .values()
+                    .map(|provenance| provenance.alloc_id()),
+            );
+        }
+    }
+
+    fn record_const_value(&mut self, value: ConstValue) {
+        match value {
+            ConstValue::Scalar(Scalar::Ptr(pointer, _)) => {
+                self.pending_allocations.push(pointer.provenance.alloc_id());
+            }
+            ConstValue::Indirect { alloc_id, .. } => self.pending_allocations.push(alloc_id),
+            ConstValue::Slice { alloc_id, .. } => self.pending_allocations.push(alloc_id),
+            ConstValue::Scalar(_) | ConstValue::ZeroSized => {}
+        }
+    }
+
+    fn drain_allocations(&mut self) {
+        while let Some(alloc_id) = self.pending_allocations.pop() {
+            if !self.seen_allocations.insert(alloc_id) {
+                continue;
+            }
+
+            match self.tcx.global_alloc(alloc_id) {
+                GlobalAlloc::Static(def_id) => self.record_static(def_id),
+                GlobalAlloc::Memory(allocation) => self.pending_allocations.extend(
+                    allocation
+                        .inner()
+                        .provenance()
+                        .ptrs()
+                        .values()
+                        .map(|provenance| provenance.alloc_id()),
+                ),
+                GlobalAlloc::Function { .. }
+                | GlobalAlloc::VTable(..)
+                | GlobalAlloc::TypeId { .. } => {}
+            }
+        }
+    }
+}
+
+impl<'tcx> Visitor<'tcx> for StaticDebugProvenance<'tcx> {
+    fn visit_const_operand(&mut self, constant: &ConstOperand<'tcx>, location: Location) {
+        let instance = self
+            .current_instance
+            .expect("static provenance visitor must be bound to an instance");
+        let constant_value = instance.instantiate_mir_and_normalize_erasing_regions(
+            self.tcx,
+            TypingEnv::fully_monomorphized(),
+            EarlyBinder::bind(constant.const_),
+        );
+        if let Ok(value) =
+            constant_value.eval(self.tcx, TypingEnv::fully_monomorphized(), constant.span)
+        {
+            self.record_const_value(value);
+        }
+        self.super_const_operand(constant, location);
+    }
+}
+
+fn static_debug_namespace(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Vec<String>> {
+    let mut reversed = Vec::new();
+    let mut current = tcx.parent(def_id);
+
+    loop {
+        let key = tcx.def_key(current);
+        let mut segment = String::new();
+        rustc_codegen_ssa::debuginfo::type_names::push_item_name(tcx, current, false, &mut segment);
+        if segment.is_empty() {
+            return None;
+        }
+        reversed.push(segment);
+
+        let Some(parent) = key.parent else {
+            break;
+        };
+        current = DefId {
+            krate: current.krate,
+            index: parent,
+        };
+    }
+
+    reversed.reverse();
+    Some(reversed)
+}
+
+fn collect_static_debug_identities<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    functions: &[CollectedFunction<'tcx>],
+) -> Result<Vec<OwnedStaticDebugIdentity>, DeviceCodegenError> {
+    let mut provenance = StaticDebugProvenance::new(tcx);
+
+    for function in functions {
+        provenance.current_instance = Some(function.instance);
+        provenance.visit_body(tcx.instance_mir(function.instance.def));
+    }
+    provenance.current_instance = None;
+    provenance.drain_allocations();
+
+    let mut statics: Vec<_> = provenance.statics.into_iter().collect();
+    statics.sort_by_key(|def_id| tcx.def_path_str(*def_id));
+    statics
+        .into_iter()
+        .filter(|def_id| matches!(tcx.def_kind(*def_id), DefKind::Static { nested: false, .. }))
+        .map(|def_id| {
+            let name = tcx.item_name(def_id).to_string();
+            let namespace = static_debug_namespace(tcx, def_id).ok_or_else(|| {
+                DeviceCodegenError::Translation(format!(
+                    "cannot represent the source namespace for device static `{}`",
+                    tcx.def_path_str(def_id)
+                ))
+            })?;
+            let declaration_span = hygiene::walk_chain_collapsed(tcx.def_span(def_id), DUMMY_SP);
+            let declaration = debug_position_from_span(tcx, declaration_span).ok_or_else(|| {
+                DeviceCodegenError::Translation(format!(
+                    "cannot represent the definition span for device static `{}`",
+                    tcx.def_path_str(def_id)
+                ))
+            })?;
+            Ok(OwnedStaticDebugIdentity {
+                def_id,
+                identity: mir_importer::DebugGlobalVariableIdentity {
+                    name,
+                    namespace,
+                    declaration,
+                    is_local_to_unit: !tcx.is_reachable_non_generic(def_id),
+                },
+            })
+        })
+        .collect()
+}
+
 /// Errors that can occur during device code generation.
 ///
-/// `Translation` is part of the taxonomy and has a `Display` arm, but nothing
-/// constructs it today: translation failures arrive as
-/// `cuda_oxide_codegen::PipelineError` and are reported through that. Kept so
-/// the variant set still mirrors the pipeline's, rather than deleted and
-/// re-added the next time it is needed.
+/// Most translation failures arrive as `cuda_oxide_codegen::PipelineError`;
+/// `Translation` reports failures while preparing rustc-owned side tables at
+/// the frontend boundary.
 #[derive(Debug)]
 pub enum DeviceCodegenError {
     /// No kernels were found to compile.
@@ -459,10 +639,6 @@ pub enum DeviceCodegenError {
     /// Failed to enter or exit stable_mir context.
     StableMirError(String),
     /// MIR to Pliron IR translation failed.
-    #[expect(
-        dead_code,
-        reason = "mirrors PipelineError's taxonomy, not constructed here"
-    )]
     Translation(String),
     /// PTX generation (llc invocation) failed.
     PtxGeneration(String),
@@ -647,6 +823,11 @@ pub fn generate_device_code<'tcx>(
     let show_mir = config.dump_mir_dialect;
     let show_llvm = config.dump_llvm_dialect;
     let debug_kind = device_debug_kind(tcx.sess.opts.debuginfo);
+    let static_debug_identities = if debug_kind.variables_enabled() {
+        collect_static_debug_identities(tcx, functions)?
+    } else {
+        Vec::new()
+    };
 
     // Print raw rustc MIR if requested (before conversion to stable_mir)
     if show_rustc_mir {
@@ -722,6 +903,34 @@ pub fn generate_device_code<'tcx>(
         .collect();
 
     let result = rustc_internal::run(tcx, || {
+        let mut debug_global_variables = BTreeMap::new();
+        for owned in &static_debug_identities {
+            let stable_item = rustc_internal::stable(MonoItem::Static(owned.def_id));
+            let rustc_public::mir::mono::MonoItem::Static(static_def) = stable_item else {
+                unreachable!("internal static MonoItem must remain a stable static MonoItem")
+            };
+            let Some(info) = mir_importer::build_debug_global_variable_info(
+                owned.identity.clone(),
+                &static_def.ty(),
+            ) else {
+                // The local-variable debug path is deliberately best-effort
+                // for semantic types it cannot yet describe (notably unions).
+                // Globals must fail closed in the same way: omitting this one
+                // DIE is preferable to attaching the physical byte-array type,
+                // and an unsupported static must not disable correct metadata
+                // for every other AS1 global in the module.
+                continue;
+            };
+            let key = mir_importer::device_static_global_key(&static_def);
+            if let Some(previous) = debug_global_variables.insert(key.clone(), info.clone())
+                && previous != info
+            {
+                return Err(mir_importer::PipelineError::Translation(format!(
+                    "conflicting debug identities for device static `{key}`"
+                )));
+            }
+        }
+
         // Convert internal Instance<'tcx> to stable_mir Instance.
         // Drop glue instances whose bodies are provably no-ops are filtered
         // out: the mir-importer's translate_drop fast-path emits a plain
@@ -804,6 +1013,7 @@ pub fn generate_device_code<'tcx>(
             target_arch_source: "CUDA_OXIDE_TARGET",
             device_arch_hint,
             debug_kind,
+            debug_global_variables,
             allow_fma_contraction,
         };
 

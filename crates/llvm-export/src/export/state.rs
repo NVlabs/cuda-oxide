@@ -10,7 +10,9 @@ use rustc_hash::FxHashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::ops::{DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourceScopeMap};
+use crate::ops::{
+    DebugGlobalVariableInfo, DebugLocalTypeKind, DebugLocalVariableInfo, DebugSourceScopeMap,
+};
 
 use super::{
     config::{DebugKind, NvvmIrDialect},
@@ -163,6 +165,15 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) debug_locations: FxHashMap<(usize, i32, i32, Option<usize>), usize>,
     /// `DIType` nodes keyed by the simple debug type they describe.
     pub(super) debug_types: FxHashMap<DebugLocalTypeKind, usize>,
+    /// Uniqued nested `DINamespace` nodes, keyed by parent scope and segment.
+    pub(super) debug_namespaces: FxHashMap<(Option<usize>, String), usize>,
+    /// Global expressions already created for a physical linkage name.
+    /// A repeated linkage must carry the exact same source identity.
+    pub(super) debug_global_variables: FxHashMap<String, (DebugGlobalVariableInfo, usize)>,
+    /// Module globals retained by the compile unit.
+    pub(super) debug_global_expressions: Vec<usize>,
+    /// Whether the compile unit's immutable globals tuple has been finalized.
+    pub(super) debug_globals_finalized: bool,
     /// `DILocalVariable` nodes keyed by scope, source line, and local identity.
     pub(super) debug_local_variables:
         FxHashMap<(usize, PathBuf, i32, DebugLocalVariableInfo), usize>,
@@ -219,6 +230,10 @@ impl<'a> ModuleExportState<'a> {
             debug_resolved_source_scopes: FxHashMap::default(),
             debug_locations: FxHashMap::default(),
             debug_types: FxHashMap::default(),
+            debug_namespaces: FxHashMap::default(),
+            debug_global_variables: FxHashMap::default(),
+            debug_global_expressions: Vec::new(),
+            debug_globals_finalized: false,
             debug_local_variables: FxHashMap::default(),
             debug_nodes: Vec::new(),
             debug_declare_used: false,

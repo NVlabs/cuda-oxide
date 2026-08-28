@@ -975,7 +975,7 @@ fn local_memory_provenance(local_idx: usize, name: &str, ty: &Ty) -> LocalMemory
 /// the inner detail rather than recurse without bound.
 const MAX_DEBUG_TYPE_DEPTH: usize = 8;
 
-fn debug_type_for_ty(ty: &Ty) -> Option<DebugLocalTypeKind> {
+pub(crate) fn debug_type_for_ty(ty: &Ty) -> Option<DebugLocalTypeKind> {
     debug_type_for_ty_at(ty, 0)
 }
 

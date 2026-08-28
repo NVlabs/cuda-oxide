@@ -1151,6 +1151,39 @@ impl Verify for MirSharedAllocOp {
 // MirGlobalAllocOp
 // ============================================================================
 
+const RUST_STATIC_GLOBAL_KEY_PREFIX: &str = "cuda-oxide:rust-static:v1:";
+const PROMOTED_GLOBAL_KEY_PREFIX: &str = "cuda-oxide:promoted:v1:";
+
+fn encode_device_global_key(prefix: &str, payload: &str) -> String {
+    format!("{prefix}{}:{payload}", payload.len())
+}
+
+/// Encode rustc's opaque static symbol as a domain-tagged lowering key.
+///
+/// The tag keeps a user-controlled `#[export_name]` from aliasing a
+/// compiler-made promoted allocation with the same string fingerprint. The
+/// length prefix makes the symbol payload unambiguous even when it contains
+/// punctuation.
+pub fn encode_rust_static_global_key(symbol: &str) -> String {
+    encode_device_global_key(RUST_STATIC_GLOBAL_KEY_PREFIX, symbol)
+}
+
+/// Encode one compiler-made promoted allocation fingerprint.
+pub fn encode_promoted_global_key(fingerprint: &str) -> String {
+    encode_device_global_key(PROMOTED_GLOBAL_KEY_PREFIX, fingerprint)
+}
+
+/// Recover the exact rustc symbol payload from a tagged static key.
+///
+/// Constant-memory globals use the payload as their externally visible
+/// linkage name; the tagged key itself remains internal to lowering and
+/// relocation lookup.
+pub fn rust_static_symbol_from_global_key(key: &str) -> Option<&str> {
+    let encoded = key.strip_prefix(RUST_STATIC_GLOBAL_KEY_PREFIX)?;
+    let (length, symbol) = encoded.split_once(':')?;
+    (length.parse::<usize>().ok()? == symbol.len()).then_some(symbol)
+}
+
 /// MIR device-global address operation.
 ///
 /// Represents the address of an ordinary Rust `static` / `static mut` reachable
@@ -1165,7 +1198,7 @@ impl Verify for MirSharedAllocOp {
 /// | Name            | Type        | Description                      |
 /// |-----------------|-------------|----------------------------------|
 /// | `global_type`   | TypeAttr    | Type stored in the global        |
-/// | `global_key`    | StringAttr  | Stable key for deduplication     |
+/// | `global_key`    | StringAttr  | Domain-tagged deduplication key  |
 /// | `global_alignment` | IntegerAttr | Optional alignment            |
 /// | `global_immutable` | UnitAttr | Storage is never written         |
 /// ```
@@ -1273,6 +1306,36 @@ impl Verify for MirGlobalAllocOp {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod device_global_key_tests {
+    use super::{
+        encode_promoted_global_key, encode_rust_static_global_key,
+        rust_static_symbol_from_global_key,
+    };
+
+    #[test]
+    fn static_and_promoted_key_domains_cannot_alias() {
+        let adversarial = "__cuda_oxide_promoted_type_collision:with:punctuation";
+        let static_key = encode_rust_static_global_key(adversarial);
+        let promoted_key = encode_promoted_global_key(adversarial);
+
+        assert_ne!(static_key, promoted_key);
+        assert_eq!(
+            rust_static_symbol_from_global_key(&static_key),
+            Some(adversarial)
+        );
+        assert_eq!(rust_static_symbol_from_global_key(&promoted_key), None);
+    }
+
+    #[test]
+    fn malformed_static_key_length_fails_closed() {
+        assert_eq!(
+            rust_static_symbol_from_global_key("cuda-oxide:rust-static:v1:999:short"),
+            None
+        );
     }
 }
 

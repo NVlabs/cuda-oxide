@@ -11167,7 +11167,7 @@ fn static_target_from_allocation_at(
 /// One pointer-width relocation inside an evaluated Rust static initializer.
 ///
 /// The source and target offsets are byte offsets. `target_key` is the same
-/// stable rustc identity stored on the target `MirGlobalAllocOp`.
+/// domain-tagged rustc identity stored on the target `MirGlobalAllocOp`.
 struct GlobalInitializerRelocation {
     source_offset: u64,
     width_bytes: u32,
@@ -11189,14 +11189,7 @@ pub(crate) struct GlobalInitializerData {
 }
 
 fn static_global_key(static_def: &rustc_public::mir::mono::StaticDef) -> String {
-    let static_ty = static_def.ty();
-    if is_constant_wrapper_type(&static_ty) {
-        rustc_public::mir::mono::Instance::from(*static_def)
-            .mangled_name()
-            .to_string()
-    } else {
-        static_def.name()
-    }
+    crate::device_static_global_key(static_def)
 }
 
 fn static_global_address_space(static_def: &rustc_public::mir::mono::StaticDef) -> u32 {
@@ -11610,12 +11603,13 @@ fn promoted_constant_dedup_key_from_parts(
     // storage requirements or provenance targets cannot alias.
     let ty = ty.deref(ctx).disp(ctx).to_string();
     let bytes = bytes_to_hex(bytes);
-    format!(
+    let fingerprint = format!(
         "__cuda_oxide_promoted_type{}:{ty}:bytes{}:{bytes}:align{alignment}:relocs{}:{relocations}",
         ty.len(),
         bytes.len() / 2,
         relocations.len()
-    )
+    );
+    dialect_mir::ops::encode_promoted_global_key(&fingerprint)
 }
 
 /// Detect zero-addend array→slice unsize: static `[T; N]` viewed as `[T]`.
