@@ -53,9 +53,10 @@ use crate::context::{
     SharedGlobalDeclaration, SharedGlobalKind, SharedGlobalRecord, SharedGlobalsMap,
 };
 use crate::convert::types::{
-    StructLayoutInfo, build_struct_slot_map, convert_type, get_type_size,
-    llvm_packed_struct_contains_pointer_in_address_space, mir_type_abi_align,
-    validate_initialized_global_layout, validate_relocated_initialized_global_layout,
+    StructLayoutInfo, build_struct_slot_map, convert_type,
+    llvm_packed_struct_contains_pointer_in_address_space, llvm_type_size_align, mir_element_stride,
+    mir_type_abi_align, validate_initialized_global_layout,
+    validate_relocated_initialized_global_layout,
 };
 use crate::helpers;
 use dialect_mir::types::{MirPtrType, MirStructType};
@@ -356,8 +357,29 @@ fn convert_mem_transfer(
                 )
             })?
     };
-    let elem_ty = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
-    let elem_size = get_type_size(ctx, elem_ty);
+    // Byte-count policy: exact or error, never guessed. rustc's stride of the
+    // stamped MIR elem type is the primary fact; the converted LLVM type's
+    // natural layout is the fallback.
+    let elem_size = match mir_element_stride(ctx, pointee) {
+        Some(stride) => stride,
+        None => {
+            let elem_ty = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
+            match llvm_type_size_align(ctx, elem_ty) {
+                Some((size, _)) => size,
+                None => {
+                    let type_display = pointee.deref(ctx).disp(ctx).to_string();
+                    return Err(pliron::create_error!(
+                        op.deref(ctx).loc(),
+                        pliron::result::ErrorKind::VerificationFailed,
+                        pliron::result::StringError(format!(
+                            "mir.{intrinsic_base} element type `{type_display}` has no exact \
+                             byte size; refusing to guess the copy length"
+                        ))
+                    ));
+                }
+            }
+        }
+    };
 
     let bytes = if elem_size == 1 {
         count
@@ -1249,7 +1271,15 @@ fn relocated_initializer_storage_type(
         StructLayout::Unpacked
     };
     let storage: TypeHandle = StructType::get_unnamed(ctx, (fields, layout)).into();
-    let lowered_size = get_type_size(ctx, storage);
+    // Exact or error, never guessed: the storage type is built from i8 arrays
+    // and integer slots, so its natural size is always computable, and it must
+    // land exactly on rustc's byte count or the relocation offsets are wrong.
+    let Some((lowered_size, _)) = llvm_type_size_align(ctx, storage) else {
+        anyhow::bail!(
+            "relocated device global storage `{}` has no exact size",
+            storage.deref(ctx).disp(ctx)
+        );
+    };
     if lowered_size != byte_count {
         anyhow::bail!(
             "relocated device global storage lowers to {} bytes, but rustc evaluated {} bytes",
@@ -4163,7 +4193,10 @@ mod tests {
             .expect("relocated initializer must use struct storage");
         assert_eq!(struct_ty.layout(), StructLayout::Packed);
         assert_eq!(struct_ty.num_fields(), 2);
-        assert_eq!(get_type_size(&ctx, storage), 9);
+        assert_eq!(
+            crate::convert::types::llvm_type_size_align(&ctx, storage),
+            Some((9, 1))
+        );
 
         let fields: Vec<_> = struct_ty.fields().collect();
         let literal_ref = fields[0].deref(&ctx);
@@ -4197,7 +4230,10 @@ mod tests {
             .downcast_ref::<StructType>()
             .expect("relocated initializer must use struct storage");
         assert_eq!(struct_ty.layout(), StructLayout::Packed);
-        assert_eq!(get_type_size(&ctx, storage), 8);
+        assert_eq!(
+            crate::convert::types::llvm_type_size_align(&ctx, storage),
+            Some((8, 1))
+        );
     }
 
     #[test]
