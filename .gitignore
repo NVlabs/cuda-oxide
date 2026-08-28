@@ -1,4 +1,6 @@
 target/
+# `target/` above is for cargo build dirs; this source module is real code.
+!crates/cuda-oxide-codegen/src/target/
 .smoketest-logs/
 *.ptx
 *.ltoir
