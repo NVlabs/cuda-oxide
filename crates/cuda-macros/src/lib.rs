@@ -433,9 +433,9 @@ fn scope_parameter_collision(input: &ItemFn, scope: &Ident) -> Option<Ident> {
 /// built with its `async` feature, the macro also emits borrowed async and owned
 /// async methods. Kernel parameter types are mapped to host-side launch types:
 ///
-/// - `&[T]` -> `&cuda_core::DeviceBuffer<T>`
-/// - `&mut [T]` -> `&mut cuda_core::DeviceBuffer<T>`
-/// - `DisjointSlice<T>` -> `&mut cuda_core::DeviceBuffer<T>`
+/// - `&[T]` -> `&impl cuda_host::KernelSliceArg<Elem = T>`
+/// - `&mut [T]` -> `&mut impl cuda_host::KernelSliceArgMut<Elem = T>`
+/// - `DisjointSlice<T>` -> `&mut impl cuda_host::KernelSliceArgMut<Elem = T>`
 /// - `Copy` scalar/struct/closure/raw-pointer arguments keep their original
 ///   type and pass through `cuda_host::KernelScalar`
 ///
@@ -2414,8 +2414,8 @@ fn validate_requires_operand(expr: &Expr, params: &[CudaModuleParam]) -> syn::Re
 /// different host type.
 #[derive(Clone, Copy)]
 enum RequiresLenAccess {
-    /// Sync prepared launcher: slice parameters are `&DeviceBuffer<T>` or
-    /// `&mut DeviceBuffer<T>`, so `.len()` resolves to the inherent method.
+    /// Sync prepared launcher: ordinary slices use `KernelSliceArg` traits,
+    /// while runtime-row-width slices use `RowWidth`; `.len()` works for both.
     SyncBuffer,
     /// Async prepared launcher: slice parameters are `&impl KernelSliceArg`
     /// or `&mut impl KernelSliceArgMut`.
@@ -2672,9 +2672,9 @@ fn cuda_module_host_type(
     let async_lifetime = cuda_module_async_lifetime();
     if let Some((elem_ty, mutable)) = cuda_module_slice_elem(ty) {
         let sync_host_ty = if mutable {
-            quote! { &mut ::cuda_core::DeviceBuffer<#elem_ty> }
+            quote! { &mut impl ::cuda_host::KernelSliceArgMut<Elem = #elem_ty> }
         } else {
-            quote! { &::cuda_core::DeviceBuffer<#elem_ty> }
+            quote! { &impl ::cuda_host::KernelSliceArg<Elem = #elem_ty> }
         };
         let (async_host_ty, marshal) = if mutable {
             (
@@ -2705,7 +2705,7 @@ fn cuda_module_host_type(
             ));
         }
         return Ok((
-            quote! { &mut ::cuda_core::DeviceBuffer<#elem_ty> },
+            quote! { &mut impl ::cuda_host::KernelSliceArgMut<Elem = #elem_ty> },
             quote! { &#async_lifetime mut impl ::cuda_host::KernelSliceArgMut<Elem = #elem_ty> },
             CudaModuleParamMarshal::WritableDeviceBuffer {
                 elem_ty: quote! { #elem_ty },
@@ -9142,6 +9142,43 @@ fn documented_kernel() {
         assert!(expanded.contains("alias(launch_context)"));
         assert!(!expanded.contains("__internal::index_1d_u32"));
         assert_eq!(scope.ident, "launch_context");
+    }
+
+    #[test]
+    fn sync_slice_launchers_use_kernel_slice_arg_traits() {
+        let module: ItemMod = parse_quote! {
+            mod kernels {
+                #[kernel]
+                pub fn slices(
+                    input: &[u32],
+                    output: &mut [u32],
+                    mut disjoint: DisjointSlice<u32>,
+                ) {
+                }
+            }
+        };
+        let expanded = expand_to_compact_string(module);
+
+        assert!(
+            expanded.contains("input:&impl::cuda_host::KernelSliceArg<Elem=u32>"),
+            "{expanded}"
+        );
+        assert!(
+            expanded.contains("output:&mutimpl::cuda_host::KernelSliceArgMut<Elem=u32>"),
+            "{expanded}"
+        );
+        assert!(
+            expanded.contains("disjoint:&mutimpl::cuda_host::KernelSliceArgMut<Elem=u32>"),
+            "{expanded}"
+        );
+        assert!(
+            !expanded.contains("&::cuda_core::DeviceBuffer<u32>"),
+            "{expanded}"
+        );
+        assert!(
+            !expanded.contains("&mut::cuda_core::DeviceBuffer<u32>"),
+            "{expanded}"
+        );
     }
 
     #[test]

@@ -69,7 +69,7 @@ pub use cuda_bindings as sys;
 /// `#[derive(DeviceCopy)]` macro, re-exported next to the `DeviceCopy` trait so
 /// `use cuda_core::DeviceCopy;` brings both into scope (serde trait+derive pattern).
 pub use cuda_macros::DeviceCopy;
-pub use device_buffer::{DeviceBuffer, DeviceCopy};
+pub use device_buffer::{DeviceBuffer, DeviceCopy, DeviceSlice, DeviceSliceError, DeviceSliceMut};
 pub use embedded::{EmbeddedModule, EmbeddedModuleError};
 pub use error::{DriverError, IntoResult};
 pub use event::CudaEvent;
