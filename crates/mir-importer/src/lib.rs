@@ -61,6 +61,7 @@
 //!         output_name: "kernel".to_string(),
 //!         ..PipelineConfig::default()
 //!     },
+//!     known_defs, // lang-item DefIds resolved by the driver (KnownDefs)
 //! )?;
 //! ```
 //!
@@ -108,3 +109,4 @@ pub use pipeline::{
 };
 pub use translator::terminator::drop_glue::{drop_glue_is_noop, drop_instance_is_noop};
 pub use translator::terminator::is_panic_entry_path;
+pub use translator::types::KnownDefs;

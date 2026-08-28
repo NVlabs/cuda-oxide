@@ -49,6 +49,56 @@ pub use dialect_mir::types::{
 };
 use rustc_public::mir::Mutability;
 
+/// Lang-item `DefId`s the type translator compares projections against.
+///
+/// The translator has no `TyCtxt`, so the driver (which does) resolves these
+/// once per compilation and hands them in through `run_pipeline`:
+///
+/// ```text
+/// driver (TyCtxt) --resolve lang items--> KnownDefs --> run_pipeline
+///                                                           |
+///                              translate_type <-- thread_local
+/// ```
+///
+/// `None` fields simply never match, so a missing id degrades to the
+/// existing "Alias type not yet supported" hard error instead of a guess.
+#[derive(Clone, Copy, Default)]
+pub struct KnownDefs {
+    /// The `FnOnce::Output` associated type. `Fn` and `FnMut` declare no
+    /// `Output` of their own (they inherit `FnOnce`'s), so this one id
+    /// covers projections through all three traits.
+    pub fn_once_output: Option<rustc_public::DefId>,
+    /// The `core::ops::Index` trait.
+    pub index_trait: Option<rustc_public::DefId>,
+    /// The `core::ops::IndexMut` trait.
+    pub index_mut_trait: Option<rustc_public::DefId>,
+}
+
+thread_local! {
+    // Freshly set at every `run_pipeline` entry. The stable `DefId`s inside
+    // are only meaningful within the surrounding `rustc_internal::run`
+    // context, so they must never be cached beyond a single pipeline run.
+    static KNOWN_DEFS: std::cell::Cell<KnownDefs> = const {
+        std::cell::Cell::new(KnownDefs {
+            fn_once_output: None,
+            index_trait: None,
+            index_mut_trait: None,
+        })
+    };
+}
+
+/// Installs the driver-resolved lang-item ids for this pipeline run,
+/// replacing whatever a previous run on this thread left behind.
+pub(crate) fn set_known_defs(defs: KnownDefs) {
+    KNOWN_DEFS.with(|cell| cell.set(defs));
+}
+
+/// The lang-item ids for the current pipeline run (all `None` if the driver
+/// never provided them).
+fn known_defs() -> KnownDefs {
+    KNOWN_DEFS.with(|cell| cell.get())
+}
+
 /// Returns the signed 32-bit integer type.
 pub fn get_i32_type(
     ctx: &mut Context,
@@ -1223,7 +1273,10 @@ pub fn translate_type(
             closure_def,
             substs,
         )) => {
-            let closure_name = format!("{:?}", closure_def.def_id());
+            // Def-path name ("crate::func::{closure#0}"): unique per closure
+            // and stable across runs, unlike the Debug form whose numeric id
+            // depends on first-touch order.
+            let closure_name = closure_def.name();
 
             // Extract upvar types from the tupled-upvars generic arg.
             let mut field_names = Vec::new();
@@ -1271,31 +1324,51 @@ pub fn translate_type(
         // Handle associated types like <SharedArray<f32, 256> as Index<usize>>::Output
         // or <Closure as FnOnce<(Args,)>>::Output
         rustc_public::ty::TyKind::Alias(rustc_public::ty::AliasKind::Projection, alias_ty) => {
-            let def_name = format!("{:?}", alias_ty.def_id);
+            // Driver-resolved lang-item ids; `None` fields never match, so
+            // without them we fall through to the hard error below.
+            let known = known_defs();
+            let assoc_def = alias_ty.def_id.def_id();
 
-            // For FnOnce::Output, FnMut::Output, Fn::Output on closures
-            // The self type is the closure, and we need its return type
-            if (def_name.contains("FnOnce")
-                || def_name.contains("FnMut")
-                || def_name.contains("Fn"))
-                && def_name.contains("Output")
-            {
-                // The self type (closure) is the first generic argument
-                let args = &alias_ty.args.0;
-                if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first() {
-                    // Get the function signature from the type (works for closures, fn ptrs, etc.)
-                    // fn_sig() is a method on TyKind that handles Closure, FnDef, and FnPtr
-                    if let Some(poly_fn_sig) = self_ty.kind().fn_sig() {
-                        let sig = poly_fn_sig.skip_binder();
-                        let output = sig.output();
-                        return translate_type(ctx, &output);
-                    }
-                }
-                // For non-closure Fn types (like function pointers), fall through to error
+            // <F as Fn/FnMut/FnOnce<Args>>::Output resolves to the callable's
+            // return type. One id check covers all three traits because only
+            // FnOnce declares an Output; Fn and FnMut inherit it.
+            //
+            //   <F as FnOnce<(A,)>>::Output
+            //    |                     |
+            //    args[0] (self)        = F's fn_sig().output()
+            if Some(assoc_def) == known.fn_once_output {
+                let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = alias_ty.args.0.first()
+                else {
+                    return input_err_noloc!(TranslationErr::unsupported(
+                        "FnOnce::Output projection without a self type"
+                    ));
+                };
+                // fn_sig() handles Closure, FnDef, and FnPtr. Anything else
+                // (e.g. dyn Fn) has no signature to project from, and there
+                // is no sensible default, so fail loudly.
+                let poly_fn_sig = self_ty.kind().fn_sig().ok_or_else(|| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "FnOnce::Output projected on non-callable type: {:?}",
+                        self_ty
+                    )))
+                })?;
+                let output = poly_fn_sig.skip_binder().output();
+                return translate_type(ctx, &output);
             }
 
-            // For Index::Output or IndexMut::Output on SharedArray<T, N>, the output is T
-            if def_name.contains("Index") && def_name.contains("Output") {
+            // <SharedArray<T, N> as Index<usize>>::Output resolves to T. The
+            // trait is identified through the assoc type's parent def. The
+            // IndexMut compare is belt and braces: IndexMut declares no
+            // Output of its own (it inherits Index's), so the Index compare
+            // is the one that fires.
+            //
+            //   <SharedArray<T, N> as Index<usize>>::Output
+            //                |                         |
+            //                substs[0]                 = T
+            let assoc_parent = assoc_def.parent();
+            if assoc_parent.is_some()
+                && (assoc_parent == known.index_trait || assoc_parent == known.index_mut_trait)
+            {
                 // Extract the self type from args
                 let args = &alias_ty.args.0;
                 if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first() {
@@ -1305,8 +1378,11 @@ pub fn translate_type(
                         substs,
                     )) = self_ty.kind()
                     {
-                        use rustc_public::CrateDef;
-                        if adt_def.trimmed_name() == "SharedArray" {
+                        // Name plus defining crate, so a user struct that
+                        // happens to be called SharedArray can't match.
+                        if adt_def.trimmed_name() == "SharedArray"
+                            && adt_def.krate().name.as_str() == "cuda_device"
+                        {
                             // Extract T from SharedArray<T, N>
                             let elem_ty = substs
                                 .0
@@ -1391,7 +1467,9 @@ pub fn translate_type(
         // panic/formatting branches pulled in by `assert!` inside core fns like
         // `f32::clamp`); never materialised as a value.
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, _)) => {
-            let name = format!("FnDef_{:?}", fn_def.def_id());
+            // Def-path name, stable across runs (the Debug form's numeric id
+            // is first-touch-order dependent).
+            let name = format!("FnDef_{}", fn_def.name());
             Ok(dialect_mir::types::MirStructType::get_with_full_layout(
                 ctx,
                 name,

@@ -807,10 +807,28 @@ pub fn generate_device_code<'tcx>(
             allow_fma_contraction,
         };
 
+        // Resolve the lang-item DefIds the type translator compares
+        // projections against (e.g. FnOnce::Output). This must happen here,
+        // inside rustc_internal::run, because stable() needs the thread-local
+        // conversion tables and the resulting ids are only valid within this
+        // context. `None` (no_core builds) just means the comparisons in the
+        // importer never match and it errors instead of guessing.
+        let lang_items = tcx.lang_items();
+        let known_defs = mir_importer::KnownDefs {
+            fn_once_output: lang_items.fn_once_output().map(rustc_internal::stable),
+            index_trait: lang_items.index_trait().map(rustc_internal::stable),
+            index_mut_trait: lang_items.index_mut_trait().map(rustc_internal::stable),
+        };
+
         // Run the cuda-oxide pipeline!
         // Rust MIR → `dialect-mir` → mem2reg → unroll → LLVM dialect → LLVM IR → PTX.
         // Device externs are emitted as `declare` statements in LLVM IR
-        mir_importer::run_pipeline(&stable_functions, &stable_device_externs, &pipeline_config)
+        mir_importer::run_pipeline(
+            &stable_functions,
+            &stable_device_externs,
+            &pipeline_config,
+            known_defs,
+        )
     });
 
     // Handle the result from rustc_internal::run.

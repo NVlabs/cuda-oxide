@@ -253,6 +253,13 @@ fn backend_options_for(config: &PipelineConfig) -> BackendOptions {
 /// are emitted as LLVM `declare` statements. These are resolved at link time
 /// by nvJitLink when linking with external LTOIR (e.g., CCCL libraries).
 ///
+/// # Known Defs
+///
+/// `known_defs` carries lang-item `DefId`s (FnOnce::Output, Index, IndexMut)
+/// resolved by the driver, which holds the `TyCtxt` this crate lacks. The
+/// ids are only valid inside the caller's `rustc_internal::run` context.
+/// Pass `Default::default()` when no functions need type translation.
+///
 /// # Errors
 ///
 /// Returns [`PipelineError`] with details on which step failed.
@@ -260,7 +267,14 @@ pub fn run_pipeline(
     functions: &[CollectedFunction],
     device_externs: &[DeviceExternDecl],
     config: &PipelineConfig,
+    known_defs: crate::translator::types::KnownDefs,
 ) -> Result<CompilationResult, PipelineError> {
+    // Install the driver-resolved lang-item ids for this run. Set (not
+    // merged) every entry: the ids are only valid inside the caller's
+    // `rustc_internal::run` context, so a stale set from a previous run on
+    // this thread must never survive.
+    crate::translator::types::set_known_defs(known_defs);
+
     prepare_output_dir(&config.output_dir)?;
 
     let mut ctx = Context::new();
@@ -573,7 +587,7 @@ mod tests {
             debug_kind: DebugKind::Off,
             allow_fma_contraction: true,
         };
-        let result = run_pipeline(&[], &[], &config).expect("pipeline run");
+        let result = run_pipeline(&[], &[], &config, Default::default()).expect("pipeline run");
 
         assert_eq!(result.artifact_kind, CompilationArtifactKind::NvvmIr);
         assert_ne!(fs::read(&result.ll_path).unwrap(), b"stale");
@@ -626,7 +640,7 @@ mod tests {
             allow_fma_contraction: true,
         };
 
-        let result = run_pipeline(&[], &[], &config).expect("pipeline run");
+        let result = run_pipeline(&[], &[], &config, Default::default()).expect("pipeline run");
 
         assert!(output_dir.is_dir());
         assert!(result.ll_path.is_file());
@@ -722,7 +736,8 @@ mod tests {
             attrs: DeviceExternAttrs::default(),
         }];
 
-        let result = run_pipeline(&[], &externs, &config).expect("pipeline run");
+        let result =
+            run_pipeline(&[], &externs, &config, Default::default()).expect("pipeline run");
         let ir = fs::read_to_string(result.ll_path).expect("read exported IR");
         assert!(
             ir.contains("declare void @consume_float(float*)"),
