@@ -65,7 +65,7 @@
 use super::super::helpers::emit_store_result_and_goto;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
-use crate::translator::{rvalue, types};
+use crate::translator::{facts, rvalue, types};
 
 use dialect_nvvm::ops::InlinePtxOp;
 use dialect_nvvm::ops::atomic::{
@@ -247,7 +247,7 @@ fn extract_ordering(operand: &mir::Operand, loc: &Location) -> TranslationResult
             )
         );
     };
-    let (_idx, variant_name) = rvalue::extract_enum_variant(&constant.const_, loc)?;
+    let (_idx, variant_name) = facts::extract_enum_variant(&constant.const_, loc)?;
     match variant_name.as_str() {
         "Relaxed" => Ok(AtomicOrdering::Relaxed),
         "Acquire" => Ok(AtomicOrdering::Acquire),

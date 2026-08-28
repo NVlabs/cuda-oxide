@@ -49,55 +49,10 @@ pub use dialect_mir::types::{
 };
 use rustc_public::mir::Mutability;
 
-/// Lang-item `DefId`s the type translator compares projections against.
-///
-/// The translator has no `TyCtxt`, so the driver (which does) resolves these
-/// once per compilation and hands them in through `run_pipeline`:
-///
-/// ```text
-/// driver (TyCtxt) --resolve lang items--> KnownDefs --> run_pipeline
-///                                                           |
-///                              translate_type <-- thread_local
-/// ```
-///
-/// `None` fields simply never match, so a missing id degrades to the
-/// existing "Alias type not yet supported" hard error instead of a guess.
-#[derive(Clone, Copy, Default)]
-pub struct KnownDefs {
-    /// The `FnOnce::Output` associated type. `Fn` and `FnMut` declare no
-    /// `Output` of their own (they inherit `FnOnce`'s), so this one id
-    /// covers projections through all three traits.
-    pub fn_once_output: Option<rustc_public::DefId>,
-    /// The `core::ops::Index` trait.
-    pub index_trait: Option<rustc_public::DefId>,
-    /// The `core::ops::IndexMut` trait.
-    pub index_mut_trait: Option<rustc_public::DefId>,
-}
-
-thread_local! {
-    // Freshly set at every `run_pipeline` entry. The stable `DefId`s inside
-    // are only meaningful within the surrounding `rustc_internal::run`
-    // context, so they must never be cached beyond a single pipeline run.
-    static KNOWN_DEFS: std::cell::Cell<KnownDefs> = const {
-        std::cell::Cell::new(KnownDefs {
-            fn_once_output: None,
-            index_trait: None,
-            index_mut_trait: None,
-        })
-    };
-}
-
-/// Installs the driver-resolved lang-item ids for this pipeline run,
-/// replacing whatever a previous run on this thread left behind.
-pub(crate) fn set_known_defs(defs: KnownDefs) {
-    KNOWN_DEFS.with(|cell| cell.set(defs));
-}
-
-/// The lang-item ids for the current pipeline run (all `None` if the driver
-/// never provided them).
-fn known_defs() -> KnownDefs {
-    KNOWN_DEFS.with(|cell| cell.get())
-}
+// The rustc-fact oracle. `is_cuda_device_adt` is re-exported because the
+// `types::is_cuda_device_adt` path is used throughout the translator.
+pub(crate) use super::facts::is_cuda_device_adt;
+use super::facts::known_defs;
 
 /// Returns the signed 32-bit integer type.
 pub fn get_i32_type(
@@ -269,16 +224,6 @@ pub fn is_zst_type(ctx: &pliron::context::Context, ty: TypeHandle) -> bool {
     }
 
     false
-}
-
-/// `true` when `adt_def` is cuda-device's type named `name`.
-///
-/// Special CUDA types (`SharedArray`, `Barrier`, ...) are recognised by bare
-/// type name, so the defining-crate anchor is what keeps a user type that
-/// merely shares the name out of the special-case translation. On a miss,
-/// callers fall through to generic ADT handling — never an error.
-pub(crate) fn is_cuda_device_adt(adt_def: &rustc_public::ty::AdtDef, name: &str) -> bool {
-    adt_def.trimmed_name() == name && adt_def.krate().name.as_str() == "cuda_device"
 }
 
 /// Checks if a Rust type is zero-sized (before translation).

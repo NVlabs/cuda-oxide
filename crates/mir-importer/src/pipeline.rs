@@ -267,13 +267,13 @@ pub fn run_pipeline(
     functions: &[CollectedFunction],
     device_externs: &[DeviceExternDecl],
     config: &PipelineConfig,
-    known_defs: crate::translator::types::KnownDefs,
+    known_defs: crate::translator::facts::KnownDefs,
 ) -> Result<CompilationResult, PipelineError> {
     // Install the driver-resolved lang-item ids for this run. Set (not
     // merged) every entry: the ids are only valid inside the caller's
     // `rustc_internal::run` context, so a stale set from a previous run on
     // this thread must never survive.
-    crate::translator::types::set_known_defs(known_defs);
+    crate::translator::facts::set_known_defs(known_defs);
 
     prepare_output_dir(&config.output_dir)?;
 

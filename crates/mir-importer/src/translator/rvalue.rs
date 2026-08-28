@@ -30,6 +30,7 @@
 //! - `translate_constant`: Translates MIR constants to `dialect-mir`
 //! - `create_ghost_enum_default`: Synthesises a placeholder for never-assigned enum locals
 
+use super::facts;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::{ValueMap, generic_pointer_kind_retype_allowed};
@@ -11077,153 +11078,6 @@ fn discriminant_to_variant_index(
     }
 }
 
-/// Read an enum constant's tag and map it to `(variant index, variant name)`.
-///
-/// Only valid for direct-tagged enums (e.g. `#[repr(u8)]` fieldless enums like
-/// `cuda_device::atomic::AtomicOrdering`) where the constant's allocation IS
-/// the tag:
-///
-/// ```text
-/// alloc bytes [0x02] --read_uint--> tag 2 --discriminant match--> (2, "Release")
-/// ```
-///
-/// Niche-encoded enums store no direct tag, so this mapping would be wrong for
-/// them; the discriminant match errors out instead of guessing. Every failure
-/// here is a hard error: inventing a variant would silently change semantics
-/// (the old Debug-string scrape defaulted to variant 0, turning SeqCst atomics
-/// into Relaxed ones).
-pub(crate) fn extract_enum_variant(
-    mir_const: &rustc_public::ty::MirConst,
-    loc: &Location,
-) -> TranslationResult<(usize, String)> {
-    use rustc_public::ty::{RigidTy, TyConstKind, TyKind, VariantIdx};
-
-    let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = mir_const.ty().kind() else {
-        return input_err!(
-            loc.clone(),
-            TranslationErr::type_error(format!(
-                "expected an enum constant, got a constant of type {:?}",
-                mir_const.ty()
-            ))
-        );
-    };
-    if adt_def.kind() != AdtKind::Enum {
-        return input_err!(
-            loc.clone(),
-            TranslationErr::type_error(format!(
-                "expected an enum constant, got a {:?} constant of type {}",
-                adt_def.kind(),
-                adt_def.trimmed_name()
-            ))
-        );
-    }
-
-    // Pull the raw tag out of the constant. read_uint() refuses uninitialized
-    // bytes, so a malformed const errors instead of yielding a made-up tag.
-    let (tag, tag_width_bytes) = match mir_const.kind() {
-        ConstantKind::Allocated(alloc) => {
-            let tag = alloc.read_uint().map_err(|e| {
-                input_error!(
-                    loc.clone(),
-                    TranslationErr::invalid_op(format!(
-                        "cannot read the tag of enum {} from its const allocation: {e:?}",
-                        adt_def.trimmed_name()
-                    ))
-                )
-            })?;
-            (tag, alloc.bytes.len())
-        }
-        ConstantKind::Ty(ty_const) => match ty_const.kind() {
-            TyConstKind::Value(_, alloc) => {
-                let tag = alloc.read_uint().map_err(|e| {
-                    input_error!(
-                        loc.clone(),
-                        TranslationErr::invalid_op(format!(
-                            "cannot read the tag of enum {} from its const allocation: {e:?}",
-                            adt_def.trimmed_name()
-                        ))
-                    )
-                })?;
-                (tag, alloc.bytes.len())
-            }
-            other => {
-                return input_err!(
-                    loc.clone(),
-                    TranslationErr::unsupported(format!(
-                        "non-value type-level enum constant: {other:?}"
-                    ))
-                );
-            }
-        },
-        ConstantKind::ZeroSized => {
-            // No tag bytes to read; only unambiguous when there is exactly
-            // one variant to pick.
-            let variants = adt_def.variants();
-            if variants.len() == 1 {
-                return Ok((0, variants[0].name()));
-            }
-            return input_err!(
-                loc.clone(),
-                TranslationErr::invalid_op(format!(
-                    "zero-sized constant of enum {} which has {} variants: no tag to read",
-                    adt_def.trimmed_name(),
-                    variants.len()
-                ))
-            );
-        }
-        ConstantKind::Unevaluated(unevaluated) => {
-            return input_err!(
-                loc.clone(),
-                TranslationErr::unsupported(format!(
-                    "unevaluated enum constant {:?}; use a literal variant",
-                    unevaluated.def
-                ))
-            );
-        }
-        ConstantKind::Param(param) => {
-            return input_err!(
-                loc.clone(),
-                TranslationErr::unsupported(format!(
-                    "unmonomorphized const param {} used as an enum value",
-                    param.name
-                ))
-            );
-        }
-    };
-
-    if tag_width_bytes == 0 {
-        return input_err!(
-            loc.clone(),
-            TranslationErr::invalid_op(format!(
-                "empty const allocation for enum {}: no tag to read",
-                adt_def.trimmed_name()
-            ))
-        );
-    }
-
-    // The stored tag is truncated to the physical tag width, while
-    // discriminant_for_variant reports full-width values; compare masked
-    // (same trick as discriminant_to_variant_index above).
-    let mask = if tag_width_bytes >= 16 {
-        u128::MAX
-    } else {
-        (1u128 << (tag_width_bytes * 8)) - 1
-    };
-    for (idx, variant) in adt_def.variants().iter().enumerate() {
-        let discr = adt_def.discriminant_for_variant(VariantIdx::to_val(idx));
-        if discr.val & mask == tag & mask {
-            return Ok((idx, variant.name()));
-        }
-    }
-    input_err!(
-        loc.clone(),
-        TranslationErr::invalid_op(format!(
-            "enum {} has no variant with tag {tag}",
-            adt_def.trimmed_name()
-        ))
-    )
-}
-
 /// Check if a type is a pointer to cuda-device's SharedArray.
 fn is_shared_array_pointer(ty: &rustc_public::ty::Ty) -> bool {
     use rustc_public::ty::{RigidTy, TyKind};
@@ -13737,17 +13591,6 @@ fn extract_shared_array_info(
 ) -> TranslationResult<(pliron::r#type::TypeHandle, usize, usize)> {
     use rustc_public::ty::{GenericArgKind, RigidTy, TyKind};
 
-    /// Evaluate a const generic to a target usize. Translation runs on
-    /// monomorphized bodies, so a const that doesn't evaluate means
-    /// polymorphic MIR reached codegen: hard error, never a guess.
-    fn eval_usize_const(c: &rustc_public::ty::TyConst, what: &str) -> TranslationResult<usize> {
-        c.eval_target_usize().map(|v| v as usize).map_err(|e| {
-            input_error_noloc!(TranslationErr::unsupported(format!(
-                "SharedArray {what} const generic did not evaluate to a target usize: {e:?}"
-            )))
-        })
-    }
-
     match ty.kind() {
         TyKind::RigidTy(RigidTy::RawPtr(pointee_ty, _)) => {
             match pointee_ty.kind() {
@@ -13791,7 +13634,7 @@ fn extract_shared_array_info(
                             "SharedArray substs missing the N const generic at position 1"
                         ));
                     };
-                    let size = eval_usize_const(n_const, "N")?;
+                    let size = facts::eval_usize_const(n_const, "SharedArray N", None)? as usize;
 
                     // ALIGN = 0 means natural alignment (the declaration
                     // default). Only a genuinely two-generic SharedArray may
@@ -13800,7 +13643,8 @@ fn extract_shared_array_info(
                     // over-alignment would miscompile.
                     let alignment = match generic_args.get(2) {
                         Some(GenericArgKind::Const(align_const)) => {
-                            eval_usize_const(align_const, "ALIGN")?
+                            facts::eval_usize_const(align_const, "SharedArray ALIGN", None)?
+                                as usize
                         }
                         Some(_) => {
                             return input_err_noloc!(TranslationErr::unsupported(

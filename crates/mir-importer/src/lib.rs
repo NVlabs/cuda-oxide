@@ -107,6 +107,6 @@ pub use pipeline::{
     DeviceExternDecl, DeviceExternType, KernelLaunchBounds, PipelineConfig, PipelineError,
     run_pipeline,
 };
+pub use translator::facts::KnownDefs;
 pub use translator::terminator::drop_glue::{drop_glue_is_noop, drop_instance_is_noop};
 pub use translator::terminator::is_panic_entry_path;
-pub use translator::types::KnownDefs;

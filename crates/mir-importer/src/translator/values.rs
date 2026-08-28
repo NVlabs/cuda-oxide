@@ -35,6 +35,7 @@
 //! [`align_pointer_addr_space`] to pick an alloca pointee that matches what
 //! actually gets stored.
 
+use super::facts::self_ty_is_shared_array;
 use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
 use dialect_mir::ops::{MirAllocaOp, MirCastOp, MirLoadOp, MirStoreOp};
 use dialect_mir::types::{MirPointerKind, MirPtrType, MirSliceType, address_space};
@@ -662,30 +663,6 @@ pub(super) fn is_constant_wrapper_type(ty: &rustc_public::ty::Ty) -> bool {
         return false;
     };
     super::types::is_cuda_device_adt(&adt_def, "ConstantMemory")
-}
-
-/// `true` if a trait-method call's `Self` type is `cuda_device::SharedArray`.
-///
-/// rustc puts a trait method's substs in declaration order, `Self` first:
-///
-/// ```text
-/// Index::index on SharedArray<f32, 256>
-///   substs = [ SharedArray<f32, 256, 0>,  usize ]
-///              ^ Self at position 0       ^ Idx
-/// ```
-///
-/// A miss is a legitimate fall-through (indexing some other type), not an
-/// error. Used by both `classify_call` below and the Index/IndexMut dispatch
-/// in `translator::terminator` -- one helper, so the two can't drift.
-pub(crate) fn self_ty_is_shared_array(substs: &rustc_public::ty::GenericArgs) -> bool {
-    use rustc_public::ty::GenericArgKind;
-    let Some(GenericArgKind::Type(ty)) = substs.0.first() else {
-        return false;
-    };
-    let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = ty.kind() else {
-        return false;
-    };
-    super::types::is_cuda_device_adt(&adt_def, "SharedArray")
 }
 
 /// Classify the write produced by a `Call` terminator's destination.

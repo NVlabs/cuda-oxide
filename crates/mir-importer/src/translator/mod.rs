@@ -19,6 +19,7 @@
 //! | [`rvalue`]     | Expression translation (binops, casts, etc.)      |
 //! | [`types`]      | Rust type → `dialect-mir` type conversion         |
 //! | [`values`]     | MIR local → alloca slot mapping                   |
+//! | [`facts`]      | Typed fact reads from rustc (the oracle)          |
 //! | [`layout`]     | Shared readers over rustc's aggregate layout       |
 //! | [`location`]   | Source-location helpers for MIR translation       |
 //! | [`payload_store`] | Enum-payload stores whose storage type differs  |
@@ -49,6 +50,7 @@
 
 pub mod block;
 pub mod body;
+pub(crate) mod facts;
 pub(crate) mod layout;
 pub(crate) mod location;
 pub(crate) mod payload_store;
