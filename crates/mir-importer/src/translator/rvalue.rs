@@ -8657,9 +8657,25 @@ enum UnionConstantStorageKind {
     },
 }
 
+/// How a classified union constant is consumed by its caller.
+///
+/// SSA reconstruction materializes the carrier field's own reference type, so
+/// a reference minted for the wrong alternative could claim validity for a
+/// pointee the program never wrote. Device-static physical storage emits the
+/// exact evaluated bytes plus one integer-width relocation slot and never
+/// mints a typed reference, so same-kind reference alternatives may keep
+/// different pointee views there; device code reads the storage through its
+/// own field types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnionConstantUse {
+    SsaReconstruction,
+    PhysicalStorage,
+}
+
 fn classify_union_constant_storage(
     ctx: &Context,
     union_ty: TypeHandle,
+    usage: UnionConstantUse,
 ) -> Result<UnionConstantStorageKind, String> {
     let (name, field_types) = {
         let ty_ref = union_ty.deref(ctx);
@@ -8740,7 +8756,10 @@ fn classify_union_constant_storage(
                 && carrier_kind == pointer_kind
                 && carrier_mutability == is_mutable =>
             {
-                if pointer_kind == MirPointerKind::SharedRef && carrier_field_ty != field_ty {
+                if usage == UnionConstantUse::SsaReconstruction
+                    && pointer_kind == MirPointerKind::SharedRef
+                    && carrier_field_ty != field_ty
+                {
                     return Err(format!(
                         "Initialized union constant `{name}` mixes reference pointee types; \
                          rustc's evaluated allocation does not retain the active union field, \
@@ -8912,12 +8931,15 @@ fn validate_device_static_union_storage(
         )
     };
 
-    let storage_kind = classify_union_constant_storage(ctx, union_ty).map_err(|message| {
-        format!(
-            "union `{union_name}` whose initializer cannot preserve pointer provenance: \
-             {message}"
-        )
-    })?;
+    let storage_kind =
+        classify_union_constant_storage(ctx, union_ty, UnionConstantUse::PhysicalStorage).map_err(
+            |message| {
+                format!(
+                    "union `{union_name}` whose initializer cannot preserve pointer provenance: \
+                 {message}"
+                )
+            },
+        )?;
     if !matches!(storage_kind, UnionConstantStorageKind::ThinPointer { .. }) {
         return Err(format!(
             "union `{union_name}` without thin-pointer storage; device-global union \
@@ -9113,8 +9135,9 @@ fn translate_union_constant_from_alloc(
         );
     }
 
-    let storage_kind = classify_union_constant_storage(ctx, union_ty)
-        .map_err(|message| input_error!(loc.clone(), TranslationErr::unsupported(message)))?;
+    let storage_kind =
+        classify_union_constant_storage(ctx, union_ty, UnionConstantUse::SsaReconstruction)
+            .map_err(|message| input_error!(loc.clone(), TranslationErr::unsupported(message)))?;
 
     match storage_kind {
         UnionConstantStorageKind::ByteImage => {
@@ -14311,10 +14334,10 @@ mod promotable_array_element_tests {
 #[allow(clippy::disallowed_methods)]
 mod aggregate_relocation_tests {
     use super::{
-        UnionConstantStorageKind, classify_union_constant_storage, constant_type_contains_pointer,
-        decode_relocation_addend, find_unconsumed_relocation, match_thin_pointer_relocation,
-        provenance_starts_in_range, relocation_free_pointer_integer_union_storage_field,
-        relocation_offsets_overlapping_range,
+        UnionConstantStorageKind, UnionConstantUse, classify_union_constant_storage,
+        constant_type_contains_pointer, decode_relocation_addend, find_unconsumed_relocation,
+        match_thin_pointer_relocation, provenance_starts_in_range,
+        relocation_free_pointer_integer_union_storage_field, relocation_offsets_overlapping_range,
         translate_pointer_integer_union_constant_from_storage, validate_array_value_element_type,
         validate_device_static_union_storage, validate_slice_relocation_shape,
     };
@@ -14611,7 +14634,11 @@ mod aggregate_relocation_tests {
             "pointer-only union constants must use typed reconstruction"
         );
         assert_eq!(
-            classify_union_constant_storage(&ctx, pointer_only_union_ty),
+            classify_union_constant_storage(
+                &ctx,
+                pointer_only_union_ty,
+                UnionConstantUse::SsaReconstruction
+            ),
             Ok(UnionConstantStorageKind::ThinPointer {
                 field_index: 0,
                 field_ty: pointer_field_ty,
@@ -14638,8 +14665,12 @@ mod aggregate_relocation_tests {
             8,
         )
         .into();
-        let pointer_integer_error = classify_union_constant_storage(&ctx, pointer_integer_union_ty)
-            .expect_err("the provenance-aware classifier must keep pointer/integer overlap closed");
+        let pointer_integer_error = classify_union_constant_storage(
+            &ctx,
+            pointer_integer_union_ty,
+            UnionConstantUse::SsaReconstruction,
+        )
+        .expect_err("the provenance-aware classifier must keep pointer/integer overlap closed");
         assert!(
             pointer_integer_error.contains("pointer/integer union constants"),
             "diagnostic must explain the provenance-vs-bits conflict: {pointer_integer_error}"
@@ -14684,8 +14715,12 @@ mod aggregate_relocation_tests {
             8,
         )
         .into();
-        let fat_pointer_error = classify_union_constant_storage(&ctx, fat_pointer_union_ty)
-            .expect_err("fat-pointer union storage must remain fail-closed");
+        let fat_pointer_error = classify_union_constant_storage(
+            &ctx,
+            fat_pointer_union_ty,
+            UnionConstantUse::SsaReconstruction,
+        )
+        .expect_err("fat-pointer union storage must remain fail-closed");
         assert!(
             fat_pointer_error.contains("not a thin pointer"),
             "diagnostic must identify unsupported fat/nested storage: {fat_pointer_error}"
@@ -14829,7 +14864,8 @@ mod aggregate_relocation_tests {
         )
         .into();
         assert!(
-            classify_union_constant_storage(&ctx, raw_views).is_ok(),
+            classify_union_constant_storage(&ctx, raw_views, UnionConstantUse::SsaReconstruction)
+                .is_ok(),
             "same-kind raw pointers may safely use different pointee views"
         );
 
@@ -14855,13 +14891,40 @@ mod aggregate_relocation_tests {
                 8,
             )
             .into();
-            let error = classify_union_constant_storage(&ctx, union_ty)
-                .expect_err("ambiguous pointer semantics must fail closed");
+            let error = classify_union_constant_storage(
+                &ctx,
+                union_ty,
+                UnionConstantUse::SsaReconstruction,
+            )
+            .expect_err("ambiguous pointer semantics must fail closed");
             assert!(
                 error.contains(expected),
                 "{name} diagnostic must identify {expected}: {error}"
             );
         }
+
+        // Physical device-static storage emits exact bytes plus one
+        // integer-width relocation slot and never mints a typed reference, so
+        // same-kind reference alternatives with different pointee views stay
+        // supported there (e.g. `union { word: &'static u32, byte: &'static u8 }`).
+        let mixed_reference_pointees: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "MixedReferencePointees".into(),
+            vec!["first".into(), "second".into()],
+            vec![shared_u32, shared_u8],
+            8,
+            8,
+        )
+        .into();
+        assert!(
+            classify_union_constant_storage(
+                &ctx,
+                mixed_reference_pointees,
+                UnionConstantUse::PhysicalStorage
+            )
+            .is_ok(),
+            "physical initializer storage must keep mixed-pointee reference unions supported"
+        );
     }
 
     #[test]
@@ -14956,6 +15019,39 @@ mod aggregate_relocation_tests {
             Ok(()),
             "one naturally aligned pointer word with one anchored relocation is the \
              accepted shape"
+        );
+
+        // The example shape `union { word: &'static u32, byte: &'static u8 }`:
+        // same-kind references with different pointee views. The storage gate
+        // emits bytes plus one relocation slot and never mints a typed
+        // reference, so this stays supported even though SSA reconstruction
+        // of the same union fails closed.
+        let shared_word_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u32_ty, false, MirPointerKind::SharedRef)
+                .into();
+        let shared_byte_ty: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, u8_ty, false, MirPointerKind::SharedRef)
+                .into();
+        let mixed_reference_union_ty: TypeHandle = MirUnionType::get(
+            &mut ctx,
+            "MixedReferenceWord".into(),
+            vec!["word".into(), "byte".into()],
+            vec![shared_word_ty, shared_byte_ty],
+            8,
+            8,
+        )
+        .into();
+        assert_eq!(
+            validate_device_static_union_storage(
+                &ctx,
+                mixed_reference_union_ty,
+                8,
+                8,
+                8,
+                &[(0, 8)]
+            ),
+            Ok(()),
+            "mixed-pointee reference unions remain valid device-static storage"
         );
 
         let byte_image_error =
