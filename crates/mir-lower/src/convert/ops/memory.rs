@@ -665,30 +665,38 @@ pub(crate) fn convert_ref(
 /// Convert `mir.ptr_offset` to `llvm.getelementptr`.
 ///
 /// Operands: `[ptr, offset]` where offset is an integer index.
-/// Uses the pointee type from the MIR pointer type for element sizing.
-/// Falls back to i8 element type if pointee type cannot be determined.
+/// Element sizing comes from the op's own result type, which is still the
+/// MIR pointer type when this converter runs. The operand's recorded type
+/// history is not usable here: a kind-only `mir.cast` lowers to a plain
+/// value forwarding, and the history does not follow that replacement
+/// edge, so a history miss would silently misscale the offset.
 pub(crate) fn convert_ptr_offset(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    operands_info: &OperandsInfo,
+    _operands_info: &OperandsInfo,
 ) -> Result<()> {
+    let loc = op.deref(ctx).loc();
     let operands: Vec<_> = op.deref(ctx).operands().collect();
 
     let (ptr, offset) = match operands.as_slice() {
         [ptr, offset] => (*ptr, *offset),
-        _ => return pliron::input_err_noloc!("PtrOffset requires exactly 2 operands"),
+        _ => return pliron::input_err!(loc, "PtrOffset requires exactly 2 operands"),
     };
 
-    let pointee_ty_opt = operands_info
-        .lookup_most_recent_of_type::<MirPtrType>(ctx, ptr)
-        .map(|mir_ptr| mir_ptr.pointee);
-
-    let elem_ty = if let Some(pointee) = pointee_ty_opt {
-        convert_type(ctx, pointee).map_err(anyhow_to_pliron)?
-    } else {
-        IntegerType::get(ctx, 8, Signedness::Signless).into()
-    };
+    let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    let pointee = result_ty
+        .deref(ctx)
+        .downcast_ref::<MirPtrType>()
+        .map(|mir_ptr| mir_ptr.pointee)
+        .ok_or_else(|| {
+            pliron::input_error!(
+                loc.clone(),
+                "mir.ptr_offset result must be a MIR pointer type; \
+                 element sizing has no fact to derive from"
+            )
+        })?;
+    let elem_ty = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
 
     let llvm_gep = llvm::GetElementPtrOp::new(
         ctx,
