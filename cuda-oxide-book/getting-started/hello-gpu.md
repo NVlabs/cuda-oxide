@@ -211,11 +211,11 @@ The `--async` flag generates a project with `tokio` and `cuda-async` dependencie
 Here's the generated async vecadd template (with minor formatting edits for readability):
 
 ```rust
-use cuda_device::{kernel, thread, DisjointSlice};
-use cuda_host::cuda_module;
 use cuda_async::device_context::init_device_contexts;
 use cuda_async::device_operation::DeviceOperation;
 use cuda_core::LaunchConfig;
+use cuda_device::{DisjointSlice, kernel, thread};
+use cuda_host::cuda_module;
 
 #[cuda_module]
 mod kernels {
