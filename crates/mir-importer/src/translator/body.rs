@@ -120,7 +120,9 @@ fn detect_cluster_config(
         };
 
         let fn_name = def_id.name();
-        if fn_name != "__cluster_config" && !fn_name.ends_with("::__cluster_config") {
+        if def_id.krate().name.as_str() != "cuda_device"
+            || (fn_name != "__cluster_config" && !fn_name.ends_with("::__cluster_config"))
+        {
             continue;
         }
 
@@ -436,8 +438,9 @@ fn detect_dynamic_shared_alignment(
             continue;
         };
         let fn_name = def_id.name();
-        if fn_name != "__dynamic_shared_alignment"
-            && !fn_name.ends_with("::__dynamic_shared_alignment")
+        if def_id.krate().name.as_str() != "cuda_device"
+            || (fn_name != "__dynamic_shared_alignment"
+                && !fn_name.ends_with("::__dynamic_shared_alignment"))
         {
             continue;
         }

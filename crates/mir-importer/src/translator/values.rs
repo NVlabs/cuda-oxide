@@ -622,7 +622,8 @@ fn classify_constant(const_op: &mir::ConstOperand) -> WriteClass {
     };
 
     if let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = pointee.kind()
-        && matches!(adt_def.trimmed_name().as_str(), "SharedArray" | "Barrier")
+        && (super::types::is_cuda_device_adt(&adt_def, "SharedArray")
+            || super::types::is_cuda_device_adt(&adt_def, "Barrier"))
     {
         return WriteClass::Classified(address_space::SHARED);
     }
@@ -660,8 +661,7 @@ pub(super) fn is_constant_wrapper_type(ty: &rustc_public::ty::Ty) -> bool {
     let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = ty.kind() else {
         return false;
     };
-    adt_def.krate().name.as_str() == "cuda_device"
-        && adt_def.trimmed_name().as_str() == "ConstantMemory"
+    super::types::is_cuda_device_adt(&adt_def, "ConstantMemory")
 }
 
 /// `true` if a trait-method call's `Self` type is `cuda_device::SharedArray`.
@@ -685,8 +685,7 @@ pub(crate) fn self_ty_is_shared_array(substs: &rustc_public::ty::GenericArgs) ->
     let TyKind::RigidTy(RigidTy::Adt(adt_def, _)) = ty.kind() else {
         return false;
     };
-    adt_def.krate().name.as_str() == "cuda_device"
-        && adt_def.trimmed_name().as_str() == "SharedArray"
+    super::types::is_cuda_device_adt(&adt_def, "SharedArray")
 }
 
 /// Classify the write produced by a `Call` terminator's destination.

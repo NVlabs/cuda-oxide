@@ -271,6 +271,16 @@ pub fn is_zst_type(ctx: &pliron::context::Context, ty: TypeHandle) -> bool {
     false
 }
 
+/// `true` when `adt_def` is cuda-device's type named `name`.
+///
+/// Special CUDA types (`SharedArray`, `Barrier`, ...) are recognised by bare
+/// type name, so the defining-crate anchor is what keeps a user type that
+/// merely shares the name out of the special-case translation. On a miss,
+/// callers fall through to generic ADT handling — never an error.
+pub(crate) fn is_cuda_device_adt(adt_def: &rustc_public::ty::AdtDef, name: &str) -> bool {
+    adt_def.trimmed_name() == name && adt_def.krate().name.as_str() == "cuda_device"
+}
+
 /// Checks if a Rust type is zero-sized (before translation).
 ///
 /// This checks the Rust type directly before translation. It handles:
@@ -287,9 +297,7 @@ pub fn is_rust_type_zst(rust_ty: &rustc_public::ty::Ty) -> bool {
         }
         // ADT - check if it has no fields (for structs)
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, _substs)) => {
-            if adt_def.trimmed_name() == "RangeToken"
-                && adt_def.krate().name.as_str() == "cuda_device"
-            {
+            if is_cuda_device_adt(&adt_def, "RangeToken") {
                 return false;
             }
             if matches!(adt_def.kind(), rustc_public::ty::AdtKind::Union) {
@@ -402,7 +410,7 @@ fn translate_pointer_like(
             Ok(MirSliceType::get_with_kind(ctx, u8_ty, pointer_kind).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, substs))
-            if adt_def.trimmed_name() == "SharedArray" =>
+            if is_cuda_device_adt(&adt_def, "SharedArray") =>
         {
             // `*mut SharedArray<T, N>` / `&mut SharedArray<T, N>` is, at
             // runtime, the base pointer of a shared-memory region holding
@@ -418,7 +426,7 @@ fn translate_pointer_like(
             .into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, _substs))
-            if adt_def.trimmed_name() == "Barrier" =>
+            if is_cuda_device_adt(&adt_def, "Barrier") =>
         {
             // `*mut Barrier` / `&mut Barrier` is a pointer into shared memory
             // carrying mbarrier state (a 64-bit opaque value).
@@ -733,7 +741,7 @@ pub fn translate_type(
             let trimmed_name = adt_def.trimmed_name();
 
             // Check if this is DisjointSlice from cuda_device
-            if trimmed_name == "DisjointSlice" {
+            if is_cuda_device_adt(&adt_def, "DisjointSlice") {
                 // Extract the element type from the generic parameter
                 // DisjointSlice<'a, T> has T as the second parameter (first is lifetime)
                 let generic_args = &substs.0;
@@ -781,14 +789,13 @@ pub fn translate_type(
                 }
 
                 Ok(MirDisjointSliceType::get_with_space(ctx, elem, space_tys).into())
-            } else if trimmed_name == "ThreadIndex" {
+            } else if is_cuda_device_adt(&adt_def, "ThreadIndex") {
                 // ThreadIndex is a newtype around usize - translate to usize
                 // The type safety is enforced at the Rust level, not the IR level
                 Ok(get_usize_type(ctx).into())
-            } else if trimmed_name == "RangeToken" && adt_def.krate().name.as_str() == "cuda_device"
-            {
+            } else if is_cuda_device_adt(&adt_def, "RangeToken") {
                 Ok(dialect_iket::types::IketRangeTokenType::get(ctx).into())
-            } else if trimmed_name == "SharedArray" {
+            } else if is_cuda_device_adt(&adt_def, "SharedArray") {
                 // SharedArray<T, N> is a zero-sized marker type.
                 // The actual shared memory is allocated when we see the static declaration.
                 // For the type itself, we use a unit/empty tuple type.
@@ -796,7 +803,7 @@ pub fn translate_type(
                 // When SharedArray appears as a static, the MIR importer handles it specially
                 // to allocate shared memory and generate correct load/store operations.
                 Ok(dialect_mir::types::MirTupleType::get(ctx, vec![]).into())
-            } else if trimmed_name == "Barrier" {
+            } else if is_cuda_device_adt(&adt_def, "Barrier") {
                 // Barrier is a 64-bit hardware barrier state stored in shared memory.
                 // It's an opaque type that represents mbarrier state.
                 // We represent it as i64 since that's its underlying storage.
@@ -806,7 +813,7 @@ pub fn translate_type(
                     pliron::builtin::types::Signedness::Unsigned,
                 )
                 .into())
-            } else if trimmed_name == "TmaDescriptor" {
+            } else if is_cuda_device_adt(&adt_def, "TmaDescriptor") {
                 // TmaDescriptor is a 128-byte opaque TMA descriptor created on host.
                 // It's passed to kernels as a pointer. When we need the pointee type,
                 // we represent it as an array of 16 i64s (128 bytes total).
@@ -1377,27 +1384,22 @@ pub fn translate_type(
                         adt_def,
                         substs,
                     )) = self_ty.kind()
+                        && is_cuda_device_adt(&adt_def, "SharedArray")
                     {
-                        // Name plus defining crate, so a user struct that
-                        // happens to be called SharedArray can't match.
-                        if adt_def.trimmed_name() == "SharedArray"
-                            && adt_def.krate().name.as_str() == "cuda_device"
-                        {
-                            // Extract T from SharedArray<T, N>
-                            let elem_ty = substs
-                                .0
-                                .iter()
-                                .find_map(|arg| match arg {
-                                    rustc_public::ty::GenericArgKind::Type(t) => Some(t),
-                                    _ => None,
-                                })
-                                .ok_or_else(|| {
-                                    input_error_noloc!(TranslationErr::unsupported(
-                                        "SharedArray missing element type"
-                                    ))
-                                })?;
-                            return translate_type(ctx, elem_ty);
-                        }
+                        // Extract T from SharedArray<T, N>
+                        let elem_ty = substs
+                            .0
+                            .iter()
+                            .find_map(|arg| match arg {
+                                rustc_public::ty::GenericArgKind::Type(t) => Some(t),
+                                _ => None,
+                            })
+                            .ok_or_else(|| {
+                                input_error_noloc!(TranslationErr::unsupported(
+                                    "SharedArray missing element type"
+                                ))
+                            })?;
+                        return translate_type(ctx, elem_ty);
                     }
                 }
             }

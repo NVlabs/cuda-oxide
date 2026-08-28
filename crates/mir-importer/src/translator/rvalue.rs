@@ -11224,7 +11224,7 @@ pub(crate) fn extract_enum_variant(
     )
 }
 
-/// Check if a type is a pointer to SharedArray.
+/// Check if a type is a pointer to cuda-device's SharedArray.
 fn is_shared_array_pointer(ty: &rustc_public::ty::Ty) -> bool {
     use rustc_public::ty::{RigidTy, TyKind};
 
@@ -11233,7 +11233,7 @@ fn is_shared_array_pointer(ty: &rustc_public::ty::Ty) -> bool {
             // Check if the pointee is SharedArray
             match pointee_ty.kind() {
                 TyKind::RigidTy(RigidTy::Adt(adt_def, _)) => {
-                    adt_def.trimmed_name() == "SharedArray"
+                    types::is_cuda_device_adt(&adt_def, "SharedArray")
                 }
                 _ => false,
             }
@@ -11242,7 +11242,8 @@ fn is_shared_array_pointer(ty: &rustc_public::ty::Ty) -> bool {
     }
 }
 
-/// Check if a type is a pointer to Barrier (mbarrier state in shared memory).
+/// Check if a type is a pointer to cuda-device's Barrier (mbarrier state in
+/// shared memory).
 fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
     use rustc_public::ty::{RigidTy, TyKind};
 
@@ -11250,7 +11251,9 @@ fn is_barrier_pointer(ty: &rustc_public::ty::Ty) -> bool {
         TyKind::RigidTy(RigidTy::RawPtr(pointee_ty, _)) => {
             // Check if the pointee is Barrier
             match pointee_ty.kind() {
-                TyKind::RigidTy(RigidTy::Adt(adt_def, _)) => adt_def.trimmed_name() == "Barrier",
+                TyKind::RigidTy(RigidTy::Adt(adt_def, _)) => {
+                    types::is_cuda_device_adt(&adt_def, "Barrier")
+                }
                 _ => false,
             }
         }
@@ -13749,9 +13752,9 @@ fn extract_shared_array_info(
         TyKind::RigidTy(RigidTy::RawPtr(pointee_ty, _)) => {
             match pointee_ty.kind() {
                 TyKind::RigidTy(RigidTy::Adt(adt_def, substs)) => {
-                    if adt_def.trimmed_name() != "SharedArray" {
+                    if !types::is_cuda_device_adt(&adt_def, "SharedArray") {
                         return input_err_noloc!(TranslationErr::unsupported(format!(
-                            "Expected SharedArray, got {}",
+                            "Expected cuda_device::SharedArray, got {}",
                             adt_def.trimmed_name()
                         )));
                     }
