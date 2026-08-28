@@ -3599,7 +3599,7 @@ fn test_ex2_approx_f16_lowering_rejects_wrong_type_and_format() {
         .expect_err("an f16 operation with an f32 operand must fail closed")
         .to_string();
         assert!(
-            error.contains("types must match the selected format"),
+            error.contains("nvvm.scalar_math types do not match its format"),
             "{error}"
         );
 
@@ -3628,7 +3628,7 @@ fn test_ex2_approx_f16_lowering_rejects_wrong_type_and_format() {
         .expect_err("unadmitted ex2.approx.ftz.f16 must fail closed")
         .to_string();
         assert!(
-            error.contains("variant has no generated lowering recipe"),
+            error.contains("nvvm.scalar_math variant is not admitted"),
             "{error}"
         );
     }
