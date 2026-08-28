@@ -1440,8 +1440,13 @@ fn ensure_foreign_callee_is_not_variadic(
 }
 
 // stable-MIR reports the function's canonical definition path rather than the
-// `cuda_device::thread::__internal` re-export spelling emitted by the macro.
-const KERNEL_SCOPE_CONSTRUCTOR: &str = "cuda_device::__internal::make_kernel_scope";
+// `cuda_device::thread::__internal` re-export spelling emitted by the macro,
+// but accept both spellings like the metadata markers below so a toolchain
+// bump changing visible-path selection cannot silently drop the match.
+const KERNEL_SCOPE_CONSTRUCTORS: &[&str] = &[
+    "cuda_device::__internal::make_kernel_scope",
+    "cuda_device::thread::__internal::make_kernel_scope",
+];
 
 // These start-of-kernel calls are compiler metadata, not source statements.
 // They are removed during import, but the replacement control-flow edge must
@@ -1469,7 +1474,7 @@ const KERNEL_METADATA_MARKERS: &[&str] = &[
 /// diagnostic span and runtime line table serve those different purposes.
 fn call_debug_location(pattern_name: Option<&str>, loc: Location) -> Location {
     if pattern_name.is_some_and(|name| {
-        name == KERNEL_SCOPE_CONSTRUCTOR || KERNEL_METADATA_MARKERS.contains(&name)
+        KERNEL_SCOPE_CONSTRUCTORS.contains(&name) || KERNEL_METADATA_MARKERS.contains(&name)
     }) {
         llvm_export::artificial_debug_location()
     } else {
@@ -3326,10 +3331,12 @@ mod tests {
             child_loc: Box::new(Location::Unknown),
         };
 
-        assert_eq!(
-            call_debug_location(Some(KERNEL_SCOPE_CONSTRUCTOR), user_location.clone()),
-            llvm_export::artificial_debug_location()
-        );
+        for constructor in KERNEL_SCOPE_CONSTRUCTORS {
+            assert_eq!(
+                call_debug_location(Some(constructor), user_location.clone()),
+                llvm_export::artificial_debug_location()
+            );
+        }
         assert_eq!(
             call_debug_location(
                 Some("cuda_device::__launch_bounds_config"),
