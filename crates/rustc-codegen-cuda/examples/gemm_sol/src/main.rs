@@ -50,7 +50,7 @@ use cuda_device::clc::{
     clc_query_get_first_ctaid_x, clc_query_is_canceled, clc_try_cancel, clc_try_cancel_multicast,
 };
 use cuda_device::cluster;
-use cuda_device::convert::cvt_bf16x2_f32;
+use cuda_device::convert::{bf16_to_f32, cvt_bf16x2_f32};
 use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
@@ -6727,8 +6727,4 @@ fn unpack_bf16_pair(packed: u32) -> (f32, f32) {
     let lo = (packed & 0xFFFF) as u16;
     let hi = ((packed >> 16) & 0xFFFF) as u16;
     (bf16_to_f32(lo), bf16_to_f32(hi))
-}
-
-fn bf16_to_f32(h: u16) -> f32 {
-    f32::from_bits((h as u32) << 16)
 }
