@@ -906,15 +906,8 @@ mod tests {
         };
 
         let field_pointer: TypeHandle = MirPtrType::get_generic(ctx, array_type, true).into();
-        let field = Operation::new(
-            ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_pointer],
-            vec![slot],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(field).set_attr_field_index(ctx, FieldIndexAttr(0));
+        let field = MirFieldAddrOp::build(ctx, slot, field_pointer, 0)
+            .expect("fixture slot is a MIR pointer");
         assert!(
             MirFieldAddrOp::new(field).verify(ctx).is_ok(),
             "alloca field projection must preserve mutable Erased storage"
@@ -1357,15 +1350,8 @@ mod tests {
         }
 
         let field_pointer: TypeHandle = MirPtrType::get_generic(ctx, array_type, false).into();
-        let field = Operation::new(
-            ctx,
-            MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_pointer],
-            vec![aggregate_argument],
-            vec![],
-            0,
-        );
-        MirFieldAddrOp::new(field).set_attr_field_index(ctx, FieldIndexAttr(0));
+        let field = MirFieldAddrOp::build(ctx, aggregate_argument, field_pointer, 0)
+            .expect("fixture aggregate argument is a MIR pointer");
         field.insert_at_back(body, ctx);
         let field_value = field.deref(ctx).get_result(0);
 

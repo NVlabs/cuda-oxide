@@ -269,19 +269,9 @@ pub fn translate_statement(
                         .into();
 
                         use dialect_mir::ops::MirFieldAddrOp;
-                        let field_addr_op = Operation::new(
-                            ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![field_ptr_ty],
-                            vec![slot],
-                            vec![],
-                            0,
-                        );
+                        let field_addr_op =
+                            MirFieldAddrOp::build(ctx, slot, field_ptr_ty, *field_idx as u32)?;
                         field_addr_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(field_addr_op).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         if let Some(prev) = current_prev {
                             field_addr_op.insert_after(ctx, prev);
                         } else {
@@ -527,19 +517,9 @@ pub fn translate_statement(
                         .into();
 
                         use dialect_mir::ops::MirFieldAddrOp;
-                        let addr_op = Operation::new(
-                            ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![field_ptr_ty],
-                            vec![ptr_val],
-                            vec![],
-                            0,
-                        );
+                        let addr_op =
+                            MirFieldAddrOp::build(ctx, ptr_val, field_ptr_ty, *field_idx as u32)?;
                         addr_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(addr_op).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         if let Some(prev) = current_prev {
                             addr_op.insert_after(ctx, prev);
                         } else {
@@ -610,19 +590,13 @@ pub fn translate_statement(
                         .into();
 
                         use dialect_mir::ops::MirFieldAddrOp;
-                        let outer_addr_op = Operation::new(
+                        let outer_addr_op = MirFieldAddrOp::build(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![outer_ptr_ty],
-                            vec![slot],
-                            vec![],
-                            0,
-                        );
+                            slot,
+                            outer_ptr_ty,
+                            *outer_field_idx as u32,
+                        )?;
                         outer_addr_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(outer_addr_op).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*outer_field_idx as u32),
-                        );
                         if let Some(prev) = current_prev {
                             outer_addr_op.insert_after(ctx, prev);
                         } else {
@@ -645,19 +619,13 @@ pub fn translate_statement(
                             slot_addr_space,
                         )
                         .into();
-                        let inner_addr_op = Operation::new(
+                        let inner_addr_op = MirFieldAddrOp::build(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![inner_ptr_ty],
-                            vec![outer_ptr],
-                            vec![],
-                            0,
-                        );
+                            outer_ptr,
+                            inner_ptr_ty,
+                            *inner_field_idx as u32,
+                        )?;
                         inner_addr_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(inner_addr_op).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*inner_field_idx as u32),
-                        );
                         if let Some(prev) = current_prev {
                             inner_addr_op.insert_after(ctx, prev);
                         } else {
@@ -921,14 +889,9 @@ pub fn translate_statement(
                 loc.clone(),
             )?;
 
-            let memcpy_op = Operation::new(
-                ctx,
-                MirMemcpyOp::get_concrete_op_info(),
-                vec![],
-                vec![dst, src, count],
-                vec![],
-                0,
-            );
+            // The typed builder stamps the elem_type fact from dst; lowering
+            // scales the byte count from that attribute, not operand history.
+            let memcpy_op = MirMemcpyOp::build(ctx, dst, src, count)?;
             memcpy_op.deref_mut(ctx).set_loc(loc);
             if let Some(prev) = last_op {
                 memcpy_op.insert_after(ctx, prev);
@@ -1044,6 +1007,12 @@ pub fn translate_statement(
             MirSetDiscriminantOp::new(set_op).set_attr_set_discriminant_variant_index(
                 ctx,
                 dialect_mir::attributes::VariantIndexAttr(variant_idx as u32),
+            );
+            // Stamp the enum type fact: lowering derives the tag/niche layout
+            // from this attribute, never from operand type history.
+            MirSetDiscriminantOp::new(set_op).set_attr_set_discriminant_enum_ty(
+                ctx,
+                pliron::builtin::attributes::TypeAttr::new(enum_mir_ty),
             );
 
             let insert_after = addr_prev.or(prev_op);

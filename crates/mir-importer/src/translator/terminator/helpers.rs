@@ -145,19 +145,8 @@ pub fn store_result_to_place(
                 pointer_address_space(ctx, slot),
             )
             .into();
-            let field_addr_op = Operation::new(
-                ctx,
-                MirFieldAddrOp::get_concrete_op_info(),
-                vec![field_ptr_ty],
-                vec![slot],
-                vec![],
-                0,
-            );
+            let field_addr_op = MirFieldAddrOp::build(ctx, slot, field_ptr_ty, *field_idx as u32)?;
             field_addr_op.deref_mut(ctx).set_loc(loc.clone());
-            MirFieldAddrOp::new(field_addr_op).set_attr_field_index(
-                ctx,
-                dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-            );
             field_addr_op.insert_after(ctx, prev_op);
             let field_ptr = field_addr_op.deref(ctx).get_result(0);
 

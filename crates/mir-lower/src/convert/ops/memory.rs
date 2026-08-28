@@ -314,11 +314,17 @@ pub(crate) fn convert_memmove(
 /// Shared lowering for `mir.memcpy` / `mir.memmove`. `intrinsic_base` selects
 /// the LLVM intrinsic family ("memcpy" or "memmove"); both share the same
 /// `(dst, src, len_bytes, isvolatile)` signature and element->byte count scaling.
+///
+/// The element type comes from the op's own `elem_type` attribute, stamped
+/// at build time from dst's pointer type. Operand type history is not
+/// usable here: a kind-only `mir.cast` lowers to a plain value forwarding,
+/// history does not follow that edge, and a stale hit would scale the byte
+/// count by the wrong element size.
 fn convert_mem_transfer(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    operands_info: &OperandsInfo,
+    _operands_info: &OperandsInfo,
     intrinsic_base: &str,
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
@@ -332,18 +338,23 @@ fn convert_mem_transfer(
     };
 
     let pointee = {
-        let dst_ptr_ty = operands_info
-            .lookup_most_recent_of_type::<MirPtrType>(ctx, dst)
+        let op_ref = op.deref(ctx);
+        op_ref
+            .attributes
+            .get::<pliron::builtin::attributes::TypeAttr>(
+                &format!("{intrinsic_base}_elem_type").try_into().unwrap(),
+            )
+            .map(|attr| attr.get_type(ctx))
             .ok_or_else(|| {
                 pliron::create_error!(
-                    op.deref(ctx).loc(),
+                    op_ref.loc(),
                     pliron::result::ErrorKind::VerificationFailed,
                     pliron::result::StringError(format!(
-                        "{intrinsic_base} destination must be a MIR pointer before lowering"
+                        "mir.{intrinsic_base} missing its elem_type attribute; \
+                         byte count has no fact to derive from"
                     ))
                 )
-            })?;
-        dst_ptr_ty.pointee
+            })?
     };
     let elem_ty = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
     let elem_size = get_type_size(ctx, elem_ty);
@@ -1729,8 +1740,6 @@ mod tests {
         abi_align: u64,
         field_index: u32,
     ) -> Option<u32> {
-        use dialect_mir::attributes::FieldIndexAttr;
-
         let mut ctx = make_ctx();
         let field_types: Vec<TypeHandle> = field_bit_widths
             .iter()
@@ -1755,16 +1764,9 @@ mod tests {
         let (module_ptr, block) = build_kernel(&mut ctx, vec![struct_ptr_ty.into()], vec![]);
         let struct_ptr_val = block.deref(&ctx).get_argument(0);
 
-        let field_addr_op = Operation::new(
-            &mut ctx,
-            mir::MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_ptr_ty.into()],
-            vec![struct_ptr_val],
-            vec![],
-            0,
-        );
-        mir::MirFieldAddrOp::new(field_addr_op)
-            .set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+        let field_addr_op =
+            mir::MirFieldAddrOp::build(&mut ctx, struct_ptr_val, field_ptr_ty.into(), field_index)
+                .expect("field_addr build");
         field_addr_op.insert_at_back(block, &ctx);
         let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
 
@@ -1975,8 +1977,6 @@ mod tests {
     /// access than the bytes allow.
     #[test]
     fn convert_load_claims_address_alignment_over_abi_at_packed_offsets() {
-        use dialect_mir::attributes::FieldIndexAttr;
-
         let mut ctx = make_ctx();
         let u8_ty: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
         let u32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
@@ -2008,15 +2008,8 @@ mod tests {
         let (module_ptr, block) = build_kernel(&mut ctx, vec![outer_ptr_ty], vec![]);
         let base = block.deref(&ctx).get_argument(0);
 
-        let field_addr_op = Operation::new(
-            &mut ctx,
-            mir::MirFieldAddrOp::get_concrete_op_info(),
-            vec![inner_ptr_ty],
-            vec![base],
-            vec![],
-            0,
-        );
-        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(1));
+        let field_addr_op =
+            mir::MirFieldAddrOp::build(&mut ctx, base, inner_ptr_ty, 1).expect("field_addr build");
         field_addr_op.insert_at_back(block, &ctx);
         let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
 
@@ -2076,8 +2069,6 @@ mod tests {
         abi_align: u64,
         field_index: u32,
     ) -> Option<u32> {
-        use dialect_mir::attributes::FieldIndexAttr;
-
         let mut ctx = make_ctx();
         let field_types: Vec<TypeHandle> = field_bit_widths
             .iter()
@@ -2107,16 +2098,9 @@ mod tests {
         let struct_ptr_val = block.deref(&ctx).get_argument(0);
         let val = block.deref(&ctx).get_argument(1);
 
-        let field_addr_op = Operation::new(
-            &mut ctx,
-            mir::MirFieldAddrOp::get_concrete_op_info(),
-            vec![field_ptr_ty.into()],
-            vec![struct_ptr_val],
-            vec![],
-            0,
-        );
-        mir::MirFieldAddrOp::new(field_addr_op)
-            .set_attr_field_index(&ctx, FieldIndexAttr(field_index));
+        let field_addr_op =
+            mir::MirFieldAddrOp::build(&mut ctx, struct_ptr_val, field_ptr_ty.into(), field_index)
+                .expect("field_addr build");
         field_addr_op.insert_at_back(block, &ctx);
         let field_ptr_val = field_addr_op.deref(&ctx).get_result(0);
 
@@ -2195,7 +2179,6 @@ mod tests {
         struct_abi_align: u64,
         index: Option<u64>,
     ) -> Option<u32> {
-        use dialect_mir::attributes::FieldIndexAttr;
         use pliron::builtin::attributes::IntegerAttr;
         use std::num::NonZeroUsize;
 
@@ -2226,15 +2209,9 @@ mod tests {
         let struct_ptr_val = block.deref(&ctx).get_argument(0);
 
         // &s.lanes -- carries the struct's alignment onto the array address.
-        let field_addr_op = Operation::new(
-            &mut ctx,
-            mir::MirFieldAddrOp::get_concrete_op_info(),
-            vec![array_ptr_ty.into()],
-            vec![struct_ptr_val],
-            vec![],
-            0,
-        );
-        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        let field_addr_op =
+            mir::MirFieldAddrOp::build(&mut ctx, struct_ptr_val, array_ptr_ty.into(), 0)
+                .expect("field_addr build");
         field_addr_op.insert_at_back(block, &ctx);
         let array_ptr_val = field_addr_op.deref(&ctx).get_result(0);
 
@@ -2339,7 +2316,6 @@ mod tests {
         index: Option<u64>,
         load_first_scalar: bool,
     ) -> (Option<u32>, Option<u32>) {
-        use dialect_mir::attributes::FieldIndexAttr;
         use pliron::builtin::attributes::IntegerAttr;
         use std::num::NonZeroUsize;
 
@@ -2374,15 +2350,9 @@ mod tests {
         let struct_ptr_val = block.deref(&ctx).get_argument(0);
 
         // &s.lanes -- carries the struct's alignment onto the array address.
-        let field_addr_op = Operation::new(
-            &mut ctx,
-            mir::MirFieldAddrOp::get_concrete_op_info(),
-            vec![array_ptr_ty.into()],
-            vec![struct_ptr_val],
-            vec![],
-            0,
-        );
-        mir::MirFieldAddrOp::new(field_addr_op).set_attr_field_index(&ctx, FieldIndexAttr(0));
+        let field_addr_op =
+            mir::MirFieldAddrOp::build(&mut ctx, struct_ptr_val, array_ptr_ty.into(), 0)
+                .expect("field_addr build");
         field_addr_op.insert_at_back(block, &ctx);
         let array_ptr_val = field_addr_op.deref(&ctx).get_result(0);
 

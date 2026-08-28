@@ -2384,15 +2384,9 @@ fn emit_ptr_memmove(
     let (count, last) =
         rvalue::translate_operand(ctx, body, &args[2], value_map, block_ptr, last, loc.clone())?;
 
-    // `mir.memmove` operand order is (dst, src, count).
-    let xfer = Operation::new(
-        ctx,
-        MirMemmoveOp::get_concrete_op_info(),
-        vec![],
-        vec![dst, src, count],
-        vec![],
-        0,
-    );
+    // `mir.memmove` operand order is (dst, src, count). The typed builder
+    // stamps the elem_type fact from dst for lowering's byte count.
+    let xfer = MirMemmoveOp::build(ctx, dst, src, count)?;
     xfer.deref_mut(ctx).set_loc(loc.clone());
     match last {
         Some(p) => xfer.insert_after(ctx, p),

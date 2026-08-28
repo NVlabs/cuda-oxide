@@ -366,15 +366,35 @@ impl PromotableOpInterface for MirStoreOp {
 /// | `count` | Integer      | Number of pointee elements to copy  |
 /// ```
 ///
+/// # Attributes
+///
+/// ```text
+/// | Name        | Type     | Description                                  |
+/// |-------------|----------|----------------------------------------------|
+/// | `memcpy_elem_type` | TypeAttr | The pointee type, stamped by [`Self::build`] |
+/// ```
+///
+/// Why an attribute when the operands are typed? Lowering runs after the
+/// operands are converted to opaque `llvm.ptr`, and operand type HISTORY
+/// breaks across value-forwarded kind-only casts. The attribute rides the
+/// op itself, so the byte count always scales by the right element:
+///
+/// ```text
+/// build time:  dst: mir.ptr<T> ──► memcpy_elem_type = T  (stamped once)
+/// lowering:    bytes = count * size_of(elem_type)  (no history lookup)
+/// ```
+///
 /// # Verification
 ///
 /// - Destination and source operands must be `MirPtrType`.
 /// - Destination and source pointee types must match.
+/// - The elem-type attribute must be present and equal that shared pointee.
 /// - Count operand must be an integer.
 #[pliron_op(
     name = "mir.memcpy",
     format,
-    interfaces = [NOpdsInterface<3>, NResultsInterface<0>]
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+    attributes = (memcpy_elem_type: pliron::builtin::attributes::TypeAttr)
 )]
 pub struct MirMemcpyOp;
 
@@ -383,35 +403,109 @@ impl MirMemcpyOp {
     pub fn new(op: Ptr<Operation>) -> Self {
         MirMemcpyOp { op }
     }
+
+    /// Build a `mir.memcpy` with its element-type fact stamped from `dst`.
+    ///
+    /// The one construction door: callers cannot forget the fact, and the
+    /// verifier keeps it equal to the pointee. Fails if `dst` is not a MIR
+    /// pointer at build time.
+    pub fn build(
+        ctx: &mut Context,
+        dst: Value,
+        src: Value,
+        count: Value,
+    ) -> Result<Ptr<Operation>, Error> {
+        build_mem_transfer::<Self>(ctx, dst, src, count, "mir.memcpy", "memcpy_elem_type")
+    }
 }
 
 impl Verify for MirMemcpyOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        let op = &*self.get_operation().deref(ctx);
-        let dst_ty = op.get_operand(0).get_type(ctx);
-        let src_ty = op.get_operand(1).get_type(ctx);
-        let count_ty = op.get_operand(2).get_type(ctx);
-
-        let dst_ty_ref = dst_ty.deref(ctx);
-        let Some(dst_ptr_ty) = dst_ty_ref.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "MirMemcpyOp destination must be a MirPtrType");
-        };
-        let src_ty_ref = src_ty.deref(ctx);
-        let Some(src_ptr_ty) = src_ty_ref.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "MirMemcpyOp source must be a MirPtrType");
-        };
-        if dst_ptr_ty.pointee != src_ptr_ty.pointee {
-            return verify_err!(
-                op.loc(),
-                "MirMemcpyOp source and destination pointee types must match"
-            );
-        }
-        if count_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
-            return verify_err!(op.loc(), "MirMemcpyOp count must be an integer");
-        }
-
-        Ok(())
+        verify_mem_transfer(
+            ctx,
+            self.get_operation(),
+            self.get_attr_memcpy_elem_type(ctx).map(|a| a.get_type(ctx)),
+            "MirMemcpyOp",
+        )
     }
+}
+
+/// Shared builder for `mir.memcpy` / `mir.memmove`: stamp `elem_type` from
+/// `dst`'s build-time pointer type.
+fn build_mem_transfer<OpT: Op>(
+    ctx: &mut Context,
+    dst: Value,
+    src: Value,
+    count: Value,
+    op_name: &str,
+    elem_type_key: &str,
+) -> Result<Ptr<Operation>, Error> {
+    let dst_ty = dst.get_type(ctx);
+    let pointee = {
+        let dst_ty_ref = dst_ty.deref(ctx);
+        dst_ty_ref
+            .downcast_ref::<MirPtrType>()
+            .map(|ptr_ty| ptr_ty.pointee)
+    };
+    let Some(pointee) = pointee else {
+        return pliron::input_err_noloc!(
+            "{op_name} destination must be a MirPtrType at build time"
+        );
+    };
+    let op = Operation::new(
+        ctx,
+        OpT::get_concrete_op_info(),
+        vec![],
+        vec![dst, src, count],
+        vec![],
+        0,
+    );
+    let elem_attr = pliron::builtin::attributes::TypeAttr::new(pointee);
+    let key: pliron::identifier::Identifier = elem_type_key.try_into().expect("valid identifier");
+    op.deref_mut(ctx).attributes.set(key, elem_attr);
+    Ok(op)
+}
+
+/// Shared verifier body for `mir.memcpy` / `mir.memmove`.
+fn verify_mem_transfer(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    elem_type: Option<pliron::r#type::TypeHandle>,
+    op_name: &str,
+) -> Result<(), Error> {
+    let op = &*op.deref(ctx);
+    let dst_ty = op.get_operand(0).get_type(ctx);
+    let src_ty = op.get_operand(1).get_type(ctx);
+    let count_ty = op.get_operand(2).get_type(ctx);
+
+    let dst_ty_ref = dst_ty.deref(ctx);
+    let Some(dst_ptr_ty) = dst_ty_ref.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "{op_name} destination must be a MirPtrType");
+    };
+    let src_ty_ref = src_ty.deref(ctx);
+    let Some(src_ptr_ty) = src_ty_ref.downcast_ref::<MirPtrType>() else {
+        return verify_err!(op.loc(), "{op_name} source must be a MirPtrType");
+    };
+    if dst_ptr_ty.pointee != src_ptr_ty.pointee {
+        return verify_err!(
+            op.loc(),
+            "{op_name} source and destination pointee types must match"
+        );
+    }
+    let Some(elem_type) = elem_type else {
+        return verify_err!(op.loc(), "{op_name} missing elem_type attribute");
+    };
+    if elem_type != dst_ptr_ty.pointee {
+        return verify_err!(
+            op.loc(),
+            "{op_name} elem_type must equal the dst/src pointee"
+        );
+    }
+    if count_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
+        return verify_err!(op.loc(), "{op_name} count must be an integer");
+    }
+
+    Ok(())
 }
 
 // ============================================================================
@@ -435,15 +529,22 @@ impl Verify for MirMemcpyOp {
 /// | `count` | Integer      | Number of pointee elements to move  |
 /// ```
 ///
+/// # Attributes
+///
+/// Same element-type fact as [`MirMemcpyOp`] (`memmove_elem_type`), stamped by [`Self::build`],
+/// read by lowering for the byte count. See the memcpy doc for the why.
+///
 /// # Verification
 ///
 /// - Destination and source operands must be `MirPtrType`.
 /// - Destination and source pointee types must match.
+/// - The elem-type attribute must be present and equal that shared pointee.
 /// - Count operand must be an integer.
 #[pliron_op(
     name = "mir.memmove",
     format,
-    interfaces = [NOpdsInterface<3>, NResultsInterface<0>]
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+    attributes = (memmove_elem_type: pliron::builtin::attributes::TypeAttr)
 )]
 pub struct MirMemmoveOp;
 
@@ -452,34 +553,28 @@ impl MirMemmoveOp {
     pub fn new(op: Ptr<Operation>) -> Self {
         MirMemmoveOp { op }
     }
+
+    /// Build a `mir.memmove` with its element-type fact stamped from `dst`.
+    /// See [`MirMemcpyOp::build`].
+    pub fn build(
+        ctx: &mut Context,
+        dst: Value,
+        src: Value,
+        count: Value,
+    ) -> Result<Ptr<Operation>, Error> {
+        build_mem_transfer::<Self>(ctx, dst, src, count, "mir.memmove", "memmove_elem_type")
+    }
 }
 
 impl Verify for MirMemmoveOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        let op = &*self.get_operation().deref(ctx);
-        let dst_ty = op.get_operand(0).get_type(ctx);
-        let src_ty = op.get_operand(1).get_type(ctx);
-        let count_ty = op.get_operand(2).get_type(ctx);
-
-        let dst_ty_ref = dst_ty.deref(ctx);
-        let Some(dst_ptr_ty) = dst_ty_ref.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "MirMemmoveOp destination must be a MirPtrType");
-        };
-        let src_ty_ref = src_ty.deref(ctx);
-        let Some(src_ptr_ty) = src_ty_ref.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "MirMemmoveOp source must be a MirPtrType");
-        };
-        if dst_ptr_ty.pointee != src_ptr_ty.pointee {
-            return verify_err!(
-                op.loc(),
-                "MirMemmoveOp source and destination pointee types must match"
-            );
-        }
-        if count_ty.deref(ctx).downcast_ref::<IntegerType>().is_none() {
-            return verify_err!(op.loc(), "MirMemmoveOp count must be an integer");
-        }
-
-        Ok(())
+        verify_mem_transfer(
+            ctx,
+            self.get_operation(),
+            self.get_attr_memmove_elem_type(ctx)
+                .map(|a| a.get_type(ctx)),
+            "MirMemmoveOp",
+        )
     }
 }
 

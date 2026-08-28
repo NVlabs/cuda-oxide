@@ -4059,8 +4059,6 @@ fn apply_field_addr_and_load(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
-    use dialect_mir::ops::MirFieldAddrOp;
-
     let field_type = types::translate_type(ctx, field_ty)?;
     let field_ptr_ty = projected_pointer_type(
         ctx,
@@ -4075,19 +4073,13 @@ fn apply_field_addr_and_load(
         )
     })?;
 
-    let addr_op = Operation::new(
+    let addr_op = dialect_mir::ops::MirFieldAddrOp::build(
         ctx,
-        MirFieldAddrOp::get_concrete_op_info(),
-        vec![field_ptr_ty],
-        vec![aggregate_ptr],
-        vec![],
-        0,
-    );
+        aggregate_ptr,
+        field_ptr_ty,
+        field_idx as u32,
+    )?;
     addr_op.deref_mut(ctx).set_loc(loc.clone());
-    MirFieldAddrOp::new(addr_op).set_attr_field_index(
-        ctx,
-        dialect_mir::attributes::FieldIndexAttr(field_idx as u32),
-    );
     match prev_op {
         Some(p) => addr_op.insert_after(ctx, p),
         None => addr_op.insert_at_front(block_ptr, ctx),
@@ -4851,7 +4843,7 @@ fn translate_place_addr_from_slot(
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> TranslationResult<Option<(Value, Option<Ptr<Operation>>)>> {
-    use dialect_mir::ops::{MirConstantOp, MirFieldAddrOp};
+    use dialect_mir::ops::MirConstantOp;
 
     let mut current = slot;
     let mut current_prev_op = prev_op;
@@ -5102,19 +5094,13 @@ fn translate_place_addr_from_slot(
                                 /* legacy requested mutability, ignored */ is_mutable,
                             )
                             .expect("fat-pointer data extraction must yield a MirPtrType");
-                            let tail_addr = Operation::new(
+                            let tail_addr = dialect_mir::ops::MirFieldAddrOp::build(
                                 ctx,
-                                MirFieldAddrOp::get_concrete_op_info(),
-                                vec![tail_ptr_ty],
-                                vec![data_ptr],
-                                vec![],
-                                0,
-                            );
+                                data_ptr,
+                                tail_ptr_ty,
+                                *field_idx as u32,
+                            )?;
                             tail_addr.deref_mut(ctx).set_loc(loc.clone());
-                            MirFieldAddrOp::new(tail_addr).set_attr_field_index(
-                                ctx,
-                                dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                            );
                             tail_addr.insert_after(ctx, extract_ptr);
                             let tail_ptr = tail_addr.deref(ctx).get_result(0);
 
@@ -5316,19 +5302,13 @@ fn translate_place_addr_from_slot(
                         // The physical struct stores an unsized slice tail as
                         // its element type, so the field address must be `*T`,
                         // not `*[T]`.
-                        let tail_addr = Operation::new(
+                        let tail_addr = dialect_mir::ops::MirFieldAddrOp::build(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![tail_ptr_ty],
-                            vec![current],
-                            vec![],
-                            0,
-                        );
+                            current,
+                            tail_ptr_ty,
+                            *field_idx as u32,
+                        )?;
                         tail_addr.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(tail_addr).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         match current_prev_op {
                             Some(previous) => tail_addr.insert_after(ctx, previous),
                             None => tail_addr.insert_at_front(block_ptr, ctx),
@@ -5450,20 +5430,13 @@ fn translate_place_addr_from_slot(
                     return Ok(None);
                 };
 
-                let op = Operation::new(
+                let op = dialect_mir::ops::MirFieldAddrOp::build(
                     ctx,
-                    MirFieldAddrOp::get_concrete_op_info(),
-                    vec![result_ptr_ty],
-                    vec![current],
-                    vec![],
-                    0,
-                );
+                    current,
+                    result_ptr_ty,
+                    flat_field_index,
+                )?;
                 op.deref_mut(ctx).set_loc(loc.clone());
-
-                MirFieldAddrOp::new(op).set_attr_field_index(
-                    ctx,
-                    dialect_mir::attributes::FieldIndexAttr(flat_field_index),
-                );
 
                 match current_prev_op {
                     Some(previous) => op.insert_after(ctx, previous),
@@ -6240,7 +6213,7 @@ pub fn translate_place_iterative(
                         // The struct model stores an unsized `[T]` tail as the
                         // element type `T`, because the elements live inline after
                         // the sized prefix. Address the field as `*T`, not `*[T]`.
-                        use dialect_mir::ops::{MirConstructSliceOp, MirFieldAddrOp};
+                        use dialect_mir::ops::MirConstructSliceOp;
                         let tail_ptr_ty = projected_pointer_type(
                             ctx,
                             current_value.get_type(ctx),
@@ -6248,19 +6221,13 @@ pub fn translate_place_iterative(
                             /* legacy requested mutability, ignored */ false,
                         )
                         .expect("slice-tail field base must be a MirPtrType");
-                        let tail_addr = Operation::new(
+                        let tail_addr = dialect_mir::ops::MirFieldAddrOp::build(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![tail_ptr_ty],
-                            vec![current_value],
-                            vec![],
-                            0,
-                        );
+                            current_value,
+                            tail_ptr_ty,
+                            *field_idx as u32,
+                        )?;
                         tail_addr.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(tail_addr).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         match current_prev_op {
                             Some(prev) => tail_addr.insert_after(ctx, prev),
                             None => tail_addr.insert_at_front(block_ptr, ctx),
@@ -6316,7 +6283,6 @@ pub fn translate_place_iterative(
                             );
                         }
 
-                        use dialect_mir::ops::MirFieldAddrOp;
                         let field_type = types::translate_type(ctx, field_ty)?;
                         let field_ptr_ty = projected_pointer_type(
                             ctx,
@@ -6325,19 +6291,13 @@ pub fn translate_place_iterative(
                             /* legacy requested mutability, ignored */ false,
                         )
                         .expect("nested DST field base must be a MirPtrType");
-                        let field_addr = Operation::new(
+                        let field_addr = dialect_mir::ops::MirFieldAddrOp::build(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![field_ptr_ty],
-                            vec![current_value],
-                            vec![],
-                            0,
-                        );
+                            current_value,
+                            field_ptr_ty,
+                            *field_idx as u32,
+                        )?;
                         field_addr.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(field_addr).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         match current_prev_op {
                             Some(prev) => field_addr.insert_after(ctx, prev),
                             None => field_addr.insert_at_front(block_ptr, ctx),
@@ -7695,14 +7655,9 @@ pub(crate) fn translate_array_constant_into_alloca(
     count_op.insert_after(ctx, global_alloc.get_operation());
     let count = count_op.deref(ctx).get_result(0);
 
-    let memcpy_op = Operation::new(
-        ctx,
-        dialect_mir::ops::MirMemcpyOp::get_concrete_op_info(),
-        vec![],
-        vec![dest_addr, src, count],
-        vec![],
-        0,
-    );
+    // Typed builder: stamps the elem_type fact from dest_addr (the whole
+    // promoted aggregate type; count is 1), read back by lowering.
+    let memcpy_op = dialect_mir::ops::MirMemcpyOp::build(ctx, dest_addr, src, count)?;
     memcpy_op.deref_mut(ctx).set_loc(loc);
     memcpy_op.insert_after(ctx, count_op);
 

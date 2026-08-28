@@ -2159,6 +2159,7 @@ fn test_pointer_projections_preserve_or_erase_kind_only() {
             0,
         );
         MirFieldAddrOp::new(op).set_attr_field_index(ctx, FieldIndexAttr(0));
+        MirFieldAddrOp::new(op).set_attr_aggregate_ty(ctx, TypeAttr::new(tuple_ty.into()));
         op
     };
     assert!(
@@ -3744,6 +3745,7 @@ fn test_mir_set_discriminant_verify() {
     );
     let valid = MirSetDiscriminantOp::new(op_valid);
     valid.set_attr_set_discriminant_variant_index(&ctx, VariantIndexAttr(1));
+    valid.set_attr_set_discriminant_enum_ty(&ctx, TypeAttr::new(enum_ty.into()));
     assert!(valid.verify(&ctx).is_ok(), "Valid set_discriminant");
 
     // Invalid: first operand is not a pointer.
@@ -4102,6 +4104,7 @@ fn test_mir_field_addr_tuple_pointee_verify() {
     );
     let field0 = MirFieldAddrOp::new(op_field0);
     field0.set_attr_field_index(&ctx, FieldIndexAttr(0));
+    field0.set_attr_aggregate_ty(&ctx, TypeAttr::new(tuple_ty.into()));
     assert!(
         field0.verify(&ctx).is_ok(),
         "tuple field 0 (u8) address accepted"
@@ -4118,6 +4121,7 @@ fn test_mir_field_addr_tuple_pointee_verify() {
     );
     let field1 = MirFieldAddrOp::new(op_field1);
     field1.set_attr_field_index(&ctx, FieldIndexAttr(1));
+    field1.set_attr_aggregate_ty(&ctx, TypeAttr::new(tuple_ty.into()));
     assert!(
         field1.verify(&ctx).is_ok(),
         "tuple field 1 (u32) address accepted"
@@ -4136,6 +4140,7 @@ fn test_mir_field_addr_tuple_pointee_verify() {
     );
     let wrong_result_ty = MirFieldAddrOp::new(op_wrong_result_ty);
     wrong_result_ty.set_attr_field_index(&ctx, FieldIndexAttr(0));
+    wrong_result_ty.set_attr_aggregate_ty(&ctx, TypeAttr::new(tuple_ty.into()));
     assert!(
         wrong_result_ty.verify(&ctx).is_err(),
         "result pointee type mismatch rejected"
@@ -4151,6 +4156,7 @@ fn test_mir_field_addr_tuple_pointee_verify() {
     );
     let out_of_bounds = MirFieldAddrOp::new(op_out_of_bounds);
     out_of_bounds.set_attr_field_index(&ctx, FieldIndexAttr(2));
+    out_of_bounds.set_attr_aggregate_ty(&ctx, TypeAttr::new(tuple_ty.into()));
     assert!(
         out_of_bounds.verify(&ctx).is_err(),
         "out-of-bounds tuple field index rejected"
@@ -4203,6 +4209,7 @@ fn test_mir_field_addr_tuple_pointee_store_verify() {
     );
     let field1 = MirFieldAddrOp::new(op_field1);
     field1.set_attr_field_index(&ctx, FieldIndexAttr(1));
+    field1.set_attr_aggregate_ty(&ctx, TypeAttr::new(tuple_ty.into()));
     assert!(
         field1.verify(&ctx).is_ok(),
         "tuple field 1 (u32) address accepted as a store destination"

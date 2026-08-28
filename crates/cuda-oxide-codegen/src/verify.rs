@@ -172,6 +172,16 @@ mod tests {
             .copied()
             .unwrap_or(types.struct_ptr);
         let base = block.deref(ctx).get_argument(0);
+        // The verifier requires the stamped aggregate fact to equal the
+        // operand pointee, so the fixture stamps the real struct type; the
+        // out-of-bounds case must still fail on the bounds check, not here.
+        let aggregate_ty = {
+            let ptr_ref = types.struct_ptr.deref(ctx);
+            ptr_ref
+                .downcast_ref::<MirPtrType>()
+                .expect("fixture struct_ptr is a MirPtrType")
+                .pointee
+        };
         let op = Operation::new(
             ctx,
             MirFieldAddrOp::get_concrete_op_info(),
@@ -181,6 +191,7 @@ mod tests {
             0,
         );
         MirFieldAddrOp::new(op).set_attr_field_index(ctx, FieldIndexAttr(field_index));
+        MirFieldAddrOp::new(op).set_attr_aggregate_ty(ctx, TypeAttr::new(aggregate_ty));
         op
     }
 

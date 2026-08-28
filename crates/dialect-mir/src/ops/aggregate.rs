@@ -19,7 +19,8 @@ use pliron::{
     operation::Operation,
     printable::Printable,
     result::Error,
-    r#type::Typed,
+    r#type::{TypeHandle, Typed},
+    value::Value,
     verify_err,
 };
 use pliron_derive::pliron_op;
@@ -1268,9 +1269,22 @@ impl Verify for MirExtractArrayElementOp {
 /// # Attributes
 ///
 /// ```text
-/// | Name          | Type           | Description              |
-/// |---------------|----------------|--------------------------|
-/// | `field_index` | FieldIndexAttr | Index of field to access |
+/// | Name           | Type           | Description                          |
+/// |----------------|----------------|--------------------------------------|
+/// | `field_index`  | FieldIndexAttr | Index of field to access             |
+/// | `aggregate_ty` | TypeAttr       | The aggregate being projected into,  |
+/// |                |                | stamped by [`Self::build`]           |
+/// ```
+///
+/// Why carry the aggregate type when the operand already points to it? The
+/// result type only names the FIELD, and at lowering time the operand is an
+/// opaque `llvm.ptr` whose type HISTORY breaks across value-forwarded
+/// kind-only casts. The attribute rides the op, so the slot map and offset
+/// always come from the right aggregate:
+///
+/// ```text
+/// build time:  ptr: mir.ptr<S> ──► aggregate_ty = S    (stamped once)
+/// lowering:    slot map / offset / align from S        (no history)
 /// ```
 ///
 /// # Results
@@ -1291,7 +1305,10 @@ impl Verify for MirExtractArrayElementOp {
     name = "mir.field_addr",
     format,
     interfaces = [NOpdsInterface<1>, OneOpdInterface, NResultsInterface<1>, OneResultInterface],
-    attributes = (field_index: FieldIndexAttr)
+    attributes = (
+        field_index: FieldIndexAttr,
+        aggregate_ty: pliron::builtin::attributes::TypeAttr
+    )
 )]
 pub struct MirFieldAddrOp;
 
@@ -1299,6 +1316,46 @@ impl MirFieldAddrOp {
     /// Create a new MirFieldAddrOp wrapper.
     pub fn new(op: Ptr<Operation>) -> Self {
         MirFieldAddrOp { op }
+    }
+
+    /// Build a `mir.field_addr` with both facts stamped.
+    ///
+    /// The one construction door: `aggregate_ty` comes from `base_ptr`'s
+    /// build-time pointer type, so it cannot drift from what `field_index`
+    /// was validated against. Fails if `base_ptr` is not a MIR pointer.
+    pub fn build(
+        ctx: &mut Context,
+        base_ptr: Value,
+        result_ty: TypeHandle,
+        field_index: u32,
+    ) -> Result<Ptr<Operation>, Error> {
+        let base_ty = base_ptr.get_type(ctx);
+        let aggregate_ty = {
+            let base_ty_ref = base_ty.deref(ctx);
+            base_ty_ref
+                .downcast_ref::<MirPtrType>()
+                .map(|ptr_ty| ptr_ty.pointee)
+        };
+        let Some(aggregate_ty) = aggregate_ty else {
+            return pliron::input_err_noloc!(
+                "mir.field_addr base must be a MirPtrType at build time"
+            );
+        };
+        let op = Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![result_ty],
+            vec![base_ptr],
+            vec![],
+            0,
+        );
+        let wrapper = MirFieldAddrOp::new(op);
+        wrapper.set_attr_field_index(ctx, FieldIndexAttr(field_index));
+        wrapper.set_attr_aggregate_ty(
+            ctx,
+            pliron::builtin::attributes::TypeAttr::new(aggregate_ty),
+        );
+        Ok(op)
     }
 }
 
@@ -1325,6 +1382,21 @@ impl Verify for MirFieldAddrOp {
         // Pointee must be a struct, tuple, union or enum type.
         let pointee_ty = ptr_type.pointee;
         let pointee_ty_obj = pointee_ty.deref(ctx);
+
+        // The stamped aggregate fact must match the operand's pointee, so
+        // lowering can trust the attribute without consulting the operand.
+        match self.get_attr_aggregate_ty(ctx) {
+            Some(attr) if attr.get_type(ctx) == pointee_ty => {}
+            Some(_) => {
+                return verify_err!(
+                    op.loc(),
+                    "MirFieldAddrOp aggregate_ty attribute must equal the operand pointee"
+                );
+            }
+            None => {
+                return verify_err!(op.loc(), "MirFieldAddrOp missing aggregate_ty attribute");
+            }
+        }
 
         let index = match self.get_attr_field_index(ctx) {
             Some(attr) => attr.0 as usize,
