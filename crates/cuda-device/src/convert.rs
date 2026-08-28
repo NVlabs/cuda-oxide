@@ -278,4 +278,18 @@ mod tests {
             );
         }
     }
+
+    /// Every bf16 bit pattern must survive the trip through the f32 widen,
+    /// NaNs included: `bf16_to_f32` places the bits in the high half and
+    /// `f32_to_bf16` truncates them back out bit-identically.
+    #[test]
+    fn every_bf16_pattern_round_trips() {
+        for bits in 0u16..=u16::MAX {
+            assert_eq!(
+                f32_to_bf16(bf16_to_f32(bits)),
+                bits,
+                "round-trip mismatch for bf16 bits {bits:#06x}"
+            );
+        }
+    }
 }
