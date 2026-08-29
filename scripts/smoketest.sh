@@ -1704,6 +1704,27 @@ if ! env -u CARGO_TARGET_DIR cargo oxide setup >/dev/null 2>&1; then
     exit 2
 fi
 
+# Pin the backend .so for the whole run. cargo-oxide's discovery step 1
+# (CUDA_OXIDE_BACKEND) short-circuits before any cargo invocation; without
+# it, every example build re-runs a cargo freshness check on the backend
+# workspace (~1s each on CI runners, ~4 minutes across 219 examples). The
+# `setup` above just built this exact .so, and pinning it also means the
+# whole run tests one backend even if its sources change mid-run. An
+# externally-set CUDA_OXIDE_BACKEND is honored as-is; if the expected path
+# is missing (unexpected host layout), fall back to per-invocation
+# discovery rather than failing.
+if [[ -z "${CUDA_OXIDE_BACKEND:-}" ]]; then
+    host_triple="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')"
+    for backend_name in librustc_codegen_cuda.so librustc_codegen_cuda.dylib; do
+        backend_so="${repo_root}/crates/rustc-codegen-cuda/target/${host_triple}/debug/${backend_name}"
+        if [[ -n "${host_triple}" && -f "${backend_so}" ]]; then
+            export CUDA_OXIDE_BACKEND="${backend_so}"
+            printf "Backend for this run: %s\n" "${CUDA_OXIDE_BACKEND}"
+            break
+        fi
+    done
+fi
+
 # Honor an externally-set CARGO_TARGET_DIR (e.g. CI); otherwise share one under
 # the repo's target/ so it is gitignored and cleaned by `cargo clean`.
 : "${CARGO_TARGET_DIR:=${repo_root}/target/oxide-examples}"
