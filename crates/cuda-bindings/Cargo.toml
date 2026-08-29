@@ -8,6 +8,11 @@ authors = ["Nihal Pasham <nihalp@nvidia.com>"]
 license = "Apache-2.0"
 repository = "https://github.com/NVlabs/cuda-oxide.git"
 
+# Standalone since the workspace switched to the shared host-side crates from
+# cutile-rs; kept on disk so the example workspaces keep building unchanged.
+# Same pattern as crates/rustc-codegen-cuda.
+[workspace]
+
 [lib]
 doctest = false
 

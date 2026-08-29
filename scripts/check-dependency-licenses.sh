@@ -121,6 +121,12 @@ FIRST_PARTY_WORKSPACE_ROOTS=(
     Cargo.toml
     crates/rustc-codegen-cuda/Cargo.toml
     crates/cuda-macros/tests/device-only/Cargo.toml
+    # The three host crates retired by the shared-crate switch: standalone
+    # packages kept on disk so the example workspaces keep building unchanged.
+    # First-party, so their declared dependencies stay in the inventory.
+    crates/cuda-bindings/Cargo.toml
+    crates/cuda-core/Cargo.toml
+    crates/cuda-async/Cargo.toml
 )
 
 # The vendored rustlantis subtree also declares `[workspace]`. It is
