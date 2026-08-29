@@ -14,5 +14,5 @@ note: function defined here
    |        ^^^^^^^^^^^
 help: provide the argument
    |
-18 |     fast_helper::<4>(/* &cuda_device::LaunchContext<'_, cuda_device::__internal::Domain1, cuda_device::__internal::U32Coordinates> */);
-   |                      ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+18 |     fast_helper::<4>(/* &LaunchContext<'_, Domain1, U32Coordinates> */);
+   |                      +++++++++++++++++++++++++++++++++++++++++++++++++

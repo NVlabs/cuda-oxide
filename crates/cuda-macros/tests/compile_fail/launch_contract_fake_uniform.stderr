@@ -1,15 +1,15 @@
-error[E0277]: the trait bound `Uniform<u32>: cuda_device::__LaunchContractUniform<u32>` is not satisfied
+error[E0277]: the trait bound `Uniform<u32>: cuda_device::uniform::__LaunchContractUniform<u32>` is not satisfied
   --> tests/compile_fail/launch_contract_fake_uniform.rs:17:1
    |
 17 | #[cuda_module]
    | ^^^^^^^^^^^^^^ unsatisfied trait bound
    |
-help: the trait `cuda_device::__LaunchContractUniform<u32>` is not implemented for `Uniform<u32>`
+help: the trait `cuda_device::uniform::__LaunchContractUniform<u32>` is not implemented for `Uniform<u32>`
   --> tests/compile_fail/launch_contract_fake_uniform.rs:12:1
    |
 12 | pub struct Uniform<T> {
    | ^^^^^^^^^^^^^^^^^^^^^
-help: the trait `cuda_device::__LaunchContractUniform<T>` is implemented for `cuda_device::Uniform<T>`
+help: the trait `cuda_device::uniform::__LaunchContractUniform<T>` is implemented for `cuda_device::Uniform<T>`
   --> $WORKSPACE/crates/cuda-device/src/uniform.rs
    |
    | impl<T> __LaunchContractUniform<T> for Uniform<T> {}
