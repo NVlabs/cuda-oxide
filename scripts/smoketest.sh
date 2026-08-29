@@ -1531,6 +1531,13 @@ run_cargo() {
         # exist when the example is compiled with full device debug metadata.
         args+=("--device-debug")
     fi
+    if [[ "${ex}" == "reborrow" ]]; then
+        # Regression coverage for the importer's Rvalue::Reborrow arm: the
+        # release MIR pipeline (GVN/copy-prop) folds implicit reborrows into
+        # plain copies before the importer sees them, so only the
+        # -Zmir-opt-level=0 device path exercises the arm.
+        args+=("--device-debug")
+    fi
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then
         case "${ex}" in
             cluster) args+=("--arch=sm_90") ;;
