@@ -195,6 +195,38 @@ fn optimize_ll(
     }
 }
 
+/// Disable SimplifyCFG's switch-to-lookup-table transform in `opt`.
+///
+/// The transform materializes phi-of-constant switch results as `.global`
+/// data arrays. When a result is a shared-memory pointer (a per-stage
+/// buffer selected by a pipeline-stage `match`, as `ptr addrspace(3)` or
+/// its generic addrspacecast), llc silently prints the table entry as a
+/// `.shared` symbol reference inside a `.global` initializer. PTX cannot
+/// encode that in either form: ptxas rejects both `= {sym}` and
+/// `= {generic(sym)}` with "Variable used as initial value not in .global
+/// or .const state space", and driver JIT of the module fails the same way
+/// (CUDA_ERROR_INVALID_PTX).
+///
+/// LLVM 22's `opt` never built these tables for us: with no `-mcpu` the
+/// default subtarget was sm_30, whose PTX 3.2 floor has no `brx.idx`, so
+/// `shouldBuildLookupTables()` was false. LLVM 23 bumped the default SM to
+/// sm_75 (llvm/llvm-project commit 9fc5fd0ad689, PR #176021), legalizing
+/// BR_JT and turning the transform on for every module we optimize. The bug
+/// was already latent with any explicit modern `-mcpu` (an LLVM 22 `opt
+/// -mcpu=sm_90` builds the same bad tables), and upstream's
+/// `validLookupTableConstant` accepts any `GlobalValue` with no
+/// address-space check, so this SimplifyCFG override is the supported
+/// control; every supported `opt` (LLVM 21+) accepts it, and it stays even
+/// once upstream learns to reject shared-space table constants because our
+/// LLVM floor spans the broken majors. Upstream precedent: NVPTX already
+/// disables relative lookup tables wholesale (llvm/llvm-project#159748,
+/// `shouldBuildRelLookupTables` = false).
+///
+/// Switches keep their branch form instead; llc lowers dense ones to
+/// `brx.idx` code-label branch tables, which PTX encodes fine and which
+/// avoid a dependent `.global` data load on the hot path.
+const DISABLE_SWITCH_LOOKUP_TABLES: &str = "-switch-to-lookup=false";
+
 /// Build the middle-end arguments for a self-contained PTX module.
 ///
 /// The LLVM exporter returns the module's externally consumed definitions as
@@ -206,7 +238,10 @@ fn optimize_ll(
 /// unreachable `.visible .func` body.
 fn optimization_args(public_symbols: &[String]) -> Result<Vec<String>, PipelineError> {
     if public_symbols.is_empty() {
-        return Ok(vec!["-O2".to_string()]);
+        return Ok(vec![
+            "-O2".to_string(),
+            DISABLE_SWITCH_LOOKUP_TABLES.to_string(),
+        ]);
     }
 
     if let Some(symbol) = public_symbols.iter().find(|symbol| symbol.contains(',')) {
@@ -218,6 +253,7 @@ fn optimization_args(public_symbols: &[String]) -> Result<Vec<String>, PipelineE
     Ok(vec![
         "-passes=internalize,default<O2>".to_string(),
         format!("-internalize-public-api-list={}", public_symbols.join(",")),
+        DISABLE_SWITCH_LOOKUP_TABLES.to_string(),
     ])
 }
 
@@ -575,6 +611,7 @@ fn generate_ptx_impl(
 
     match result {
         Ok(output) if output.status.success() => {
+            verify_no_shared_symbols_in_initializers(module.output)?;
             if matches!(debug_kind, DebugKind::LineTables) {
                 strip_target_debug_from_ptx(module.output)?;
                 if opts.verbose {
@@ -623,6 +660,110 @@ fn record_diagnostic(diagnostics: &mut Vec<String>, sink: Option<fn(&str)>, diag
         sink(&diagnostic);
     }
     diagnostics.push(diagnostic);
+}
+
+/// Build-time diagnostic: reject PTX whose `.global`/`.const` initializers
+/// reference `.shared` symbols.
+///
+/// llc prints such initializers silently (exit 0), but ptxas rejects both
+/// the bare `= {sym}` and the wrapped `= {generic(sym)}` forms with
+/// "Variable used as initial value not in .global or .const state space",
+/// and driver JIT fails module load with CUDA_ERROR_INVALID_PTX at runtime.
+/// [`DISABLE_SWITCH_LOOKUP_TABLES`] removes the one known producer
+/// (SimplifyCFG data tables of per-stage shared-buffer pointers); this scan
+/// turns any future variant of the class back into a loud compile error
+/// instead of a runtime 218, regardless of which pass produced it.
+fn verify_no_shared_symbols_in_initializers(ptx_path: &Path) -> Result<(), PipelineError> {
+    let ptx = std::fs::read_to_string(ptx_path).map_err(|e| {
+        PipelineError::PtxGeneration(format!(
+            "failed to read PTX for shared-initializer verification ({}): {e}",
+            ptx_path.display()
+        ))
+    })?;
+    if let Err(message) = scan_for_shared_symbols_in_initializers(&ptx) {
+        return Err(PipelineError::PtxGeneration(format!(
+            "{} contains a .global/.const initializer referencing a .shared symbol; \
+             ptxas rejects this (\"Variable used as initial value not in .global or \
+             .const state space\") and driver JIT fails with CUDA_ERROR_INVALID_PTX:\n\
+             {message}\n\
+             This is a compiler bug: an optimization materialized shared-memory \
+             addresses into a data-space initializer.",
+            ptx_path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Pure scan half of [`verify_no_shared_symbols_in_initializers`]: returns
+/// the offending line on failure.
+fn scan_for_shared_symbols_in_initializers(ptx: &str) -> Result<(), String> {
+    // Pass 1: collect the names of `.shared`-space variables. Declarations
+    // look like `.shared .align 16 .b8 __shared_mem_0[16384];`, optionally
+    // with a linking directive (`.visible`, `.extern`, `.weak`, ...) first.
+    let shared_symbols: Vec<&str> = ptx
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let decl = trimmed
+                .strip_prefix(".visible ")
+                .or_else(|| trimmed.strip_prefix(".extern "))
+                .or_else(|| trimmed.strip_prefix(".weak "))
+                .or_else(|| trimmed.strip_prefix(".common "))
+                .unwrap_or(trimmed);
+            if !decl.starts_with(".shared") {
+                return None;
+            }
+            // The symbol is the last identifier before `[`, `;`, or `=`.
+            let name_part = decl.split(['[', ';', '=']).next()?;
+            let name = name_part.split_whitespace().next_back()?;
+            (!name.starts_with('.')).then_some(name)
+        })
+        .collect();
+    if shared_symbols.is_empty() {
+        return Ok(());
+    }
+
+    // Pass 2: any initialized `.global`/`.const` declaration whose
+    // initializer mentions a shared symbol (as a whole identifier) is
+    // unassemblable, whether bare or wrapped in `generic(...)`.
+    for line in ptx.lines() {
+        let trimmed = line.trim_start();
+        let decl = trimmed
+            .strip_prefix(".visible ")
+            .or_else(|| trimmed.strip_prefix(".extern "))
+            .or_else(|| trimmed.strip_prefix(".weak "))
+            .unwrap_or(trimmed);
+        if !(decl.starts_with(".global") || decl.starts_with(".const")) {
+            continue;
+        }
+        let Some((_, initializer)) = decl.split_once('=') else {
+            continue;
+        };
+        for symbol in &shared_symbols {
+            if contains_ptx_identifier(initializer, symbol) {
+                return Err(format!("  {}", line.trim()));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whole-identifier containment for PTX symbols (`__shared_mem_1` must not
+/// match inside `__shared_mem_10`). PTX identifiers use `[A-Za-z0-9_$]`.
+fn contains_ptx_identifier(haystack: &str, symbol: &str) -> bool {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(symbol) {
+        let begin = start + pos;
+        let end = begin + symbol.len();
+        let before_ok = begin == 0 || !haystack[..begin].chars().next_back().is_some_and(is_ident);
+        let after_ok = !haystack[end..].chars().next().is_some_and(is_ident);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = begin + 1;
+    }
+    false
 }
 
 fn strip_target_debug_from_ptx(ptx_path: &Path) -> Result<(), PipelineError> {
@@ -746,13 +887,17 @@ mod tests {
             [
                 "-passes=internalize,default<O2>",
                 "-internalize-public-api-list=constant_data,first_kernel",
+                "-switch-to-lookup=false",
             ]
         );
     }
 
     #[test]
     fn modules_without_public_roots_keep_the_existing_optimization_pipeline() {
-        assert_eq!(optimization_args(&[]).unwrap(), ["-O2"]);
+        assert_eq!(
+            optimization_args(&[]).unwrap(),
+            ["-O2", "-switch-to-lookup=false"]
+        );
     }
 
     #[test]
@@ -778,6 +923,60 @@ mod tests {
             required_ptx_feature("sm_80", merged.ptx_isa).unwrap(),
             Some("+ptx73")
         );
+    }
+
+    /// The post-llc scan must catch every encoding of a `.shared` symbol in
+    /// a data-space initializer (ptxas rejects bare and `generic()` alike)
+    /// while staying quiet on legal PTX, including integer switch tables and
+    /// shared symbols whose names prefix one another.
+    #[test]
+    fn shared_symbols_in_data_initializers_are_detected() {
+        // Legal: plain shared declarations, integer lookup tables, and
+        // global-to-global initializers.
+        let clean = "\
+.visible .global .align 8 .u64 table[4] = {1, 2, 3, 4};
+.shared .align 16 .b8 __shared_mem_0[16384];
+.visible .entry k()
+{
+\t.shared .align 8 .b8 local_buf[64];
+\tst.shared.u32 [%rd1], %r2;
+}
+.global .align 8 .u64 ptr_table[1] = {generic(some_global)};
+.global .align 4 .b8 some_global[4];
+";
+        assert!(scan_for_shared_symbols_in_initializers(clean).is_ok());
+
+        // Bare reference: the exact shape LLVM 23's switch lookup tables
+        // produced (`.global .u64 switch_$_table[4] = {__shared_mem_0, ...}`).
+        let bare = "\
+.shared .align 16 .b8 __shared_mem_0[16384];
+.global .align 8 .u64 switch_$_table_$_kernel[4] = {__shared_mem_0, __shared_mem_0, __shared_mem_0, __shared_mem_0};
+";
+        let error = scan_for_shared_symbols_in_initializers(bare).unwrap_err();
+        assert!(error.contains("switch_$_table_$_kernel"));
+
+        // generic()-wrapped references are equally unassemblable.
+        let wrapped = "\
+.shared .align 16 .b8 stage_buf[64];
+.visible .global .align 8 .u64 t[1] = {generic(stage_buf)};
+";
+        assert!(scan_for_shared_symbols_in_initializers(wrapped).is_err());
+
+        // .const initializers follow the same ptxas rule as .global.
+        let const_space = "\
+.shared .align 8 .b8 s[8];
+.const .align 8 .u64 c[1] = {s};
+";
+        assert!(scan_for_shared_symbols_in_initializers(const_space).is_err());
+
+        // Identifier boundaries: shared `__shared_mem_1` must not flag an
+        // initializer that references the (global) `__shared_mem_10`.
+        let prefixed = "\
+.shared .align 8 .b8 __shared_mem_1[8];
+.global .align 8 .b8 __shared_mem_10[8];
+.global .align 8 .u64 t[1] = {__shared_mem_10};
+";
+        assert!(scan_for_shared_symbols_in_initializers(prefixed).is_ok());
     }
 
     #[test]
@@ -1068,6 +1267,128 @@ mod tests {
             "linked PTX for a one-call kernel should be O(100) lines, got {}",
             ptx.lines().count()
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Regression test for switch-to-lookup-table suppression: a switch whose
+    /// phi results are per-stage `.shared` buffer pointers (the multi-stage
+    /// pipeline pattern in the tcgen05 GEMM examples) must not become a
+    /// `.global` data table. LLVM 23's `opt` builds `[N x ptr addrspace(3)]`
+    /// tables for it, and llc prints the entries as bare `.shared` symbols in
+    /// a `.global` initializer, which ptxas rejects ("Variable used as
+    /// initial value not in .global or .const state space") and driver JIT
+    /// fails with CUDA_ERROR_INVALID_PTX.
+    #[test]
+    fn switch_over_shared_pointers_does_not_become_a_global_lookup_table() {
+        let opts = BackendOptions {
+            target_arch: Some("sm_80".to_string()),
+            ..BackendOptions::default()
+        };
+        let Some(toolchain) = LlvmToolchain::resolve(&opts) else {
+            return;
+        };
+        if toolchain.opt.is_none() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_shared_switch_{}_{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let ll_path = root.join("kernel.ll");
+        let ptx_path = root.join("kernel.ptx");
+        // A 4-way stage switch selecting both a `.shared`-space pointer and
+        // its generic (addrspacecast) counterpart, mirroring how mbarrier
+        // (shared-space) and TMA destination (generic) pointers reach the
+        // merge block in the real pipelines.
+        std::fs::write(
+            &ll_path,
+            "target datalayout = \"e-i64:64-i128:128-v16:16-v32:32-n16:32:64\"\n\
+             target triple = \"nvptx64-nvidia-cuda\"\n\
+             \n\
+             @stage0 = addrspace(3) global [64 x i8] zeroinitializer, align 8\n\
+             @stage1 = addrspace(3) global [64 x i8] zeroinitializer, align 8\n\
+             @stage2 = addrspace(3) global [64 x i8] zeroinitializer, align 8\n\
+             @stage3 = addrspace(3) global [64 x i8] zeroinitializer, align 8\n\
+             \n\
+             define ptx_kernel void @kernel(ptr %out, i32 %x) {\n\
+             entry:\n\
+               %s = and i32 %x, 3\n\
+               switch i32 %s, label %unreach [\n\
+                 i32 0, label %c0\n\
+                 i32 1, label %c1\n\
+                 i32 2, label %c2\n\
+                 i32 3, label %merge\n\
+               ]\n\
+             unreach:\n\
+               unreachable\n\
+             c0:\n\
+               br label %merge\n\
+             c1:\n\
+               br label %merge\n\
+             c2:\n\
+               br label %merge\n\
+             merge:\n\
+               %shared = phi ptr addrspace(3) [ @stage0, %c0 ], [ @stage1, %c1 ], \
+                 [ @stage2, %c2 ], [ @stage3, %entry ]\n\
+               %generic = phi ptr [ addrspacecast (ptr addrspace(3) @stage0 to ptr), %c0 ], \
+                 [ addrspacecast (ptr addrspace(3) @stage1 to ptr), %c1 ], \
+                 [ addrspacecast (ptr addrspace(3) @stage2 to ptr), %c2 ], \
+                 [ addrspacecast (ptr addrspace(3) @stage3 to ptr), %entry ]\n\
+               %v1 = load i32, ptr addrspace(3) %shared, align 4\n\
+               %v2 = load i32, ptr %generic, align 4\n\
+               %sum = add i32 %v1, %v2\n\
+               store i32 %sum, ptr %out, align 4\n\
+               ret void\n\
+             }\n",
+        )
+        .unwrap();
+
+        generate_ptx_with_toolchain(
+            PtxModule {
+                llvm_ir: &ll_path,
+                output: &ptx_path,
+                public_symbols: &[
+                    "kernel".to_string(),
+                    "stage0".to_string(),
+                    "stage1".to_string(),
+                    "stage2".to_string(),
+                    "stage3".to_string(),
+                ],
+            },
+            DebugKind::Off,
+            &opts,
+            &toolchain,
+            &GeneratedModuleRequirements::default(),
+            None,
+        )
+        .unwrap();
+
+        let ptx = std::fs::read_to_string(&ptx_path).unwrap();
+        // Mechanism: with `-switch-to-lookup=false` no data table forms.
+        assert!(
+            !ptx.contains("switch_$_table"),
+            "opt built a switch lookup table despite -switch-to-lookup=false:\n{ptx}"
+        );
+        // Property: no initializer may reference a `.shared` symbol at all.
+        // ptxas rejects both the bare `= {sym}` and the wrapped
+        // `= {generic(sym)}` forms ("Variable used as initial value not in
+        // .global or .const state space").
+        for line in ptx.lines() {
+            if let Some((_, init)) = line.split_once("= {") {
+                for stage in ["stage0", "stage1", "stage2", "stage3"] {
+                    assert!(
+                        !init.contains(stage),
+                        ".shared symbol in a .global initializer (invalid PTX): {line}"
+                    );
+                }
+            }
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
