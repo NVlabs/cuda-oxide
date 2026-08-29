@@ -8,8 +8,9 @@
 use crate::{CudaContext, CudaModule, DriverError};
 use oxide_artifacts::ArtifactError;
 pub use oxide_artifacts::{
-    ArtifactCompileOptions, ArtifactDebugPolicy, ArtifactPayloadKind,
-    COMPILE_OPTIONS_TARGET_MARKER, OwnedArtifactBundle,
+    ArtifactCompileOptions, ArtifactDebugPolicy, ArtifactEntryKind, ArtifactPayloadKind,
+    COMPILE_OPTIONS_TARGET_MARKER, KERNEL_ENTRIES_TARGET_MARKER, OwnedArtifactBundle,
+    build_kernel_entries_sidecar, parse_kernel_entries_sidecar,
 };
 use std::fmt;
 use std::path::{Path, PathBuf};

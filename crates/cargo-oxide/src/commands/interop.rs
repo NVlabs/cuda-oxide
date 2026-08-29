@@ -314,9 +314,10 @@ pub(super) fn read_interop_recorded_target(ir_path: &Path) -> Result<String, Str
     if target.is_empty() {
         return Err(format!("recorded CUDA target {} is empty", path.display()));
     }
-    match (lines.next(), lines.next()) {
-        (None, None) => Ok(target.to_string()),
-        (Some(marker), None) if marker == oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER => {
+    let markers = lines.collect::<Vec<_>>();
+    match markers.as_slice() {
+        [] => Ok(target.to_string()),
+        [marker] if *marker == oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER => {
             let options_path = ir_path.with_extension("options");
             if !options_path.is_file() {
                 return Err(format!(
@@ -327,12 +328,45 @@ pub(super) fn read_interop_recorded_target(ir_path: &Path) -> Result<String, Str
             }
             Ok(target.to_string())
         }
+        [options_marker, kernels_marker]
+            if *options_marker == oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+                && *kernels_marker == oxide_artifacts::KERNEL_ENTRIES_TARGET_MARKER =>
+        {
+            let options_path = ir_path.with_extension("options");
+            if !options_path.is_file() {
+                return Err(format!(
+                    "recorded CUDA target {} requires the sibling compile options {}, which is missing",
+                    path.display(),
+                    options_path.display()
+                ));
+            }
+            read_interop_kernel_entries(ir_path)?;
+            Ok(target.to_string())
+        }
         _ => Err(format!(
             "recorded CUDA target {} has an unrecognized format: {:?}",
             path.display(),
             text.trim()
         )),
     }
+}
+
+pub(super) fn read_interop_kernel_entries(ir_path: &Path) -> Result<Vec<String>, String> {
+    let path = ir_path.with_extension("kernels");
+    let bytes = std::fs::read(&path).map_err(|error| {
+        format!(
+            "device build did not record its kernel entries at {} ({error})",
+            path.display()
+        )
+    })?;
+    oxide_artifacts::parse_kernel_entries_sidecar(&bytes)
+        .map(|kernels| kernels.into_iter().map(str::to_string).collect())
+        .map_err(|error| {
+            format!(
+                "recorded kernel entries {} are invalid: {error}",
+                path.display()
+            )
+        })
 }
 
 /// Read the `.target sm_XX` directive from an emitted PTX artifact.
@@ -449,8 +483,21 @@ fn finalize_interop_device_artifact(
                 std::process::exit(1);
             });
             let options = finalization_options_from_artifact(&target, compile_options);
+            let expected_kernels = read_interop_kernel_entries(&ir_path).unwrap_or_else(|error| {
+                eprintln!("Error: {error}");
+                std::process::exit(1);
+            });
+            let expected_kernels = expected_kernels
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
             let cubin = finalizer
-                .materialize_nvvm_ir(artifact_name, &ir, &options)
+                .materialize_nvvm_ir_with_expected_kernels(
+                    artifact_name,
+                    &ir,
+                    &expected_kernels,
+                    &options,
+                )
                 .unwrap_or_else(|error| {
                     eprintln!(
                         "Error: could not finalize {} for {}: {error}",

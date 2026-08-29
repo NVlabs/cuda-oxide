@@ -7,17 +7,13 @@
 
 use crate::ltoir;
 pub use cuda_core::embedded::{
-    ArtifactCompileOptions, ArtifactPayloadKind, EmbeddedModule, OwnedArtifactBundle,
-    artifact_bundles_from_binary_path, artifact_bundles_from_current_exe,
+    ArtifactCompileOptions, ArtifactEntryKind, ArtifactPayloadKind, EmbeddedModule,
+    OwnedArtifactBundle, artifact_bundles_from_binary_path, artifact_bundles_from_current_exe,
     embedded_modules_from_current_exe,
 };
 use cuda_core::{CudaContext, CudaModule, DriverError};
 use std::sync::Arc;
 use thiserror::Error;
-
-// ArtifactEntryKind::Kernel wire tag. cuda-core re-exports OwnedArtifactBundle
-// but not the enum itself, so deferred loading reads the stable encoded tag.
-const ARTIFACT_ENTRY_KIND_KERNEL: u16 = 1;
 
 /// Errors while discovering, building, or loading an embedded CUDA module.
 #[derive(Debug, Error)]
@@ -162,7 +158,7 @@ fn load_bundle(
     let expected_kernels = bundle
         .entries
         .iter()
-        .filter(|entry| entry.kind.to_u16() == ARTIFACT_ENTRY_KIND_KERNEL)
+        .filter(|entry| entry.kind == ArtifactEntryKind::Kernel)
         .map(|entry| entry.symbol.as_str())
         .collect::<Vec<_>>();
     if let Some(cubin) = bundle.payload(ArtifactPayloadKind::Cubin) {

@@ -101,6 +101,21 @@ pub fn emit_ltoir(
         );
         std::process::exit(1);
     });
+    let source_kernels_path = ll_path.with_extension("kernels");
+    let kernel_entries = std::fs::read(&source_kernels_path).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not read emitted kernel entries at {}: {e}",
+            source_kernels_path.display()
+        );
+        std::process::exit(1);
+    });
+    oxide_artifacts::parse_kernel_entries_sidecar(&kernel_entries).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: invalid emitted kernel entries at {}: {e}",
+            source_kernels_path.display()
+        );
+        std::process::exit(1);
+    });
 
     let compute_arch = parsed_arch.compute();
     let ltoir = compile_nvvm_to_ltoir(&ir, example, &parsed_arch, compile_options);
@@ -112,6 +127,7 @@ pub fn emit_ltoir(
     for metadata_path in [
         out_path.with_extension("target"),
         out_path.with_extension("options"),
+        out_path.with_extension("kernels"),
     ] {
         match std::fs::remove_file(&metadata_path) {
             Ok(()) => {}
@@ -140,12 +156,21 @@ pub fn emit_ltoir(
         );
         std::process::exit(1);
     });
+    let kernels_path = out_path.with_extension("kernels");
+    std::fs::write(&kernels_path, kernel_entries).unwrap_or_else(|e| {
+        eprintln!(
+            "Error: could not write LTOIR kernel entries to {}: {e}",
+            kernels_path.display()
+        );
+        std::process::exit(1);
+    });
     let target_path = out_path.with_extension("target");
     std::fs::write(
         &target_path,
         format!(
-            "{sm_arch}\n{}\n",
-            oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+            "{sm_arch}\n{}\n{}\n",
+            oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER,
+            oxide_artifacts::KERNEL_ENTRIES_TARGET_MARKER,
         ),
     )
     .unwrap_or_else(|e| {

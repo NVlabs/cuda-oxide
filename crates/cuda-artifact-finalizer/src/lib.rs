@@ -515,6 +515,59 @@ entry:
 !1 = !{i32 2, i32 0, i32 3, i32 1}
 "#;
 
+    /// Same annotated kernel without `@llvm.used`. libNVVM emits LTOIR, but an
+    /// unrooted nvJitLink operation succeeds with an empty final image.
+    const UNROOTED_LEGACY_NVVM_IR: &[u8] = br#"
+target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-v64:64:64-v128:128-n16:32:64"
+target triple = "nvptx64-nvidia-cuda"
+
+define void @dropped_without_root() {
+entry:
+  ret void
+}
+
+!nvvm.annotations = !{!0}
+!nvvmir.version = !{!1}
+!0 = !{void ()* @dropped_without_root, !"kernel", i32 1}
+!1 = !{i32 2, i32 0, i32 3, i32 1}
+"#;
+
+    #[test]
+    #[ignore = "requires discoverable CUDA Toolkit libNVVM, nvJitLink, and libdevice"]
+    fn live_expected_kernel_root_prevents_a_successful_empty_link() {
+        let finalizer = Finalizer::discover().unwrap();
+        let options = FinalizationOptions::new("sm_86".parse().unwrap());
+        let ltoir = finalizer
+            .compiler()
+            .compile_nvvm_ir_to_ltoir("unrooted.ll", UNROOTED_LEGACY_NVVM_IR, &options)
+            .unwrap();
+        let input = [NamedInput::new("unrooted.ltoir", &ltoir)];
+
+        let unguarded = finalizer
+            .link_ltoir(&input, &options, FinalizerOutput::Cubin)
+            .expect("nvJitLink reports success even after dropping the kernel");
+        assert!(is_valid_cubin(&unguarded));
+        assert!(
+            crate::validation::cubin_kernel_entries(&unguarded)
+                .expect("the unguarded cubin has a readable symbol inventory")
+                .is_empty(),
+            "the negative fixture must reproduce nvJitLink's successful empty output"
+        );
+
+        let guarded = finalizer
+            .link_ltoir_with_expected_kernels(
+                &input,
+                &["dropped_without_root"],
+                &options,
+                FinalizerOutput::Cubin,
+            )
+            .expect("-kernels-used must retain the expected entry");
+        assert_eq!(
+            crate::validation::cubin_kernel_entries(&guarded).unwrap(),
+            ["dropped_without_root"]
+        );
+    }
+
     #[test]
     #[ignore = "requires discoverable CUDA Toolkit libNVVM, nvJitLink, and libdevice"]
     fn live_pipeline_accepts_toolkit_cubins_and_emits_ptx_for_both_fma_policies() {

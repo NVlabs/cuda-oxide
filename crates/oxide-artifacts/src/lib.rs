@@ -35,6 +35,15 @@ const KNOWN_COMPILE_OPTIONS: u64 = OPTION_NO_FMA_CONTRACTION | OPTION_DEBUG_MASK
 /// format header.
 pub const COMPILE_OPTIONS_TARGET_MARKER: &str = "compile-options=v1";
 
+/// Marker written after [`COMPILE_OPTIONS_TARGET_MARKER`] in a versioned
+/// NVVM/LTOIR `.target` sidecar. It makes older consumers reject artifacts
+/// whose sibling `.kernels` retention contract they do not understand.
+pub const KERNEL_ENTRIES_TARGET_MARKER: &str = "kernel-entries=v1";
+
+const KERNEL_ENTRIES_MAGIC: [u8; 8] = *b"OXKERNL\0";
+const KERNEL_ENTRIES_VERSION: u16 = 1;
+const KERNEL_ENTRIES_HEADER_BYTES: usize = 16;
+
 const COMPILE_OPTIONS_SIDECAR_HEADER: &str = "cuda-oxide-compile-options-v1";
 const COMPILE_OPTIONS_FMA_ON: &str = "cuda-oxide-compile-options-v1\nfma-contraction=on\n";
 const COMPILE_OPTIONS_FMA_OFF: &str = "cuda-oxide-compile-options-v1\nfma-contraction=off\n";
@@ -208,6 +217,101 @@ impl ArtifactEntryKind {
             _ => None,
         }
     }
+}
+
+/// Encode the normalized kernel-entry set for a sibling `.kernels` sidecar.
+///
+/// The length-prefixed format preserves arbitrary UTF-8 symbol names without
+/// introducing escaping rules. Sorting and de-duplication make the sidecar a
+/// stable semantic record rather than a reflection of collection order.
+pub fn build_kernel_entries_sidecar<'a>(
+    kernels: impl IntoIterator<Item = &'a str>,
+) -> Result<Vec<u8>, ArtifactError> {
+    let mut kernels = kernels.into_iter().collect::<Vec<_>>();
+    kernels.sort_unstable();
+    kernels.dedup();
+    if kernels.iter().any(|kernel| kernel.is_empty()) {
+        return Err(ArtifactError::EmptyEntrySymbol);
+    }
+
+    let mut bytes = vec![0; KERNEL_ENTRIES_HEADER_BYTES];
+    bytes[..8].copy_from_slice(&KERNEL_ENTRIES_MAGIC);
+    write_u16(&mut bytes, 8, KERNEL_ENTRIES_VERSION);
+    write_u32(
+        &mut bytes,
+        12,
+        checked_u32(kernels.len(), "kernel entry count")?,
+    );
+    for kernel in kernels {
+        let length = checked_u32(kernel.len(), "kernel entry length")?;
+        bytes.extend_from_slice(&length.to_le_bytes());
+        bytes.extend_from_slice(kernel.as_bytes());
+    }
+    Ok(bytes)
+}
+
+/// Decode a complete sibling `.kernels` sidecar.
+pub fn parse_kernel_entries_sidecar(bytes: &[u8]) -> Result<Vec<&str>, ArtifactError> {
+    if bytes.len() < KERNEL_ENTRIES_HEADER_BYTES {
+        return Err(ArtifactError::Truncated("kernel entries header"));
+    }
+    if bytes[..8] != KERNEL_ENTRIES_MAGIC {
+        return Err(ArtifactError::Malformed(
+            "kernel entries sidecar has bad magic".to_string(),
+        ));
+    }
+    let version = read_u16(bytes, 8)?;
+    if version != KERNEL_ENTRIES_VERSION {
+        return Err(ArtifactError::UnsupportedVersion(version));
+    }
+    if read_u16(bytes, 10)? != 0 {
+        return Err(ArtifactError::Malformed(
+            "kernel entries sidecar has nonzero reserved bits".to_string(),
+        ));
+    }
+    let count = usize::try_from(read_u32(bytes, 12)?)
+        .map_err(|_| ArtifactError::TooLarge("kernel entry count"))?;
+    let minimum_entry_bytes = count
+        .checked_mul(5)
+        .ok_or(ArtifactError::TooLarge("kernel entry count"))?;
+    if minimum_entry_bytes > bytes.len() - KERNEL_ENTRIES_HEADER_BYTES {
+        return Err(ArtifactError::Truncated("kernel entries"));
+    }
+    let mut cursor = KERNEL_ENTRIES_HEADER_BYTES;
+    let mut kernels = Vec::with_capacity(count);
+    for _ in 0..count {
+        let length_end = cursor
+            .checked_add(4)
+            .ok_or(ArtifactError::TooLarge("kernel entry length"))?;
+        let length = usize::try_from(read_u32(bytes, cursor)?)
+            .map_err(|_| ArtifactError::TooLarge("kernel entry length"))?;
+        cursor = length_end;
+        let end = cursor
+            .checked_add(length)
+            .ok_or(ArtifactError::TooLarge("kernel entry"))?;
+        let kernel = std::str::from_utf8(
+            bytes
+                .get(cursor..end)
+                .ok_or(ArtifactError::Truncated("kernel entry"))?,
+        )
+        .map_err(|_| ArtifactError::InvalidUtf8("kernel entry"))?;
+        if kernel.is_empty() {
+            return Err(ArtifactError::EmptyEntrySymbol);
+        }
+        kernels.push(kernel);
+        cursor = end;
+    }
+    if cursor != bytes.len() {
+        return Err(ArtifactError::Malformed(
+            "kernel entries sidecar has trailing bytes".to_string(),
+        ));
+    }
+    if kernels.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(ArtifactError::Malformed(
+            "kernel entries sidecar is not a normalized set".to_string(),
+        ));
+    }
+    Ok(kernels)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -983,6 +1087,49 @@ mod tests {
 
     fn sample_payload_record_start() -> usize {
         HEADER_BYTES + "demo".len() + "sm_90".len()
+    }
+
+    #[test]
+    fn kernel_entries_sidecar_round_trips_a_normalized_set() {
+        let sidecar = build_kernel_entries_sidecar(["kernel_b", "kernel_a", "kernel_a"])
+            .expect("valid kernel names");
+
+        assert_eq!(
+            parse_kernel_entries_sidecar(&sidecar).unwrap(),
+            ["kernel_a", "kernel_b"]
+        );
+    }
+
+    #[test]
+    fn kernel_entries_sidecar_rejects_incomplete_or_noncanonical_input() {
+        assert!(matches!(
+            build_kernel_entries_sidecar([""]),
+            Err(ArtifactError::EmptyEntrySymbol)
+        ));
+
+        let sidecar = build_kernel_entries_sidecar(["kernel_a", "kernel_b"]).unwrap();
+        assert!(matches!(
+            parse_kernel_entries_sidecar(&sidecar[..sidecar.len() - 1]),
+            Err(ArtifactError::Truncated("kernel entry"))
+        ));
+
+        let mut duplicate = sidecar;
+        let second_name = KERNEL_ENTRIES_HEADER_BYTES + 4 + "kernel_a".len() + 4;
+        duplicate[second_name..].copy_from_slice(b"kernel_a");
+        assert!(matches!(
+            parse_kernel_entries_sidecar(&duplicate),
+            Err(ArtifactError::Malformed(message))
+                if message.contains("normalized set")
+        ));
+
+        let mut impossible_count = vec![0; KERNEL_ENTRIES_HEADER_BYTES];
+        impossible_count[..8].copy_from_slice(&KERNEL_ENTRIES_MAGIC);
+        write_u16(&mut impossible_count, 8, KERNEL_ENTRIES_VERSION);
+        write_u32(&mut impossible_count, 12, u32::MAX);
+        assert!(matches!(
+            parse_kernel_entries_sidecar(&impossible_count),
+            Err(ArtifactError::Truncated("kernel entries"))
+        ));
     }
 
     #[test]

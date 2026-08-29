@@ -367,7 +367,7 @@ fn generated_file_cleanup_preserves_ltoir_cubin_cache() {
         unique
     ));
     std::fs::create_dir_all(&root).unwrap();
-    for extension in ["ptx", "ll", "ltoir", "cubin", "target"] {
+    for extension in ["ptx", "ll", "ltoir", "cubin", "target", "kernels"] {
         std::fs::write(root.join(format!("my_kernel.{extension}")), b"stale").unwrap();
     }
     let cached_cubin = root.join(".oxide-artifacts/ltoir-cubin-cache/v1/entries/key/image.cubin");
@@ -376,7 +376,7 @@ fn generated_file_cleanup_preserves_ltoir_cubin_cache() {
 
     clean_generated_files(&root, "my-kernel");
 
-    for extension in ["ptx", "ll", "ltoir", "cubin", "target"] {
+    for extension in ["ptx", "ll", "ltoir", "cubin", "target", "kernels"] {
         assert!(!root.join(format!("my_kernel.{extension}")).exists());
     }
     assert_eq!(
@@ -3873,6 +3873,29 @@ fn recorded_target_sidecar_is_the_completion_marker() {
     // ...and the record is trusted once it exists.
     std::fs::write(root.join("device_kernels.options"), "fma=on\ndebug=none\n").unwrap();
     assert_eq!(read_interop_recorded_target(&ir_path).unwrap(), "sm_120a");
+
+    // The current marker additionally requires the exact kernel-entry set.
+    std::fs::write(
+        root.join("device_kernels.target"),
+        format!(
+            "sm_120a\n{}\n{}\n",
+            oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER,
+            oxide_artifacts::KERNEL_ENTRIES_TARGET_MARKER,
+        ),
+    )
+    .unwrap();
+    let error = read_interop_recorded_target(&ir_path).unwrap_err();
+    assert!(error.contains("kernel entries"), "{error}");
+    std::fs::write(
+        root.join("device_kernels.kernels"),
+        oxide_artifacts::build_kernel_entries_sidecar(["kernel_b", "kernel_a"]).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(read_interop_recorded_target(&ir_path).unwrap(), "sm_120a");
+    assert_eq!(
+        read_interop_kernel_entries(&ir_path).unwrap(),
+        ["kernel_a", "kernel_b"]
+    );
 
     // Unknown trailing content is rejected, not half-trusted.
     std::fs::write(

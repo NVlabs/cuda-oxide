@@ -559,8 +559,9 @@ pub fn run_pipeline(
                 config.allow_fma_contraction,
                 config.debug_kind,
             )?;
+            write_kernel_entries_sidecar(&config.output_dir, &config.output_name, functions)?;
             // Publish the target last: its version marker is the completion record
-            // that says the sibling options file is required.
+            // that says the sibling options and kernel-entry files are required.
             write_nvvm_target_sidecar(&config.output_dir, &config.output_name, &generated.target)?;
             Ok(CompilationResult {
                 artifact_path: ll_path.clone(),
@@ -637,13 +638,42 @@ fn write_nvvm_target_sidecar(
     std::fs::write(
         &path,
         format!(
-            "{target}\n{}\n",
-            oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+            "{target}\n{}\n{}\n",
+            oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER,
+            oxide_artifacts::KERNEL_ENTRIES_TARGET_MARKER,
         ),
     )
     .map_err(|error| {
         PipelineError::Export(format!(
             "failed to record NVVM target in {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+/// Records the complete host-visible kernel set used to root and verify the
+/// later nvJitLink operation. Device functions are deliberately excluded.
+fn write_kernel_entries_sidecar(
+    output_dir: &Path,
+    output_name: &str,
+    functions: &[CollectedFunction],
+) -> Result<(), PipelineError> {
+    let path = output_dir.join(format!("{output_name}.kernels"));
+    let bytes = oxide_artifacts::build_kernel_entries_sidecar(
+        functions
+            .iter()
+            .filter(|function| function.is_kernel)
+            .map(|function| function.export_name.as_str()),
+    )
+    .map_err(|error| {
+        PipelineError::Export(format!(
+            "failed to encode NVVM kernel entries for {}: {error}",
+            path.display()
+        ))
+    })?;
+    std::fs::write(&path, bytes).map_err(|error| {
+        PipelineError::Export(format!(
+            "failed to record NVVM kernel entries in {}: {error}",
             path.display()
         ))
     })
@@ -685,6 +715,7 @@ fn stale_compilation_artifact_paths(
         "ptx",
         "target",
         "options",
+        "kernels",
         "ltoir",
         "cubin",
         "cubin.target",
@@ -1170,8 +1201,9 @@ fn adversarial_export_name() -> u64 {
         assert_eq!(
             fs::read_to_string(output_dir.join("empty.target")).unwrap(),
             format!(
-                "sm_86\n{}\n",
-                oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER
+                "sm_86\n{}\n{}\n",
+                oxide_artifacts::COMPILE_OPTIONS_TARGET_MARKER,
+                oxide_artifacts::KERNEL_ENTRIES_TARGET_MARKER,
             )
         );
         assert_eq!(
@@ -1179,6 +1211,13 @@ fn adversarial_export_name() -> u64 {
             oxide_artifacts::ArtifactCompileOptions::new()
                 .with_fma_contraction(true)
                 .sidecar_text()
+        );
+        assert!(
+            oxide_artifacts::parse_kernel_entries_sidecar(
+                &fs::read(output_dir.join("empty.kernels")).unwrap()
+            )
+            .unwrap()
+            .is_empty()
         );
 
         fs::remove_dir_all(&root).expect("clean up temp output dir");

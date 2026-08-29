@@ -85,6 +85,7 @@ use cuda_artifact_finalizer::{
 };
 use cuda_core::embedded::{
     ArtifactCompileOptions, ArtifactDebugPolicy, COMPILE_OPTIONS_TARGET_MARKER,
+    KERNEL_ENTRIES_TARGET_MARKER, parse_kernel_entries_sidecar,
 };
 use cuda_core::{CudaContext, CudaModule, DriverError};
 #[cfg(test)]
@@ -127,6 +128,15 @@ pub enum LtoirError {
         /// Path to the malformed sidecar.
         path: PathBuf,
         /// Trimmed sidecar contents.
+        value: String,
+    },
+
+    /// A required kernel-entry sidecar was absent or malformed.
+    #[error("invalid cuda-oxide kernel metadata in {path}: {value}")]
+    InvalidKernelEntries {
+        /// Path to the missing or malformed sidecar.
+        path: PathBuf,
+        /// Specific metadata failure.
         value: String,
     },
 
@@ -273,6 +283,11 @@ fn build_cubin_from_ll_file(ll_path: &Path, arch: &CudaArch) -> Result<FileCubin
         source,
     })?;
     let compile_options = read_compile_options(ll_path)?;
+    let expected_kernels = read_kernel_entries(ll_path)?;
+    let expected_kernel_refs = expected_kernels
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     validate_ir_target_sidecar(ll_path, arch)?;
     // Record the supplied target for older or manually created `.ll` files.
     // The sibling `.ltoir` can then be loaded after the `.ll` is removed.
@@ -293,6 +308,7 @@ fn build_cubin_from_ll_file(ll_path: &Path, arch: &CudaArch) -> Result<FileCubin
         &ltoir_path.display().to_string(),
         arch,
         compile_options,
+        &expected_kernel_refs,
     )?;
     let ltoir = cached
         .ltoir
@@ -666,6 +682,7 @@ fn cached_nvvm_ir_to_cubin(
         ltoir_module_name,
         arch,
         ArtifactCompileOptions::new(),
+        &[],
     )
 }
 
@@ -676,13 +693,15 @@ fn cached_nvvm_ir_to_cubin_with_compile_options(
     ltoir_module_name: &str,
     arch: &CudaArch,
     compile_options: ArtifactCompileOptions,
+    expected_kernels: &[&str],
 ) -> Result<CacheResult, LtoirError> {
     let finalizer = Finalizer::discover()?;
     let options = finalization_options(arch, compile_options);
-    let key = finalizer.nvvm_ir_artifact_digest(
+    let key = finalizer.nvvm_ir_artifact_digest_with_expected_kernels(
         nvvm_module_name,
         ltoir_module_name,
         nvvm_ir,
+        expected_kernels,
         &options,
         FinalizerOutput::Cubin,
     );
@@ -692,8 +711,9 @@ fn cached_nvvm_ir_to_cubin_with_compile_options(
             finalizer
                 .compiler()
                 .compile_nvvm_ir_to_ltoir(nvvm_module_name, nvvm_ir, &options)?;
-        let cubin = finalizer.link_ltoir(
+        let cubin = finalizer.link_ltoir_with_expected_kernels(
             &[NamedInput::new(ltoir_module_name, &ltoir)],
+            expected_kernels,
             &options,
             FinalizerOutput::Cubin,
         )?;
@@ -721,6 +741,7 @@ fn cached_ltoir_to_cubin(
         module_name,
         arch,
         ArtifactCompileOptions::new(),
+        &[],
     )
 }
 
@@ -730,14 +751,25 @@ fn cached_ltoir_to_cubin_with_compile_options(
     module_name: &str,
     arch: &CudaArch,
     compile_options: ArtifactCompileOptions,
+    expected_kernels: &[&str],
 ) -> Result<CacheResult, LtoirError> {
     let linker = LtoLinker::discover()?;
     let options = finalization_options(arch, compile_options);
     let inputs = [NamedInput::new(module_name, ltoir)];
-    let key = linker.artifact_digest(&inputs, &options, FinalizerOutput::Cubin);
+    let key = linker.artifact_digest_with_expected_kernels(
+        &inputs,
+        expected_kernels,
+        &options,
+        FinalizerOutput::Cubin,
+    );
     let build = || -> Result<BuiltArtifacts, LtoirError> {
         Ok(BuiltArtifacts::new(
-            linker.link_ltoir(&inputs, &options, FinalizerOutput::Cubin)?,
+            linker.link_ltoir_with_expected_kernels(
+                &inputs,
+                expected_kernels,
+                &options,
+                FinalizerOutput::Cubin,
+            )?,
             None,
         ))
     };
@@ -954,9 +986,15 @@ pub fn load_kernel_module(
                 ExecutionRoute::PtxBridge => {
                     let nvvm_ir = read_artifact(&ll)?;
                     let compile_options = read_compile_options(&ll)?;
-                    let ptx = build_ptx_from_nvvm_ir_with_compile_options(
+                    let expected_kernels = read_kernel_entries(&ll)?;
+                    let expected_kernel_refs = expected_kernels
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>();
+                    let ptx = build_ptx_from_nvvm_ir_with_compile_options_and_expected_kernels(
                         &nvvm_ir,
                         &ll.display().to_string(),
+                        &expected_kernel_refs,
                         &emitted.sm(),
                         compile_options,
                     )?;
@@ -969,6 +1007,11 @@ pub fn load_kernel_module(
             let execution = execution_arch_for_context(ctx)?;
             let bytes = read_artifact(&ltoir)?;
             let compile_options = read_compile_options(&ltoir)?;
+            let expected_kernels = read_kernel_entries(&ltoir)?;
+            let expected_kernel_refs = expected_kernels
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
             let image = match execution_route(&emitted, &execution)? {
                 ExecutionRoute::Cubin => {
                     cached_ltoir_to_cubin_with_compile_options(
@@ -977,13 +1020,14 @@ pub fn load_kernel_module(
                         &ltoir.display().to_string(),
                         &emitted,
                         compile_options,
+                        &expected_kernel_refs,
                     )?
                     .cubin
                 }
                 ExecutionRoute::PtxBridge => link_ltoir_to_ptx_parsed_with_compile_options(
                     &bytes,
                     &ltoir.display().to_string(),
-                    &[],
+                    &expected_kernel_refs,
                     &emitted,
                     compile_options,
                 )?,
@@ -1143,6 +1187,10 @@ fn emitted_compile_options_path(ll_path: &Path) -> PathBuf {
     ll_path.with_extension("options")
 }
 
+fn emitted_kernel_entries_path(artifact_path: &Path) -> PathBuf {
+    artifact_path.with_extension("kernels")
+}
+
 fn read_compile_options(ll_path: &Path) -> Result<ArtifactCompileOptions, LtoirError> {
     let path = emitted_compile_options_path(ll_path);
     match std::fs::read_to_string(&path) {
@@ -1159,15 +1207,30 @@ fn read_compile_options(ll_path: &Path) -> Result<ArtifactCompileOptions, LtoirE
     }
 }
 
+fn read_kernel_entries(artifact_path: &Path) -> Result<Vec<String>, LtoirError> {
+    let path = emitted_kernel_entries_path(artifact_path);
+    match std::fs::read(&path) {
+        Ok(bytes) => parse_kernel_entries_sidecar(&bytes)
+            .map(|kernels| kernels.into_iter().map(str::to_string).collect())
+            .map_err(|error| LtoirError::InvalidKernelEntries {
+                path,
+                value: error.to_string(),
+            }),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(source) => Err(LtoirError::Io { path, source }),
+    }
+}
+
 fn read_emitted_target(ll_path: &Path) -> Result<Option<CudaArch>, LtoirError> {
     let path = emitted_target_path(ll_path);
     match std::fs::read_to_string(&path) {
         Ok(target) => {
             let mut lines = target.lines();
             let arch = lines.next().unwrap_or_default().parse()?;
-            match (lines.next(), lines.next()) {
-                (None, None) => Ok(Some(arch)),
-                (Some(marker), None) if marker == COMPILE_OPTIONS_TARGET_MARKER => {
+            let markers = lines.collect::<Vec<_>>();
+            match markers.as_slice() {
+                [] => Ok(Some(arch)),
+                [marker] if *marker == COMPILE_OPTIONS_TARGET_MARKER => {
                     let options_path = emitted_compile_options_path(ll_path);
                     if !options_path.try_exists().map_err(|source| LtoirError::Io {
                         path: options_path.clone(),
@@ -1179,6 +1242,34 @@ fn read_emitted_target(ll_path: &Path) -> Result<Option<CudaArch>, LtoirError> {
                         });
                     }
                     read_compile_options(ll_path)?;
+                    Ok(Some(arch))
+                }
+                [options_marker, kernels_marker]
+                    if *options_marker == COMPILE_OPTIONS_TARGET_MARKER
+                        && *kernels_marker == KERNEL_ENTRIES_TARGET_MARKER =>
+                {
+                    let options_path = emitted_compile_options_path(ll_path);
+                    if !options_path.try_exists().map_err(|source| LtoirError::Io {
+                        path: options_path.clone(),
+                        source,
+                    })? {
+                        return Err(LtoirError::InvalidCompileOptions {
+                            path: options_path,
+                            value: "required sidecar is missing".to_string(),
+                        });
+                    }
+                    read_compile_options(ll_path)?;
+                    let kernels_path = emitted_kernel_entries_path(ll_path);
+                    if !kernels_path.try_exists().map_err(|source| LtoirError::Io {
+                        path: kernels_path.clone(),
+                        source,
+                    })? {
+                        return Err(LtoirError::InvalidKernelEntries {
+                            path: kernels_path,
+                            value: "required sidecar is missing".to_string(),
+                        });
+                    }
+                    read_kernel_entries(ll_path)?;
                     Ok(Some(arch))
                 }
                 _ => Err(LtoirError::InvalidCompileOptions {
@@ -1212,12 +1303,30 @@ fn write_artifact_target_sidecar(
 ) -> Result<(), LtoirError> {
     let path = emitted_target_path(artifact_path);
     let options_path = emitted_compile_options_path(artifact_path);
-    let contents = if options_path.try_exists().map_err(|source| LtoirError::Io {
+    let kernels_path = emitted_kernel_entries_path(artifact_path);
+    let has_options = options_path.try_exists().map_err(|source| LtoirError::Io {
         path: options_path.clone(),
         source,
-    })? {
+    })?;
+    let has_kernels = kernels_path.try_exists().map_err(|source| LtoirError::Io {
+        path: kernels_path.clone(),
+        source,
+    })?;
+    let contents = if has_options && has_kernels {
+        read_compile_options(artifact_path)?;
+        read_kernel_entries(artifact_path)?;
+        format!(
+            "{}\n{COMPILE_OPTIONS_TARGET_MARKER}\n{KERNEL_ENTRIES_TARGET_MARKER}\n",
+            target.sm()
+        )
+    } else if has_options {
         read_compile_options(artifact_path)?;
         format!("{}\n{COMPILE_OPTIONS_TARGET_MARKER}\n", target.sm())
+    } else if has_kernels {
+        return Err(LtoirError::InvalidCompileOptions {
+            path: options_path,
+            value: "kernel metadata requires the compile-options sidecar".to_string(),
+        });
     } else {
         format!("{}\n", target.sm())
     };
@@ -1283,6 +1392,7 @@ pub(crate) fn execution_route(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cuda_core::embedded::build_kernel_entries_sidecar;
 
     fn temp_dir(name: &str) -> PathBuf {
         let unique = std::time::SystemTime::now()
@@ -1381,6 +1491,45 @@ mod tests {
             ArtifactCompileOptions::new(),
             "legacy artifacts default to FMA enabled with no debug information"
         );
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn kernel_entry_marker_requires_and_validates_its_sidecar() {
+        let dir = temp_dir("versioned_kernel_entries");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ll = dir.join("kernel.ll");
+        std::fs::write(&ll, "; test\n").unwrap();
+        std::fs::write(
+            dir.join("kernel.options"),
+            ArtifactCompileOptions::new().sidecar_text(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("kernel.target"),
+            format!("sm_86\n{COMPILE_OPTIONS_TARGET_MARKER}\n{KERNEL_ENTRIES_TARGET_MARKER}\n"),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            read_emitted_target(&ll),
+            Err(LtoirError::InvalidKernelEntries { .. })
+        ));
+
+        std::fs::write(
+            dir.join("kernel.kernels"),
+            build_kernel_entries_sidecar(["kernel_b", "kernel_a"]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read_emitted_target(&ll).unwrap().unwrap().sm(), "sm_86");
+        assert_eq!(read_kernel_entries(&ll).unwrap(), ["kernel_a", "kernel_b"]);
+
+        std::fs::write(dir.join("kernel.kernels"), b"invalid").unwrap();
+        assert!(matches!(
+            read_emitted_target(&ll),
+            Err(LtoirError::InvalidKernelEntries { .. })
+        ));
 
         std::fs::remove_dir_all(dir).unwrap();
     }
