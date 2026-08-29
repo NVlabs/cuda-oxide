@@ -615,3 +615,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 }
+
+// CodeQL PR-attribution probe: comment-only change, no code modified.

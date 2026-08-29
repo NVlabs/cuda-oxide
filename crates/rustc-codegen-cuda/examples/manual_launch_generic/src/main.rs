@@ -144,3 +144,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nSUCCESS: manual type- and const-generic launches passed");
     Ok(())
 }
+
+// CodeQL PR-attribution probe: comment-only change, no code modified.

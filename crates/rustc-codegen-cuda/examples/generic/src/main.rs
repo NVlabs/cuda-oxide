@@ -235,3 +235,5 @@ fn main() {
 
     println!("\n✓ SUCCESS: typed generic launches and captured closures worked for f32 and i32");
 }
+
+// CodeQL PR-attribution probe: comment-only change, no code modified.

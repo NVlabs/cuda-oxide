@@ -393,3 +393,5 @@ fn has_guarded_branch(definition: ptx_parse::CallableDefinition<'_, '_>) -> bool
         .instructions()
         .any(|instruction| instruction.base_opcode() == "bra" && instruction.predicate().is_some())
 }
+
+// CodeQL PR-attribution probe: comment-only change, no code modified.

@@ -394,3 +394,5 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+// CodeQL PR-attribution probe: comment-only change, no code modified.

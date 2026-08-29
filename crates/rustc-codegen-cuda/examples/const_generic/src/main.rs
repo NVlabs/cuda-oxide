@@ -186,3 +186,5 @@ mod tests {
         println!("VALUE=8 host lookup: {value_8}");
     }
 }
+
+// CodeQL PR-attribution probe: comment-only change, no code modified.
