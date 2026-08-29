@@ -127,14 +127,14 @@ fn main() {
 
     let result = out.to_host_vec(&stream).expect("copy back");
     let mut failures = 0;
-    for lane in 0..LANES {
+    for (lane, &got) in result.iter().enumerate().take(LANES) {
         let next = ((lane + 1) % LANES) as u32;
         let mut expected: u32 = 0;
         for i in 0..iters {
             expected = expected.wrapping_add(i * 100 + next).wrapping_add(i + next);
         }
-        if result[lane] != expected {
-            eprintln!("✗ lane {lane}: got {}, expected {expected}", result[lane]);
+        if got != expected {
+            eprintln!("✗ lane {lane}: got {got}, expected {expected}");
             failures += 1;
         }
     }
