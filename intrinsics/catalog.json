@@ -103,7 +103,7 @@
       "rust-llvm-23.1.0-16696adc-register-mma.json:33d5d636dd9c3453f01674f047e1b562ac347cca25233e133182cdc1fd9c35fb",
       "rust-llvm-23.1.0-16696adc-scalar-arithmetic.json:6b8c10d5e6809316cdc0b4bd424b30ac8ab48006c60153488d68daf68de50188",
       "rust-llvm-23.1.0-16696adc-scalar-conversion.json:d1b2271f40a573ac62e474a62c83a20154b0001e3603571bc81246168da13d65",
-      "rust-llvm-23.1.0-16696adc-scalar-math.json:9888f9ebc8dde0b3f8df66c6851a8c4a1ddb544123de775084e7bfe36ea320d0",
+      "rust-llvm-23.1.0-16696adc-scalar-math.json:1a9e7994e07b5b53390df11a7e1805aa46176d21c8ed7e988433aee578c4dd47",
       "rust-llvm-23.1.0-16696adc-sparse-mma-int8-m16n8k64.json:2c0588c11569a4057647c099cfca9adfc449f3b3aea4e387f440a47e79d9b241",
       "rust-llvm-23.1.0-16696adc-sparse-mma-int8.json:9023c5c47bf1ad7266a13be8c4024d34e4e7d1efed6582affbbb9cdcdcfbea01",
       "rust-llvm-23.1.0-16696adc-sparse-mma-ordered-f8f6f4-f16.json:8569d7303b1a5af418214f2548e4b10c825c06c524dbecbc35b8ab0d4e2cf7ba",
@@ -55851,11 +55851,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned llc (LLVM version 22.1.2-rust-1.96.0-nightly, SHA-256 ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e) emitted each reviewed instruction exactly once per probe. Per-op PTX SHA-256: ex2_approx_f32 e5085463d64720c2769ca57b8c1e4eece25b26452b3308cf873ba94d7daa17b2, ex2_approx_ftz_f32 8ef33c541bb966b084a3bea0ee452b3210ae48509d8d1228d4427d895b938ef0, tanh_approx_f32 e25146dfbb77a3ad5b6ad4553b861c0a4bb2a39df8c4a7d87b49f4314fa72c30. ex2 binds the overloaded selection-less import records; tanh has no import record at all (PTX-native): llc 22 selects llvm.nvvm.tanh.approx.f32 via NVVMIntrinsic-class matching but llc 21 lowers it to an extern funcall, so the inline route is required while LLVM 21 remains supported.",
+              "detail": "Pinned llc emitted each reviewed instruction exactly once per probe. Per-op PTX SHA-256: ex2_approx_f32 e5085463d64720c2769ca57b8c1e4eece25b26452b3308cf873ba94d7daa17b2, ex2_approx_ftz_f32 8ef33c541bb966b084a3bea0ee452b3210ae48509d8d1228d4427d895b938ef0, tanh_approx_f32 e25146dfbb77a3ad5b6ad4553b861c0a4bb2a39df8c4a7d87b49f4314fa72c30. The hashes are byte-identical to the original llc-22 attestation (LLVM version 22.1.2-rust-1.96.0-nightly, SHA-256 ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e) because these inline-PTX probe bodies pass through llc verbatim. ex2 binds the overloaded selection-less import records; tanh has no import record at all (PTX-native). The typed llvm.nvvm.tanh.approx.f32 route was re-checked alongside this llc-23 re-attestation: the pinned llc 23 and Ubuntu LLVM 22.1.7 select it via NVVMIntrinsic-class matching, while Ubuntu LLVM 21.1.8 still lowers it to an extern funcall, so the inline route remains required while LLVM 21 remains a supported llc fallback.",
               "artifact_kind": null,
-              "tool_path": null,
-              "tool_version": null,
-              "tool_sha256": null
+              "tool_path": "llc",
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -56086,11 +56086,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned llc (LLVM version 22.1.2-rust-1.96.0-nightly, SHA-256 ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e) emitted each reviewed instruction exactly once per probe. Per-op PTX SHA-256: ex2_approx_f32 e5085463d64720c2769ca57b8c1e4eece25b26452b3308cf873ba94d7daa17b2, ex2_approx_ftz_f32 8ef33c541bb966b084a3bea0ee452b3210ae48509d8d1228d4427d895b938ef0, tanh_approx_f32 e25146dfbb77a3ad5b6ad4553b861c0a4bb2a39df8c4a7d87b49f4314fa72c30. ex2 binds the overloaded selection-less import records; tanh has no import record at all (PTX-native): llc 22 selects llvm.nvvm.tanh.approx.f32 via NVVMIntrinsic-class matching but llc 21 lowers it to an extern funcall, so the inline route is required while LLVM 21 remains supported.",
+              "detail": "Pinned llc emitted each reviewed instruction exactly once per probe. Per-op PTX SHA-256: ex2_approx_f32 e5085463d64720c2769ca57b8c1e4eece25b26452b3308cf873ba94d7daa17b2, ex2_approx_ftz_f32 8ef33c541bb966b084a3bea0ee452b3210ae48509d8d1228d4427d895b938ef0, tanh_approx_f32 e25146dfbb77a3ad5b6ad4553b861c0a4bb2a39df8c4a7d87b49f4314fa72c30. The hashes are byte-identical to the original llc-22 attestation (LLVM version 22.1.2-rust-1.96.0-nightly, SHA-256 ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e) because these inline-PTX probe bodies pass through llc verbatim. ex2 binds the overloaded selection-less import records; tanh has no import record at all (PTX-native). The typed llvm.nvvm.tanh.approx.f32 route was re-checked alongside this llc-23 re-attestation: the pinned llc 23 and Ubuntu LLVM 22.1.7 select it via NVVMIntrinsic-class matching, while Ubuntu LLVM 21.1.8 still lowers it to an extern funcall, so the inline route remains required while LLVM 21 remains a supported llc fallback.",
               "artifact_kind": null,
-              "tool_path": null,
-              "tool_version": null,
-              "tool_sha256": null
+              "tool_path": "llc",
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -245247,11 +245247,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned llc (LLVM version 22.1.2-rust-1.96.0-nightly, SHA-256 ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e) emitted each reviewed instruction exactly once per probe. Per-op PTX SHA-256: ex2_approx_f32 e5085463d64720c2769ca57b8c1e4eece25b26452b3308cf873ba94d7daa17b2, ex2_approx_ftz_f32 8ef33c541bb966b084a3bea0ee452b3210ae48509d8d1228d4427d895b938ef0, tanh_approx_f32 e25146dfbb77a3ad5b6ad4553b861c0a4bb2a39df8c4a7d87b49f4314fa72c30. ex2 binds the overloaded selection-less import records; tanh has no import record at all (PTX-native): llc 22 selects llvm.nvvm.tanh.approx.f32 via NVVMIntrinsic-class matching but llc 21 lowers it to an extern funcall, so the inline route is required while LLVM 21 remains supported.",
+              "detail": "Pinned llc emitted each reviewed instruction exactly once per probe. Per-op PTX SHA-256: ex2_approx_f32 e5085463d64720c2769ca57b8c1e4eece25b26452b3308cf873ba94d7daa17b2, ex2_approx_ftz_f32 8ef33c541bb966b084a3bea0ee452b3210ae48509d8d1228d4427d895b938ef0, tanh_approx_f32 e25146dfbb77a3ad5b6ad4553b861c0a4bb2a39df8c4a7d87b49f4314fa72c30. The hashes are byte-identical to the original llc-22 attestation (LLVM version 22.1.2-rust-1.96.0-nightly, SHA-256 ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e) because these inline-PTX probe bodies pass through llc verbatim. ex2 binds the overloaded selection-less import records; tanh has no import record at all (PTX-native). The typed llvm.nvvm.tanh.approx.f32 route was re-checked alongside this llc-23 re-attestation: the pinned llc 23 and Ubuntu LLVM 22.1.7 select it via NVVMIntrinsic-class matching, while Ubuntu LLVM 21.1.8 still lowers it to an extern funcall, so the inline route remains required while LLVM 21 remains a supported llc fallback.",
               "artifact_kind": null,
-              "tool_path": null,
-              "tool_version": null,
-              "tool_sha256": null
+              "tool_path": "llc",
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [

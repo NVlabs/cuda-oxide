@@ -113,7 +113,10 @@
           "stage": "backend_codegen",
           "mechanism": "inline_ptx",
           "outcome": "succeeded",
-          "detail": "Pinned llc (LLVM version 22.1.2-rust-1.96.0-nightly, SHA-256 ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e) emitted each reviewed instruction exactly once per probe. Per-op PTX SHA-256: ex2_approx_f32 e5085463d64720c2769ca57b8c1e4eece25b26452b3308cf873ba94d7daa17b2, ex2_approx_ftz_f32 8ef33c541bb966b084a3bea0ee452b3210ae48509d8d1228d4427d895b938ef0, tanh_approx_f32 e25146dfbb77a3ad5b6ad4553b861c0a4bb2a39df8c4a7d87b49f4314fa72c30. ex2 binds the overloaded selection-less import records; tanh has no import record at all (PTX-native): llc 22 selects llvm.nvvm.tanh.approx.f32 via NVVMIntrinsic-class matching but llc 21 lowers it to an extern funcall, so the inline route is required while LLVM 21 remains supported."
+          "detail": "Pinned llc emitted each reviewed instruction exactly once per probe. Per-op PTX SHA-256: ex2_approx_f32 e5085463d64720c2769ca57b8c1e4eece25b26452b3308cf873ba94d7daa17b2, ex2_approx_ftz_f32 8ef33c541bb966b084a3bea0ee452b3210ae48509d8d1228d4427d895b938ef0, tanh_approx_f32 e25146dfbb77a3ad5b6ad4553b861c0a4bb2a39df8c4a7d87b49f4314fa72c30. The hashes are byte-identical to the original llc-22 attestation (LLVM version 22.1.2-rust-1.96.0-nightly, SHA-256 ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e) because these inline-PTX probe bodies pass through llc verbatim. ex2 binds the overloaded selection-less import records; tanh has no import record at all (PTX-native). The typed llvm.nvvm.tanh.approx.f32 route was re-checked alongside this llc-23 re-attestation: the pinned llc 23 and Ubuntu LLVM 22.1.7 select it via NVVMIntrinsic-class matching, while Ubuntu LLVM 21.1.8 still lowers it to an extern funcall, so the inline route remains required while LLVM 21 remains a supported llc fallback.",
+          "tool_path": "llc",
+          "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
         },
         {
           "targets": [
