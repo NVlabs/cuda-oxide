@@ -75,7 +75,7 @@
       "rust-llvm-23.1.0-16696adc-clc.json:afc13ecb0e9a316d5102e98beea67e921a89c2474e46dc0d8d1a9cf4a3b12d4c",
       "rust-llvm-23.1.0-16696adc-cluster-barrier.json:2e3886e63765415c1f4467670adf9253a4733d0b292f13536f00461c1fd84f14",
       "rust-llvm-23.1.0-16696adc-cluster-memory.json:13067b0e40a71e50e0a9b8e7b6b41d72f069bd95d97e6cf67906a8a7ac1d80af",
-      "rust-llvm-23.1.0-16696adc-cluster-sreg.json:b2e5b7e44bdf94b0d19086ddfd8eb006faf8f67fdcfa53a4285a4b67c964fff3",
+      "rust-llvm-23.1.0-16696adc-cluster-sreg.json:f637df8caa13340748e1ed32c63c24c186c96f1eacb72e95a80aabb64dc4fade",
       "rust-llvm-23.1.0-16696adc-cp-async-mbarrier.json:49bcc68b25dafe33941e53bfd9f8f7838d9ba9cd678c2b8349469c1ae2aa66d0",
       "rust-llvm-23.1.0-16696adc-cp-async.json:191a81aacb8e52de15aced1d3ecd15269a14e9f15c351134357a71fe979a8ed0",
       "rust-llvm-23.1.0-16696adc-debug-control.json:d73c53717cd7284ad64ec49e2b5bd0514f4bb9088cc17c1fe3cb566809d2030a",
@@ -115,11 +115,11 @@
       "rust-llvm-23.1.0-16696adc-sparse-mma-standard-int4.json:921cdd8ea3aee8e00811161d5b8aac1adfc8e660a130a49c9dac6d6ee948c56c",
       "rust-llvm-23.1.0-16696adc-special-registers.json:767656ba6449cd0707f972fd688bb0f170d4d418aacd130209ea734e7eab24a7",
       "rust-llvm-23.1.0-16696adc-stmatrix.json:ba2f4d6b8b361a6d052395c749295f9ad2174047322b9ac022764c5a288f05e9",
-      "rust-llvm-23.1.0-16696adc-tcgen05-control.json:611fe548284453e4fdbd18856ab445470d116b5b455eeca8ce471f6ed772b635",
+      "rust-llvm-23.1.0-16696adc-tcgen05-control.json:93eec293a47d692a92fb3ad057e787e31b0e25507cbebdbb4b7dcbed35056c11",
       "rust-llvm-23.1.0-16696adc-tcgen05-cp.json:2709ecd0983ab4efb36cfe24b1bd277369510ae3f98b337c4b73d715b338e4a9",
       "rust-llvm-23.1.0-16696adc-tcgen05-ld.json:5dc2b3df8abdfb79ce0a2ae41a286f8d8d6eb99a584353bc884fc1d5b1857e3d",
-      "rust-llvm-23.1.0-16696adc-tcgen05-ldst-offset.json:cfdf7c4f8f959b4612917832786ba6315e2a62c9a0343c6bd72fa02b1932e0d3",
-      "rust-llvm-23.1.0-16696adc-tcgen05-mma.json:1389bc5ca8067718579c49439e5410a374850420b0067cae975a15b79e64ec00",
+      "rust-llvm-23.1.0-16696adc-tcgen05-ldst-offset.json:039b67da5f9edcfc80454b55f3a147880c9d96d56f64de2d82f2070c94a80f33",
+      "rust-llvm-23.1.0-16696adc-tcgen05-mma.json:8bb4d7fe8ecc7815e904eb1f41ce3ccc670d946cdcda567b188e64e7a4d7e7ba",
       "rust-llvm-23.1.0-16696adc-tcgen05-st.json:3ac8a0870333ea8a4b93a1f3ea95b27fb76477b3c8e2597b3df549125a7de010",
       "rust-llvm-23.1.0-16696adc-tcgen05.json:9a7fda406f9f8204ffcb99f5d055550b64fa34e939b64c2ae65a9249f7f3773b",
       "rust-llvm-23.1.0-16696adc-threadfence.json:35e804e8bb9c2bd2358046df50c4ccee779fbe3c0290742af0c213fbb16c2aea",
@@ -246536,11 +246536,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 retained three entries and the three exact instructions from the 1,180-byte source (SHA-256 c9d6009791b64f0871bf7d007d85d381ba94d1125070ebcdac4c7f0fcb652e13). PTX SHA-256: sm_100a/+ptx86 fe1818fb3e1217277df5f8922dc413380c8d13ee6a94f35401182aff0e875554; sm_101a/+ptx86 f78d319d104c813972755fb159f0a3f947c9a28e145af19dae04e79bd4711b35; sm_103a/+ptx88 44e7d4fd8b50b0973a5db7652603703b7bef6981e324fcfdcbaa94a929cb46d5; sm_110a/+ptx90 f4fd13829114b6240d81c6e8eef90994cef310201a4d0c989b9af4f107e35017. A separate direct-intrinsic fixture (SHA-256 5d6f385d95b18564caed76220ac69296e1e625ae6d98c0c48e6311d8df034c21) emitted the same instructions on those targets. Direct PTX SHA-256: c4ae06b9fd3894dc070c1e86c5addb338b9fb6a7c80ab3b15bff961cd5264325; 99b083ffd590e834dfa45f3f5e86ca00b4d98863308bef0912a24d337303c22c; 86671718d828e2082b66c67a4e89ef49abef80186db1b2618b579b7b1b4475ad; 1a782892745df5e6647c6c1827f8b515905d76ec49dfc6f84a563b1faa6f5599, in target order above.",
+              "detail": "Pinned llc retained three entries and the three exact instructions from the 1,180-byte source (SHA-256 c9d6009791b64f0871bf7d007d85d381ba94d1125070ebcdac4c7f0fcb652e13). PTX SHA-256: sm_100a/+ptx86 fe1818fb3e1217277df5f8922dc413380c8d13ee6a94f35401182aff0e875554; sm_101a/+ptx86 f78d319d104c813972755fb159f0a3f947c9a28e145af19dae04e79bd4711b35; sm_103a/+ptx88 44e7d4fd8b50b0973a5db7652603703b7bef6981e324fcfdcbaa94a929cb46d5; sm_110a/+ptx90 f4fd13829114b6240d81c6e8eef90994cef310201a4d0c989b9af4f107e35017. A separate direct-intrinsic fixture (SHA-256 5d6f385d95b18564caed76220ac69296e1e625ae6d98c0c48e6311d8df034c21) emitted the same instructions on those targets. Direct PTX SHA-256: c4ae06b9fd3894dc070c1e86c5addb338b9fb6a7c80ab3b15bff961cd5264325; 99b083ffd590e834dfa45f3f5e86ca00b4d98863308bef0912a24d337303c22c; 86671718d828e2082b66c67a4e89ef49abef80186db1b2618b579b7b1b4475ad; 1a782892745df5e6647c6c1827f8b515905d76ec49dfc6f84a563b1faa6f5599, in target order above.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -268438,11 +268438,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -268897,11 +268897,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -269243,11 +269243,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -269590,11 +269590,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -269921,11 +269921,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -270253,11 +270253,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -270585,11 +270585,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -270918,11 +270918,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -271280,11 +271280,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -271643,11 +271643,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -271977,11 +271977,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -272312,11 +272312,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -272706,11 +272706,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -273101,11 +273101,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -273439,11 +273439,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -273778,11 +273778,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -285365,8 +285365,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -286468,8 +286468,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -287571,8 +287571,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -288674,8 +288674,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -289777,8 +289777,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -291988,8 +291988,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -294053,8 +294053,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -296123,8 +296123,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -298081,8 +298081,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -300152,8 +300152,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -302103,8 +302103,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -303905,8 +303905,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -305010,8 +305010,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -306115,8 +306115,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -307220,8 +307220,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -308325,8 +308325,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -310481,8 +310481,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -312770,8 +312770,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -315062,8 +315062,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -317358,8 +317358,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -319655,8 +319655,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -321952,8 +321952,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -324246,8 +324246,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -326536,8 +326536,8 @@
               "detail": "Pinned LLVM emitted all 24 generated probes at the exact PTX floor: 30,652 PTX bytes in 24 files, sorted SHA-256 manifest c2ad5ba66e4139cc89c14712b870da372cac61d7e85045e931688e9808311065. The four direct f16/tf32/f8f6f4/i8 oracle outputs total 3,500 bytes, manifest 552a6101ef26cb380916a3e2b695f6da24a001f7f6b2a0a1358b8fa430bacab7. Every manifest in this fixture hashes lexically sorted sha256sum entries keyed by artifact basename. All 14 forms, five new aliases, and five preserved aliases were retained. KIND and A/B collector selector mappings matched LLVM. Runtime was not executed.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -328703,11 +328703,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 retained three entries and the three exact instructions from the 1,180-byte source (SHA-256 c9d6009791b64f0871bf7d007d85d381ba94d1125070ebcdac4c7f0fcb652e13). PTX SHA-256: sm_100a/+ptx86 fe1818fb3e1217277df5f8922dc413380c8d13ee6a94f35401182aff0e875554; sm_101a/+ptx86 f78d319d104c813972755fb159f0a3f947c9a28e145af19dae04e79bd4711b35; sm_103a/+ptx88 44e7d4fd8b50b0973a5db7652603703b7bef6981e324fcfdcbaa94a929cb46d5; sm_110a/+ptx90 f4fd13829114b6240d81c6e8eef90994cef310201a4d0c989b9af4f107e35017. A separate direct-intrinsic fixture (SHA-256 5d6f385d95b18564caed76220ac69296e1e625ae6d98c0c48e6311d8df034c21) emitted the same instructions on those targets. Direct PTX SHA-256: c4ae06b9fd3894dc070c1e86c5addb338b9fb6a7c80ab3b15bff961cd5264325; 99b083ffd590e834dfa45f3f5e86ca00b4d98863308bef0912a24d337303c22c; 86671718d828e2082b66c67a4e89ef49abef80186db1b2618b579b7b1b4475ad; 1a782892745df5e6647c6c1827f8b515905d76ec49dfc6f84a563b1faa6f5599, in target order above.",
+              "detail": "Pinned llc retained three entries and the three exact instructions from the 1,180-byte source (SHA-256 c9d6009791b64f0871bf7d007d85d381ba94d1125070ebcdac4c7f0fcb652e13). PTX SHA-256: sm_100a/+ptx86 fe1818fb3e1217277df5f8922dc413380c8d13ee6a94f35401182aff0e875554; sm_101a/+ptx86 f78d319d104c813972755fb159f0a3f947c9a28e145af19dae04e79bd4711b35; sm_103a/+ptx88 44e7d4fd8b50b0973a5db7652603703b7bef6981e324fcfdcbaa94a929cb46d5; sm_110a/+ptx90 f4fd13829114b6240d81c6e8eef90994cef310201a4d0c989b9af4f107e35017. A separate direct-intrinsic fixture (SHA-256 5d6f385d95b18564caed76220ac69296e1e625ae6d98c0c48e6311d8df034c21) emitted the same instructions on those targets. Direct PTX SHA-256: c4ae06b9fd3894dc070c1e86c5addb338b9fb6a7c80ab3b15bff961cd5264325; 99b083ffd590e834dfa45f3f5e86ca00b4d98863308bef0912a24d337303c22c; 86671718d828e2082b66c67a4e89ef49abef80186db1b2618b579b7b1b4475ad; 1a782892745df5e6647c6c1827f8b515905d76ec49dfc6f84a563b1faa6f5599, in target order above.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -329032,11 +329032,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 retained three entries and the three exact instructions from the 1,180-byte source (SHA-256 c9d6009791b64f0871bf7d007d85d381ba94d1125070ebcdac4c7f0fcb652e13). PTX SHA-256: sm_100a/+ptx86 fe1818fb3e1217277df5f8922dc413380c8d13ee6a94f35401182aff0e875554; sm_101a/+ptx86 f78d319d104c813972755fb159f0a3f947c9a28e145af19dae04e79bd4711b35; sm_103a/+ptx88 44e7d4fd8b50b0973a5db7652603703b7bef6981e324fcfdcbaa94a929cb46d5; sm_110a/+ptx90 f4fd13829114b6240d81c6e8eef90994cef310201a4d0c989b9af4f107e35017. A separate direct-intrinsic fixture (SHA-256 5d6f385d95b18564caed76220ac69296e1e625ae6d98c0c48e6311d8df034c21) emitted the same instructions on those targets. Direct PTX SHA-256: c4ae06b9fd3894dc070c1e86c5addb338b9fb6a7c80ab3b15bff961cd5264325; 99b083ffd590e834dfa45f3f5e86ca00b4d98863308bef0912a24d337303c22c; 86671718d828e2082b66c67a4e89ef49abef80186db1b2618b579b7b1b4475ad; 1a782892745df5e6647c6c1827f8b515905d76ec49dfc6f84a563b1faa6f5599, in target order above.",
+              "detail": "Pinned llc retained three entries and the three exact instructions from the 1,180-byte source (SHA-256 c9d6009791b64f0871bf7d007d85d381ba94d1125070ebcdac4c7f0fcb652e13). PTX SHA-256: sm_100a/+ptx86 fe1818fb3e1217277df5f8922dc413380c8d13ee6a94f35401182aff0e875554; sm_101a/+ptx86 f78d319d104c813972755fb159f0a3f947c9a28e145af19dae04e79bd4711b35; sm_103a/+ptx88 44e7d4fd8b50b0973a5db7652603703b7bef6981e324fcfdcbaa94a929cb46d5; sm_110a/+ptx90 f4fd13829114b6240d81c6e8eef90994cef310201a4d0c989b9af4f107e35017. A separate direct-intrinsic fixture (SHA-256 5d6f385d95b18564caed76220ac69296e1e625ae6d98c0c48e6311d8df034c21) emitted the same instructions on those targets. Direct PTX SHA-256: c4ae06b9fd3894dc070c1e86c5addb338b9fb6a7c80ab3b15bff961cd5264325; 99b083ffd590e834dfa45f3f5e86ca00b4d98863308bef0912a24d337303c22c; 86671718d828e2082b66c67a4e89ef49abef80186db1b2618b579b7b1b4475ad; 1a782892745df5e6647c6c1827f8b515905d76ec49dfc6f84a563b1faa6f5599, in target order above.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -338886,11 +338886,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -339343,11 +339343,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -339689,11 +339689,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -340034,11 +340034,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -340365,11 +340365,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -340695,11 +340695,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -341027,11 +341027,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -341358,11 +341358,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -341720,11 +341720,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -342081,11 +342081,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -342415,11 +342415,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -342748,11 +342748,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -343142,11 +343142,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -343535,11 +343535,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -343873,11 +343873,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [
@@ -344210,11 +344210,11 @@
               "stage": "backend_codegen",
               "mechanism": "inline_ptx",
               "outcome": "succeeded",
-              "detail": "Pinned LLVM 22 accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
+              "detail": "Pinned llc accepted the final paired fixture with offset 16 (source SHA-256 110e6ae381ae3cb6e810814279a6bdccce57510a39f4b5489987ab58a30ed607). Every successful target retained 32 entries, 16 exact loads, 16 exact stores, 8 pack::16b loads, and 8 unpack::16b stores. PTX SHA-256: sm_100a/+ptx86 72ed5dfd5d8a2765dccfda9f74cc920c7247292ab0905b4a7cf8d41d49a7e674; sm_101a/+ptx86 19327e2058f9ad42ffc5e5f8d9de74de5c2644e7b02b682d0848d91503b22868; sm_103a/+ptx88 69887c9ce9d2432248ef22837a88a4a3be6cc0b413a34bd5fe4a8938c96a34a2; sm_110a/+ptx90 7df33a256a701f57d97fe1c4c9092d40dd7ae52daac7539ce5d7391e426b6534. Separately proven family-target PTX SHA-256: sm_100f/+ptx88 f1fa2c2ba513ddab0ff041eb610dde14058c5d81847e2d041514403c4df23ecd; sm_101f/+ptx88 d034643204b14dd6345d4ca777cb22bf0bbeaa9e7a3b74b0313ed04a219031c6; sm_103f/+ptx88 71f659cc80f4906a66a803d0d92f608327af514210a9b1e2071c7d09b2baf740; sm_110f/+ptx90 fe44017ddee11dd0cef2562890d9ea69f2113667d21bd5925314d8d33c46de81. The imported records have no selections, so the admitted route is inline PTX. The public i32 constant is sign-extended into the imported i64 immediate carrier. Selected negative i64 direct-intrinsic probes crashed in LLVM's Assembly Printer, so that route is not admitted. PTX and CCCL state no numeric range; the admitted public API follows CCCL's i32 carrier, and the production fixture uses offset 16.",
               "artifact_kind": null,
               "tool_path": "llc",
-              "tool_version": "LLVM version 22.1.2-rust-1.96.0-nightly",
-              "tool_sha256": "ff1dcdc18a5441003d43c5df267b43e2b6dd3efccca38c20bb2801885626331e"
+              "tool_version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+              "tool_sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921"
             },
             {
               "targets": [

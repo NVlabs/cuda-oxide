@@ -61,6 +61,18 @@
 //! cached `.so` unloadable regardless of mtimes. A cache predating the
 //! fingerprint file defers to the mtime checks (a `cargo-oxide` reinstall or
 //! `rm -rf ~/.cargo/cuda-oxide` heals those).
+//!
+//! Re-cloning can only heal a mismatch when upstream's pin agrees with the
+//! user's (e.g. upstream main moved to the nightly the user just pinned).
+//! When the user's project and the backend source genuinely pin DIFFERENT
+//! nightlies, every rebuild re-records the same mismatching fingerprint and a
+//! naive retry loops on a multi-minute cold rebuild per invocation. To stop
+//! that, each heal attempt first records the (active, recorded) fingerprint
+//! pair in a marker file next to the cached `.so`; if the very same pair
+//! mismatches again after a rebuild, the lookup reports both toolchain
+//! identities with guidance and exits instead of rebuilding. Any lookup that
+//! passes the fingerprint check deletes the marker, so a genuinely healed
+//! cache clears the memory.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -122,38 +134,68 @@ pub fn find_or_build_backend(workspace_root: &Path, configured_backend: Option<&
 
     // 4. Cached .so. Only honored when it isn't older than the running
     //    cargo-oxide binary; see the module-level comment about issue #49.
-    if let Some(cache_dir) = cache_directory() {
-        let cached_so = cache_dir.join("librustc_codegen_cuda.so");
-        if cached_so.exists() {
-            let source_dir = cache_dir.join("src/crates/rustc-codegen-cuda");
-            match cached_backend_status(&cached_so, Some(&source_dir)) {
-                CacheStatus::Fresh => return cached_so,
-                CacheStatus::StaleVsBinary => invalidate_cache(&cache_dir),
-                CacheStatus::StaleVsToolchain => {
-                    eprintln!(
-                        "Cached backend was built against a different Rust \
-                         toolchain; re-cloning and rebuilding at {}.",
-                        cache_dir.display()
-                    );
-                    invalidate_cache(&cache_dir);
-                }
-                CacheStatus::StaleVsSource => {
-                    // The cached source advanced; rebuild the `.so` from it in
-                    // place. We do NOT invalidate the cache here, so the
-                    // auto-fetch step below skips the clone (the source tree is
-                    // still present) and rebuilds from the existing source.
-                    eprintln!(
-                        "Cached backend source at {} is newer than the cached \
-                         library; rebuilding from it in place.",
-                        source_dir.display()
-                    );
-                }
-            }
-        }
+    if let Some(cache_dir) = cache_directory()
+        && let Some(cached_so) = consult_backend_cache(&cache_dir)
+    {
+        return cached_so;
     }
 
     // 5. Auto-fetch from git
     auto_fetch_and_build()
+}
+
+/// Consults the shared backend cache at `cache_dir` (discovery step 4).
+///
+/// Returns the cached `.so` when it is fresh. Returns `None` when the caller
+/// should fall through to the auto-fetch step, after performing whichever
+/// invalidation the staleness verdict calls for. Exits the process with
+/// guidance when a toolchain mismatch already failed one heal attempt and
+/// rebuilding again cannot converge (see [`toolchain_heal_decision`]).
+fn consult_backend_cache(cache_dir: &Path) -> Option<PathBuf> {
+    let cached_so = cache_dir.join("librustc_codegen_cuda.so");
+    if !cached_so.exists() {
+        return None;
+    }
+    let source_dir = cache_dir.join("src/crates/rustc-codegen-cuda");
+    match cached_backend_status(&cached_so, Some(&source_dir)) {
+        CacheStatus::Fresh => {
+            // The fingerprint check passed: end any heal cycle, so a future,
+            // unrelated mismatch gets its own one-shot heal attempt.
+            clear_heal_marker(cache_dir);
+            Some(cached_so)
+        }
+        CacheStatus::StaleVsBinary => {
+            invalidate_cache(cache_dir);
+            None
+        }
+        CacheStatus::StaleVsToolchain => match toolchain_heal_decision(cache_dir) {
+            ToolchainHealDecision::Heal => {
+                eprintln!(
+                    "Cached backend was built against a different Rust \
+                     toolchain; re-cloning and rebuilding at {}.",
+                    cache_dir.display()
+                );
+                invalidate_cache(cache_dir);
+                None
+            }
+            ToolchainHealDecision::GiveUp { current, recorded } => {
+                report_unhealable_toolchain_mismatch(&current, &recorded);
+                std::process::exit(1);
+            }
+        },
+        CacheStatus::StaleVsSource => {
+            // The cached source advanced; rebuild the `.so` from it in
+            // place. We do NOT invalidate the cache here, so the
+            // auto-fetch step below skips the clone (the source tree is
+            // still present) and rebuilds from the existing source.
+            eprintln!(
+                "Cached backend source at {} is newer than the cached \
+                 library; rebuilding from it in place.",
+                source_dir.display()
+            );
+            None
+        }
+    }
 }
 
 /// Returns where the backend `.so` lives (or would live), with NO side
@@ -345,6 +387,100 @@ fn write_toolchain_fingerprint(cache_dir: &Path, build_dir: &Path) {
     if let Some(fp) = toolchain_fingerprint_in(build_dir) {
         let _ = std::fs::write(cache_dir.join(TOOLCHAIN_FINGERPRINT_FILE), fp);
     }
+}
+
+/// File next to the cached `.so` recording the (active, recorded) fingerprint
+/// pair that triggered the most recent toolchain heal attempt (re-clone +
+/// rebuild). Survives [`invalidate_cache`] on purpose: it is the memory that
+/// tells the NEXT lookup whether that heal converged.
+const TOOLCHAIN_HEAL_MARKER_FILE: &str = "toolchain-heal-attempt.txt";
+
+/// What the `StaleVsToolchain` arm of the cache lookup should do.
+#[derive(Debug, PartialEq, Eq)]
+enum ToolchainHealDecision {
+    /// First mismatch for this (active, recorded) pair: invalidate and
+    /// rebuild. This is the legitimate self-heal case, e.g. upstream main
+    /// moved to the nightly the user's project just pinned.
+    Heal,
+    /// A previous heal attempt already re-cloned and rebuilt for this exact
+    /// pair and the mismatch persisted: the user's project pin and the
+    /// backend source's nested pin genuinely differ, so rebuilding again
+    /// would cold-rebuild for minutes on every invocation, forever.
+    GiveUp { current: String, recorded: String },
+}
+
+/// Decides whether a `StaleVsToolchain` cache may attempt another heal, and
+/// records the mismatch pair before approving one so the next IDENTICAL
+/// mismatch is recognized as non-convergent. Conservative: when either
+/// fingerprint cannot be read, always heal (the pre-guard behavior); the
+/// marker write is best effort, a failure just means one more heal attempt.
+fn toolchain_heal_decision(cache_dir: &Path) -> ToolchainHealDecision {
+    let (Some(current), Ok(recorded)) = (
+        current_toolchain_fingerprint(),
+        std::fs::read_to_string(cache_dir.join(TOOLCHAIN_FINGERPRINT_FILE)),
+    ) else {
+        return ToolchainHealDecision::Heal;
+    };
+    let recorded = recorded.trim().to_string();
+    let marker = heal_marker_content(&current, &recorded);
+    if std::fs::read_to_string(cache_dir.join(TOOLCHAIN_HEAL_MARKER_FILE))
+        .is_ok_and(|stored| stored == marker)
+    {
+        return ToolchainHealDecision::GiveUp { current, recorded };
+    }
+    let _ = std::fs::write(cache_dir.join(TOOLCHAIN_HEAL_MARKER_FILE), marker);
+    ToolchainHealDecision::Heal
+}
+
+/// Serialized form of a heal-attempt pair. Compared as a whole string, so it
+/// needs no parsing on the way back in.
+fn heal_marker_content(current: &str, recorded: &str) -> String {
+    format!("active toolchain:\n{current}\n\nrecorded toolchain:\n{recorded}\n")
+}
+
+/// Forgets any recorded heal attempt. Called whenever the cached fingerprint
+/// check passes, so a healed cache does not short-circuit a future mismatch.
+fn clear_heal_marker(cache_dir: &Path) {
+    let _ = std::fs::remove_file(cache_dir.join(TOOLCHAIN_HEAL_MARKER_FILE));
+}
+
+/// One compact identity line (release + commit hash) out of a full
+/// `rustc -vV` fingerprint, for the non-convergence report.
+fn toolchain_identity_line(fingerprint: &str) -> String {
+    let field = |prefix: &str| {
+        fingerprint
+            .lines()
+            .find_map(|line| line.strip_prefix(prefix))
+            .unwrap_or("unknown")
+    };
+    format!(
+        "release {} (commit-hash {})",
+        field("release: "),
+        field("commit-hash: ")
+    )
+}
+
+/// The repeated-mismatch report: both toolchain identities plus what to do
+/// about it. The caller exits afterwards; rebuilding cannot converge.
+fn report_unhealable_toolchain_mismatch(current: &str, recorded: &str) {
+    eprintln!(
+        "Error: the cached cuda-oxide backend was already re-cloned and rebuilt \
+         for this exact toolchain mismatch, and rebuilding it again cannot fix it:"
+    );
+    eprintln!(
+        "  your project resolves:  {}",
+        toolchain_identity_line(current)
+    );
+    eprintln!(
+        "  the backend built with: {}",
+        toolchain_identity_line(recorded)
+    );
+    eprintln!(
+        "Your project's rust-toolchain.toml pins a different nightly than the \
+         cuda-oxide backend source it depends on. Align the pins (and run \
+         `cargo oxide update` after changing them), or point CUDA_OXIDE_BACKEND \
+         at a backend built with your project's toolchain."
+    );
 }
 
 /// Returns the newest mtime among the backend source inputs under
@@ -1375,6 +1511,81 @@ mod tests {
             cached_backend_status(&so, None),
             CacheStatus::StaleVsToolchain,
             "toolchain mismatch must win over binary staleness"
+        );
+    }
+
+    /// The heal guard must short-circuit a REPEATED identical mismatch pair:
+    /// the first `StaleVsToolchain` verdict for a pair heals (recording the
+    /// pair first), the second identical one gives up instead of re-cloning
+    /// and cold-rebuilding on every invocation forever. A pair that changed
+    /// (a different recorded fingerprint after a rebuild) is a fresh
+    /// mismatch and must heal again.
+    #[test]
+    fn repeated_identical_toolchain_mismatch_gives_up_instead_of_rebuilding() {
+        let Some(current) = current_toolchain_fingerprint() else {
+            return; // no rustc here; nothing to observe
+        };
+        let dir = tempdir();
+        let first_recorded = "rustc 0.0.0 (deadbeef 1970-01-01)\nrelease: 0.0.0";
+        std::fs::write(dir.join(TOOLCHAIN_FINGERPRINT_FILE), first_recorded).unwrap();
+
+        assert_eq!(
+            toolchain_heal_decision(&dir),
+            ToolchainHealDecision::Heal,
+            "the FIRST mismatch for a pair is the legitimate self-heal case"
+        );
+        assert!(
+            dir.join(TOOLCHAIN_HEAL_MARKER_FILE).exists(),
+            "a heal attempt must be recorded before the rebuild runs"
+        );
+
+        assert_eq!(
+            toolchain_heal_decision(&dir),
+            ToolchainHealDecision::GiveUp {
+                current: current.clone(),
+                recorded: first_recorded.to_string(),
+            },
+            "the SAME pair after a heal attempt cannot converge; it must stop rebuilding"
+        );
+
+        // A rebuild that changed the recorded fingerprint (e.g. the source
+        // clone advanced to a new pin) is a NEW mismatch: heal once more.
+        std::fs::write(
+            dir.join(TOOLCHAIN_FINGERPRINT_FILE),
+            "rustc 0.0.1 (cafef00d 1970-01-02)",
+        )
+        .unwrap();
+        assert_eq!(
+            toolchain_heal_decision(&dir),
+            ToolchainHealDecision::Heal,
+            "a changed mismatch pair must get its own heal attempt"
+        );
+    }
+
+    /// A cache lookup that passes the fingerprint check must delete the heal
+    /// marker: a genuinely healed cache forgets the old mismatch, so a
+    /// future, unrelated mismatch gets its own one-shot heal attempt instead
+    /// of being short-circuited by stale memory.
+    #[test]
+    fn fresh_cache_clears_the_heal_marker() {
+        let Some(fp) = current_toolchain_fingerprint() else {
+            return; // no rustc here; nothing to assert
+        };
+        let year = Duration::from_secs(365 * 24 * 60 * 60);
+        let dir = tempdir();
+        let so = dir.join("librustc_codegen_cuda.so");
+        write_with_mtime(&so, b"built", SystemTime::now() + year);
+        std::fs::write(dir.join(TOOLCHAIN_FINGERPRINT_FILE), fp).unwrap();
+        std::fs::write(dir.join(TOOLCHAIN_HEAL_MARKER_FILE), "stale heal memory").unwrap();
+
+        assert_eq!(
+            consult_backend_cache(&dir),
+            Some(so),
+            "a matching fingerprint with fresh mtimes must reuse the cache"
+        );
+        assert!(
+            !dir.join(TOOLCHAIN_HEAL_MARKER_FILE).exists(),
+            "a passing fingerprint check must clear the heal marker"
         );
     }
 

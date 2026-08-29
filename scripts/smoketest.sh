@@ -1517,6 +1517,26 @@ run_cargo() {
         return
     fi
 
+    # Rvalue::Reborrow coverage needs both device MIR pipelines. GVN folds
+    # the Mutability::Mut variant into plain copies at mir-opt-level>0, so
+    # only the --device-debug (-Zmir-opt-level=0) run below reaches that
+    # half; the Mutability::Not (CoerceShared) variant is left unoptimised
+    # by GVN and reaches the importer in release builds too, so run the
+    # release invocation first.
+    if [[ ${COMPILE_ONLY} -eq 0 && "${ex}" == "reborrow" ]]; then
+        if [[ ${VERBOSE} -eq 1 ]]; then
+            cargo oxide run "${ex}" 2>&1 | tee "${log}"
+            CARGO_EC=${PIPESTATUS[0]}
+        else
+            cargo oxide run "${ex}" >"${log}" 2>&1
+            CARGO_EC=$?
+        fi
+        if [[ ${CARGO_EC} -ne 0 ]]; then
+            printf '%s failed its release (mir-opt-level>0) invocation\n' "${ex}" >>"${log}"
+            return
+        fi
+    fi
+
     local verb="run"
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then verb="build"; fi
     local -a args=("${verb}" "${ex}")
@@ -1532,10 +1552,12 @@ run_cargo() {
         args+=("--device-debug")
     fi
     if [[ "${ex}" == "reborrow" ]]; then
-        # Regression coverage for the importer's Rvalue::Reborrow arm: the
-        # release MIR pipeline (GVN/copy-prop) folds implicit reborrows into
-        # plain copies before the importer sees them, so only the
-        # -Zmir-opt-level=0 device path exercises the arm.
+        # Regression coverage for the importer's Rvalue::Reborrow arm. GVN
+        # folds the Mutability::Mut variant into plain copies at
+        # mir-opt-level>0, so this --device-debug run is what keeps that
+        # half reachable; the Mutability::Not (CoerceShared) variant is left
+        # unoptimised by GVN and reaches the importer in release builds too
+        # (covered by the release invocation above).
         args+=("--device-debug")
     fi
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then

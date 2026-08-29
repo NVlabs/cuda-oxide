@@ -181,9 +181,11 @@ pub const CALLEE_TANH_F32: &str = placeholder!("tanhf32");
 /// Placeholder call used for `f64::tanh` / `std::sys::cmath::tanh`.
 pub const CALLEE_TANH_F64: &str = placeholder!("tanhf64");
 // The inverse hyperbolics were pure-Rust formulas in `std` (compositions of
-// `ln`/`sqrt`/`ln_1p`) until nightly-2026-08-28, which reworked them into
-// `std::sys::cmath::{asinh,acosh,atanh}{,f}` shims like the rest of this
-// family; they now need placeholders of their own.
+// `ln`/`sqrt`/`ln_1p`). nightly-2026-08-28 (rustc e457a7b0d) reworked
+// asinh/acosh into `std::sys::cmath::{asinh,acosh}{,f}` shims like the rest
+// of this family, so they need placeholders of their own; atanh is still the
+// pure-Rust `ln_1p` formula there and cmath declares no atanh, so its
+// placeholders are defensive, for when std makes the same move.
 /// Placeholder call used for `f32::asinh` / `std::sys::cmath::asinhf`.
 pub const CALLEE_ASINH_F32: &str = placeholder!("asinhf32");
 /// Placeholder call used for `f64::asinh` / `std::sys::cmath::asinh`.

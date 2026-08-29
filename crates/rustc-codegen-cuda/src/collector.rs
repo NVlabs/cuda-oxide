@@ -612,6 +612,10 @@ fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
             | "std::sys::cmath::cosh"
             | "std::sys::cmath::tanhf"
             | "std::sys::cmath::tanh"
+            // Inverse hyperbolics: on this nightly (rustc e457a7b0d) only
+            // asinh/acosh are `std::sys::cmath` shims; atanh is still the
+            // pure-Rust `ln_1p` formula and cmath declares no atanh, so its
+            // entries are defensive, for when std makes the same move.
             | "std::sys::cmath::asinhf"
             | "std::sys::cmath::asinh"
             | "std::sys::cmath::acoshf"

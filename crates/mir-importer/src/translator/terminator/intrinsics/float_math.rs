@@ -272,8 +272,11 @@ impl RustFloatMathIntrinsic {
             "std::sys::cmath::cosh" => Some(Self::CoshF64),
             "std::sys::cmath::tanhf" => Some(Self::TanhF32),
             "std::sys::cmath::tanh" => Some(Self::TanhF64),
-            // Inverse hyperbolics: pure-Rust in `std` before
-            // nightly-2026-08-28, `std::sys::cmath` shims since.
+            // Inverse hyperbolics: pure-Rust formulas in `std` before
+            // nightly-2026-08-28. On this nightly (rustc e457a7b0d) only
+            // asinh/acosh became `std::sys::cmath` shims; atanh keeps its
+            // pure-Rust `ln_1p` formula and cmath declares no atanh, so the
+            // atanh arms are defensive, for when std makes the same move.
             "std::sys::cmath::asinhf" => Some(Self::AsinhF32),
             "std::sys::cmath::asinh" => Some(Self::AsinhF64),
             "std::sys::cmath::acoshf" => Some(Self::AcoshF32),
