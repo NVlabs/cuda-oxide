@@ -296,11 +296,11 @@ they become `call` instructions to `@llvm.nvvm.*` intrinsics.
 
 ### Architecture Coverage
 
-At catalog SHA-256 `c8007834` (the stamp in every `ops/generated/` file
+At catalog SHA-256 `49bcd626` (the stamp in every `ops/generated/` file
 header), the dialect holds 575 operations across 42 modules, and they come
 from two different places. The split is the first thing to know about it,
 because it decides where -- and whether -- you would add one. If the header
-stamp no longer starts with `c8007834`, the counts on this page predate the
+stamp no longer starts with `49bcd626`, the counts on this page predate the
 catalog you are reading.
 
 **Hand-written**, directly under `crates/dialect-nvvm/src/ops/`. These are the
