@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 #
 # Keep every example workspace's Cargo.lock resolving the same dependency
 # versions.
@@ -51,7 +53,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 EXAMPLES_ROOT="crates/rustc-codegen-cuda/examples"
 
 usage() {
-    sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    # The doc block above: everything after the shebang + SPDX lines, up to
+    # the first non-comment line. No hardcoded line range to fall stale.
+    awk 'NR > 3 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"
 }
 
 # Print every example Cargo.lock path (top-level workspaces and nested
