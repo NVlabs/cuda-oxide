@@ -28,6 +28,15 @@ jobs:
       - name: Clone repository
         uses: actions/checkout@v4
 
+      # Every example workspace must pin the same dependency versions. The
+      # shared CARGO_TARGET_DIR below keys build caches on the resolved
+      # dependency subtree, so one drifted Cargo.lock silently costs a full
+      # dependency-tree rebuild (bindgen over cuda.h included) for that one
+      # example -- a 15-70s spike in an otherwise ~2s-per-example run.
+      # Fails fast, before any toolkit install.
+      - name: Example lockfiles resolve identical dependency versions
+        run: bash scripts/sync-example-locks.sh --check
+
       # Needed for cuda.h (bindgen in cuda-bindings) and the link-time
       # libcuda.so stub. Same shape as unit-tests.yml / clippy.yml.
       - name: Install CUDA toolkit

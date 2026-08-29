@@ -9,7 +9,7 @@
 //! generic kernel from a library crate via the embedded artifact bundle API
 //! rather than from a PTX file on disk.
 //!
-//! When `kernel_lib::kernels::load(&ctx)` is called, the macro-generated
+//! When `embedded_kernel_lib::kernels::load(&ctx)` is called, the macro-generated
 //! `load` function uses `load_all_ptx_bundles_merged` (because the module
 //! contains generic kernels). This merges all PTX bundles in the process,
 //! including the binary crate's bundle where the monomorphized PTX for
@@ -17,13 +17,13 @@
 //!
 //! Before the fix this would panic with:
 //!   DriverError(500, "named symbol not found")
-//! because `load_embedded_module("kernel-lib")` only searched that library's
+//! because `load_embedded_module("embedded-kernel-lib")` only searched that library's
 //! own bundle, which has no monomorphized entry points.
 //!
 //! Run: cargo oxide run cross_crate_embedded
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
-use kernel_lib::kernels;
+use embedded_kernel_lib::kernels;
 
 fn main() {
     let ctx = CudaContext::new(0).expect("CUDA context");
