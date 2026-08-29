@@ -30,6 +30,7 @@ use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 use pliron::{input_err, input_error_noloc};
 use rustc_public::CrateDef;
+use rustc_public::CrateDefType;
 use rustc_public::mir;
 use rustc_public::ty::AdtKind;
 use rustc_public_bridge::IndexedVal;

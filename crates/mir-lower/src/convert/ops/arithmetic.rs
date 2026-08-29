@@ -29,6 +29,8 @@
 
 use crate::convert::intrinsics::common::call_intrinsic;
 use crate::convert::types::convert_type;
+use crate::convert::types::{StructLayoutInfo, build_struct_slot_map};
+use dialect_mir::types::MirTupleType;
 use llvm_export::attributes::{
     FCmpPredicateAttr, FastmathFlags, FastmathFlagsAttr, ICmpPredicateAttr,
     IntegerOverflowFlagsAttr,
@@ -355,7 +357,9 @@ fn convert_checked_binop_with_intrinsic(
         .deref(ctx)
         .downcast_ref::<IntegerType>()
         .map(|t| t.width())
-        .ok_or_else(|| pliron::input_error!(loc, "checked binop: lhs must be an integer type"))?;
+        .ok_or_else(|| {
+            pliron::input_error!(loc.clone(), "checked binop: lhs must be an integer type")
+        })?;
 
     // Pliron identifiers use underscores; llvm-export converts to dots on output.
     let intrinsic_name = format!("llvm_{op_name}_with_overflow_i{width}");
@@ -371,6 +375,48 @@ fn convert_checked_binop_with_intrinsic(
     let func_ty = llvm_types::FuncType::get(ctx, struct_ty.into(), vec![lhs_ty, lhs_ty], false);
 
     let call_op = call_intrinsic(ctx, rewriter, op, &intrinsic_name, func_ty, vec![lhs, rhs])?;
+
+    // The overflow intrinsic returns the bare `{iN, i1}` pair, but the type
+    // converter lowers the MIR `(T, bool)` result tuple with rustc's exact
+    // layout, including explicit `[N x i8]` tail-padding slots. Every other
+    // consumer of the tuple (block arguments, stores, field indexing, the
+    // block-arg scalarizer) uses the converted form, so re-pack the
+    // intrinsic's result into it whenever the two differ. This mismatch was
+    // latent until nightly-2026-08-28, whose `RangeInclusive` iterator MIR
+    // forwards a checked-op tuple through a block argument, where the
+    // scalarizer indexes the padded form into the unpadded value.
+    let result_tuple_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    let layout = {
+        let ty_ref = result_tuple_ty.deref(ctx);
+        ty_ref
+            .downcast_ref::<MirTupleType>()
+            .map(StructLayoutInfo::of_tuple)
+    };
+    if let Some(layout) = layout {
+        let map = build_struct_slot_map(ctx, &layout)
+            .map_err(|e| pliron::input_error!(loc.clone(), "{e}"))?;
+        if map.llvm_struct_ty != struct_ty.into() {
+            let call_result = call_op.deref(ctx).get_result(0);
+            let undef_op = llvm::UndefOp::new(ctx, map.llvm_struct_ty);
+            rewriter.insert_operation(ctx, undef_op.get_operation());
+            let mut repacked = undef_op.get_operation().deref(ctx).get_result(0);
+            let mut last_op = undef_op.get_operation();
+            for (pair_idx, slot) in map.decl_to_llvm.iter().enumerate().take(2) {
+                let Some(slot) = slot else { continue };
+                let extract_op =
+                    llvm::ExtractValueOp::new(ctx, call_result, vec![pair_idx as u32])?;
+                rewriter.insert_operation(ctx, extract_op.get_operation());
+                let extracted = extract_op.get_operation().deref(ctx).get_result(0);
+                let insert_op = llvm::InsertValueOp::new(ctx, repacked, extracted, vec![*slot]);
+                rewriter.insert_operation(ctx, insert_op.get_operation());
+                repacked = insert_op.get_operation().deref(ctx).get_result(0);
+                last_op = insert_op.get_operation();
+            }
+            rewriter.replace_operation(ctx, op, last_op);
+            return Ok(());
+        }
+    }
+
     rewriter.replace_operation(ctx, op, call_op);
     Ok(())
 }

@@ -100,11 +100,11 @@ use llvm_export::ops::{
 };
 use rustc_hir::def::DefKind;
 use rustc_middle::mir::interpret::{AllocId, GlobalAlloc, Scalar};
-use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{ConstOperand, ConstValue, Location};
+use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::layout::{LayoutCx, LayoutOf};
-use rustc_middle::ty::{EarlyBinder, Instance, InstanceKind, TypingEnv};
+use rustc_middle::ty::{EarlyBinder, Instance, InstanceKind, ShimKind, TypingEnv};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_session::config::DebugInfo;
 use rustc_span::def_id::DefId;
@@ -385,7 +385,7 @@ fn build_debug_source_scope_map<'tcx>(
                 let callee = tcx.instantiate_and_normalize_erasing_regions(
                     func.instance.args,
                     TypingEnv::fully_monomorphized(),
-                    EarlyBinder::bind(callee),
+                    EarlyBinder::bind(tcx, callee),
                 );
                 let callsite = hygiene::walk_chain_collapsed(callsite, mir.span);
                 DebugInlinedScope {
@@ -469,7 +469,16 @@ enum StaticDebugStorage {
 /// Identify the two cuda-device marker types whose static storage is
 /// materialized in NVPTX shared memory rather than at the marker's Rust layout.
 fn shared_static_debug_storage(tcx: TyCtxt<'_>, def_id: DefId) -> Option<StaticDebugStorage> {
-    let ty = tcx.type_of(def_id).instantiate_identity();
+    // `type_of(..).instantiate_identity()` returns `Unnormalized<Ty>` since
+    // the eager-normalization refactor (rust-lang/rust#155345). We are in a
+    // fully monomorphized codegen context inspecting a static's declared
+    // type, so follow `TyCtxt::static_ptr_ty`'s discipline and normalize the
+    // wrapper away (a `static X: SomeAlias = ..` must still be recognized as
+    // the underlying cuda-device marker ADT) rather than `skip_normalization`.
+    let ty = tcx.normalize_erasing_regions(
+        TypingEnv::fully_monomorphized(),
+        tcx.type_of(def_id).instantiate_identity(),
+    );
     let TyKind::Adt(adt, _) = ty.kind() else {
         return None;
     };
@@ -602,7 +611,7 @@ impl<'tcx> Visitor<'tcx> for StaticDebugProvenance<'tcx> {
         let constant_value = instance.instantiate_mir_and_normalize_erasing_regions(
             self.tcx,
             TypingEnv::fully_monomorphized(),
-            EarlyBinder::bind(constant.const_),
+            EarlyBinder::bind(self.tcx, constant.const_),
         );
         if let Ok(value) =
             constant_value.eval(self.tcx, TypingEnv::fully_monomorphized(), constant.span)
@@ -856,14 +865,15 @@ pub fn generate_device_code<'tcx>(
             let fn_sig = tcx.fn_sig(decl.def_id).instantiate_identity();
             let fn_sig = fn_sig.skip_binder();
 
-            if !matches!(fn_sig.abi, rustc_abi::ExternAbi::C { unwind: false }) {
+            if !matches!(fn_sig.abi(), rustc_abi::ExternAbi::C { unwind: false }) {
                 return Err(DeviceCodegenError::InvalidDeviceExternSignature(format!(
                     "`{}` uses ABI {:?}; device externs must use `extern \"C\"` without unwinding",
-                    decl.export_name, fn_sig.abi
+                    decl.export_name,
+                    fn_sig.abi()
                 )));
             }
 
-            if fn_sig.c_variadic {
+            if fn_sig.c_variadic() {
                 return Err(DeviceCodegenError::InvalidDeviceExternSignature(format!(
                     "`{}` is variadic; variadic device externs are not supported",
                     decl.export_name
@@ -1066,8 +1076,10 @@ pub fn generate_device_code<'tcx>(
                     // call, so the function body is dead. Translating it would
                     // fail on IntoIter and similar stdlib shims whose MIR
                     // contains constructs the device pipeline does not support.
-                    if matches!(func.instance.def, InstanceKind::DropGlue(..))
-                        && mir_importer::drop_instance_is_noop(&stable_instance)
+                    if matches!(
+                        func.instance.def,
+                        InstanceKind::Shim(ShimKind::DropGlue(..))
+                    ) && mir_importer::drop_instance_is_noop(&stable_instance)
                     {
                         return None;
                     }

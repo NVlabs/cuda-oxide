@@ -600,7 +600,9 @@ fn match_pipelined_counted_loop(
     let slot_count = usize::from(max_pending_groups) + 1;
     if pipeline_events.len() != slot_count * 3
         || !pipeline_events
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .all(|chunk| chunk[0].1 == 0 && chunk[1].1 == 1 && chunk[2].1 == 2)
     {
         return Ok(None);
@@ -629,15 +631,21 @@ fn match_pipelined_counted_loop(
     }
 
     let mmas = pipeline_events
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|chunk| chunk[0].2)
         .collect::<Vec<_>>();
     let commits = pipeline_events
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|chunk| chunk[1].2)
         .collect::<Vec<_>>();
     let partial_waits = pipeline_events
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|chunk| chunk[2].2)
         .collect::<Vec<_>>();
 

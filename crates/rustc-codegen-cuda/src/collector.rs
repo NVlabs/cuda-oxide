@@ -127,12 +127,14 @@
 use mir_importer::is_panic_entry_path;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_index::{Idx, bit_set::DenseBitSet};
-use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
     BasicBlock, ConstOperand, ConstValue, Location, START_BLOCK, TerminatorKind,
 };
-use rustc_middle::ty::{Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv};
+use rustc_middle::mono::{CodegenUnit, MonoItem};
+use rustc_middle::ty::{
+    Instance, InstanceKind, ShimKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv,
+};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -610,6 +612,12 @@ fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
             | "std::sys::cmath::cosh"
             | "std::sys::cmath::tanhf"
             | "std::sys::cmath::tanh"
+            | "std::sys::cmath::asinhf"
+            | "std::sys::cmath::asinh"
+            | "std::sys::cmath::acoshf"
+            | "std::sys::cmath::acosh"
+            | "std::sys::cmath::atanhf"
+            | "std::sys::cmath::atanh"
             | "std::sys::cmath::expm1f"
             | "std::sys::cmath::expm1"
             | "std::sys::cmath::log1pf"
@@ -1077,7 +1085,14 @@ impl<'tcx> DeviceCollector<'tcx> {
             // because the shim is compiler-generated, but `instance_mir`
             // still provides the body.
             let has_mir = self.tcx.is_mir_available(def_id)
-                || matches!(func.instance.def, InstanceKind::DropGlue(..));
+                || matches!(
+                    func.instance.def,
+                    // Compiler-built shims with no HIR body but an
+                    // `instance_mir` body: drop glue, and (since
+                    // nightly-2026-08-28) the `<fn(..) as FnPtr>::as_ptr`
+                    // shim that backs `FnPtr::addr`.
+                    InstanceKind::Shim(ShimKind::DropGlue(..) | ShimKind::FnPtrAsPtr(..))
+                );
             if has_mir {
                 // Use instance_mir for monomorphized MIR.
                 // This returns OPTIMIZED MIR (post -C opt-level passes).
@@ -1110,7 +1125,10 @@ impl<'tcx> DeviceCollector<'tcx> {
                 // paths (e.g. for assertion failures) that are unreachable
                 // in practice; the mir-importer handles these via its
                 // existing unreachable-block patching.
-                if !matches!(func.instance.def, InstanceKind::DropGlue(..)) {
+                if !matches!(
+                    func.instance.def,
+                    InstanceKind::Shim(ShimKind::DropGlue(..))
+                ) {
                     self.check_panic_machinery(mir, &func, &ctx, &reachable);
                 }
 
@@ -1251,17 +1269,17 @@ impl<'tcx> DeviceCollector<'tcx> {
         let place_ty = self.tcx.instantiate_and_normalize_erasing_regions(
             caller.instance.args,
             TypingEnv::fully_monomorphized(),
-            EarlyBinder::bind(place_ty),
+            EarlyBinder::bind(self.tcx, place_ty),
         );
 
         // Resolve drop_in_place::<T>. This returns the drop glue shim
         // (InstanceKind::DropGlue) which wraps the actual Drop::drop call.
-        let drop_instance = Instance::resolve_drop_in_place(self.tcx, place_ty);
+        let drop_instance = Instance::resolve_drop_glue(self.tcx, place_ty);
 
         // DropGlue(_, None) is an empty shim for types that need no
         // destructor. The mir-importer's no-op analysis will lower these
         // as plain branches, so there's nothing to collect.
-        if let InstanceKind::DropGlue(_, None) = drop_instance.def {
+        if let InstanceKind::Shim(ShimKind::DropGlue(_, None)) = drop_instance.def {
             return;
         }
 
@@ -1402,10 +1420,25 @@ impl<'tcx> DeviceCollector<'tcx> {
         //   Caller: cuda_oxide_kernel_<hash>_scale::<f32> (args = [f32])
         //   Call in MIR: scale<T>(...)  (args = [T])
         //   After substitution: scale::<f32> (args = [f32])
+        //
+        // `TyKind::FnDef` args sit behind a `Binder` since rust-lang/rust
+        // PR "place FnDef behind a binder" (8fb83aba335): the binder scopes
+        // the function's LATE-bound (lifetime) vars. By the time a FnDef
+        // type appears in built MIR those binders have been instantiated
+        // (with dummy regions), so no bound vars can remain here; the
+        // caller's still-generic EARLY-bound params (`T`) are not binder
+        // vars and are substituted by `instantiate_and_normalize` below.
+        // rustc_monomorphize::collector uses `args.no_bound_vars().unwrap()`
+        // at its equivalent Call-terminator sites; we follow it rather than
+        // `skip_binder()`, which would silently discard a bound var if one
+        // ever appeared.
+        let args = args
+            .no_bound_vars()
+            .expect("FnDef args in built MIR carry no late-bound vars");
         let args = self.tcx.instantiate_and_normalize_erasing_regions(
             caller.instance.args,
             TypingEnv::fully_monomorphized(),
-            EarlyBinder::bind(*args),
+            EarlyBinder::bind(self.tcx, args),
         );
 
         // Check if function is from a crate we should compile
@@ -1533,7 +1566,8 @@ impl<'tcx> DeviceCollector<'tcx> {
         // bodies (e.g. for array/slice element drops) are collected.
         if !matches!(
             resolved.def,
-            InstanceKind::Item(_) | InstanceKind::DropGlue(..)
+            InstanceKind::Item(_)
+                | InstanceKind::Shim(ShimKind::DropGlue(..) | ShimKind::FnPtrAsPtr(..))
         ) {
             return;
         }
@@ -1541,7 +1575,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         // For DropGlue instances discovered via Call terminators (rather
         // than Drop terminators), route them through the same collection
         // logic as process_drop_place to avoid duplicating the enqueue path.
-        if let InstanceKind::DropGlue(_, Some(_)) = resolved.def {
+        if let InstanceKind::Shim(ShimKind::DropGlue(_, Some(_))) = resolved.def {
             let mangled = self.tcx.symbol_name(resolved).name.to_string();
             if self.seen.contains(&mangled) {
                 return;
@@ -1582,7 +1616,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         }
 
         // Empty drop glue (DropGlue with None type) has no body to collect.
-        if let InstanceKind::DropGlue(_, None) = resolved.def {
+        if let InstanceKind::Shim(ShimKind::DropGlue(_, None)) = resolved.def {
             return;
         }
 
@@ -1649,7 +1683,13 @@ impl<'tcx> DeviceCollector<'tcx> {
         // Skip functions without MIR bodies (extern intrinsics like cuda_device::threadIdx_x).
         // These are handled specially by the terminator translator in mir-importer
         // which dispatches them to NVVM intrinsic operations.
-        if !self.tcx.is_mir_available(resolved.def_id()) {
+        //
+        // Compiler-built shims (`FnPtrAsPtr`) have no HIR body either, so
+        // `is_mir_available` is false for their def_id, but `instance_mir`
+        // synthesises their body; do not skip those.
+        if !self.tcx.is_mir_available(resolved.def_id())
+            && !matches!(resolved.def, InstanceKind::Shim(ShimKind::FnPtrAsPtr(..)))
+        {
             if self.verbose {
                 eprintln!(
                     "[collector] Skipping extern/intrinsic (no MIR): {}",
@@ -1717,6 +1757,14 @@ impl<'tcx> DeviceCollector<'tcx> {
                 ("closure", instance)
             }
             TyKind::FnDef(fn_def_id, fn_args) => {
+                // This ty comes from fully-monomorphized MIR, so the FnDef
+                // binder (late-bound lifetimes only) has been instantiated;
+                // assert that instead of `skip_binder()`, matching
+                // rustc_monomorphize::collector's
+                // `args.no_bound_vars().unwrap()` discipline.
+                let fn_args = fn_args
+                    .no_bound_vars()
+                    .expect("FnDef args in monomorphized MIR carry no late-bound vars");
                 let Some(instance) =
                     Instance::try_resolve(self.tcx, typing_env, *fn_def_id, fn_args)
                         .ok()

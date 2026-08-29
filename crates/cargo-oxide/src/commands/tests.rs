@@ -2970,12 +2970,12 @@ fn cuda_header_candidates_cover_standard_and_redistributable_layouts() {
 fn parse_rust_toolchain_toml_reads_channel_and_components() {
     let pin = parse_rust_toolchain_toml(
         r#"[toolchain]
-channel = "nightly-2026-04-03"
+channel = "nightly-2026-08-28"
 components = ["rust-src", "rustc-dev", "llvm-tools"]
 "#,
     )
     .expect("pin should parse");
-    assert_eq!(pin.channel, "nightly-2026-04-03");
+    assert_eq!(pin.channel, "nightly-2026-08-28");
     assert_eq!(
         pin.components,
         vec![
@@ -2996,16 +2996,16 @@ fn parse_rust_toolchain_toml_rejects_missing_channel() {
 #[test]
 fn active_toolchain_matches_channel_accepts_target_triple_suffix() {
     assert!(active_toolchain_matches_channel(
-        "nightly-2026-04-03-aarch64-apple-darwin (default)",
-        "nightly-2026-04-03"
+        "nightly-2026-08-28-aarch64-apple-darwin (default)",
+        "nightly-2026-08-28"
     ));
     assert!(active_toolchain_matches_channel(
-        "nightly-2026-04-03",
-        "nightly-2026-04-03"
+        "nightly-2026-08-28",
+        "nightly-2026-08-28"
     ));
     assert!(!active_toolchain_matches_channel(
         "nightly-2026-01-01-x86_64-unknown-linux-gnu (default)",
-        "nightly-2026-04-03"
+        "nightly-2026-08-28"
     ));
 }
 
@@ -3014,20 +3014,20 @@ fn active_toolchain_matches_channel_accepts_rustup_128_and_129_formats() {
     // rustup 1.29 single-line form with an override annotation, as
     // observed verbatim on a workspace with rust-toolchain.toml.
     assert!(active_toolchain_matches_channel(
-        "nightly-2026-04-03-x86_64-unknown-linux-gnu (overridden by \
+        "nightly-2026-08-28-x86_64-unknown-linux-gnu (overridden by \
              '/home/user/cuda-oxide/rust-toolchain.toml')",
-        "nightly-2026-04-03"
+        "nightly-2026-08-28"
     ));
     // rustup 1.28 two-line form: bare name, then the reason line.
     assert!(active_toolchain_matches_channel(
-        "nightly-2026-04-03-x86_64-unknown-linux-gnu\nactive because: \
+        "nightly-2026-08-28-x86_64-unknown-linux-gnu\nactive because: \
              overridden by '/home/user/cuda-oxide/rust-toolchain.toml'",
-        "nightly-2026-04-03"
+        "nightly-2026-08-28"
     ));
     // A mismatched pin must not be rescued by later lines.
     assert!(!active_toolchain_matches_channel(
         "stable-x86_64-unknown-linux-gnu\nactive because: default",
-        "nightly-2026-04-03"
+        "nightly-2026-08-28"
     ));
 }
 
@@ -3068,7 +3068,7 @@ fn update_refuses_when_the_config_pins_a_backend() {
 fn doctor_verified_components_unions_pin_list_with_required_floor() {
     // Pin lists everything: order preserved, no duplicates appended.
     let pin = RustToolchainPin {
-        channel: "nightly-2026-04-03".to_string(),
+        channel: "nightly-2026-08-28".to_string(),
         components: vec![
             "rust-src".to_string(),
             "rustc-dev".to_string(),
@@ -3090,7 +3090,7 @@ fn doctor_verified_components_unions_pin_list_with_required_floor() {
 
     // A trimmed pin still gets the hard floor appended.
     let trimmed = RustToolchainPin {
-        channel: "nightly-2026-04-03".to_string(),
+        channel: "nightly-2026-08-28".to_string(),
         components: vec!["clippy".to_string()],
     };
     assert_eq!(

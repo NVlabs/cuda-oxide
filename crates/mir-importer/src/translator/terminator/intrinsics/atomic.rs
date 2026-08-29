@@ -132,10 +132,9 @@ fn parse_atomic_type_name(type_name: &str) -> Option<AtomicTypeInfo> {
         (AtomicScope::Block, rest)
     } else if let Some(rest) = type_name.strip_prefix("SystemAtomic") {
         (AtomicScope::System, rest)
-    } else if let Some(rest) = type_name.strip_prefix("DeviceAtomic") {
-        (AtomicScope::Device, rest)
     } else {
-        return None;
+        let rest = type_name.strip_prefix("DeviceAtomic")?;
+        (AtomicScope::Device, rest)
     };
 
     let (bit_width, is_float, is_signed) = match base {
@@ -868,18 +867,36 @@ fn extract_core_ordering(c: &TyConst) -> Option<AtomicOrdering> {
     intrinsic_ordering_from_discriminant(discr)
 }
 
-/// Extract ordering consts without assuming how many type generics precede them.
+/// Extract ordering consts without assuming how many type generics precede
+/// them, plus the `VOLATILE` flag when present.
+///
+/// nightly-2026-08-28 added a `const VOLATILE: bool` tail generic to
+/// `atomic_load`/`atomic_store`. Ordering consts are the
+/// `AtomicOrdering`-typed ones; a `bool` const is the volatile flag.
+/// Returns `None` when any ordering const cannot be evaluated.
 fn extract_orderings_from_generics(
     substs: &rustc_public::ty::GenericArgs,
-) -> Option<Vec<AtomicOrdering>> {
-    substs
-        .0
-        .iter()
-        .filter_map(|arg| match arg {
-            GenericArgKind::Const(c) => Some(extract_core_ordering(c)),
-            _ => None,
-        })
-        .collect()
+) -> Option<(Vec<AtomicOrdering>, bool)> {
+    let mut orderings = Vec::new();
+    let mut volatile = false;
+    for arg in substs.0.iter() {
+        let GenericArgKind::Const(c) = arg else {
+            continue;
+        };
+        let is_bool = matches!(
+            c.kind(),
+            TyConstKind::Value(ty, _) if matches!(ty.kind(), TyKind::RigidTy(RigidTy::Bool))
+        );
+        if is_bool {
+            let TyConstKind::Value(_, alloc) = c.kind() else {
+                unreachable!("bool const kind re-matched");
+            };
+            volatile = alloc.read_uint().ok()? != 0;
+        } else {
+            orderings.push(extract_core_ordering(c)?);
+        }
+    }
+    Some((orderings, volatile))
 }
 
 /// Extract the element type from the first generic type arg.
@@ -1063,12 +1080,21 @@ fn extract_core_intrinsic_orderings_from_generics(
     loc: &Location,
     expected_orderings: usize,
 ) -> TranslationResult<Vec<AtomicOrdering>> {
-    let Some(orderings) = extract_orderings_from_generics(substs) else {
+    let Some((orderings, volatile)) = extract_orderings_from_generics(substs) else {
         return input_err!(
             loc.clone(),
             TranslationErr::unsupported("could not evaluate core atomic ordering generics")
         );
     };
+
+    if volatile {
+        return input_err!(
+            loc.clone(),
+            TranslationErr::unsupported(
+                "volatile core atomics (`VOLATILE = true`) are not supported in device code"
+            )
+        );
+    }
 
     if orderings.len() != expected_orderings {
         return input_err!(

@@ -27,6 +27,7 @@ use pliron::r#type::{TypeHandle, Typed};
 use pliron::utils::apint::APInt;
 use pliron::value::Value;
 use rustc_public::CrateDef;
+use rustc_public::CrateDefType;
 use std::num::NonZeroUsize;
 
 #[derive(Clone, Copy)]

@@ -171,9 +171,10 @@ same preserve-or-erase and mutability-preservation rules.
 `MirDisjointSliceType` has a fixed field-0 carrier contract:
 `MirPtr<T, mutable, addrspace(0), RawMut>`.
 
-`Retag` remains a codegen no-op. The dialect records the static pointer category
-but does not attempt to model dynamic Stacked Borrows / Tree Borrows tags or
-retag epochs.
+Retags (formerly `StatementKind::Retag`, now the `WithRetag` flag on
+`Rvalue::Use`) remain a codegen no-op. The dialect records the static pointer
+category but does not attempt to model dynamic Stacked Borrows / Tree Borrows
+tags or retag epochs.
 
 Union fields are alternative typed views of shared storage, not simultaneously
 live values. Recursive pointer-carrier discovery includes every declared union

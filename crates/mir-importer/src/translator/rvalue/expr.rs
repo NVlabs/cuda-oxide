@@ -391,6 +391,15 @@ pub fn translate_rvalue(
                     MirCastKindAttr::PointerWithExposedProvenance
                 }
                 mir::CastKind::Transmute => MirCastKindAttr::Transmute,
+                // Elaborated `box` derefs turn the inner pointer into a raw
+                // pointer with this cast. Upstream documents it as "almost
+                // equivalent to a regular transmute except that if the input
+                // would not be valid as `Box<T>`, the cast is UB. Backends
+                // that do not care about UB detection can treat this like a
+                // regular transmute", and rustc_codegen_ssa lowers it in the
+                // same match arm as `Transmute` (mir/rvalue.rs). We follow
+                // codegen_ssa: a plain same-size bit reinterpretation.
+                mir::CastKind::BoxDerefTransmute => MirCastKindAttr::Transmute,
                 mir::CastKind::PointerCoercion(coercion) => match coercion {
                     mir::PointerCoercion::Unsize => MirCastKindAttr::PointerCoercionUnsize,
                     mir::PointerCoercion::MutToConstPointer => {
@@ -475,7 +484,7 @@ pub fn translate_rvalue(
             let result = op.deref(ctx).get_result(0);
             Ok((Some(op), result, prev_op_after_right))
         }
-        mir::Rvalue::Use(operand) => {
+        mir::Rvalue::Use(operand, _) => {
             // Use just copies/moves a value - no operation needed, just pass through
             // The operand translation may insert field extraction operations
             let (val, last_inserted) =
@@ -1010,6 +1019,16 @@ pub fn translate_rvalue(
 
             Ok((None, value, last_inserted))
         }
+        // New in nightly-2026-08-28 (`feature(reborrow)`, rust-lang/rust
+        // PR #159103): reborrowing a user ADT that implements the `Reborrow`
+        // marker trait. Real lowering lands in the follow-up commit.
+        mir::Rvalue::Reborrow(_, _, place) => input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "Rvalue::Reborrow for place {:?} not yet implemented",
+                place
+            ))
+        ),
         mir::Rvalue::Len(place) => input_err!(
             loc,
             TranslationErr::unsupported(format!(

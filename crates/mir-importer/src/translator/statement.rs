@@ -74,7 +74,7 @@ pub fn translate_statement(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
 ) -> TranslationResult<Option<Ptr<Operation>>> {
-    let loc = span_to_location(ctx, stmt.span);
+    let loc = span_to_location(ctx, stmt.source_info.span);
 
     match &stmt.kind {
         mir::StatementKind::Assign(place, rvalue) => {
@@ -92,7 +92,7 @@ pub fn translate_statement(
                     // device global rather than storing it element by element in
                     // every thread. Falls through when the constant is not a
                     // shape that can be reduced to a byte image.
-                    mir::Rvalue::Use(mir::Operand::Constant(constant)) => {
+                    mir::Rvalue::Use(mir::Operand::Constant(constant), _) => {
                         if let Some(last) = rvalue::translate_array_constant_into_alloca(
                             ctx,
                             body,
@@ -841,14 +841,13 @@ pub fn translate_statement(
             Ok(prev_op)
         }
 
-        // `Retag` refines rustc's dynamic alias/provenance model but has no
-        // runtime effect. `dialect-mir` preserves the static source category
-        // (`&T`, `&mut T`, `*const T`, `*mut T`) in its pointer types, but it
-        // does not model Stacked/Tree Borrows tags or retag epochs. Therefore
-        // Retag remains an intentional no-op. Any future LLVM alias metadata
-        // must be based on an explicit audited policy, never inferred from the
-        // fact that Retag was skipped or from `MirPtrType::is_mutable`.
-        mir::StatementKind::Retag(..) => Ok(prev_op),
+        // Retag note: `StatementKind::Retag` no longer exists on the pinned
+        // nightly; retagging is now carried as the `WithRetag` flag on
+        // `Rvalue::Use`. Retags refine rustc's dynamic alias/provenance model
+        // (Stacked/Tree Borrows) but have no runtime effect, so the importer
+        // ignores the flag, exactly as it used to skip the statement. Any
+        // future LLVM alias metadata must be based on an explicit audited
+        // policy, never inferred from skipped retags or `MirPtrType::is_mutable`.
 
         // Other codegen-irrelevant borrow-check / type-system / coverage hints
         // have no runtime effect and are intentionally skipped.

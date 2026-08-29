@@ -1112,10 +1112,9 @@ fn parse_integer_sat_name(name: &str) -> Option<(IntegerSatKind, u32)> {
         (IntegerSatKind::SignedSub, rest)
     } else if let Some(rest) = name.strip_prefix("llvm_uadd_sat_i") {
         (IntegerSatKind::UnsignedAdd, rest)
-    } else if let Some(rest) = name.strip_prefix("llvm_usub_sat_i") {
-        (IntegerSatKind::UnsignedSub, rest)
     } else {
-        return None;
+        let rest = name.strip_prefix("llvm_usub_sat_i")?;
+        (IntegerSatKind::UnsignedSub, rest)
     };
     let width = width.parse().ok()?;
     (width > 0 && width <= 128).then_some((kind, width))
@@ -1487,10 +1486,9 @@ enum FloatToIntSatKind {
 fn parse_float_to_int_sat_name(name: &str) -> Option<(FloatToIntSatKind, u32, u32)> {
     let (kind, rest) = if let Some(rest) = name.strip_prefix("llvm_fptosi_sat_i") {
         (FloatToIntSatKind::Signed, rest)
-    } else if let Some(rest) = name.strip_prefix("llvm_fptoui_sat_i") {
-        (FloatToIntSatKind::Unsigned, rest)
     } else {
-        return None;
+        let rest = name.strip_prefix("llvm_fptoui_sat_i")?;
+        (FloatToIntSatKind::Unsigned, rest)
     };
     let (int_width, float_width) = rest.split_once("_f")?;
     let int_width: u32 = int_width.parse().ok()?;

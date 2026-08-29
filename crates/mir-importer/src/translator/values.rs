@@ -604,8 +604,8 @@ fn classify_rvalue(rvalue: &mir::Rvalue, classes: &[SlotAddrSpace]) -> WriteClas
         // `_y = _x` — propagate `_x`'s current classification. `Move` and
         // `Copy` are indistinguishable for addrspace purposes. `CopyForDeref`
         // behaves the same at this layer.
-        mir::Rvalue::Use(mir::Operand::Copy(place))
-        | mir::Rvalue::Use(mir::Operand::Move(place))
+        mir::Rvalue::Use(mir::Operand::Copy(place), _)
+        | mir::Rvalue::Use(mir::Operand::Move(place), _)
         | mir::Rvalue::CopyForDeref(place)
             if place.projection.is_empty() =>
         {
@@ -617,7 +617,7 @@ fn classify_rvalue(rvalue: &mir::Rvalue, classes: &[SlotAddrSpace]) -> WriteClas
         // result is `addrspace(3)`. The matching `WriteClass::Classified`
         // here keeps the destination slot typed to match, avoiding the
         // otherwise-inevitable `PtrToPtr` narrow-to-generic cast.
-        mir::Rvalue::Use(mir::Operand::Constant(const_op)) => classify_constant(const_op),
+        mir::Rvalue::Use(mir::Operand::Constant(const_op), _) => classify_constant(const_op),
         // Every other rvalue shape (aggregates, arithmetic, casts, complex
         // projections, `Ref`/`AddressOf`, …) we decline to reason about
         // here. The matching `Call`-terminator classifier handles the

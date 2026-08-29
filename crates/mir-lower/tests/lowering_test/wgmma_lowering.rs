@@ -972,7 +972,7 @@ fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Resu
         .collect::<Vec<_>>();
 
     nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
-    for pair in descriptors.chunks_exact(2) {
+    for pair in descriptors.as_chunks::<2>().0 {
         Operation::new(
             &mut ctx,
             nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),

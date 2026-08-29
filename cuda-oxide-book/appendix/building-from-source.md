@@ -10,7 +10,7 @@ from a fresh checkout. If you just want to run an example, the
 
 | Dependency       | Version                       | Purpose                                                     |
 |:-----------------|:----------------------------- |:------------------------------------------------------------|
-| **Rust nightly** | `nightly-2026-04-03` (pinned) | Compiler toolchain with `rustc-dev` for the codegen backend |
+| **Rust nightly** | `nightly-2026-08-28` (pinned) | Compiler toolchain with `rustc-dev` for the codegen backend |
 | **CUDA Toolkit** | 12.x+                         | Driver API, `nvcc`, PTX assembler                           |
 | **Clang**        | 21+ (`clang-21` pkg)          | `bindgen` in host `cuda-bindings` needs clang's headers     |
 | **Linux**        | Tested on Ubuntu 24.04        | Windows and macOS are not supported                         |
@@ -31,15 +31,15 @@ components. Rustup picks it up automatically:
 ```toml
 # rust-toolchain.toml (already in the repo root)
 [toolchain]
-channel = "nightly-2026-04-03"
+channel = "nightly-2026-08-28"
 components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "rustfmt", "llvm-tools"]
 ```
 
 If you need to install manually:
 
 ```bash
-rustup toolchain install nightly-2026-04-03
-rustup component add rust-src rustc-dev rust-analyzer clippy rustfmt llvm-tools --toolchain nightly-2026-04-03
+rustup toolchain install nightly-2026-08-28
+rustup component add rust-src rustc-dev rust-analyzer clippy rustfmt llvm-tools --toolchain nightly-2026-08-28
 ```
 
 `rust-src` provides the standard library source for cross-compilation,
@@ -64,7 +64,7 @@ required for `ptxas` and header files, but you will not be able to run kernels.
 ## Install LLVM (usually optional)
 
 The codegen pipeline emits LLVM IR and invokes `llc` to produce PTX. The
-pinned Rust toolchain (`nightly-2026-04-03`) already ships LLVM 22 with the
+pinned Rust toolchain (`nightly-2026-08-28`) already ships LLVM 23 with the
 NVPTX backend enabled via the `llvm-tools` component, so the recommended
 path is:
 
@@ -79,7 +79,7 @@ one-shot fix for older clones. The pipeline auto-detects this `llc` at
 
 If you would rather use a system LLVM (for a specific patch level, or
 because you already have one installed), the pipeline falls back to
-`llc-22` / `llc-21` on `PATH`. LLVM 21 is the minimum — earlier releases
+`llc-23` / `llc-22` / `llc-21` on `PATH`. LLVM 21 is the minimum — earlier releases
 reject the TMA / tcgen05 / WGMMA intrinsic signatures that cuda-oxide
 emits.
 
@@ -108,7 +108,7 @@ To pin a specific binary (rustup's, a distro's, or a custom build), set
 
 1. `$CUDA_OXIDE_LLC` (if set)
 2. The Rust toolchain's `llvm-tools` llc
-3. `llc-22`, then `llc-21`, then bare `llc` on `PATH`
+3. `llc-23`, then `llc-22`, then `llc-21`, then bare `llc` on `PATH`
 
 ```{note}
 Older `llc` binaries (LLVM 20 and earlier) will compile simpler kernels when
@@ -151,7 +151,7 @@ build process. `cargo-oxide` handles building it transparently.
 pipeline. Inside the repo, it works via a workspace alias. For standalone use, install it with the pinned nightly toolchain:
 
 ```bash
-cargo +nightly-2026-04-03 install --git https://github.com/NVlabs/cuda-oxide.git cargo-oxide
+cargo +nightly-2026-08-28 install --git https://github.com/NVlabs/cuda-oxide.git cargo-oxide
 ```
 
 On first run, `cargo-oxide` automatically fetches and builds the codegen backend
@@ -253,10 +253,11 @@ cuda-oxide/
 
 `llc` not found or missing NVPTX
 : The fastest fix is `rustup component add llvm-tools` — the pinned
-  toolchain's `llc` is LLVM 22 with NVPTX enabled and is auto-picked up.
+  toolchain's `llc` is LLVM 23 with NVPTX enabled and is auto-picked up.
   Otherwise install a system LLVM 21+ (`sudo apt install llvm-21`); the
-  pipeline probes the rustup `llc` first, then `llc-22` → `llc-21` on
-  `PATH`. To pin a specific binary set `CUDA_OXIDE_LLC=/path/to/llc`.
+  pipeline probes the rustup `llc` first, then `llc-23` → `llc-22` →
+  `llc-21` on `PATH`. To pin a specific binary set
+  `CUDA_OXIDE_LLC=/path/to/llc`.
 
 `Intrinsic has incorrect argument type!` (from `llc`)
 : Your `llc` is older than LLVM 21 and cannot lower the modern TMA / tcgen05
@@ -264,7 +265,7 @@ cuda-oxide/
 
 `error[E0463]: can't find crate for rustc_middle`
 : You are missing the `rustc-dev` component. Run:
-  `rustup component add rustc-dev --toolchain nightly-2026-04-03`.
+  `rustup component add rustc-dev --toolchain nightly-2026-08-28`.
 
 CUDA driver version mismatch
 : The toolkit version (compile-time) and driver version (runtime) must be
