@@ -624,6 +624,7 @@ fn generate_ptx_impl(
     match result {
         Ok(output) if output.status.success() => {
             verify_no_shared_symbols_in_initializers(module.output)?;
+            verify_no_leaked_intrinsic_externs(module.output)?;
             if matches!(debug_kind, DebugKind::LineTables) {
                 strip_target_debug_from_ptx(module.output)?;
                 if opts.verbose {
@@ -764,6 +765,83 @@ fn scan_for_shared_symbols_in_initializers(ptx: &str) -> Result<(), String> {
             if contains_ptx_identifier(initializer, symbol) {
                 return Err(format!("  {}", line.trim()));
             }
+        }
+    }
+    Ok(())
+}
+
+/// Build-time diagnostic: reject PTX where llc leaked an unsupported LLVM
+/// intrinsic as an extern function declaration.
+///
+/// An llc that predates an intrinsic does not error on it. It "lowers" the
+/// call by inventing an extern function with the LLVM-internal name:
+///
+/// ```text
+/// our IR:  call @llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3(...)
+///            │ llc too old to know stmatrix: exit 0, says nothing
+///            ▼
+/// PTX:  .extern .func llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3
+///                      ▲
+///        dots are not legal in PTX identifiers → ptxas: "Parsing error
+///        near '.nvvm'" (or driver JIT CUDA_ERROR_INVALID_PTX at runtime)
+/// ```
+///
+/// This scan names the intrinsic and the real remedy (a newer llc /
+/// `CUDA_OXIDE_LLC`) instead of letting a cryptic assembler parse error or
+/// a runtime JIT failure stand in for "your llc is too old". Found the
+/// hard way: CI's llc floor pin predated `llvm.nvvm.stmatrix.*` (needs
+/// llc-22+) and shipped unassemblable tcgen05 PTX for as long as nothing
+/// assembled it.
+fn verify_no_leaked_intrinsic_externs(ptx_path: &Path) -> Result<(), PipelineError> {
+    let ptx = std::fs::read_to_string(ptx_path).map_err(|e| {
+        PipelineError::PtxGeneration(format!(
+            "failed to read PTX for leaked-intrinsic verification ({}): {e}",
+            ptx_path.display()
+        ))
+    })?;
+    if let Err(symbol) = scan_for_leaked_intrinsic_externs(&ptx) {
+        return Err(PipelineError::PtxGeneration(format!(
+            "{} declares `.extern .func {symbol}`: llc did not recognize this \
+             LLVM intrinsic and leaked its dotted internal name into the PTX, \
+             which ptxas cannot parse (PTX identifiers cannot contain '.'). \
+             The llc in use is too old for this intrinsic; use a newer llc \
+             (set CUDA_OXIDE_LLC or install a newer LLVM).",
+            ptx_path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Pure scan half of [`verify_no_leaked_intrinsic_externs`]: returns the
+/// offending symbol on failure.
+///
+/// A leaked intrinsic shows up as `.extern .func <name>` (optionally with a
+/// parenthesized return-param group before the name) where `<name>` contains
+/// a `.`. Dots are impossible in identifiers the exporter emits, so any hit
+/// is an llc-side leak, not user code.
+fn scan_for_leaked_intrinsic_externs(ptx: &str) -> Result<(), String> {
+    for line in ptx.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix(".extern") else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix(".func") else {
+            continue;
+        };
+        // Skip an optional `(.param ...)` return group before the name.
+        let mut rest = rest.trim_start();
+        if rest.starts_with('(') {
+            let Some(close) = rest.find(')') else {
+                continue;
+            };
+            rest = rest[close + 1..].trim_start();
+        }
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.'))
+            .collect();
+        if name.contains('.') {
+            return Err(name);
         }
     }
     Ok(())
@@ -998,6 +1076,30 @@ mod tests {
 .global .align 8 .u64 t[1] = {__shared_mem_10};
 ";
         assert!(scan_for_shared_symbols_in_initializers(prefixed).is_ok());
+    }
+
+    #[test]
+    fn leaked_intrinsic_extern_is_rejected_with_its_name() {
+        // Exactly what llc-21 emits for an intrinsic it predates (observed
+        // for llvm.nvvm.stmatrix.* in gemm_sol under the CI floor pin).
+        let leaked = ".version 8.6\n.target sm_100a\n\
+             .extern .func llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3\n\
+             (\n\t.param .b64 p0\n)\n;\n";
+        let symbol = scan_for_leaked_intrinsic_externs(leaked).unwrap_err();
+        assert_eq!(symbol, "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3");
+
+        // Return-param group before the name is skipped, name still found.
+        let with_ret = ".extern .func (.param .b32 ret) llvm.nvvm.foo.bar (\n";
+        assert_eq!(
+            scan_for_leaked_intrinsic_externs(with_ret).unwrap_err(),
+            "llvm.nvvm.foo.bar"
+        );
+
+        // Legitimate dotless externs (vprintf, malloc-style) stay accepted.
+        let legit = ".extern .func (.param .b32 ret) vprintf (\n\
+             .param .b64 fmt,\n.param .b64 args\n);\n\
+             .extern .func my_device_helper();\n";
+        assert!(scan_for_leaked_intrinsic_externs(legit).is_ok());
     }
 
     #[test]
