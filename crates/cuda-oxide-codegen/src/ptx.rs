@@ -197,34 +197,46 @@ fn optimize_ll(
 
 /// Disable SimplifyCFG's switch-to-lookup-table transform in `opt`.
 ///
-/// The transform materializes phi-of-constant switch results as `.global`
-/// data arrays. When a result is a shared-memory pointer (a per-stage
-/// buffer selected by a pipeline-stage `match`, as `ptr addrspace(3)` or
-/// its generic addrspacecast), llc silently prints the table entry as a
-/// `.shared` symbol reference inside a `.global` initializer. PTX cannot
-/// encode that in either form: ptxas rejects both `= {sym}` and
-/// `= {generic(sym)}` with "Variable used as initial value not in .global
-/// or .const state space", and driver JIT of the module fails the same way
-/// (CUDA_ERROR_INVALID_PTX).
+/// The transform replaces a dense switch with a constant data table of its
+/// results. Fine on CPUs, fatal here when the results are shared-memory
+/// pointers (a kernel `match` picking a per-stage buffer): shared addresses
+/// are per-block runtime values, so a compile-time table of them is an
+/// impossible object, and every tool after `opt` handles it badly:
 ///
-/// LLVM 22's `opt` never built these tables for us: with no `-mcpu` the
-/// default subtarget was sm_30, whose PTX 3.2 floor has no `brx.idx`, so
-/// `shouldBuildLookupTables()` was false. LLVM 23 bumped the default SM to
-/// sm_75 (llvm/llvm-project commit 9fc5fd0ad689, PR #176021), legalizing
-/// BR_JT and turning the transform on for every module we optimize. The bug
-/// was already latent with any explicit modern `-mcpu` (an LLVM 22 `opt
-/// -mcpu=sm_90` builds the same bad tables), and upstream's
-/// `validLookupTableConstant` accepts any `GlobalValue` with no
-/// address-space check, so this SimplifyCFG override is the supported
-/// control; every supported `opt` (LLVM 21+) accepts it, and it stays even
-/// once upstream learns to reject shared-space table constants because our
-/// LLVM floor spans the broken majors. Upstream precedent: NVPTX already
-/// disables relative lookup tables wholesale (llvm/llvm-project#159748,
-/// `shouldBuildRelLookupTables` = false).
+/// ```text
+/// match stage { 0 => &SMEM_A0, .. }        the failure chain:
+///        │ opt: builds the table            opt   builds it     (trigger)
+///        ▼                                  llc   prints it,
+/// .global .u64 table[4] =                         exit 0        (silence)
+///     { __shared_mem_0, .. }   ← invalid   ptxas / driver JIT
+///     { generic(__shared_mem_0), .. } too        reject: CUDA_ERROR_
+///                                                INVALID_PTX    (too late)
+/// ```
 ///
-/// Switches keep their branch form instead; llc lowers dense ones to
-/// `brx.idx` code-label branch tables, which PTX encodes fine and which
-/// avoid a dependent `.global` data load on the hot path.
+/// ptxas rejects BOTH encodings with "Variable used as initial value not
+/// in .global or .const state space"; on a real GPU the module dies at JIT
+/// load with error 218.
+///
+/// Why this appeared with LLVM 23, and why the flag is permanent:
+///
+/// - `opt` decides "is the table trick worth it?" from its target GPU. We
+///   pass no `-mcpu`, so the built-in default decides: LLVM 22 assumed
+///   sm_30 (trick off); LLVM 23 assumes sm_75 (trick on) after
+///   llvm/llvm-project PR #176021 (commit 9fc5fd0ad689).
+/// - The bug was always latent, not new: LLVM 22 with an explicit modern
+///   `-mcpu` builds the same bad tables, because upstream's
+///   `validLookupTableConstant` never checks address spaces. So passing a
+///   real `-mcpu` would make things worse, not better.
+/// - This cl::opt is the supported control, accepted identically by every
+///   `opt` we support (LLVM 21+), and it stays even after upstream learns
+///   to reject shared-space table constants: our LLVM floor spans the
+///   broken majors for years. Precedent: NVPTX already disables relative
+///   lookup tables wholesale (llvm/llvm-project#159748).
+///
+/// What we get instead is better anyway: switches keep their branch form
+/// and llc lowers dense ones to `brx.idx` code-label tables, which PTX
+/// encodes fine, and which swap a dependent `.global` data load on the hot
+/// path for a few uniform ALU ops.
 const DISABLE_SWITCH_LOOKUP_TABLES: &str = "-switch-to-lookup=false";
 
 /// Build the middle-end arguments for a self-contained PTX module.
@@ -665,14 +677,23 @@ fn record_diagnostic(diagnostics: &mut Vec<String>, sink: Option<fn(&str)>, diag
 /// Build-time diagnostic: reject PTX whose `.global`/`.const` initializers
 /// reference `.shared` symbols.
 ///
-/// llc prints such initializers silently (exit 0), but ptxas rejects both
-/// the bare `= {sym}` and the wrapped `= {generic(sym)}` forms with
-/// "Variable used as initial value not in .global or .const state space",
-/// and driver JIT fails module load with CUDA_ERROR_INVALID_PTX at runtime.
-/// [`DISABLE_SWITCH_LOOKUP_TABLES`] removes the one known producer
-/// (SimplifyCFG data tables of per-stage shared-buffer pointers); this scan
-/// turns any future variant of the class back into a loud compile error
-/// instead of a runtime 218, regardless of which pass produced it.
+/// The safety net behind [`DISABLE_SWITCH_LOOKUP_TABLES`]. That flag turns
+/// off the one KNOWN producer of this impossible object; this scan catches
+/// any future producer, whichever pass invents it:
+///
+/// ```text
+/// llc: prints the bad initializer, exit 0, says nothing
+///        │
+///        ▼ this scan (microseconds, right after llc)
+/// .global .u64 t[4] = { __shared_mem_0, .. }   → BUILD FAILS, offending
+///                     { generic(...), .. }       line printed, instead of
+///                                                CUDA_ERROR_INVALID_PTX
+///                                                at JIT load on a real GPU
+/// ```
+///
+/// ptxas rejects both encodings ("Variable used as initial value not in
+/// .global or .const state space"); a shared address is a per-block runtime
+/// value and can never sit in a data-space initializer.
 fn verify_no_shared_symbols_in_initializers(ptx_path: &Path) -> Result<(), PipelineError> {
     let ptx = std::fs::read_to_string(ptx_path).map_err(|e| {
         PipelineError::PtxGeneration(format!(
