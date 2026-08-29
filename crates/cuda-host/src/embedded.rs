@@ -119,7 +119,14 @@ pub fn load_all_ptx_bundles_merged(
         return Err(EmbeddedModuleError::NoModules);
     }
 
-    Ok(ctx.load_module_from_image(merged.as_bytes())?)
+    let module = ctx.load_module_from_image(merged.as_bytes())?;
+    // Retain the merged module's `.entry` names (a few dozen bytes per
+    // kernel). If a later `_TID_` generic-kernel lookup misses while a
+    // same-base entry exists under a different hash, the launch paths can
+    // then report a host/device type-identity naming divergence instead of an
+    // opaque "named symbol not found". See `crate::entry_registry`.
+    crate::entry_registry::register_merged_module_entries(&module, &merged);
+    Ok(module)
 }
 
 fn strip_ptx_module_headers(ptx: &str) -> Result<String, String> {

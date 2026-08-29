@@ -1026,6 +1026,7 @@ fn cuda_module_function_binding(kernel: &CudaModuleKernel) -> TokenStream2 {
         let ptx_name = internal_ident("__cuda_oxide_ptx_name");
         let function_storage = internal_ident("__cuda_oxide_function_storage");
         let cache = internal_ident("__cuda_oxide_function_cache");
+        let error = internal_ident("__cuda_oxide_error");
         quote! {
             let #ptx_name = #ptx_name_fn #turbofish ();
             let #function_storage = {
@@ -1036,7 +1037,20 @@ fn cuda_module_function_binding(kernel: &CudaModuleKernel) -> TokenStream2 {
                 if let Some(#function) = #cache.get(#ptx_name) {
                     #function.clone()
                 } else {
-                    let #function = self.__module.load_function(#ptx_name)?;
+                    // A `_TID_` lookup miss can mean the host and the device
+                    // backend disagreed on the kernel's type-identity hash;
+                    // the diagnosis panics with a self-explaining message in
+                    // that case and passes ordinary misses through unchanged.
+                    let #function = self
+                        .__module
+                        .load_function(#ptx_name)
+                        .map_err(|#error| {
+                            ::cuda_host::diagnose_generic_kernel_load_error(
+                                &self.__module,
+                                #ptx_name,
+                                #error,
+                            )
+                        })?;
                     #cache.insert(#ptx_name, #function.clone());
                     #function
                 }

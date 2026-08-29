@@ -243,6 +243,7 @@ pub(crate) fn expand_cuda_launch(input: CudaLaunchInput) -> TokenStream2 {
     let args_ident = internal_ident("__cuda_oxide_args");
     let closure_ident = internal_ident("__cuda_oxide_closure");
     let ptx_name_ident = internal_ident("__cuda_oxide_ptx_name");
+    let module_ident = internal_ident("__cuda_oxide_module");
     let function_ident = internal_ident("__cuda_oxide_function");
     let config_ident = internal_ident("__cuda_oxide_config");
     let cooperative_ident = internal_ident("__cuda_oxide_cooperative");
@@ -438,9 +439,14 @@ pub(crate) fn expand_cuda_launch(input: CudaLaunchInput) -> TokenStream2 {
             {
                 let mut #closure_ident = #closure_expr;
                 let #ptx_name_ident: &'static str = #instantiate(&#closure_ident);
-                let #function_ident = #module.load_function(#ptx_name_ident).unwrap_or_else(|#error_ident| {
-                    panic!(
-                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                let #module_ident = &#module;
+                // On a miss, the helper panics with the host/device
+                // type-identity divergence diagnosis when the module holds
+                // this kernel under a different `_TID_` hash; an ordinary
+                // miss keeps this macro's long-standing panic message.
+                let #function_ident = #module_ident.load_function(#ptx_name_ident).unwrap_or_else(|#error_ident| {
+                    ::cuda_host::panic_generic_kernel_load_failed(
+                        #module_ident,
                         stringify!(#kernel_base),
                         #ptx_name_ident,
                         #error_ident,
@@ -457,9 +463,11 @@ pub(crate) fn expand_cuda_launch(input: CudaLaunchInput) -> TokenStream2 {
         quote! {
             {
                 let #ptx_name_ident = #ptx_name_helper();
-                let #function_ident = #module.load_function(#ptx_name_ident).unwrap_or_else(|#error_ident| {
-                    panic!(
-                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                let #module_ident = &#module;
+                // Same divergence-aware failure path as the closure branch.
+                let #function_ident = #module_ident.load_function(#ptx_name_ident).unwrap_or_else(|#error_ident| {
+                    ::cuda_host::panic_generic_kernel_load_failed(
+                        #module_ident,
                         stringify!(#kernel_base),
                         #ptx_name_ident,
                         #error_ident,
@@ -616,6 +624,7 @@ pub(crate) fn expand_cuda_launch_async(input: CudaLaunchAsyncInput) -> TokenStre
     });
     let closure_ident = internal_ident("__cuda_oxide_closure");
     let ptx_name_ident = internal_ident("__cuda_oxide_ptx_name");
+    let module_ident = internal_ident("__cuda_oxide_module");
     let function_ident = internal_ident("__cuda_oxide_function");
     let launch_ident = internal_ident("__cuda_oxide_launch");
     let error_ident = internal_ident("__cuda_oxide_error");
@@ -672,9 +681,14 @@ pub(crate) fn expand_cuda_launch_async(input: CudaLaunchAsyncInput) -> TokenStre
             {
                 let #closure_ident = #closure_expr;
                 let #ptx_name_ident: &'static str = #instantiate(&#closure_ident);
-                let #function_ident = #module.load_function(#ptx_name_ident).unwrap_or_else(|#error_ident| {
-                    panic!(
-                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                let #module_ident = &#module;
+                // On a miss, the helper panics with the host/device
+                // type-identity divergence diagnosis when the module holds
+                // this kernel under a different `_TID_` hash; an ordinary
+                // miss keeps this macro's long-standing panic message.
+                let #function_ident = #module_ident.load_function(#ptx_name_ident).unwrap_or_else(|#error_ident| {
+                    ::cuda_host::panic_generic_kernel_load_failed(
+                        #module_ident,
                         stringify!(#kernel_base),
                         #ptx_name_ident,
                         #error_ident,
@@ -691,9 +705,11 @@ pub(crate) fn expand_cuda_launch_async(input: CudaLaunchAsyncInput) -> TokenStre
         quote! {
             {
                 let #ptx_name_ident = #ptx_name_helper();
-                let #function_ident = #module.load_function(#ptx_name_ident).unwrap_or_else(|#error_ident| {
-                    panic!(
-                        "Failed to load kernel `{}` (expected PTX entry `{}`): {:?}",
+                let #module_ident = &#module;
+                // Same divergence-aware failure path as the closure branch.
+                let #function_ident = #module_ident.load_function(#ptx_name_ident).unwrap_or_else(|#error_ident| {
+                    ::cuda_host::panic_generic_kernel_load_failed(
+                        #module_ident,
                         stringify!(#kernel_base),
                         #ptx_name_ident,
                         #error_ident,

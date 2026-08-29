@@ -418,3 +418,90 @@ fn function_local_unroll_const_stays_in_block_scope() {
         "a block-local const must not be copied into the function signature: {output}"
     );
 }
+
+#[test]
+fn generic_and_closure_launches_route_misses_through_the_divergence_panic() {
+    let generic: CudaLaunchInput = parse_quote! {
+        kernel: kernels::map::<u32>,
+        stream: stream,
+        module: module,
+        config: config,
+        args: []
+    };
+    let closure: CudaLaunchInput = parse_quote! {
+        kernel: kernels::map,
+        stream: stream,
+        module: module,
+        config: config,
+        args: [|value: u32| value]
+    };
+    for input in [generic, closure] {
+        let expanded = expand_cuda_launch(input).to_string().replace(' ', "");
+        assert!(
+            expanded.contains("::cuda_host::panic_generic_kernel_load_failed"),
+            "generic `_TID_` misses must go through the type-identity \
+             divergence diagnosis: {expanded}"
+        );
+        assert!(
+            !expanded.contains("Failedtoloadkernel"),
+            "the plain-miss message now lives in the helper, not the \
+             expansion: {expanded}"
+        );
+    }
+
+    let async_generic: CudaLaunchAsyncInput = parse_quote! {
+        kernel: kernels::map::<u32>,
+        module: module,
+        config: config,
+        args: []
+    };
+    let async_closure: CudaLaunchAsyncInput = parse_quote! {
+        kernel: kernels::map,
+        module: module,
+        config: config,
+        args: [|value: u32| value]
+    };
+    for input in [async_generic, async_closure] {
+        let expanded = expand_cuda_launch_async(input).to_string().replace(' ', "");
+        assert!(
+            expanded.contains("::cuda_host::panic_generic_kernel_load_failed"),
+            "async generic `_TID_` misses must go through the type-identity \
+             divergence diagnosis: {expanded}"
+        );
+    }
+}
+
+#[test]
+fn non_generic_launches_keep_the_plain_lookup_panic() {
+    // A fixed-name kernel cannot diverge on a `_TID_` hash, so its miss
+    // keeps the macro-local panic (and stays duck-typed over the module
+    // expression, which trybuild fixtures rely on).
+    let plain: CudaLaunchInput = parse_quote! {
+        kernel: kernels::map,
+        stream: stream,
+        module: module,
+        config: config,
+        args: []
+    };
+    let expanded = expand_cuda_launch(plain).to_string().replace(' ', "");
+    assert!(
+        !expanded.contains("panic_generic_kernel_load_failed"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("Failedtoloadkernel"), "{expanded}");
+
+    let async_plain: CudaLaunchAsyncInput = parse_quote! {
+        kernel: kernels::map,
+        module: module,
+        config: config,
+        args: []
+    };
+    let expanded = expand_cuda_launch_async(async_plain)
+        .to_string()
+        .replace(' ', "");
+    assert!(
+        !expanded.contains("panic_generic_kernel_load_failed"),
+        "{expanded}"
+    );
+    assert!(expanded.contains("Failedtoloadkernel"), "{expanded}");
+}

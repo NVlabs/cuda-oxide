@@ -1264,3 +1264,35 @@ fn launch_contract_allows_deferred_minimum_blocks() {
     expand_cuda_module(module)
         .expect("minimum blocks affects device occupancy metadata, not the host launch contract");
 }
+
+#[test]
+fn generic_kernel_lookup_misses_route_through_the_divergence_diagnosis() {
+    let module: ItemMod = parse_quote! {
+        mod kernels {
+            #[kernel]
+            pub fn scale<T: Copy>(factor: T, mut out: DisjointSlice<T>) {}
+        }
+    };
+    let expanded = expand_to_compact_string(module);
+    assert!(
+        expanded.contains("::cuda_host::diagnose_generic_kernel_load_error"),
+        "a generic `_TID_` lookup miss must be routed through the host/device \
+         type-identity divergence diagnosis: {expanded}"
+    );
+    assert!(
+        expanded.contains("&self.__module,"),
+        "the diagnosis needs the loaded module to consult its retained \
+         `.entry` names: {expanded}"
+    );
+}
+
+#[test]
+fn non_generic_kernel_lookups_never_consult_the_divergence_diagnosis() {
+    // Non-generic kernels have fixed PTX names; a miss cannot be a
+    // type-identity divergence, so the plain `?` propagation stays.
+    let expanded = expand_to_compact_string(one_kernel_module());
+    assert!(
+        !expanded.contains("diagnose_generic_kernel_load_error"),
+        "non-generic lookups must keep the ordinary error path: {expanded}"
+    );
+}
