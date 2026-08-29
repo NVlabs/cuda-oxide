@@ -52,8 +52,10 @@
 //! `cargo-oxide` binary and the cached source untouched. The stale `.so` then
 //! loads against the wrong driver and fails with a cryptic
 //! `librustc_driver-<hash>.so: cannot open shared object file`. To catch this
-//! we record the active toolchain fingerprint (`rustc -vV`) next to the cached
-//! `.so` at build time and compare it on every lookup; a recorded fingerprint
+//! we record the fingerprint (`rustc -vV`) of the toolchain that built the
+//! `.so` (resolved from the backend source directory, exactly like the build
+//! command itself) next to the cached `.so`, and compare it on every lookup
+//! against the toolchain active in the user's cwd; a recorded fingerprint
 //! that differs from the active toolchain forces a fresh re-clone and rebuild.
 //! This check has the highest precedence, since a toolchain mismatch makes the
 //! cached `.so` unloadable regardless of mtimes. A cache predating the
@@ -266,8 +268,39 @@ const TOOLCHAIN_FINGERPRINT_FILE: &str = "toolchain-fingerprint.txt";
 /// output (release, commit-hash, host, LLVM version). The cached backend `.so`
 /// links against this toolchain's `librustc_driver`, so any change here means
 /// the cache can no longer be loaded.
+///
+/// "Active" means resolved from the process working directory, i.e. the
+/// toolchain the APPLICATION build (which loads the `.so`) will use. The
+/// fingerprint RECORDED next to the `.so` must instead come from
+/// [`toolchain_fingerprint_in`] with the backend build directory: rustup's
+/// `rustc` proxy resolves `rust-toolchain.toml` by walking up from the cwd,
+/// and the backend builds with `current_dir = <source clone>` whose nested
+/// pin can differ from the user's cwd.
 fn current_toolchain_fingerprint() -> Option<String> {
-    let output = Command::new("rustc").args(["-vV"]).output().ok()?;
+    fingerprint_from_command(toolchain_fingerprint_command(None))
+}
+
+/// The fingerprint of the toolchain rustup resolves FROM `build_dir`: the
+/// toolchain `backend_build_command` actually builds the `.so` with (same
+/// cwd, inherited env, so `RUSTUP_TOOLCHAIN` and the directory's
+/// `rust-toolchain.toml` resolve identically).
+fn toolchain_fingerprint_in(build_dir: &Path) -> Option<String> {
+    fingerprint_from_command(toolchain_fingerprint_command(Some(build_dir)))
+}
+
+/// `rustc -vV`, optionally resolved from `build_dir` instead of the process
+/// working directory. Split out so tests can assert the resolution cwd.
+fn toolchain_fingerprint_command(build_dir: Option<&Path>) -> Command {
+    let mut cmd = Command::new("rustc");
+    cmd.args(["-vV"]);
+    if let Some(dir) = build_dir {
+        cmd.current_dir(dir);
+    }
+    cmd
+}
+
+fn fingerprint_from_command(mut cmd: Command) -> Option<String> {
+    let output = cmd.output().ok()?;
     output
         .status
         .success()
@@ -297,11 +330,19 @@ fn toolchain_fingerprint_mismatch(cache_dir: &Path) -> bool {
     }
 }
 
-/// Records the active toolchain fingerprint next to the cached `.so`. Best
+/// Records the fingerprint of the toolchain THAT BUILT the backend (resolved
+/// from `build_dir`, the backend source crate) next to the cached `.so`. Best
 /// effort: a write failure just means the next run re-detects a mismatch and
 /// rebuilds again.
-fn write_toolchain_fingerprint(cache_dir: &Path) {
-    if let Some(fp) = current_toolchain_fingerprint() {
+///
+/// Recording the user's-cwd toolchain here instead would be a bug: when the
+/// user's project pins a different nightly than the source clone, the cached
+/// `.so` (linked against the clone's `librustc_driver`) would carry the
+/// project's fingerprint, `toolchain_fingerprint_mismatch` would compare the
+/// project toolchain against itself and never fire, and every application
+/// build would loop on "couldn't load codegen backend" with no self-heal.
+fn write_toolchain_fingerprint(cache_dir: &Path, build_dir: &Path) {
+    if let Some(fp) = toolchain_fingerprint_in(build_dir) {
         let _ = std::fs::write(cache_dir.join(TOOLCHAIN_FINGERPRINT_FILE), fp);
     }
 }
@@ -707,7 +748,8 @@ fn auto_fetch_and_build() -> PathBuf {
     let codegen_crate = src_dir.join("crates/rustc-codegen-cuda");
     let built_so = build_backend_from_source(&codegen_crate);
     if built_so.exists() {
-        install_backend_into(&cache_dir, &built_so).expect("Failed to copy backend to cache");
+        install_backend_into(&cache_dir, &built_so, &codegen_crate)
+            .expect("Failed to copy backend to cache");
         eprintln!("✓ Backend cached at {}", so_path.display());
     }
 
@@ -722,13 +764,19 @@ fn auto_fetch_and_build() -> PathBuf {
 /// swap, so the next lookup would load a backend linked against the wrong
 /// `librustc_driver`.
 ///
-/// Takes the directory explicitly so it can be exercised without touching
-/// `CARGO_HOME`.
-fn install_backend_into(cache_dir: &Path, built_so: &Path) -> std::io::Result<PathBuf> {
+/// Takes the directories explicitly so it can be exercised without touching
+/// `CARGO_HOME`. `build_dir` is the backend source crate the `.so` was built
+/// in; the recorded fingerprint is resolved from there (see
+/// [`write_toolchain_fingerprint`]).
+fn install_backend_into(
+    cache_dir: &Path,
+    built_so: &Path,
+    build_dir: &Path,
+) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(cache_dir)?;
     let so_path = cache_dir.join("librustc_codegen_cuda.so");
     std::fs::copy(built_so, &so_path)?;
-    write_toolchain_fingerprint(cache_dir);
+    write_toolchain_fingerprint(cache_dir, build_dir);
     Ok(so_path)
 }
 
@@ -743,9 +791,9 @@ fn install_backend_into(cache_dir: &Path, built_so: &Path) -> std::io::Result<Pa
 /// Returns `None` when the cache directory cannot be determined or the copy
 /// fails. Callers treat this as best effort: a failure leaves the in-repo build
 /// usable and costs external projects only a rebuild.
-pub fn publish_to_cache(built_so: &Path) -> Option<PathBuf> {
+pub fn publish_to_cache(built_so: &Path, codegen_crate: &Path) -> Option<PathBuf> {
     let cache_dir = cache_directory()?;
-    install_backend_into(&cache_dir, built_so).ok()
+    install_backend_into(&cache_dir, built_so, codegen_crate).ok()
 }
 
 /// Returns the active rustc sysroot path (e.g., `~/.rustup/toolchains/nightly-...`).
@@ -1128,6 +1176,65 @@ mod tests {
         );
     }
 
+    /// The recorded fingerprint must come from the toolchain that BUILT the
+    /// backend. `backend_build_command` runs cargo with
+    /// `current_dir = <codegen crate>`, so rustup resolves the nested
+    /// `rust-toolchain.toml` there; the fingerprint command must resolve from
+    /// the same directory. Fingerprinting the user's-cwd rustc instead records
+    /// a fingerprint that can never match the `.so`, so the
+    /// `StaleVsToolchain` guard never fires and every application build loops
+    /// on "couldn't load codegen backend".
+    #[test]
+    fn fingerprint_command_resolves_from_the_build_dir() {
+        let command = toolchain_fingerprint_command(Some(Path::new("/tmp/codegen")));
+        assert_eq!(command.get_program(), OsStr::new("rustc"));
+        assert_eq!(
+            command.get_current_dir(),
+            Some(Path::new("/tmp/codegen")),
+            "must resolve rustup's rust-toolchain.toml from the backend build dir"
+        );
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(args, ["-vV"]);
+
+        // The application-side check keeps resolving from the process cwd.
+        let command = toolchain_fingerprint_command(None);
+        assert_eq!(command.get_current_dir(), None);
+    }
+
+    /// Behavioral proof that resolution honors the build dir: a build dir
+    /// pinning a toolchain that cannot resolve must defeat fingerprinting
+    /// (and thus `write_toolchain_fingerprint` writes nothing), even though
+    /// the process cwd still resolves fine. Skipped when `rustc` is not a
+    /// rustup proxy (resolution is then cwd-insensitive by construction).
+    #[test]
+    fn fingerprint_resolution_follows_the_build_dir_pin_not_the_cwd() {
+        if current_toolchain_fingerprint().is_none() {
+            return; // no rustc here; nothing to observe
+        }
+        let dir = tempdir();
+        std::fs::write(
+            dir.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"cuda-oxide-nonexistent-test-toolchain\"\n",
+        )
+        .unwrap();
+        let pinned = toolchain_fingerprint_in(&dir);
+        if pinned.is_some() {
+            return; // not a rustup proxy; the pin cannot influence resolution
+        }
+
+        let cache = dir.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        write_toolchain_fingerprint(&cache, &dir);
+        assert!(
+            !cache.join(TOOLCHAIN_FINGERPRINT_FILE).exists(),
+            "the recorded fingerprint must be resolved from the build dir, \
+             not from the process cwd"
+        );
+    }
+
     /// Installing must leave both the `.so` and the toolchain fingerprint in
     /// the cache. A `.so` written without a fingerprint defers to the mtime
     /// checks, which cannot see a toolchain swap, so the next lookup would
@@ -1140,7 +1247,7 @@ mod tests {
         std::fs::write(&source, b"built").unwrap();
 
         let cache = dir.join("cache");
-        let installed = install_backend_into(&cache, &source).expect("install must succeed");
+        let installed = install_backend_into(&cache, &source, &dir).expect("install must succeed");
 
         assert_eq!(
             installed,
@@ -1176,7 +1283,7 @@ mod tests {
         let source = dir.join("built.so");
         std::fs::write(&source, b"fresh").unwrap();
 
-        let installed = install_backend_into(&cache, &source).expect("install must succeed");
+        let installed = install_backend_into(&cache, &source, &dir).expect("install must succeed");
 
         assert_eq!(
             std::fs::read(&installed).unwrap(),

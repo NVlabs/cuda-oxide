@@ -32,7 +32,7 @@ pub fn setup(ctx: &Context) {
     // `crates/rustc-codegen-cuda` above it. Publishing the build there keeps
     // those projects on the backend that was just built instead of on whatever
     // the cache last held.
-    match backend::publish_to_cache(&built_so) {
+    match backend::publish_to_cache(&built_so, &ctx.codegen_crate) {
         Some(path) => {
             println!();
             println!("✓ Published to {}", path.display());
