@@ -76,8 +76,13 @@ SM100_COMPILE_EXAMPLES=(redux_f32)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance ex2_approx_f16 generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd legacy_atomic_rmw_cas libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
 ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_kernel_shared_param error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
-# Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
-NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
+# Per-example rustc flags policy: an example that needs a special rustc flag
+# (e.g. disjoint_slice_len needs -Zinline-mir=no to keep its regression
+# pattern un-inlined) must carry it in its own Cargo.toml via the nightly
+# `profile-rustflags` feature, scoped to its own package. Never route such a
+# flag through RUSTFLAGS/CARGO_ENCODED_RUSTFLAGS here: cargo keys build
+# caches on rustflags, so a global flag forks a full second dependency-tree
+# build (~160s on the CI runner) for that one example.
 
 # Examples whose `main` deliberately never launches a kernel: they exist to
 # prove the device code compiles, and say so in their module docs
@@ -757,41 +762,10 @@ verdict_compile() {
 
 # ---- Runner --------------------------------------------------------------
 
-# Run `cargo oxide "$@"`, appending EXTRA_RUSTFLAGS (set per-example by
-# run_cargo) to the inherited Cargo flag source. rustc resolves repeated -Z
-# options last-one-wins, and Cargo prefers CARGO_ENCODED_RUSTFLAGS over
-# RUSTFLAGS when both are present.
-EXTRA_RUSTFLAGS=""
-invoke_cargo_oxide() {
-    if [[ -n "${EXTRA_RUSTFLAGS}" ]]; then
-        # `${var+x}` rather than `[[ -v var ]]`, which needs bash 4.2 and is a
-        # *parse* error on the bash 3.2 that macOS ships. Both mean "set, even
-        # if empty" -- not "non-empty", which matters because the branch below
-        # decides on that basis whether to prepend the 0x1f separator.
-        if [[ -n "${CARGO_ENCODED_RUSTFLAGS+x}" ]]; then
-            local encoded_flags="${CARGO_ENCODED_RUSTFLAGS}"
-            if [[ -n "${encoded_flags}" ]]; then
-                encoded_flags+=$'\x1f'
-            fi
-            CARGO_ENCODED_RUSTFLAGS="${encoded_flags}${EXTRA_RUSTFLAGS}" \
-                cargo oxide "$@"
-        else
-            RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${EXTRA_RUSTFLAGS}" cargo oxide "$@"
-        fi
-    else
-        cargo oxide "$@"
-    fi
-}
-
 # Run cargo oxide for ${ex} in category ${cat}. Writes to ${log}. Returns
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
-    local noinline
-    EXTRA_RUSTFLAGS=""
-    for noinline in "${NOINLINE_MIR_EXAMPLES[@]}"; do
-        [[ "${ex}" == "${noinline}" ]] && EXTRA_RUSTFLAGS="-Zinline-mir=no"
-    done
     # Rust `char` must remain plain i32 in both NVVM dialects. A runtime
     # round-trip cannot distinguish it from an incorrect zeroext i32 ABI.
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "device_ffi_test" ]]; then
@@ -800,10 +774,10 @@ run_cargo() {
         for arch in sm_90 sm_100; do
             local -a char_abi_args=("build" "${ex}" "--emit-nvvm-ir" "--arch=${arch}")
             if [[ ${VERBOSE} -eq 1 ]]; then
-                invoke_cargo_oxide "${char_abi_args[@]}" 2>&1 | tee -a "${log}"
+                cargo oxide "${char_abi_args[@]}" 2>&1 | tee -a "${log}"
                 CARGO_EC=${PIPESTATUS[0]}
             else
-                invoke_cargo_oxide "${char_abi_args[@]}" >>"${log}" 2>&1
+                cargo oxide "${char_abi_args[@]}" >>"${log}" 2>&1
                 CARGO_EC=$?
             fi
             if [[ ${CARGO_EC} -ne 0 ]]; then
@@ -1534,10 +1508,10 @@ run_cargo() {
         nvvm_arch="$(nvvm_verify_arch "${ex}")"
         local -a args=("emit-ltoir" "${ex}" "--arch=${nvvm_arch}")
         if [[ ${VERBOSE} -eq 1 ]]; then
-            invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
+            cargo oxide "${args[@]}" 2>&1 | tee "${log}"
             CARGO_EC=${PIPESTATUS[0]}
         else
-            invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
+            cargo oxide "${args[@]}" >"${log}" 2>&1
             CARGO_EC=$?
         fi
         return
@@ -1593,10 +1567,10 @@ run_cargo() {
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_MODERN_ARCH}")
     fi
     if [[ ${VERBOSE} -eq 1 ]]; then
-        invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
+        cargo oxide "${args[@]}" 2>&1 | tee "${log}"
         CARGO_EC=${PIPESTATUS[0]}
     else
-        invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
+        cargo oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
     fi
     # Any example may ship a verify-code-shape.sh; running whichever exist keeps
@@ -1615,7 +1589,7 @@ run_cargo() {
                 # and already set CARGO_EC.
                 local -a no_opt_args=("${args[@]}")
                 no_opt_args[0]="build"
-                CUDA_OXIDE_NO_OPT=1 invoke_cargo_oxide "${no_opt_args[@]}" >>"${log}" 2>&1 \
+                CUDA_OXIDE_NO_OPT=1 cargo oxide "${no_opt_args[@]}" >>"${log}" 2>&1 \
                     || CARGO_EC=$?
                 break
             fi
@@ -1729,6 +1703,7 @@ if ! env -u CARGO_TARGET_DIR cargo oxide setup >/dev/null 2>&1; then
     echo "error: failed to build the codegen backend; run 'cargo oxide setup' to see why" >&2
     exit 2
 fi
+
 # Honor an externally-set CARGO_TARGET_DIR (e.g. CI); otherwise share one under
 # the repo's target/ so it is gitignored and cleaned by `cargo clean`.
 : "${CARGO_TARGET_DIR:=${repo_root}/target/oxide-examples}"
