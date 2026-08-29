@@ -16,9 +16,11 @@
 #                   never accepted.
 #   tcgen05      -- 5th-gen tensor cores; sm_100 datacenter only. On sm_100
 #                   require full execution; elsewhere PTX compilation is
-#                   sufficient.
+#                   sufficient, and when a capable ptxas is available the
+#                   PTX must also assemble (the ptxas gate below).
 #   wgmma        -- Hopper only (sm_90a). On Hopper require execution;
-#                   elsewhere PTX compilation is sufficient.
+#                   elsewhere PTX compilation is sufficient (plus the
+#                   ptxas gate).
 #   blackwell-mma -- Blackwell-consumer-only MMA (kind::mxf8f6f4 exists on
 #                   sm_120/sm_121 alone), always compiled with
 #                   `--arch=sm_120a` because the generated target gating
@@ -323,6 +325,61 @@ if [[ "${host_cc}" =~ ^([0-9]+)\.[0-9]+$ ]] && [[ $((10#${BASH_REMATCH[1]})) -ge
     IKET_EXEC=1
 fi
 
+# ---- ptxas gate ------------------------------------------------------------
+# Compile-only style verdicts for the GPU-gated categories (tcgen05, wgmma,
+# blackwell-mma) accepted "a .ptx exists". That bar misses PTX that llc emits
+# but ptxas rejects: e.g. `.global` initializers referencing `.shared`
+# symbols, which fail driver JIT with CUDA_ERROR_INVALID_PTX only on the
+# gated hardware. When a ptxas is available, actually assemble the PTX for
+# the arch recorded in its `.target` line. Resolution order matches how the
+# examples themselves shell out to ptxas: explicit override, PATH, then the
+# CUDA toolkit install locations.
+PTXAS_BIN=""
+for ptxas_candidate in "${CUDA_OXIDE_PTXAS:-}" \
+                       "$(command -v ptxas 2>/dev/null)" \
+                       "${CUDA_HOME:+${CUDA_HOME}/bin/ptxas}" \
+                       /usr/local/cuda/bin/ptxas \
+                       /usr/local/cuda-*/bin/ptxas; do
+    if [[ -n "${ptxas_candidate}" && -x "${ptxas_candidate}" ]]; then
+        PTXAS_BIN="${ptxas_candidate}"
+        break
+    fi
+done
+
+# Assemble ${1} (a .ptx file) with the resolved ptxas for the arch its
+# `.target` line records. Sets PTXAS_NOTE for the verdict text. Returns 1
+# only for a real assembly failure; a missing/too-old ptxas or an arch it
+# does not know is a documented skip, not a failure.
+PTXAS_NOTE=""
+ptxas_verify() {
+    local ptx="$1" arch stderr_out
+    if [[ -z "${PTXAS_BIN}" ]]; then
+        PTXAS_NOTE="ptxas gate skipped: no ptxas found"
+        return 0
+    fi
+    if [[ ! -s "${ptx}" ]]; then
+        PTXAS_NOTE="ptxas gate skipped: no PTX at ${ptx}"
+        return 0
+    fi
+    arch="$(sed -nE 's/^\.target[[:space:]]+(sm_[0-9]+[af]?).*/\1/p' "${ptx}" | head -1)"
+    if [[ -z "${arch}" ]]; then
+        PTXAS_NOTE="ptxas gate skipped: no .target line in ${ptx}"
+        return 0
+    fi
+    if stderr_out="$("${PTXAS_BIN}" -arch="${arch}" "${ptx}" -o /dev/null 2>&1)"; then
+        PTXAS_NOTE="ptxas ${arch} ok"
+        return 0
+    fi
+    # An arch this ptxas predates (or a PTX ISA newer than it parses) is a
+    # tooling gap, not a compiler bug: note the skip and keep the verdict.
+    if grep -qE "is not defined for option 'gpu-name'|Unsupported \.version" <<<"${stderr_out}"; then
+        PTXAS_NOTE="ptxas gate skipped: ${PTXAS_BIN} is too old for ${arch}"
+        return 0
+    fi
+    PTXAS_NOTE="ptxas -arch=${arch} rejected the PTX: $(head -2 <<<"${stderr_out}" | tr '\n' ' ')"
+    return 1
+}
+
 printf "%scuda-oxide smoketest%s @ %s%s%s (%s)\n" "${C_BOLD}" "${C_RESET}" "${C_BOLD}" "${git_head}" "${C_RESET}" "${git_branch}"
 printf "GPU: %s\n" "${gpu_info}"
 printf "LTOIR arch: %s (modern: %s)\n" "${LTOIR_ARCH}" "${LTOIR_MODERN_ARCH}"
@@ -539,11 +596,15 @@ verdict_error() {
 }
 
 verdict_tcgen05() {
-    local log="$1" ec="$2"
+    local ex="$1" log="$2" ec="$3"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if grep -qE 'WARNING: tcgen05 requires|Skipping GPU test: requires sm_100|Skipping benchmark: requires sm_100|tcgen05 \(5th gen tensor cores\) requires sm_100|PTX was generated successfully' "${log}"; then
         if grep -qE 'PTX written|PTX Verification|PTX file generated' "${log}"; then
-            echo "PASS (tcgen05, PTX compiled)"
+            if ! ptxas_verify "crates/rustc-codegen-cuda/examples/${ex}/${ex//-/_}.ptx"; then
+                echo "FAIL (tcgen05, ${PTXAS_NOTE})"
+                return 1
+            fi
+            echo "PASS (tcgen05, PTX compiled; ${PTXAS_NOTE})"
             return 0
         fi
         echo "FAIL (tcgen05, PTX not generated)"
@@ -560,11 +621,15 @@ verdict_tcgen05() {
 }
 
 verdict_wgmma() {
-    local log="$1" ec="$2"
+    local ex="$1" log="$2" ec="$3"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if grep -qE 'WARNING: WGMMA requires|WGMMA is Hopper-only|PTX load failed \(expected on non-Hopper\)|PTX module loaded' "${log}"; then
         if grep -qE 'PTX written|PTX Verification|PTX file generated|inspect generated PTX|\.ptx' "${log}"; then
-            echo "PASS (wgmma, PTX compiled)"
+            if ! ptxas_verify "crates/rustc-codegen-cuda/examples/${ex}/${ex//-/_}.ptx"; then
+                echo "FAIL (wgmma, ${PTXAS_NOTE})"
+                return 1
+            fi
+            echo "PASS (wgmma, PTX compiled; ${PTXAS_NOTE})"
             return 0
         fi
         echo "FAIL (wgmma, PTX not generated)"
@@ -581,13 +646,17 @@ verdict_wgmma() {
 }
 
 verdict_blackwell_mma() {
-    local log="$1" ec="$2"
+    local ex="$1" log="$2" ec="$3"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     # Non-sm_120/121 host: the example declares the skip and must still
     # prove the sm_120a PTX was generated with the block-scaled instruction.
     if grep -qE 'mxf8f6f4 block-scale MMA requires sm_120' "${log}"; then
         if [[ ${ec} -eq 0 ]] && grep -qE 'PTX was generated successfully' "${log}"; then
-            echo "PASS (blackwell-mma, PTX compiled)"
+            if ! ptxas_verify "crates/rustc-codegen-cuda/examples/${ex}/${ex//-/_}.ptx"; then
+                echo "FAIL (blackwell-mma, ${PTXAS_NOTE})"
+                return 1
+            fi
+            echo "PASS (blackwell-mma, PTX compiled; ${PTXAS_NOTE})"
             return 0
         fi
         echo "FAIL (blackwell-mma, PTX not generated)"
@@ -721,6 +790,18 @@ verdict_compile() {
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
     if verify_nvvm_in_compile_only "${ex}"; then
         if [[ -s "${ex_dir}/${artifact}.ll" && -s "${ex_dir}/${artifact}.ltoir" ]]; then
+            # A GPU-gated example may also have produced a .ptx via its
+            # direct-LLVM invocation (e.g. tcgen05's dual-route branch);
+            # that artifact must assemble like any other gated PTX.
+            case "$(classify "${ex}")" in
+                tcgen05|wgmma|blackwell-mma)
+                    if [[ -s "${ex_dir}/${artifact}.ptx" ]] \
+                        && ! ptxas_verify "${ex_dir}/${artifact}.ptx"; then
+                        echo "FAIL (${PTXAS_NOTE})"
+                        return 1
+                    fi
+                    ;;
+            esac
             echo "PASS (verified and compiled by libNVVM)"
             return 0
         fi
@@ -728,6 +809,19 @@ verdict_compile() {
         return 1
     fi
     if [[ -s "${ex_dir}/${artifact}.ptx" ]]; then
+        # GPU-gated categories never execute in compile-only mode, so the
+        # PTX must at least assemble: driver-JIT-only errors (e.g. .shared
+        # symbols in .global initializers) otherwise pass CI silently.
+        case "$(classify "${ex}")" in
+            tcgen05|wgmma|blackwell-mma)
+                if ! ptxas_verify "${ex_dir}/${artifact}.ptx"; then
+                    echo "FAIL (${PTXAS_NOTE})"
+                    return 1
+                fi
+                echo "PASS (compiled; ${PTXAS_NOTE})"
+                return 0
+                ;;
+        esac
         echo "PASS (compiled)"
         return 0
     fi
@@ -1055,15 +1149,23 @@ run_cargo() {
             return
         fi
 
+        # The base MMA coverage is split into cg1/cg2 kernels (ptxas enforces
+        # one tcgen05 granularity per function); the aggregate counts below
+        # run over both bodies concatenated, plus per-kernel purity checks.
+        local llvm_mma_base_cg1 llvm_mma_base_cg2
         local llvm_mma_base llvm_mma_ws llvm_mma_base_count llvm_mma_base_unique
         local llvm_mma_ws_count llvm_mma_ws_unique
-        llvm_mma_base="$(awk '/^\.visible \.entry compile_tcgen05_mma_base\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_mma_base_cg1="$(awk '/^\.visible \.entry compile_tcgen05_mma_base_cg1\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_mma_base_cg2="$(awk '/^\.visible \.entry compile_tcgen05_mma_base_cg2\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_mma_base="${llvm_mma_base_cg1}"$'\n'"${llvm_mma_base_cg2}"
         llvm_mma_ws="$(awk '/^\.visible \.entry compile_tcgen05_mma_ws\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
         llvm_mma_base_count="$(grep -oE "${mma_base_re}" <<<"${llvm_mma_base}" | wc -l)"
         llvm_mma_base_unique="$(grep -oE "${mma_base_re}" <<<"${llvm_mma_base}" | sort -u | wc -l)"
         llvm_mma_ws_count="$(grep -oE "${mma_ws_re}" <<<"${llvm_mma_ws}" | wc -l)"
         llvm_mma_ws_unique="$(grep -oE "${mma_ws_re}" <<<"${llvm_mma_ws}" | sort -u | wc -l)"
-        if [[ -z "${llvm_mma_base}" || -z "${llvm_mma_ws}" ]] \
+        if [[ -z "${llvm_mma_base_cg1}" || -z "${llvm_mma_base_cg2}" || -z "${llvm_mma_ws}" ]] \
+            || grep -qE '\.cta_group::2\.' <<<"${llvm_mma_base_cg1}" \
+            || grep -qE '\.cta_group::1\.' <<<"${llvm_mma_base_cg2}" \
             || [[ ${llvm_mma_base_count} -ne 9 || ${llvm_mma_base_unique} -ne 8 ]] \
             || [[ ${llvm_mma_ws_count} -ne 16 || ${llvm_mma_ws_unique} -ne 10 ]] \
             || [[ $(grep -oE "${mma_base_plain_re}" <<<"${llvm_mma_base}" | wc -l) -ne 6 ]] \
@@ -1245,9 +1347,13 @@ run_cargo() {
             CARGO_EC=1
         fi
 
+        # Same cg1/cg2 split as the PTX route: aggregate over both bodies.
+        local nvvm_mma_base_cg1 nvvm_mma_base_cg2
         local nvvm_mma_base nvvm_mma_ws nvvm_mma_base_count nvvm_mma_base_unique
         local nvvm_mma_ws_count nvvm_mma_ws_unique nvvm_mma_inline_count nvvm_mma_memory_count
-        nvvm_mma_base="$(awk '/^define .*@compile_tcgen05_mma_base\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_mma_base_cg1="$(awk '/^define .*@compile_tcgen05_mma_base_cg1\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_mma_base_cg2="$(awk '/^define .*@compile_tcgen05_mma_base_cg2\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_mma_base="${nvvm_mma_base_cg1}"$'\n'"${nvvm_mma_base_cg2}"
         nvvm_mma_ws="$(awk '/^define .*@compile_tcgen05_mma_ws\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
         nvvm_mma_base_count="$(grep -oE "${mma_base_re}" <<<"${nvvm_mma_base}" | wc -l)"
         nvvm_mma_base_unique="$(grep -oE "${mma_base_re}" <<<"${nvvm_mma_base}" | sort -u | wc -l)"
@@ -1276,7 +1382,9 @@ run_cargo() {
                 fi
             done
         fi
-        if [[ -z "${nvvm_mma_base}" || -z "${nvvm_mma_ws}" ]] \
+        if [[ -z "${nvvm_mma_base_cg1}" || -z "${nvvm_mma_base_cg2}" || -z "${nvvm_mma_ws}" ]] \
+            || grep -qE '\.cta_group::2\.' <<<"${nvvm_mma_base_cg1}" \
+            || grep -qE '\.cta_group::1\.' <<<"${nvvm_mma_base_cg2}" \
             || [[ ${nvvm_mma_base_count} -ne 9 || ${nvvm_mma_base_unique} -ne 8 ]] \
             || [[ ${nvvm_mma_ws_count} -ne 16 || ${nvvm_mma_ws_unique} -ne 10 ]] \
             || [[ ${nvvm_mma_inline_count} -ne 25 || ${nvvm_mma_memory_count} -ne 25 ]] \
@@ -1798,9 +1906,9 @@ for ex in "${selected[@]}"; do
     else
         case "${cat}" in
             error)       verdict="$(verdict_error       "${log}" "${ec}" "${ex}")" && status=0 || status=$? ;;
-            tcgen05)     verdict="$(verdict_tcgen05     "${log}" "${ec}")"        && status=0 || status=$? ;;
-            wgmma)       verdict="$(verdict_wgmma       "${log}" "${ec}")"        && status=0 || status=$? ;;
-            blackwell-mma) verdict="$(verdict_blackwell_mma "${log}" "${ec}")"    && status=0 || status=$? ;;
+            tcgen05)     verdict="$(verdict_tcgen05     "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
+            wgmma)       verdict="$(verdict_wgmma       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
+            blackwell-mma) verdict="$(verdict_blackwell_mma "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             ltoir-modern) verdict="$(verdict_ltoir_modern "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
