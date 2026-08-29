@@ -164,8 +164,8 @@ pliron operation, and the types map directly to LLVM's type system. The
 dialect itself (ops, types, attributes, op-interfaces) is defined upstream in
 the `pliron-llvm` crate; cuda-oxide consumes it and re-exports it through the
 thin `llvm-export` crate, which also carries the textual `.ll` exporter and a
-few GPU-specific extensions (named address spaces, a syncscope enum, fp16 bit
-helpers) that pliron-llvm does not ship.
+few GPU-specific extensions (named address spaces, fp16 bit helpers) that
+pliron-llvm does not ship.
 
 ### Types
 
