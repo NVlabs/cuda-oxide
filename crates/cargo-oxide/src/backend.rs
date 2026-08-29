@@ -391,6 +391,23 @@ pub fn refresh_cached_backend() -> PathBuf {
 /// Builds the backend from a local source tree.
 pub fn build_backend_from_source(codegen_crate: &Path) -> PathBuf {
     println!("Building rustc-codegen-cuda backend...");
+    // The application build still honors these (codegen_env.rs folds them
+    // into the composed flags), so say once why the backend build does not.
+    let ambient_flags_present = [
+        "RUSTFLAGS",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_BUILD_RUSTFLAGS",
+    ]
+    .iter()
+    .any(|var| std::env::var(var).is_ok_and(|value| !value.trim().is_empty()));
+    if ambient_flags_present {
+        println!(
+            "  note: ambient RUSTFLAGS are ignored for the backend dylib (its \
+             digest keys every build cache); they still apply to application \
+             builds. For custom backend flags, build crates/rustc-codegen-cuda \
+             manually and point CUDA_OXIDE_BACKEND at the result."
+        );
+    }
 
     let rustc_sysroot = get_rustc_sysroot();
     let lib_path = rustc_sysroot.as_ref().map(|s| format!("{}/lib", s));
@@ -449,6 +466,25 @@ fn backend_build_command(codegen_crate: &Path, rustc_lib_path: Option<&str>) -> 
     // host-tuple` makes Cargo compile the dylib for the running toolchain.
     cmd.env("CARGO_TARGET_DIR", &target_dir);
     cmd.env_remove("CARGO_BUILD_TARGET");
+
+    // Ambient rustc flags must not reach the backend build either. The
+    // dylib's sha256 becomes the global `--cfg cuda_oxide_internal_backend_
+    // identity` for every application unit, so flags that alter the backend's
+    // bits fork a parallel cache universe for the entire application
+    // dependency tree -- and because this freshness build has a single cache
+    // slot, alternating flag sets relink the dylib on every transition.
+    // Application-targeting flags belong in the application build, which
+    // codegen_env.rs composes separately.
+    //
+    // An EMPTY CARGO_ENCODED_RUSTFLAGS is Cargo's highest-precedence flag
+    // source and resolves to zero flags, which is the only way to also
+    // suppress CARGO_TARGET_<TRIPLE>_RUSTFLAGS and config-file
+    // [build]/[target.*] rustflags -- sources env_remove cannot reach.
+    // The two env_removes below are then belt-and-suspenders for older
+    // cargos that ignore an empty encoded value.
+    cmd.env("CARGO_ENCODED_RUSTFLAGS", "");
+    cmd.env_remove("RUSTFLAGS");
+    cmd.env_remove("CARGO_BUILD_RUSTFLAGS");
 
     if let Some(path) = rustc_lib_path {
         cmd.env("LIBRARY_PATH", build_library_path(path));
@@ -769,6 +805,25 @@ mod tests {
         let cargo_build_target = command
             .get_envs()
             .find_map(|(key, value)| (key == OsStr::new("CARGO_BUILD_TARGET")).then_some(value));
+        // Ambient flags must not alter the backend bits, or the identity cfg
+        // digest forks every application unit's cache slot. The empty-but-set
+        // CARGO_ENCODED_RUSTFLAGS is what silences the sources env_remove
+        // cannot reach (CARGO_TARGET_<TRIPLE>_RUSTFLAGS, config-file
+        // [build]/[target.*] rustflags).
+        let encoded = command.get_envs().find_map(|(key, value)| {
+            (key == OsStr::new("CARGO_ENCODED_RUSTFLAGS")).then_some(value)
+        });
+        assert_eq!(
+            encoded,
+            Some(Some(OsStr::new(""))),
+            "CARGO_ENCODED_RUSTFLAGS must be set to the empty string"
+        );
+        for scrubbed in ["RUSTFLAGS", "CARGO_BUILD_RUSTFLAGS"] {
+            let entry = command
+                .get_envs()
+                .find_map(|(key, value)| (key == OsStr::new(scrubbed)).then_some(value));
+            assert_eq!(entry, Some(None), "{scrubbed} must be scrubbed");
+        }
         let args = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
