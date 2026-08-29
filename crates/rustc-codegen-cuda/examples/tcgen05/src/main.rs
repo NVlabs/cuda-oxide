@@ -305,11 +305,16 @@ mod kernels {
         }
     }
 
-    /// Keeps every base tcgen05 MMA form in device code.
+    /// Keeps the cta_group::1 base tcgen05 MMA forms in device code.
     ///
-    /// This kernel is compile-only and is never launched.
+    /// This kernel is compile-only and is never launched. The base MMA
+    /// coverage is split by CTA group because ptxas enforces one tcgen05
+    /// granularity per function ("Function ... uses single CTA
+    /// (.cta_group::1) and CTA pair granularity (.cta_group::2) and that is
+    /// not allowed"); a mixed kernel makes the whole module unassemblable
+    /// and unloadable, taking the runtime test kernels down with it.
     #[kernel]
-    pub unsafe fn compile_tcgen05_mma_base(
+    pub unsafe fn compile_tcgen05_mma_base_cg1(
         d_tmem: u32,
         a_tmem: u32,
         metadata_tmem: u32,
@@ -319,11 +324,8 @@ mod kernels {
     ) {
         unsafe {
             tcgen05::tcgen05_mma_shared::<0, 1, 0>(d_tmem, a_desc, b_desc, idesc, false);
-            tcgen05::tcgen05_mma_shared::<1, 2, 1>(d_tmem, a_desc, b_desc, idesc, false);
             tcgen05::tcgen05_mma_shared::<2, 1, 2>(d_tmem, a_desc, b_desc, idesc, false);
-            tcgen05::tcgen05_mma_shared::<3, 2, 3>(d_tmem, a_desc, b_desc, idesc, false);
             tcgen05::tcgen05_mma_tensor::<0, 1, 0>(d_tmem, a_tmem, b_desc, idesc, false);
-            tcgen05::tcgen05_mma_tensor_ashift::<1, 2, 1>(d_tmem, a_tmem, b_desc, idesc, false);
             tcgen05::tcgen05_mma_sp_shared::<2, 1, 2>(
                 d_tmem,
                 a_desc,
@@ -332,7 +334,7 @@ mod kernels {
                 false,
                 metadata_tmem,
             );
-            tcgen05::tcgen05_mma_sp_tensor::<3, 2, 3>(
+            tcgen05::tcgen05_mma_sp_tensor_ashift::<0, 1, 0>(
                 d_tmem,
                 a_tmem,
                 b_desc,
@@ -340,7 +342,28 @@ mod kernels {
                 false,
                 metadata_tmem,
             );
-            tcgen05::tcgen05_mma_sp_tensor_ashift::<0, 1, 0>(
+        }
+    }
+
+    /// Keeps the cta_group::2 base tcgen05 MMA forms in device code.
+    ///
+    /// This kernel is compile-only and is never launched. See
+    /// `compile_tcgen05_mma_base_cg1` for why the coverage is split by CTA
+    /// group.
+    #[kernel]
+    pub unsafe fn compile_tcgen05_mma_base_cg2(
+        d_tmem: u32,
+        a_tmem: u32,
+        metadata_tmem: u32,
+        a_desc: u64,
+        b_desc: u64,
+        idesc: u32,
+    ) {
+        unsafe {
+            tcgen05::tcgen05_mma_shared::<1, 2, 1>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_shared::<3, 2, 3>(d_tmem, a_desc, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_tensor_ashift::<1, 2, 1>(d_tmem, a_tmem, b_desc, idesc, false);
+            tcgen05::tcgen05_mma_sp_tensor::<3, 2, 3>(
                 d_tmem,
                 a_tmem,
                 b_desc,
@@ -795,34 +818,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (major, minor) = ctx.compute_capability()?;
     println!("GPU Compute Capability: sm_{}{}", major, minor);
 
-    if major < 10 {
-        println!("\n⚠️  WARNING: tcgen05 requires sm_100/sm_120 (Blackwell) or newer!");
+    // Gate on the GPUs that can actually execute this module BEFORE trying
+    // to load it (same set as gemm_sol_final; keep in sync with
+    // mir-importer's tcgen05 target support). Deciding "wrong GPU" from a
+    // module-load failure is not sound: the driver reports arch-incompatible
+    // PTX and genuinely malformed PTX with the same CUDA_ERROR_INVALID_PTX,
+    // so a load-error fallback silently converts compiler bugs into a
+    // PTX-only "pass".
+    if !can_execute_tcgen05_ptx(major, minor) {
+        println!("\n⚠️  WARNING: tcgen05 requires sm_100 (datacenter Blackwell)!");
         println!("   Your GPU is sm_{}{}", major, minor);
         if major == 9 {
             println!("   Hopper GPUs use WGMMA, not tcgen05.");
+        } else if major >= 10 {
+            println!("   Consumer Blackwell has no tcgen05.");
         }
+        println!("   PTX was generated successfully; run on sm_100 to execute kernels.");
         return verify_ptx_only();
     }
 
     let module = match kernels::load(&ctx) {
         Ok(m) => m,
         Err(e) => {
-            // `load` wraps the driver's own status, so reach through its
-            // `Driver` variant for the code the arms below key on. Anything
-            // else (a missing or unsupported payload) is not "right PTX, wrong
-            // GPU" and falls through to the error return.
+            // This GPU passed the capability gate above, so the module must
+            // load. CUDA_ERROR_INVALID_PTX here means the driver rejected
+            // the generated PTX itself: a compiler bug, never a "wrong GPU"
+            // situation. Fail loudly instead of degrading to the PTX-only
+            // verification path.
             let driver_status = match &e {
                 cuda_host::EmbeddedModuleError::Driver(driver) => Some(driver.0),
                 _ => None,
             };
             println!("\n❌ embedded module load failed: {e:?} (driver status = {driver_status:?})");
             if driver_status == Some(sys::cudaError_enum_CUDA_ERROR_INVALID_PTX) {
-                println!("   CUDA_ERROR_INVALID_PTX — the driver rejected the PTX.");
-                println!("   PTX target: sm_100a, GPU: sm_{}{}", major, minor);
-                println!(
-                    "   PTX was generated successfully; run on sm_100a hardware to execute kernels."
-                );
-                return verify_ptx_only();
+                return Err(format!(
+                    "driver rejected the generated PTX as invalid on sm_{major}{minor}, \
+                     which should execute it (CUDA_ERROR_INVALID_PTX): {e:?}"
+                )
+                .into());
             }
             return Err(e.into());
         }
@@ -842,6 +875,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// Keep this execution set in sync with mir-importer's tcgen05 target
+// support (and with gemm_sol_final's copy). Other GPU generations may
+// inspect and assemble the generated artifact, but must not turn a
+// module-load failure into an execution pass.
+fn can_execute_tcgen05_ptx(major: i32, minor: i32) -> bool {
+    matches!((major, minor), (10, 0) | (10, 1) | (10, 3) | (11, 0))
+}
+
 fn verify_ptx_only() -> Result<(), Box<dyn std::error::Error>> {
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tcgen05.ptx");
 
@@ -852,8 +893,18 @@ fn verify_ptx_only() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📝 PTX Verification:");
     println!("   PTX file generated at: {}", ptx_path.display());
 
+    // Assemble for the arch the module actually targets (read from the PTX
+    // `.target` line). The old hardcoded `-arch=sm_120a` could never succeed
+    // against this sm_100a-target module and only printed noise.
+    let ptx = std::fs::read_to_string(&ptx_path)?;
+    let arch = ptx
+        .lines()
+        .find_map(|line| line.strip_prefix(".target "))
+        .map(|rest| rest.split([',', ' ']).next().unwrap_or(rest).to_string())
+        .unwrap_or_else(|| "sm_100a".to_string());
+
     let ptxas_result = std::process::Command::new("ptxas")
-        .arg("-arch=sm_120a")
+        .arg(format!("-arch={arch}"))
         .arg(&ptx_path)
         .arg("-o")
         .arg("/dev/null")
@@ -861,11 +912,21 @@ fn verify_ptx_only() -> Result<(), Box<dyn std::error::Error>> {
 
     match ptxas_result {
         Ok(output) if output.status.success() => {
-            println!("   ✓ PTX validated by ptxas (sm_120a)");
+            println!("   ✓ PTX validated by ptxas ({arch})");
         }
         Ok(output) => {
-            println!("   ⚠️  ptxas validation failed:");
-            println!("      {}", String::from_utf8_lossy(&output.stderr));
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            // A ptxas that predates this arch (or this PTX ISA) cannot
+            // judge the module; only a real assembly rejection is fatal.
+            if stderr.contains("is not defined for option 'gpu-name'")
+                || stderr.contains("Unsupported .version")
+            {
+                println!("   ℹ️  installed ptxas is too old for {arch} - cannot validate PTX");
+            } else {
+                return Err(
+                    format!("ptxas -arch={arch} rejected the generated PTX:\n{stderr}").into(),
+                );
+            }
         }
         Err(_) => {
             println!("   ℹ️  ptxas not found - cannot validate PTX");
