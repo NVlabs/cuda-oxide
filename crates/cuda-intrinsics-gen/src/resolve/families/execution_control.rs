@@ -161,8 +161,8 @@ pub(in crate::resolve) fn execution_control_recipe(
     const SETMAX_DEC_MODIFIERS: &[&str] = &["dec", "sync", "aligned", "u32"];
     const GRID_LAUNCH_SELECTIONS: &[&str] = &["GRIDDEPCONTROL_LAUNCH_DEPENDENTS"];
     const GRID_WAIT_SELECTIONS: &[&str] = &["GRIDDEPCONTROL_WAIT"];
-    const SETMAX_INC_SELECTIONS: &[&str] = &["anonymous_22212"];
-    const SETMAX_DEC_SELECTIONS: &[&str] = &["anonymous_22214"];
+    const SETMAX_INC_SELECTIONS: &[&str] = &["anonymous_21745"];
+    const SETMAX_DEC_SELECTIONS: &[&str] = &["anonymous_21747"];
     const BAR_SECTION: &str =
         "9.7.14.1 Parallel Synchronization and Communication Instructions: bar, barrier";
     const BAR_URL: &str = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-bar-barrier";

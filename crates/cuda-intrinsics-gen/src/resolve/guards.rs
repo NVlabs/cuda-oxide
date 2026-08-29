@@ -65,7 +65,7 @@ pub(super) fn selection_matches_policy(
         if let Some(mma) = &tcgen05.mma {
             let expected = if mma.alias.is_some() {
                 BTreeSet::from([if tcgen05_mma_is_ws(mma.form) {
-                    tcgen05_mma_selection_asm(
+                    tcgen05_mma_declaration_asm(
                         mma.form,
                         Tcgen05MmaKind::F8f6f4,
                         1,
@@ -74,7 +74,7 @@ pub(super) fn selection_matches_policy(
                         Some(Tcgen05MmaBUsage::Discard),
                     )
                 } else {
-                    tcgen05_mma_selection_asm(
+                    tcgen05_mma_declaration_asm(
                         mma.form,
                         Tcgen05MmaKind::F8f6f4,
                         1,

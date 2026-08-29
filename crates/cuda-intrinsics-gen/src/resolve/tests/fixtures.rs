@@ -756,8 +756,12 @@ pub(super) fn packed_conversion_declaration(policy: &OverlayIntrinsic) -> Import
         llvm_name: policy.llvm_symbol.clone().unwrap(),
         arguments: policy.llvm_arguments.clone(),
         results: policy.llvm_results.clone(),
-        classes: vec!["Intrinsic".into(), "NVVMPureIntrinsic".into()],
-        properties: vec!["IntrNoMem".into(), "IntrSpeculatable".into()],
+        classes: vec!["Intrinsic".into(), "PureIntrinsic".into()],
+        properties: vec![
+            "IntrNoCreateUndefOrPoison".into(),
+            "IntrNoMem".into(),
+            "IntrSpeculatable".into(),
+        ],
         selections: vec![],
     }
 }
@@ -1455,7 +1459,7 @@ pub(super) fn test_wgmma_control_admission() -> WgmmaControlAdmission {
 
 pub(super) fn test_special_register_admission() -> SpecialRegisterAdmission {
     SpecialRegisterAdmission {
-        llvm_evidence_profile: "rust-llvm-22.1.2-1cb4e383".into(),
+        llvm_evidence_profile: "rust-llvm-23.1.0-16696adc".into(),
         libnvvm_evidence_profile: "cuda-13.3-libnvvm-13.3.33".into(),
         runtime_validation: RuntimeValidation::Unexecuted,
         registers: REVIEWED_SPECIAL_REGISTERS.into(),

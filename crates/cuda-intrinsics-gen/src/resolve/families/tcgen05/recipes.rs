@@ -745,10 +745,12 @@ pub(in crate::resolve) fn tcgen05_recipe(operation: Tcgen05Operation) -> Tcgen05
                 &["i32"] as &[_],
                 if x8 { F32_X32 } else { F32_X4 },
                 &["tmem_ptr", "i1"] as &[_],
+                // Overloaded data type-variables in the pinned LLVM 23 dump
+                // (see tcgen05_overloaded_data_token): 32 and 4 registers.
                 if x8 {
-                    &["v32i32"] as &[_]
+                    &["anonymous_9953"] as &[_]
                 } else {
-                    &["v4i32"] as &[_]
+                    &["anonymous_9941"] as &[_]
                 },
                 LOAD_CLASSES,
                 LOAD_PROPERTIES,

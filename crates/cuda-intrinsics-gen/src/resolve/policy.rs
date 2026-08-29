@@ -352,7 +352,11 @@ pub(super) fn validate_policy(
                 declaration
                     .classes
                     .iter()
-                    .any(|class| class == "NVVMPureIntrinsic")
+                    // LLVM 23 added a target-generic `PureIntrinsic` class
+                    // (Intrinsics.td) and migrated many NVVM declarations to
+                    // it from the NVPTX-local `NVVMPureIntrinsic`; both carry
+                    // the same purity contract.
+                    .any(|class| class == "NVVMPureIntrinsic" || class == "PureIntrinsic")
                     || (matches!(
                         policy.family.as_str(),
                         "packed_alu" | "scalar_arithmetic" | "extended_minmax"

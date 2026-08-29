@@ -320,8 +320,11 @@ pub(in crate::resolve) fn validate_prmt_policy(
         declaration
             .classes
             .iter()
-            .any(|class| class == "NVVMPureIntrinsic")
-            && declaration.properties == ["IntrNoMem", "IntrSpeculatable"]
+            // LLVM 23 migrated prmt to the target-generic PureIntrinsic
+            // class and added IntrNoCreateUndefOrPoison.
+            .any(|class| class == "NVVMPureIntrinsic" || class == "PureIntrinsic")
+            && declaration.properties
+                == ["IntrNoCreateUndefOrPoison", "IntrNoMem", "IntrSpeculatable"]
             && policy.pure
             && policy.memory == "none"
             && !policy.convergent

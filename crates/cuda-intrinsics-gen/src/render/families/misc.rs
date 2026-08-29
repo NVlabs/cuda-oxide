@@ -60,9 +60,7 @@ fn clc_safety_lines(operation: ClcOperation, names: ClcSafetyArgNames) -> Vec<St
             format!(
                 "{response} must designate a writable, 16-byte-aligned 16-byte region in `shared::cta` memory, and {mbar} must designate a valid, aligned shared-memory mbarrier."
             ),
-            format!(
-                "Each CTA must issue `arrive_expect_tx` for its own corresponding mbarrier with 16 bytes before this request."
-            ),
+            "Each CTA must issue `arrive_expect_tx` for its own corresponding mbarrier with 16 bytes before this request.".to_string(),
             "This CTA must not have observed a prior CLC try-cancel request fail.".into(),
             "The response is written to every CTA's shared-memory window and signals every CTA's mbarrier.".into(),
             "Every CTA in the cluster must still be active.".into(),

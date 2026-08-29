@@ -757,7 +757,7 @@ fn compact_tcgen05_load_admission_matches_all_llvm_records_and_fails_closed() {
     let scalar_raw = &loads[0];
     assert_eq!(scalar_raw.rust_result, "u32");
     assert_eq!(scalar_raw.dialect_results, ["i32"]);
-    assert_eq!(scalar_raw.llvm_results, ["i32"]);
+    assert_eq!(scalar_raw.llvm_results, ["anonymous_9933"]);
     assert_eq!(
         scalar_raw.expected_ptx.modifiers,
         ["ld", "sync", "aligned", "16x64b", "x1", "b32"]
@@ -789,7 +789,7 @@ fn compact_tcgen05_load_admission_matches_all_llvm_records_and_fails_closed() {
     let largest = &loads[57];
     assert_eq!(largest.rust_result, "[u32; 128]");
     assert_eq!(largest.dialect_results.len(), 128);
-    assert_eq!(largest.llvm_results, ["v128i32"]);
+    assert_eq!(largest.llvm_results, ["anonymous_9961"]);
     assert_eq!(
         largest.expected_ptx.operands,
         [
@@ -902,7 +902,10 @@ fn compact_tcgen05_store_admission_matches_all_llvm_records_and_fails_closed() {
     let scalar_raw = &stores[0];
     assert_eq!(scalar_raw.rust_arguments, ["u32", "u32"]);
     assert_eq!(scalar_raw.dialect_operands, ["i32", "i32"]);
-    assert_eq!(scalar_raw.llvm_arguments, ["tmem_ptr", "i32", "i1"]);
+    assert_eq!(
+        scalar_raw.llvm_arguments,
+        ["tmem_ptr", "anonymous_9933", "i1"]
+    );
     assert_eq!(
         scalar_raw.expected_ptx.modifiers,
         ["st", "sync", "aligned", "16x64b", "x1", "b32"]
@@ -941,7 +944,7 @@ fn compact_tcgen05_store_admission_matches_all_llvm_records_and_fails_closed() {
     let largest = &stores[57];
     assert_eq!(largest.rust_arguments, ["u32", "[u32; 128]"]);
     assert_eq!(largest.dialect_operands.len(), 129);
-    assert_eq!(largest.llvm_arguments, ["tmem_ptr", "v128i32", "i1"]);
+    assert_eq!(largest.llvm_arguments, ["tmem_ptr", "anonymous_9961", "i1"]);
     assert_eq!(
         largest.expected_ptx.operands,
         [

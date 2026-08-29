@@ -279,7 +279,7 @@ pub fn generate_ptx(
         return Err(PipelineError::PtxGeneration(
             "No working llc found.\n\
              cuda-oxide tries (in order): opts.llc_override (CUDA_OXIDE_LLC), the \
-             Rust toolchain's llvm-tools llc, then llc-22 / llc-21 on PATH. \
+             Rust toolchain's llvm-tools llc, then llc-23 / llc-22 / llc-21 on PATH. \
              LLVM 21+ is required (earlier versions reject the TMA / tcgen05 / \
              WGMMA intrinsic signatures we emit).\n\
              Easiest fix: `rustup component add llvm-tools` (auto-picked up).\n\

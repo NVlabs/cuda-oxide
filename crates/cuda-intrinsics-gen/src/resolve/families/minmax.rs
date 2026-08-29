@@ -556,7 +556,13 @@ pub(in crate::resolve) fn validate_extended_minmax_policy(
     );
     ensure!(
         declaration.classes == recipe.classes
-            && declaration.properties == ["Commutative", "IntrNoMem", "IntrSpeculatable"]
+            && declaration.properties
+                == [
+                    "Commutative",
+                    "IntrNoCreateUndefOrPoison",
+                    "IntrNoMem",
+                    "IntrSpeculatable",
+                ]
             && declaration.selections.len() == 1,
         "{} imported extended-minmax classes, properties, or selection count changed",
         policy.id

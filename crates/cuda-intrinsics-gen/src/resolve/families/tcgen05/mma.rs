@@ -319,6 +319,30 @@ pub(in crate::resolve) fn tcgen05_mma_selection_asm(
     format!("{head} {operands};")
 }
 
+/// The DECLARATION-side spelling of one tcgen05 MMA selection string.
+///
+/// `tcgen05_mma_selection_asm` produces the PTX ISA instruction cuda-oxide
+/// emits and ptxas has validated (`.collector::a::<usage>.ashift`). LLVM 23's
+/// TableGen selection strings instead spell `.ashift` BEFORE the collector
+/// qualifier (`.ashift.collector::a::<usage>`; LLVM 22 matched the ISA
+/// order). Use this wrapper wherever an IMPORTED declaration's selection asm
+/// is compared, and keep the base function for emission and evidence.
+pub(in crate::resolve) fn tcgen05_mma_declaration_asm(
+    form: Tcgen05MmaForm,
+    kind: Tcgen05MmaKind,
+    cta_group: u8,
+    collector_a: Option<&str>,
+    b_buffer: Option<u8>,
+    b_usage: Option<Tcgen05MmaBUsage>,
+) -> String {
+    let asm = tcgen05_mma_selection_asm(form, kind, cta_group, collector_a, b_buffer, b_usage);
+    if tcgen05_mma_is_ws(form) || !tcgen05_mma_is_ashift(form) {
+        return asm;
+    }
+    asm.replacen(".ashift", "", 1)
+        .replacen(".collector::a::", ".ashift.collector::a::", 1)
+}
+
 pub(in crate::resolve) fn tcgen05_mma_all_selection_asms(form: Tcgen05MmaForm) -> BTreeSet<String> {
     if tcgen05_mma_is_ws(form) {
         return [
@@ -331,7 +355,7 @@ pub(in crate::resolve) fn tcgen05_mma_all_selection_asms(form: Tcgen05MmaForm) -
         .flat_map(|usage| {
             TCGEN05_MMA_KINDS.into_iter().flat_map(move |kind| {
                 (0..4).map(move |buffer| {
-                    tcgen05_mma_selection_asm(form, kind, 1, None, Some(buffer), Some(usage))
+                    tcgen05_mma_declaration_asm(form, kind, 1, None, Some(buffer), Some(usage))
                 })
             })
         })
@@ -342,7 +366,7 @@ pub(in crate::resolve) fn tcgen05_mma_all_selection_asms(form: Tcgen05MmaForm) -
         .flat_map(|kind| {
             (1..=2).flat_map(move |group| {
                 ["discard", "lastuse", "fill", "use"].map(move |usage| {
-                    tcgen05_mma_selection_asm(form, kind, group, Some(usage), None, None)
+                    tcgen05_mma_declaration_asm(form, kind, group, Some(usage), None, None)
                 })
             })
         })
@@ -360,7 +384,7 @@ pub(in crate::resolve) fn tcgen05_mma_valid_selection_asms(
         .flat_map(|kind| {
             (1..=2).flat_map(move |group| {
                 ["discard", "lastuse"].map(move |usage| {
-                    tcgen05_mma_selection_asm(form, kind, group, Some(usage), None, None)
+                    tcgen05_mma_declaration_asm(form, kind, group, Some(usage), None, None)
                 })
             })
         })
@@ -876,7 +900,7 @@ pub(in crate::resolve) fn validate_tcgen05_mma_policy(
     let expected_all = tcgen05_mma_all_selection_asms(form);
     let expected_valid = if alias.is_some() {
         BTreeSet::from([if tcgen05_mma_is_ws(form) {
-            tcgen05_mma_selection_asm(
+            tcgen05_mma_declaration_asm(
                 form,
                 Tcgen05MmaKind::F8f6f4,
                 1,
@@ -885,7 +909,14 @@ pub(in crate::resolve) fn validate_tcgen05_mma_policy(
                 Some(Tcgen05MmaBUsage::Discard),
             )
         } else {
-            tcgen05_mma_selection_asm(form, Tcgen05MmaKind::F8f6f4, 1, Some("discard"), None, None)
+            tcgen05_mma_declaration_asm(
+                form,
+                Tcgen05MmaKind::F8f6f4,
+                1,
+                Some("discard"),
+                None,
+                None,
+            )
         }])
     } else {
         tcgen05_mma_valid_selection_asms(form)

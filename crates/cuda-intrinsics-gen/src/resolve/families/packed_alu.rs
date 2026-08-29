@@ -354,8 +354,13 @@ pub(in crate::resolve) fn packed_f32x2_alu_recipe(
 pub(in crate::resolve) fn packed_bf16x2_alu_recipe(
     operation: PackedAluOperation,
 ) -> Option<PackedAluRecipe> {
-    const PURE: &[&str] = &["IntrNoMem", "IntrSpeculatable"];
-    const COMMUTATIVE_PURE: &[&str] = &["Commutative", "IntrNoMem", "IntrSpeculatable"];
+    const PURE: &[&str] = &["IntrNoCreateUndefOrPoison", "IntrNoMem", "IntrSpeculatable"];
+    const COMMUTATIVE_PURE: &[&str] = &[
+        "Commutative",
+        "IntrNoCreateUndefOrPoison",
+        "IntrNoMem",
+        "IntrSpeculatable",
+    ];
     Some(match operation {
         PackedAluOperation::Fma => PackedAluRecipe {
             id: "fma_bf16x2",
@@ -566,7 +571,7 @@ pub(in crate::resolve) fn packed_bf16x2_alu_recipe(
                 record: "int_nvvm_fabs",
                 symbol: "llvm.nvvm.fabs",
                 resolved_symbol: Some("llvm.nvvm.fabs.v2bf16"),
-                arguments: &["anonymous_14"],
+                arguments: &["anonymous_8"],
                 results: &["anyfloat"],
                 properties: PURE,
                 selection: "ABS_BF16X2",
@@ -595,8 +600,13 @@ pub(in crate::resolve) fn packed_bf16x2_alu_recipe(
 pub(in crate::resolve) fn packed_f16x2_alu_recipe(
     operation: PackedAluOperation,
 ) -> Option<PackedAluRecipe> {
-    const PURE: &[&str] = &["IntrNoMem", "IntrSpeculatable"];
-    const COMMUTATIVE_PURE: &[&str] = &["Commutative", "IntrNoMem", "IntrSpeculatable"];
+    const PURE: &[&str] = &["IntrNoCreateUndefOrPoison", "IntrNoMem", "IntrSpeculatable"];
+    const COMMUTATIVE_PURE: &[&str] = &[
+        "Commutative",
+        "IntrNoCreateUndefOrPoison",
+        "IntrNoMem",
+        "IntrSpeculatable",
+    ];
     Some(match operation {
         PackedAluOperation::Fma => PackedAluRecipe {
             id: "fma_f16x2",
@@ -906,7 +916,7 @@ pub(in crate::resolve) fn packed_f16x2_alu_recipe(
                 record: "int_nvvm_fabs",
                 symbol: "llvm.nvvm.fabs",
                 resolved_symbol: Some("llvm.nvvm.fabs.v2f16"),
-                arguments: &["anonymous_14"],
+                arguments: &["anonymous_8"],
                 results: &["anyfloat"],
                 properties: PURE,
                 selection: "ABS_F16X2",

@@ -180,15 +180,20 @@ pub(in crate::resolve) fn scalar_arithmetic_recipe(
     let ptx_modifier_symbol = ptx_modifier_names.join(".");
     let selection_asm =
         format!("{operation_name}.{ptx_modifier_symbol}.{format_name} \t$dst, {operands};");
+    // LLVM 23 marks every scalar-arithmetic NVVM intrinsic
+    // IntrNoCreateUndefOrPoison uniformly (LLVM 22 only had it on fma.rn.d),
+    // so the property set no longer varies by format.
     let properties = match (operation, format) {
         (ScalarArithmeticOperation::Mul | ScalarArithmeticOperation::Add, _) => {
-            vec!["Commutative", "IntrNoMem", "IntrSpeculatable"]
+            vec![
+                "Commutative",
+                "IntrNoCreateUndefOrPoison",
+                "IntrNoMem",
+                "IntrSpeculatable",
+            ]
         }
-        (ScalarArithmeticOperation::Div, _) => vec!["IntrNoMem"],
-        (ScalarArithmeticOperation::Fma, ScalarArithmeticFormat::F32) => {
-            vec!["IntrNoMem", "IntrSpeculatable"]
-        }
-        (ScalarArithmeticOperation::Fma, ScalarArithmeticFormat::F64) => {
+        (ScalarArithmeticOperation::Div, _) => vec!["IntrNoCreateUndefOrPoison", "IntrNoMem"],
+        (ScalarArithmeticOperation::Fma, _) => {
             vec!["IntrNoCreateUndefOrPoison", "IntrNoMem", "IntrSpeculatable"]
         }
     };

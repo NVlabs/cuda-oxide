@@ -409,7 +409,7 @@ pub(in crate::resolve) fn validate_scalar_conversion_policy(
         policy.id
     );
     ensure!(
-        declaration.properties == ["IntrNoMem", "IntrSpeculatable"]
+        declaration.properties == ["IntrNoCreateUndefOrPoison", "IntrNoMem", "IntrSpeculatable"]
             && declaration.selections.len() == 1
             && declaration.selections[0].source_record == recipe.selection_record
             && declaration.selections[0].asm == recipe.selection_asm

@@ -870,7 +870,7 @@ fn standard_fp8_resolves_exact_routes_and_target_floors() {
         (
             IntrinsicBackend::LlvmNvptx,
             BackendLoweringMechanism::InlinePtx,
-            "rust-llvm-22.1.2-1cb4e383",
+            "rust-llvm-23.1.0-16696adc",
         ),
         (
             IntrinsicBackend::LibNvvm,

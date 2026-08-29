@@ -86,8 +86,8 @@ pub(super) fn parse_rust_toolchain_toml(contents: &str) -> Result<RustToolchainP
 /// The toolchain name is the first whitespace-delimited token of the first
 /// line in every rustup output format seen so far:
 ///
-/// - pre-1.28 and 1.29+: `nightly-2026-04-03-<triple> (default)` or
-///   `nightly-2026-04-03-<triple> (overridden by '<path>')` on one line
+/// - pre-1.28 and 1.29+: `nightly-2026-08-28-<triple> (default)` or
+///   `nightly-2026-08-28-<triple> (overridden by '<path>')` on one line
 ///   (verified against rustup 1.29.0);
 /// - 1.28.x: the bare name on the first line with the reason on a second
 ///   `active because: ...` line.
@@ -430,7 +430,7 @@ pub fn doctor(ctx: &Context) {
     // pipeline:
     //   1. `CUDA_OXIDE_LLC` (caller-supplied override)
     //   2. Rust toolchain's `llvm-tools` component (auto-installed via rustup)
-    //   3. `llc-22`, `llc-21`, `llc` on `PATH`
+    //   3. `llc-23`, `llc-22`, `llc-21`, `llc` on `PATH`
     // Whatever we pick, reject if the major version is < 21.
     print!("llc (LLVM)... ");
 
@@ -464,7 +464,7 @@ pub fn doctor(ctx: &Context) {
     if let Some(rustup) = rustup_llc_path.clone() {
         candidates.push(rustup);
     }
-    for name in ["llc-22", "llc-21", "llc"] {
+    for name in ["llc-23", "llc-22", "llc-21", "llc"] {
         candidates.push(name.to_string());
     }
 
@@ -514,7 +514,7 @@ pub fn doctor(ctx: &Context) {
         None => {
             println!("✗ llc not found");
             eprintln!("  cuda-oxide probes (in order): $CUDA_OXIDE_LLC, the Rust toolchain's");
-            eprintln!("  llvm-tools llc, then llc-22/llc-21/llc on PATH. Easiest fix:");
+            eprintln!("  llvm-tools llc, then llc-23/llc-22/llc-21/llc on PATH. Easiest fix:");
             eprintln!("    rustup component add llvm-tools");
             eprintln!("  Alternative: `sudo apt install llvm-21` (older versions reject");
             eprintln!("  modern TMA / tcgen05 / WGMMA intrinsics).");

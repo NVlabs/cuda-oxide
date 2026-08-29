@@ -828,7 +828,7 @@ pub(in crate::resolve) fn validate_packed_conversion_policy(
     );
     let declaration = declaration.context("packed conversion has no imported declaration")?;
     ensure!(
-        declaration.properties == ["IntrNoMem", "IntrSpeculatable"]
+        declaration.properties == ["IntrNoCreateUndefOrPoison", "IntrNoMem", "IntrSpeculatable"]
             && declaration.selections.is_empty(),
         "{} selectionless packed-conversion declaration changed",
         policy.id

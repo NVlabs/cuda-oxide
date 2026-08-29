@@ -359,7 +359,7 @@ pub(in crate::resolve) fn expand_tcgen05_admission(
             validate_abi_id(&variant.abi_id)?;
             records.push(materialize_tcgen05_ld_variant(&base, admission, variant));
         }
-        for pair in records[first_load..].chunks_exact(2) {
+        for pair in records[first_load..].as_chunks::<2>().0 {
             let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
             let packed = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
             ensure!(
@@ -420,7 +420,7 @@ pub(in crate::resolve) fn expand_tcgen05_admission(
             validate_abi_id(&variant.abi_id)?;
             records.push(materialize_tcgen05_st_variant(&base, admission, variant));
         }
-        for pair in records[first_store..].chunks_exact(2) {
+        for pair in records[first_store..].as_chunks::<2>().0 {
             let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.st);
             let unpacked = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.st);
             ensure!(
@@ -498,7 +498,7 @@ pub(in crate::resolve) fn expand_tcgen05_admission(
             validate_abi_id(&variant.abi_id)?;
             records.push(materialize_tcgen05_ld_variant(&base, admission, variant));
         }
-        for pair in records[first_load..].chunks_exact(2) {
+        for pair in records[first_load..].as_chunks::<2>().0 {
             let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
             let packed = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.ld);
             ensure!(
@@ -519,7 +519,7 @@ pub(in crate::resolve) fn expand_tcgen05_admission(
             validate_abi_id(&variant.abi_id)?;
             records.push(materialize_tcgen05_st_variant(&base, admission, variant));
         }
-        for pair in records[first_store..].chunks_exact(2) {
+        for pair in records[first_store..].as_chunks::<2>().0 {
             let raw = pair[0].tcgen05.as_ref().and_then(|tcgen05| tcgen05.st);
             let unpacked = pair[1].tcgen05.as_ref().and_then(|tcgen05| tcgen05.st);
             ensure!(

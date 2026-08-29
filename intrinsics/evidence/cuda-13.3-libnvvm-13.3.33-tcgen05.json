@@ -607,7 +607,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v4i32"
+            "anonymous_9941"
           ]
         }
       }
@@ -655,7 +655,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v32i32"
+            "anonymous_9953"
           ]
         }
       }

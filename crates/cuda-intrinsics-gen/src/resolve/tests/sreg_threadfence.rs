@@ -243,7 +243,7 @@ fn special_register_evidence_validates_both_backend_routes() {
     let policies = expand_special_register_admission(&test_special_register_admission()).unwrap();
     let mut evidence_files = vec![
         read_evidence_file(
-            &repo_root.join("intrinsics/evidence/rust-llvm-22.1.2-1cb4e383-special-registers.json"),
+            &repo_root.join("intrinsics/evidence/rust-llvm-23.1.0-16696adc-special-registers.json"),
         )
         .unwrap(),
         read_evidence_file(
@@ -251,7 +251,7 @@ fn special_register_evidence_validates_both_backend_routes() {
         )
         .unwrap(),
     ];
-    let llvm_revision = "1cb4e3833c1919c2e6fb579a23ac0e2b22587b7e";
+    let llvm_revision = "16696adcd119e6ba9cc175207d984d7021211acb";
     let indexed = index_evidence(&evidence_files, llvm_revision).unwrap();
     for policy in &policies {
         for lowering in &policy.backend_lowerings {

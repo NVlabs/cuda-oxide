@@ -1876,7 +1876,9 @@ pub(in crate::resolve) fn tma_imported_properties(operation: TmaOperation) -> Ve
         | TmaOperation::ReplaceElementStride
         | TmaOperation::ReplaceGlobalDim
         | TmaOperation::ReplaceGlobalStride => {
-            properties.push("ImmArg<arg1>".into());
+            // LLVM 23 added the Range<arg1,0,5> ordinal bound these
+            // tensormap.replace declarations always implied.
+            properties.extend(["ImmArg<arg1>".into(), "Range<arg1,0,5>".into()]);
         }
         TmaOperation::ReplaceElementType => {
             properties.extend([

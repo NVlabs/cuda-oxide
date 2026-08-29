@@ -6,7 +6,7 @@
 //! Shared CUDA target parsing and recorded target-to-PTX policy.
 //!
 //! The floors in [`RECORDED_PTX_FLOORS`] describe the defaults emitted by the
-//! pinned LLVM 22 NVPTX backend. They are not backend-independent CUDA facts;
+//! pinned LLVM 23 NVPTX backend. They are not backend-independent CUDA facts;
 //! in particular, LLVM 21 does not accept every target recorded here.
 
 use std::fmt;
@@ -139,7 +139,7 @@ impl fmt::Display for CudaArchParseError {
 }
 impl std::error::Error for CudaArchParseError {}
 
-/// One exact CUDA target and its pinned LLVM 22 default PTX ISA.
+/// One exact CUDA target and its pinned LLVM 23 default PTX ISA.
 ///
 /// The suffix is part of the key; consumers must not infer fallback entries
 /// for other suffixes.
@@ -153,7 +153,7 @@ pub struct TargetPtxFloor {
     pub floor: u16,
 }
 
-/// Exact target floors recorded from the pinned LLVM 22 NVPTX backend.
+/// Exact target floors recorded from the pinned LLVM 23 NVPTX backend.
 ///
 /// These entries describe backend defaults, not backend-independent CUDA
 /// facts. There are no wildcard or suffix-fallback entries.
@@ -300,7 +300,7 @@ pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
     },
 ];
 
-/// A CUDA target without an exact recorded LLVM 22 PTX floor.
+/// A CUDA target without an exact recorded LLVM 23 PTX floor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnsupportedTargetError {
     target: String,
@@ -316,7 +316,7 @@ impl fmt::Display for UnsupportedTargetError {
 }
 impl std::error::Error for UnsupportedTargetError {}
 
-/// Return the pinned LLVM 22 default PTX floor for an exact target.
+/// Return the pinned LLVM 23 default PTX floor for an exact target.
 ///
 /// Suffixed targets require their own entry; this lookup never falls back to
 /// the unsuffixed capability or another architecture-family suffix.
@@ -463,7 +463,7 @@ mod tests {
             path
         }
 
-        fn llvm_22() -> Option<PathBuf> {
+        fn llvm_23() -> Option<PathBuf> {
             let llc = rust_toolchain_llc();
             let output = Command::new(&llc).arg("--version").output().unwrap();
             assert!(output.status.success(), "llc --version failed");
@@ -479,8 +479,8 @@ mod tests {
                         .ok()
                 })
                 .expect("llc --version did not report an LLVM version");
-            if major != 22 {
-                eprintln!("skipping LLVM-derived PTX-floor test: expected LLVM 22, found {major}");
+            if major != 23 {
+                eprintln!("skipping LLVM-derived PTX-floor test: expected LLVM 23, found {major}");
                 return None;
             }
             Some(llc)
@@ -526,8 +526,8 @@ mod tests {
         }
 
         #[test]
-        fn recorded_floors_match_llvm_22_defaults() {
-            let Some(llc) = llvm_22() else { return };
+        fn recorded_floors_match_llvm_23_defaults() {
+            let Some(llc) = llvm_23() else { return };
             let directory = TestDir::new();
             let module = module(&directory.0);
             for entry in RECORDED_PTX_FLOORS {
@@ -548,7 +548,7 @@ mod tests {
 
         #[test]
         fn sm_90a_requires_ptx_80() {
-            let Some(llc) = llvm_22() else { return };
+            let Some(llc) = llvm_23() else { return };
             let directory = TestDir::new();
             let module = module(&directory.0);
             let output = directory.0.join("sm_90a.ptx");
@@ -568,7 +568,7 @@ mod tests {
 
         #[test]
         fn sm_103a_rejects_ptx_86_near_miss() {
-            let Some(llc) = llvm_22() else { return };
+            let Some(llc) = llvm_23() else { return };
             let directory = TestDir::new();
             let module = module(&directory.0);
             let output = directory.0.join("sm_103a.ptx");

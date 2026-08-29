@@ -399,6 +399,27 @@ fn tcgen05_ld_multiplicity_label(multiplicity: Tcgen05LdMultiplicity) -> &'stati
     }
 }
 
+/// The pinned LLVM 23 TableGen dump models tcgen05 ld/st data as one
+/// OVERLOADED vector type-variable per register count (LLVM 22 declared
+/// concrete `i32`/`vNi32` types). Re-derived here independently of the
+/// resolve half (see `tcgen05_overloaded_data_token` in
+/// resolve/families/tcgen05/ldst_cp.rs): count 1 -> anonymous_9933, then +4
+/// per doubling.
+fn tcgen05_overloaded_data_token(register_count: usize) -> String {
+    let anonymous = match register_count {
+        1 => 9933,
+        2 => 9937,
+        4 => 9941,
+        8 => 9945,
+        16 => 9949,
+        32 => 9953,
+        64 => 9957,
+        128 => 9961,
+        other => unreachable!("tcgen05 ld/st register count {other} has no imported record"),
+    };
+    format!("anonymous_{anonymous}")
+}
+
 pub(in crate::render) fn tcgen05_ld_register_count(record: &CatalogIntrinsic) -> usize {
     let ld = record
         .tcgen05
@@ -998,7 +1019,7 @@ pub(in crate::render) fn tcgen05_render_contract(record: &CatalogIntrinsic) -> b
                 && record.dialect.operands == ["i32"]
                 && record.dialect.results == vec!["f32"; 32]
                 && llvm.arguments == ["tmem_ptr", "i1"]
-                && llvm.results == ["v32i32"]
+                && llvm.results == [tcgen05_overloaded_data_token(32)]
                 && tcgen05.source_contract
                     == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
         }
@@ -1009,7 +1030,7 @@ pub(in crate::render) fn tcgen05_render_contract(record: &CatalogIntrinsic) -> b
                 && record.dialect.operands == ["i32"]
                 && record.dialect.results == ["f32", "f32", "f32", "f32"]
                 && llvm.arguments == ["tmem_ptr", "i1"]
-                && llvm.results == ["v4i32"]
+                && llvm.results == [tcgen05_overloaded_data_token(4)]
                 && tcgen05.source_contract
                     == Tcgen05SourceContract::LlvmCustomLoweringWithoutSelection
         }
@@ -1050,11 +1071,7 @@ pub(in crate::render) fn tcgen05_render_contract(record: &CatalogIntrinsic) -> b
             } else {
                 format!("[u32; {count}]")
             };
-            let llvm_result = if count == 1 {
-                "i32".into()
-            } else {
-                format!("v{count}i32")
-            };
+            let llvm_result = tcgen05_overloaded_data_token(count);
             !record.rust.safe
                 && record.rust.arguments
                     == if has_half_split_offset {
@@ -1095,11 +1112,7 @@ pub(in crate::render) fn tcgen05_render_contract(record: &CatalogIntrinsic) -> b
             } else {
                 format!("[u32; {count}]")
             };
-            let llvm_data = if count == 1 {
-                "i32".into()
-            } else {
-                format!("v{count}i32")
-            };
+            let llvm_data = tcgen05_overloaded_data_token(count);
             !record.rust.safe
                 && record.rust.arguments
                     == if has_half_split_offset {

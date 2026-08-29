@@ -332,11 +332,28 @@ pub(in crate::resolve) fn tcgen05_ld_rust_result(ld: Tcgen05Ld) -> String {
     }
 }
 
+/// The pinned LLVM 23 TableGen dump models tcgen05 ld/st data as one
+/// OVERLOADED vector type-variable per register count (LLVM 22 declared
+/// concrete `i32`/`vNi32` types). These anonymous record names are stable
+/// for the dump hashes recorded in intrinsics/upstream.lock and follow one
+/// arithmetic ladder: count 1 -> anonymous_9933, then +4 per doubling.
+pub(in crate::resolve) fn tcgen05_overloaded_data_token(register_count: usize) -> String {
+    let anonymous = match register_count {
+        1 => 9933,
+        2 => 9937,
+        4 => 9941,
+        8 => 9945,
+        16 => 9949,
+        32 => 9953,
+        64 => 9957,
+        128 => 9961,
+        other => unreachable!("tcgen05 ld/st register count {other} has no imported record"),
+    };
+    format!("anonymous_{anonymous}")
+}
+
 pub(in crate::resolve) fn tcgen05_ld_llvm_result(ld: Tcgen05Ld) -> String {
-    match tcgen05_ld_register_count(ld) {
-        1 => "i32".into(),
-        count => format!("v{count}i32"),
-    }
+    tcgen05_overloaded_data_token(tcgen05_ld_register_count(ld))
 }
 
 pub(in crate::resolve) fn tcgen05_ld_op_type(ld: Tcgen05Ld) -> String {
@@ -517,10 +534,7 @@ pub(in crate::resolve) fn tcgen05_st_rust_data(st: Tcgen05St) -> String {
 }
 
 pub(in crate::resolve) fn tcgen05_st_llvm_data(st: Tcgen05St) -> String {
-    match tcgen05_st_register_count(st) {
-        1 => "i32".into(),
-        count => format!("v{count}i32"),
-    }
+    tcgen05_overloaded_data_token(tcgen05_st_register_count(st))
 }
 
 pub(in crate::resolve) fn tcgen05_st_op_type(st: Tcgen05St) -> String {

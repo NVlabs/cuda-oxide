@@ -30,9 +30,9 @@ pub(in crate::resolve) enum ScalarMathRecipeSource {
         llvm_symbol: String,
     },
     /// Bound to an overloaded (polymorphic) tblgen record: the import
-    /// carries `anonymous_14`/`anyfloat` signature tokens and the concrete
+    /// carries `anonymous_8`/`anyfloat` signature tokens and the concrete
     /// f32 instantiation is recorded as the resolved symbol. Only ex2 uses
-    /// this (LLVM 22 models it as `int_nvvm_ex2_approx{,_ftz}` without a
+    /// this (LLVM 23, like 22, models it as `int_nvvm_ex2_approx{,_ftz}` without a
     /// per-format record).
     ImportedOverloaded {
         source_record: String,
@@ -291,7 +291,13 @@ pub(in crate::resolve) fn scalar_math_recipe(
         dialect_type,
         minimum_ptx,
         minimum_sm,
-        properties: vec!["IntrNoMem"],
+        // LLVM 23 marks the scalar-math NVVM intrinsics
+        // IntrNoCreateUndefOrPoison, EXCEPT the ex2/lg2 families which keep
+        // the bare IntrNoMem set.
+        properties: match operation {
+            ScalarMathOperation::Ex2 | ScalarMathOperation::Lg2 => vec!["IntrNoMem"],
+            _ => vec!["IntrNoCreateUndefOrPoison", "IntrNoMem"],
+        },
         ptx_modifiers,
         ptx_isa_section,
         ptx_isa_url,
@@ -384,7 +390,7 @@ pub(in crate::resolve) fn scalar_math_overlay_record(
                 vec![recipe.rust_type.to_owned()],
             ),
             // The polymorphic signature tokens mirror the imported
-            // overloaded record verbatim (anyfloat over anonymous_14), the
+            // overloaded record verbatim (anyfloat over anonymous_8), the
             // same shape packed_alu uses for llvm.nvvm.fabs.
             ScalarMathRecipeSource::ImportedOverloaded {
                 source_record,
@@ -395,7 +401,7 @@ pub(in crate::resolve) fn scalar_math_overlay_record(
                 Some(source_record.clone()),
                 Some(llvm_symbol.clone()),
                 Some(resolved_llvm_symbol.clone()),
-                vec!["anonymous_14".to_owned()],
+                vec!["anonymous_8".to_owned()],
                 vec!["anyfloat".to_owned()],
             ),
             ScalarMathRecipeSource::PtxNative { instruction } => (
@@ -559,7 +565,7 @@ pub(in crate::resolve) fn validate_scalar_math_policy(
                 && policy.source_record.as_deref() == Some(source_record.as_str())
                 && policy.llvm_symbol.as_deref() == Some(llvm_symbol.as_str())
                 && policy.resolved_llvm_symbol.as_deref() == Some(resolved_llvm_symbol.as_str())
-                && policy.llvm_arguments == ["anonymous_14"]
+                && policy.llvm_arguments == ["anonymous_8"]
                 && policy.llvm_results == ["anyfloat"]
         }
         ScalarMathRecipeSource::PtxNative { instruction } => {

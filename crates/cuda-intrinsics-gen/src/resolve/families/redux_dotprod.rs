@@ -459,7 +459,9 @@ pub(in crate::resolve) fn validate_dot_product_policy(
         declaration
             .classes
             .iter()
-            .any(|class| class == "NVVMPureIntrinsic")
+            // LLVM 23 migrated the dot-product declarations from
+            // NVVMPureIntrinsic to the target-generic PureIntrinsic class.
+            .any(|class| class == "NVVMPureIntrinsic" || class == "PureIntrinsic")
             && declaration.properties == recipe.llvm_properties,
         "{} dot-product effects or immediate contract disagree with the imported declaration",
         policy.id
@@ -573,7 +575,7 @@ pub(in crate::resolve) fn dot_product_recipe(
             dialect_op_type: "Dp4aS32Op",
             dialect_op_name: "nvvm.dp4a_s32",
             llvm_arguments: &["i32", "i32", "i32"],
-            llvm_properties: &["IntrNoMem", "IntrSpeculatable"],
+            llvm_properties: &["IntrNoCreateUndefOrPoison", "IntrNoMem", "IntrSpeculatable"],
             adapter: DotProductAdapter::DirectThreeOperands,
             ptx_mnemonic: "dp4a",
             ptx_modifiers: &["s32", "s32"],
@@ -588,7 +590,7 @@ pub(in crate::resolve) fn dot_product_recipe(
             dialect_op_type: "Dp4aU32Op",
             dialect_op_name: "nvvm.dp4a_u32",
             llvm_arguments: &["i32", "i32", "i32"],
-            llvm_properties: &["IntrNoMem", "IntrSpeculatable"],
+            llvm_properties: &["IntrNoCreateUndefOrPoison", "IntrNoMem", "IntrSpeculatable"],
             adapter: DotProductAdapter::DirectThreeOperands,
             ptx_mnemonic: "dp4a",
             ptx_modifiers: &["u32", "u32"],
@@ -603,7 +605,12 @@ pub(in crate::resolve) fn dot_product_recipe(
             dialect_op_type: "Dp2aS32Op",
             dialect_op_name: "nvvm.dp2a_s32",
             llvm_arguments: &["i32", "i32", "i1", "i32"],
-            llvm_properties: &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
+            llvm_properties: &[
+                "ImmArg<arg2>",
+                "IntrNoCreateUndefOrPoison",
+                "IntrNoMem",
+                "IntrSpeculatable",
+            ],
             adapter: DotProductAdapter::InsertLowHalfFalse,
             ptx_mnemonic: "dp2a",
             ptx_modifiers: &["lo", "s32", "s32"],
@@ -618,7 +625,12 @@ pub(in crate::resolve) fn dot_product_recipe(
             dialect_op_type: "Dp2aU32Op",
             dialect_op_name: "nvvm.dp2a_u32",
             llvm_arguments: &["i32", "i32", "i1", "i32"],
-            llvm_properties: &["ImmArg<arg2>", "IntrNoMem", "IntrSpeculatable"],
+            llvm_properties: &[
+                "ImmArg<arg2>",
+                "IntrNoCreateUndefOrPoison",
+                "IntrNoMem",
+                "IntrSpeculatable",
+            ],
             adapter: DotProductAdapter::InsertLowHalfFalse,
             ptx_mnemonic: "dp2a",
             ptx_modifiers: &["lo", "u32", "u32"],
