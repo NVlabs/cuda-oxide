@@ -239,6 +239,67 @@ fn optimize_ll(
 /// path for a few uniform ALU ops.
 const DISABLE_SWITCH_LOOKUP_TABLES: &str = "-switch-to-lookup=false";
 
+/// Disable llc's late branch folding so loops keep the two-jump layout
+/// ptxas's SASS unroller recognizes.
+///
+/// LLVM 23's NVPTX backend gained `reverseBranchCondition`
+/// (llvm/llvm-project PR #191889, commit d55166c23bf1, follow-up PR
+/// #191890, commit 205f4bf6cc03), which lets BranchFolding and
+/// MachineBlockPlacement collapse the classic loop branch idiom into a
+/// single negated conditional with fallthrough:
+///
+/// ```text
+/// LLVM 22 layout (ptxas unrolls)       LLVM 23 layout (ptxas gives up)
+///
+/// guard:  @%p bra body;    ─┐          guard:  @!%p bra exit;
+///         bra.uni exit;     │ taken            (falls through to body)
+/// body:   ...             ◄─┘          body:   ...
+/// latch:  @%p bra exit;                latch:  @%p bra body;
+///         bra.uni body;   ← continue           (falls through to exit)
+/// exit:                                exit:
+/// ```
+///
+/// Why we turn it off:
+///
+/// - ptxas's SASS loop unroller keys on the taken-target orientation at
+///   both ends of the loop: the guard's conditional taken-target must
+///   enter the preheader/body, and the latch must be "conditional exit +
+///   `bra.uni` continue". The folded negated forms defeat it.
+/// - Upstream enabled the folding with no opt-out (PR #191889), so the
+///   only supported control is disabling the two late machine passes.
+/// - Both flags are generic disable-only cl::opts: they skip layout
+///   transforms and change no semantics, so there is no correctness
+///   surface. llc 21.1.8, 22.1.2, 22.1.7, and 23.1.0 all accept them.
+/// - Measured on gemm_views' sgemm_naive_raw (RTX 5090, live benches,
+///   bit-identical numerics): folded layout drops 38 -> 26 registers and
+///   FFMA 18 -> 4, costing 26% throughput (7218 -> 5708 GFLOPS). With
+///   these flags: 38 registers, 7226 GFLOPS. Zero register movement on
+///   the 16 other kernels across 6 examples; PTX grows 1-6% in lines,
+///   all redundant jumps ptxas discards.
+///
+/// Permanent until ptxas learns to unroll both layouts or upstream adds
+/// an opt-out for the NVPTX folding; an internal NVBug and an LLVM issue
+/// are to be filed to track both ends.
+const DISABLE_BRANCH_FOLD: &str = "-disable-branch-fold";
+
+/// Companion to [`DISABLE_BRANCH_FOLD`]: MachineBlockPlacement performs
+/// the same rotation and tail layout on its own, so both passes must be
+/// off or the folded form comes back.
+const DISABLE_BLOCK_PLACEMENT: &str = "-disable-block-placement";
+
+/// The unconditional head of every `llc` invocation: target selection plus
+/// the branch-layout controls ptxas depends on (see
+/// [`DISABLE_BRANCH_FOLD`]). Kept as a function so the tests can assert
+/// the argument list verbatim.
+fn base_llc_args(target: &str) -> Vec<String> {
+    vec![
+        "-march=nvptx64".to_string(),
+        format!("-mcpu={target}"),
+        DISABLE_BRANCH_FOLD.to_string(),
+        DISABLE_BLOCK_PLACEMENT.to_string(),
+    ]
+}
+
 /// Build the middle-end arguments for a self-contained PTX module.
 ///
 /// The LLVM exporter returns the module's externally consumed definitions as
@@ -576,9 +637,7 @@ fn generate_ptx_impl(
     }
 
     let mut llc_cmd = std::process::Command::new(&toolchain.llc_path);
-    llc_cmd
-        .arg("-march=nvptx64")
-        .arg(format!("-mcpu={}", target));
+    llc_cmd.args(base_llc_args(&target));
     if let Some(feature) =
         required_ptx_feature(&target, requirements.ptx_isa).map_err(PipelineError::PtxGeneration)?
     {
@@ -996,6 +1055,23 @@ mod tests {
         assert_eq!(
             optimization_args(&[]).unwrap(),
             ["-O2", "-switch-to-lookup=false"]
+        );
+    }
+
+    /// Every llc invocation must carry the branch-layout controls: without
+    /// them LLVM 23's BranchFolding/MachineBlockPlacement rewrite loop
+    /// branches into a form ptxas's SASS unroller does not recognize (see
+    /// [`DISABLE_BRANCH_FOLD`]).
+    #[test]
+    fn llc_base_args_keep_the_ptxas_friendly_branch_layout() {
+        assert_eq!(
+            base_llc_args("sm_90"),
+            [
+                "-march=nvptx64",
+                "-mcpu=sm_90",
+                "-disable-branch-fold",
+                "-disable-block-placement",
+            ]
         );
     }
 
