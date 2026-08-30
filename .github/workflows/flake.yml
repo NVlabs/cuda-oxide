@@ -1,0 +1,37 @@
+---
+name: flake
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # flake.nix derives its toolchain from rust-toolchain.toml, so flake.lock has
+  # to know every nightly that file names. #1201 moved the pin without moving
+  # the lock, and every flake output stopped evaluating. The toolchain-pin
+  # parity guard does not cover this: it compares copies of the pin text, not
+  # the lock's capacity to resolve it.
+  evaluation:
+    name: flake evaluation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.11.1
+
+      - name: Evaluate development shell and cargo-oxide package
+        run: |
+          nix eval .#devShells.x86_64-linux.default.drvPath
+          nix eval .#packages.x86_64-linux.cargo-oxide.drvPath

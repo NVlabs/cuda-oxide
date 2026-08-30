@@ -131,6 +131,14 @@ check-intrinsics base_ref="HEAD^":
     cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal
     cargo run -p cuda-intrinsics-gen -- check-abi-history --base-ref {{base_ref}}
 
+# flake.lock has to be able to resolve the pin in rust-toolchain.toml, and
+# nothing else checks that. Kept out of `check` and `check-guards` so those
+# stay runnable without Nix.
+# Evaluate the dev shell and cargo-oxide package against flake.lock (needs Nix)
+check-flake:
+    nix eval .#devShells.x86_64-linux.default.drvPath
+    nix eval .#packages.x86_64-linux.cargo-oxide.drvPath
+
 # Build docs warning-free + run doctests (mirrors the docs CI gate). The `test`
 # recipe uses `--all-targets`, which skips doctests, so this covers them.
 # cuda-bindings is excluded from doctests (its generated C doc comments are not
@@ -221,9 +229,12 @@ check-errors:
 # failed. Keep this list in step when a guard is added to any of the three
 # workflows -- the crate-inventory and toolchain-parity jobs were added to CI
 # without being added here, which is the same drift this recipe exists to
-# prevent. Prerequisites: `cargo-deny` on PATH (`cargo install cargo-deny
-# --locked`) and `python3` (most of the scripts drive it). The scripts are
-# invoked via `bash` as CI does, since not all of them carry an exec bit.
+# prevent. The flake evaluation gate has its own `check-flake` recipe and is
+# deliberately not part of `check-guards`, so contributors without Nix can
+# still run this list. Prerequisites: `cargo-deny` on PATH (`cargo install
+# cargo-deny --locked`) and `python3` (most of the scripts drive it). The
+# scripts are invoked via `bash` as CI does, since not all of them carry an
+# exec bit.
 # Run the status-guard, naming-guard and cargo-deny CI jobs (needs cargo-deny, python3)
 check-guards:
     bash scripts/check-error-example-status.sh
