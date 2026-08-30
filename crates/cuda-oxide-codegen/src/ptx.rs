@@ -8,7 +8,7 @@ use crate::generated::GeneratedModuleRequirements;
 use crate::llvm_tools::LlvmToolchain;
 use crate::options::BackendOptions;
 use crate::target::{
-    ModuleRequirements, detect_module_requirements_in_llvm_file,
+    ModuleRequirements, PtxIsaRequirement, detect_module_requirements_in_llvm_file,
     merge_generated_module_requirements, merge_generated_module_requirements_for_target,
     required_ptx_feature, resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
     validate_target_features, validate_target_for_llvm_major,
@@ -302,6 +302,38 @@ fn base_llc_args(target: &str) -> Vec<String> {
         DISABLE_BRANCH_FOLD.to_string(),
         DISABLE_BLOCK_PLACEMENT.to_string(),
     ]
+}
+
+/// Full-debug modules need PTX ISA 7.5 or newer declared, whatever the
+/// target's own floor is.
+///
+/// llc's DWARF emission writes label-difference expressions into debug
+/// sections:
+///
+/// ```text
+/// .section .debug_pubnames
+/// {
+/// .b32 $L__pubNames_end0-$L__pubNames_start0   ← "labels1 - labels2
+///                                                 expression in .section"
+///                                                 = PTX ISA 7.5 feature
+/// ```
+///
+/// but still declares the target's default `.version` (7.0 at sm_80), so
+/// ptxas rejects the module. Observed with llc-22 (CI's floor pin); llc-23
+/// emits its debug sections differently and dodges it. There is no 7.5
+/// requirement spelling in the supported set, so raise to the nearest one,
+/// 7.8; [`required_ptx_feature`] already refuses to downgrade targets whose
+/// floor is at or above it. Caught by the all-examples compile-only ptxas
+/// gate; line-tables debug emits no such expressions and stays untouched.
+fn ptx_isa_with_debug_floor(
+    requirement: PtxIsaRequirement,
+    debug_kind: DebugKind,
+) -> PtxIsaRequirement {
+    if debug_kind.variables_enabled() {
+        requirement.max(PtxIsaRequirement::Ptx78)
+    } else {
+        requirement
+    }
 }
 
 /// Build the middle-end arguments for a self-contained PTX module.
@@ -642,8 +674,11 @@ fn generate_ptx_impl(
 
     let mut llc_cmd = std::process::Command::new(&toolchain.llc_path);
     llc_cmd.args(base_llc_args(&target));
-    if let Some(feature) =
-        required_ptx_feature(&target, requirements.ptx_isa).map_err(PipelineError::PtxGeneration)?
+    if let Some(feature) = required_ptx_feature(
+        &target,
+        ptx_isa_with_debug_floor(requirements.ptx_isa, debug_kind),
+    )
+    .map_err(PipelineError::PtxGeneration)?
     {
         llc_cmd.arg(format!("-mattr={feature}"));
     }
@@ -1059,6 +1094,52 @@ mod tests {
         assert_eq!(
             optimization_args(&[]).unwrap(),
             ["-O2", "-switch-to-lookup=false"]
+        );
+    }
+
+    /// Full-debug DWARF uses label-difference expressions (a PTX ISA 7.5
+    /// feature), so the requirement floor rises to the nearest supported
+    /// spelling, 7.8; targets already at or above it are untouched, and
+    /// line-tables/off never raise (see [`ptx_isa_with_debug_floor`]).
+    #[test]
+    fn full_debug_raises_the_ptx_isa_floor_only_when_below() {
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full),
+            PtxIsaRequirement::Ptx78
+        );
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Ptx70, DebugKind::Full),
+            PtxIsaRequirement::Ptx78
+        );
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Ptx86, DebugKind::Full),
+            PtxIsaRequirement::Ptx86
+        );
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::LineTables),
+            PtxIsaRequirement::Default
+        );
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Off),
+            PtxIsaRequirement::Default
+        );
+        // End to end: at sm_80 (floor 7.0) the raised requirement emits the
+        // feature; at sm_90a (floor 8.0) it is already satisfied.
+        assert_eq!(
+            required_ptx_feature(
+                "sm_80",
+                ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full)
+            )
+            .unwrap(),
+            Some("+ptx78")
+        );
+        assert_eq!(
+            required_ptx_feature(
+                "sm_90a",
+                ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full)
+            )
+            .unwrap(),
+            None
         );
     }
 
