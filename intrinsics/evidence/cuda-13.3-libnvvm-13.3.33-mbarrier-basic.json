@@ -89,6 +89,49 @@
       }
     },
     {
+      "id": "mbarrier_arrive_no_complete",
+      "source_record": "int_nvvm_mbarrier_arrive_noComplete_shared",
+      "llvm_symbol": "llvm.nvvm.mbarrier.arrive.noComplete.shared",
+      "llvm_arguments": ["shared_ptr", "i32"],
+      "llvm_results": ["i64"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "compute_80",
+      "ptx_feature": "PTX ISA 7.0 minimum; CUDA 13.3 emits PTX 9.3",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "convergent side-effecting inline PTX mbarrier.arrive.noComplete.shared.b64 with =l,l,r,~{memory}",
+          "stage": "backend_codegen",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 libNVVM compiled the production barrier no-complete regression to 7,056-byte LTOIR (SHA-256 3a7f7b31681ec0b1db3cf883967abd5e61a2d19449182bb83791ba1d94b38e42), retaining the dynamic count input and returned barrier state."
+        },
+        {
+          "targets": ["sm_80", "ptx93"],
+          "representation": "retained production barrier no-complete regression kernel",
+          "stage": "device_link",
+          "mechanism": "inline_ptx",
+          "outcome": "succeeded",
+          "artifact_kind": "cubin",
+          "detail": "CUDA 13.3 nvJitLink produced a 12,704-byte sm_80 cubin (SHA-256 7193ea511d07aef4a88079f7b7fa606aa31820671c597477322dfd3c43d9e546); cuobjdump confirmed .text, .nv.info, .nv.constant0, and .nv.shared sections for barrier_no_complete_test, with the counted arrival lowered as ATOMS.ADD on the barrier state.",
+          "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+          "tool_version": "V13.3.33",
+          "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+        }
+      ],
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": ["arrive", "noComplete", "shared", "b64"],
+        "operands": [
+          { "kind": "register" },
+          { "kind": "address" },
+          { "kind": "register" }
+        ]
+      }
+    },
+    {
       "id": "mbarrier_test_wait",
       "source_record": "int_nvvm_mbarrier_test_wait_shared",
       "llvm_symbol": "llvm.nvvm.mbarrier.test.wait.shared",

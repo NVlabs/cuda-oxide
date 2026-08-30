@@ -111,6 +111,59 @@
       }
     },
     {
+      "id": "mbarrier_arrive_no_complete",
+      "source_record": "int_nvvm_mbarrier_arrive_noComplete_shared",
+      "llvm_symbol": "llvm.nvvm.mbarrier.arrive.noComplete.shared",
+      "llvm_arguments": ["shared_ptr", "i32"],
+      "llvm_results": ["i64"],
+      "concrete_llvm_arguments": ["ptr addrspace(3)", "i32"],
+      "concrete_llvm_results": ["i64"],
+      "target_triple": "nvptx64-nvidia-cuda",
+      "gpu_target": "sm_80",
+      "ptx_feature": "+ptx70",
+      "status": "validated",
+      "stages": [
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "typed llvm.nvvm.mbarrier.arrive.noComplete.shared declaration",
+          "stage": "declaration_canonicalization",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "LLVM canonicalized the counted shared-pointer declaration with convergent and nocallback attributes."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "typed counted shared-memory mbarrier no-complete arrival",
+          "stage": "backend_codegen",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "The selected Rust LLVM backend emitted exact mbarrier.arrive.noComplete.shared.b64 PTX."
+        },
+        {
+          "targets": ["sm_80", "ptx70"],
+          "representation": "PTX emitted by the selected Rust LLVM mbarrier probe",
+          "stage": "ptx_assembly",
+          "mechanism": "typed_nvvm",
+          "outcome": "succeeded",
+          "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+          "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+          "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+          "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+        }
+      ],
+      "declaration_attributes_canonicalized": true,
+      "runtime_validation": "unexecuted",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": ["arrive", "noComplete", "shared", "b64"],
+        "operands": [
+          { "kind": "register" },
+          { "kind": "address" },
+          { "kind": "register" }
+        ]
+      }
+    },
+    {
       "id": "mbarrier_test_wait",
       "source_record": "int_nvvm_mbarrier_test_wait_shared",
       "llvm_symbol": "llvm.nvvm.mbarrier.test.wait.shared",
