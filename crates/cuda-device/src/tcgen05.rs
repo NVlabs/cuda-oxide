@@ -70,8 +70,11 @@
 //!
 //! # Hardware Support
 //!
-//! - **sm_100/sm_100a**: B100, B200 (Data Center)
-//! - **sm_120/sm_120a**: RTX 5090 (Consumer)
+//! - **sm_100/sm_100a**: B100, B200 (Datacenter Blackwell)
+//! - **sm_103a, sm_110a**: B300 (Blackwell Ultra), Jetson Thor (Thor robotics/embedded); supported via the `compute_100` TMEM-capable architecture family
+//!
+//! Note: Consumer Blackwell (sm_120, RTX 50 series) does not implement TMEM or
+//! the tcgen05 instruction set; tensor operations on sm_120 use register-based `mma.sync`.
 
 use core::marker::PhantomData;
 

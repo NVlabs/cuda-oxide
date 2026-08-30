@@ -104,12 +104,12 @@ cargo oxide run tcgen05_matmul
 
 ## Expected Output
 
-### On Blackwell (sm_100/sm_120):
+### On Blackwell Datacenter (sm_100a):
 
 ```text
 === Unified tcgen05 Matmul Example ===
 
-GPU Compute Capability: sm_120
+GPU Compute Capability: sm_100
 Loading PTX from: tcgen05_matmul.ptx
 ✓ PTX loaded successfully
 
@@ -136,12 +136,14 @@ SUM CHECK:
 === tcgen05 Matmul Test Complete ===
 ```
 
-### On Pre-Blackwell:
+### On Non-Datacenter GPUs (Consumer Blackwell, Hopper, Ada):
 
 ```text
-GPU Compute Capability: sm_90
+GPU Compute Capability: sm_120
 
-⚠️  WARNING: tcgen05 requires sm_100/sm_120 (Blackwell) or newer!
+⚠️  tcgen05 (5th gen tensor cores) requires sm_100 (datacenter Blackwell only).
+   Your GPU is sm_120 (consumer Blackwell has no tcgen05).
+   PTX was generated successfully; run on sm_100 to execute kernels.
 
 📝 PTX Verification:
    PTX file generated at: tcgen05_matmul.ptx
@@ -149,7 +151,8 @@ GPU Compute Capability: sm_90
 
 ## Hardware Requirements
 
-- **Required GPU**: Blackwell B100, B200 or newer (sm_100/sm_120)
+- **Required GPU**: Blackwell datacenter B100, B200 or newer (sm_100a)
+- **NOT supported**: Consumer Blackwell (sm_120), Hopper (sm_90), Ada (sm_89)
 - **CUDA Driver**: 12.x with Blackwell support
 - **Memory**: ~32KB shared memory per block
 

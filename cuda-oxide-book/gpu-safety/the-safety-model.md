@@ -531,14 +531,14 @@ architectures. Every call is `unsafe`, the safety contracts are complex
 and architecture-dependent, and the documentation lives in the PTX ISA
 manual more than in Rust doc comments.
 
-| Feature                              | Key APIs                                                      | Architectures      |
-|:-------------------------------------|:--------------------------------------------------------------|:-------------------|
-| **TMA** (Tensor Memory Accelerator)  | `tma_load_2d`, `tma_store_2d`, `TmaDescriptor`                | sm_90+ (Hopper)    |
-| **tcgen05** (Tensor Core Gen 5)      | `tcgen05_mma`, `tcgen05_commit`, `TensorMemoryHandle`         | sm_120 (Blackwell) |
-| **WGMMA** (Warpgroup MMA)            | `wgmma_mma_async`, `wgmma_commit_group`, `wgmma_wait_group`   | sm_90+ (Hopper)    |
-| **Cluster**                          | `cluster_rank`, `map_shared_rank`, `cluster_barrier_arrive`   | sm_90+ (Hopper)    |
-| **CLC** (Cluster Launch Control)     | `clc_prefetch`, `clc_query_channel`                           | sm_120 (Blackwell) |
-| **TMEM** (Tensor Memory)             | `TmemGuard` (typestate), `tmem_alloc`, `tmem_dealloc`         | sm_120 (Blackwell) |
+| Feature                              | Key APIs                                                      | Architectures          |
+|:-------------------------------------|:--------------------------------------------------------------|:-----------------------|
+| **TMA** (Tensor Memory Accelerator)  | `tma_load_2d`, `tma_store_2d`, `TmaDescriptor`                | sm_90+ (Hopper)        |
+| **tcgen05** (Tensor Core Gen 5)      | `tcgen05_mma`, `tcgen05_commit`, `TensorMemoryHandle`         | sm_100a (Blackwell DC) |
+| **WGMMA** (Warpgroup MMA)            | `wgmma_mma_async`, `wgmma_commit_group`, `wgmma_wait_group`   | sm_90+ (Hopper)        |
+| **Cluster**                          | `cluster_rank`, `map_shared_rank`, `cluster_barrier_arrive`   | sm_90+ (Hopper)        |
+| **CLC** (Cluster Launch Control)     | `clc_prefetch`, `clc_query_channel`                           | sm_100+ (Blackwell)    |
+| **TMEM** (Tensor Memory)             | `TmemGuard` (typestate), `tmem_alloc`, `tmem_dealloc`         | sm_100a (Blackwell DC) |
 
 If you are writing application-level kernels, you should not need Tier 3
 APIs. They exist for the people building the next CUTLASS -- and for those

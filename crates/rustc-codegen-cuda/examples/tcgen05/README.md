@@ -152,15 +152,15 @@ TMEM address: 0x00000000
 
 ## Hardware Requirements
 
-- **Required GPU**: Blackwell B100, B200 or newer (sm_100/sm_120)
-- **NOT supported**: Hopper (sm_90 — uses WGMMA), Ada (sm_89)
+- **Required GPU**: Blackwell datacenter B100, B200 or newer (sm_100a)
+- **NOT supported**: Hopper (sm_90 — uses WGMMA), Ada (sm_89), Consumer Blackwell (sm_120)
 - **CUDA Driver**: 12.x with Blackwell support
 
 ## tcgen05 vs WGMMA (Hopper)
 
-| Feature              | WGMMA (Hopper)       | tcgen05 (Blackwell)       |
+| Feature              | WGMMA (Hopper)       | tcgen05 (Blackwell DC)    |
 |----------------------|----------------------|---------------------------|
-| Architecture         | sm_90                | sm_100/sm_120             |
+| Architecture         | sm_90                | sm_100a                   |
 | Accumulator storage  | Register file        | TMEM (separate memory)    |
 | Accumulator capacity | Limited by registers | Larger (TMEM)             |
 | Issue model          | 128-thread warpgroup | Single thread             |
