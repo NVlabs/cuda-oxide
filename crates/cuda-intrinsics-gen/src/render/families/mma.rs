@@ -316,7 +316,9 @@ pub(in crate::render) fn sparse_mma_fragment_counts(
     record: &CatalogIntrinsic,
 ) -> (usize, usize, usize, usize) {
     match record.sparse_mma.as_ref().unwrap().adapter {
+        SparseMmaAdapter::C2U32A2U32B2U32MetadataU32SelectorU32ToD2U32 => (2, 2, 2, 2),
         SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32 => (2, 4, 4, 2),
+        SparseMmaAdapter::C4F32A2U32B2U32MetadataU32SelectorU32ToD4F32 => (4, 2, 2, 4),
         SparseMmaAdapter::C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32
         | SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32 => (4, 4, 4, 4),
         SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32 => (4, 2, 2, 4),
@@ -325,6 +327,7 @@ pub(in crate::render) fn sparse_mma_fragment_counts(
 
 pub(in crate::render) fn sparse_mma_selector_values(record: &CatalogIntrinsic) -> &'static [u32] {
     match record.sparse_mma.as_ref().unwrap().selector {
+        SparseMmaSelector::ImmediateZeroThroughThree => &[0, 1, 2, 3],
         SparseMmaSelector::ImmediateZeroOrOne => &[0, 1],
         SparseMmaSelector::ImmediateZero => &[0],
     }
@@ -334,6 +337,9 @@ pub(in crate::render) fn sparse_mma_selector_description(
     record: &CatalogIntrinsic,
 ) -> &'static str {
     match record.sparse_mma.as_ref().unwrap().selector {
+        SparseMmaSelector::ImmediateZeroThroughThree => {
+            "the compile-time constant `0`, `1`, `2`, or `3`"
+        }
         SparseMmaSelector::ImmediateZeroOrOne => "the compile-time constant `0` or `1`",
         SparseMmaSelector::ImmediateZero => "the compile-time constant `0`",
     }
@@ -341,6 +347,9 @@ pub(in crate::render) fn sparse_mma_selector_description(
 
 pub(in crate::render) fn sparse_mma_selector_error(record: &CatalogIntrinsic) -> &'static str {
     match record.sparse_mma.as_ref().unwrap().selector {
+        SparseMmaSelector::ImmediateZeroThroughThree => {
+            "sparse MMA selector must be the compile-time constant 0, 1, 2, or 3"
+        }
         SparseMmaSelector::ImmediateZeroOrOne => {
             "sparse MMA selector must be the compile-time constant 0 or 1"
         }
@@ -352,18 +361,29 @@ pub(in crate::render) fn sparse_mma_selector_error(record: &CatalogIntrinsic) ->
 
 pub(in crate::render) const SPARSE_MMA_STANDARD_METADATA_RULE: &str = "Every 4-bit metadata group must encode two distinct 2-bit indices; `0x0`, `0x5`, `0xa`, and `0xf` are undefined behavior.";
 pub(in crate::render) const SPARSE_MMA_ORDERED_METADATA_RULE: &str = "Every 4-bit metadata group must be `0x4`, `0x8`, `0x9`, `0xc`, `0xd`, or `0xe`; any other value is undefined behavior.";
+pub(in crate::render) const SPARSE_MMA_ORDERED_TF32_METADATA_RULE: &str =
+    "Every 4-bit metadata group must be `0x4` or `0xe`; any other value is undefined behavior.";
 
 pub(in crate::render) fn sparse_mma_metadata_rule(mma: &SparseMma) -> &'static str {
-    match mma.metadata {
-        SparseMmaMetadata::Standard => SPARSE_MMA_STANDARD_METADATA_RULE,
-        SparseMmaMetadata::Ordered => SPARSE_MMA_ORDERED_METADATA_RULE,
+    match (mma.metadata, mma.a_element) {
+        (SparseMmaMetadata::Standard, _) => SPARSE_MMA_STANDARD_METADATA_RULE,
+        (SparseMmaMetadata::Ordered, SparseMmaElement::Tf32) => {
+            SPARSE_MMA_ORDERED_TF32_METADATA_RULE
+        }
+        (SparseMmaMetadata::Ordered, _) => SPARSE_MMA_ORDERED_METADATA_RULE,
     }
 }
 
 pub(in crate::render) fn sparse_mma_import_adapter(record: &CatalogIntrinsic) -> &'static str {
     match record.sparse_mma.as_ref().unwrap().adapter {
+        SparseMmaAdapter::C2U32A2U32B2U32MetadataU32SelectorU32ToD2U32 => {
+            "GeneratedMmaImportAdapter::C2U32A2U32B2U32ToD2U32"
+        }
         SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32 => {
             "GeneratedMmaImportAdapter::C2U32A4U32B4U32ToD2U32"
+        }
+        SparseMmaAdapter::C4F32A2U32B2U32MetadataU32SelectorU32ToD4F32 => {
+            "GeneratedMmaImportAdapter::C4F32A2U32B2U32ToD4F32"
         }
         SparseMmaAdapter::C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32 => {
             "GeneratedMmaImportAdapter::C4F32A4U32B4U32ToD4F32"
@@ -392,6 +412,8 @@ pub(in crate::render) fn sparse_mma_attr_variants(
 ) {
     let mma = record.sparse_mma.as_ref().expect("sparse-MMA record");
     let shape = match mma.shape {
+        SparseMmaShape::M16n8k8 => "SparseMmaShapeAttr::M16n8k8",
+        SparseMmaShape::M16n8k16 => "SparseMmaShapeAttr::M16n8k16",
         SparseMmaShape::M16n8k32 => "SparseMmaShapeAttr::M16n8k32",
         SparseMmaShape::M16n8k64 => "SparseMmaShapeAttr::M16n8k64",
         SparseMmaShape::M16n8k128 => "SparseMmaShapeAttr::M16n8k128",
@@ -402,6 +424,9 @@ pub(in crate::render) fn sparse_mma_attr_variants(
         SparseMmaAccumulator::S32 => "SparseMmaAccumulatorAttr::S32",
     };
     let element = |element| match element {
+        SparseMmaElement::F16 => "SparseMmaElementAttr::F16",
+        SparseMmaElement::Bf16 => "SparseMmaElementAttr::Bf16",
+        SparseMmaElement::Tf32 => "SparseMmaElementAttr::Tf32",
         SparseMmaElement::E2m1 => "SparseMmaElementAttr::E2m1",
         SparseMmaElement::E2m3 => "SparseMmaElementAttr::E2m3",
         SparseMmaElement::E3m2 => "SparseMmaElementAttr::E3m2",
@@ -426,6 +451,9 @@ pub(in crate::render) fn sparse_mma_attr_variants(
         SparseMmaMetadata::Ordered => "SparseMmaMetadataAttr::Ordered",
     };
     let selector = match mma.selector {
+        SparseMmaSelector::ImmediateZeroThroughThree => {
+            "SparseMmaSelectorAttr::ImmediateZeroThroughThree"
+        }
         SparseMmaSelector::ImmediateZeroOrOne => "SparseMmaSelectorAttr::ImmediateZeroOrOne",
         SparseMmaSelector::ImmediateZero => "SparseMmaSelectorAttr::ImmediateZero",
     };

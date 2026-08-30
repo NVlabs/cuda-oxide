@@ -16,12 +16,12 @@ use super::contracts::{
     ScalarArithmetic, ScalarArithmeticFormat, ScalarArithmeticOperation, ScalarArithmeticRounding,
     ScalarArithmeticSaturation, ScalarArithmeticSubnormal, ScalarConversion,
     ScalarConversionRounding, ScalarConversionSaturation, ScalarMath, ScalarMathFormat,
-    ScalarMathOperation, ScalarMathPrecision, ScalarMathSubnormal, SparseMma, SparseMmaElement,
-    SparseMmaMetadata, SparseMmaOverflow, SparseMmaShape, SpecialRegister, SpecialRegisterKind,
-    StmatrixLayout, StmatrixMultiplicity, Tcgen05, Tcgen05CpGroup, Tcgen05CpMember,
-    Tcgen05LdMultiplicity, Tcgen05LdShape, Tcgen05MmaAlias, Tcgen05MmaForm, Tcgen05Operation, Tma,
-    TmaOperation, TmaReductionLoadMode, TmaReductionOperation, Vote, WarpBarrier, WarpMatch,
-    WarpShuffle, WgmmaControl, WgmmaControlMode,
+    ScalarMathOperation, ScalarMathPrecision, ScalarMathSubnormal, SparseMma, SparseMmaAccumulator,
+    SparseMmaElement, SparseMmaMetadata, SparseMmaOverflow, SparseMmaShape, SpecialRegister,
+    SpecialRegisterKind, StmatrixLayout, StmatrixMultiplicity, Tcgen05, Tcgen05CpGroup,
+    Tcgen05CpMember, Tcgen05LdMultiplicity, Tcgen05LdShape, Tcgen05MmaAlias, Tcgen05MmaForm,
+    Tcgen05Operation, Tma, TmaOperation, TmaReductionLoadMode, TmaReductionOperation, Vote,
+    WarpBarrier, WarpMatch, WarpShuffle, WgmmaControl, WgmmaControlMode,
 };
 use super::core::{BackendLoweringMechanism, IntrinsicBackend, IntrinsicSource, RuntimeValidation};
 use super::imported::ImportedAddressSpace;
@@ -72,6 +72,8 @@ pub struct OverlayShardFile {
     pub sparse_mma_f8f6f4_f32: Option<SparseMmaF8F6F4Admission>,
     #[serde(default)]
     pub sparse_mma_f8f6f4_f16: Option<SparseMmaF8F6F4F16Admission>,
+    #[serde(default)]
+    pub sparse_mma_ordered_ampere_float: Option<SparseMmaOrderedAmpereFloatAdmission>,
     #[serde(default)]
     pub prmt: Option<PrmtAdmission>,
     #[serde(default)]
@@ -725,6 +727,26 @@ pub struct SparseMmaF8F6F4F16Admission {
     pub a_elements: Vec<SparseMmaElement>,
     pub b_elements: Vec<SparseMmaElement>,
     pub product_count: usize,
+}
+
+/// Compact admission for the reviewed ordered-metadata Ampere floating sparse MMA forms.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparseMmaOrderedAmpereFloatAdmission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
+    #[serde(rename = "variant")]
+    pub variants: Vec<SparseMmaOrderedAmpereFloatVariant>,
+}
+
+/// One reviewed ordered-metadata Ampere floating sparse MMA form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparseMmaOrderedAmpereFloatVariant {
+    pub shape: SparseMmaShape,
+    pub accumulator: SparseMmaAccumulator,
+    pub element: SparseMmaElement,
 }
 
 #[derive(Debug, Clone, Deserialize)]

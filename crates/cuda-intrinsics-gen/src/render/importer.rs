@@ -2616,9 +2616,11 @@ pub(super) fn import_generated_tcgen05_store_operands(
 #[derive(Clone, Copy)]
 pub(super) enum GeneratedMmaImportAdapter {
     C2U32A2U32B1U32ToD2U32,
+    C2U32A2U32B2U32ToD2U32,
     C2U32A4U32B2U32ToD2U32,
     C2U32A4U32B4U32ToD2U32,
     C4F32A2U32B1U32ToD4F32,
+    C4F32A2U32B2U32ToD4F32,
     C4F32A4U32B2U32ToD4F32,
     C4F32A4U32B4U32ToD4F32,
     C2F64A1F64B1F64ToD2F64,
@@ -2695,12 +2697,16 @@ pub(super) fn import_generated_mma_operands(
         match adapter {
             GeneratedMmaImportAdapter::C2U32A2U32B1U32ToD2U32 =>
                 (u32_ty, 2, u32_ty, 2, true, u32_ty, 1, false, u32_ty, 2),
+            GeneratedMmaImportAdapter::C2U32A2U32B2U32ToD2U32 =>
+                (u32_ty, 2, u32_ty, 2, true, u32_ty, 2, true, u32_ty, 2),
             GeneratedMmaImportAdapter::C2U32A4U32B2U32ToD2U32 =>
                 (u32_ty, 2, u32_ty, 4, true, u32_ty, 2, true, u32_ty, 2),
             GeneratedMmaImportAdapter::C2U32A4U32B4U32ToD2U32 =>
                 (u32_ty, 2, u32_ty, 4, true, u32_ty, 4, true, u32_ty, 2),
             GeneratedMmaImportAdapter::C4F32A2U32B1U32ToD4F32 =>
                 (f32_ty, 4, u32_ty, 2, true, u32_ty, 1, false, f32_ty, 4),
+            GeneratedMmaImportAdapter::C4F32A2U32B2U32ToD4F32 =>
+                (f32_ty, 4, u32_ty, 2, true, u32_ty, 2, true, f32_ty, 4),
             GeneratedMmaImportAdapter::C4F32A4U32B2U32ToD4F32 =>
                 (f32_ty, 4, u32_ty, 4, true, u32_ty, 2, true, f32_ty, 4),
             GeneratedMmaImportAdapter::C4F32A4U32B4U32ToD4F32 =>

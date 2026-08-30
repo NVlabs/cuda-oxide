@@ -296,6 +296,8 @@ pub struct SparseMma {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaShape {
+    M16n8k8,
+    M16n8k16,
     M16n8k32,
     M16n8k64,
     M16n8k128,
@@ -312,6 +314,9 @@ pub enum SparseMmaAccumulator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaElement {
+    F16,
+    Bf16,
+    Tf32,
     E2m1,
     E2m3,
     E3m2,
@@ -347,7 +352,10 @@ pub enum SparseMmaMetadata {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+// The shared prefix makes each variant's accepted immediate range explicit in catalog data.
+#[allow(clippy::enum_variant_names)]
 pub enum SparseMmaSelector {
+    ImmediateZeroThroughThree,
     ImmediateZeroOrOne,
     ImmediateZero,
 }
@@ -362,7 +370,9 @@ pub enum SparseMmaParticipation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaAdapter {
+    C2U32A2U32B2U32MetadataU32SelectorU32ToD2U32,
     C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32,
+    C4F32A2U32B2U32MetadataU32SelectorU32ToD4F32,
     C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32,
     C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32,
     C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32,
@@ -372,7 +382,13 @@ pub enum SparseMmaAdapter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SparseMmaLlvmAdapter {
+    A2V2F16B2V2F16C2V2F16MetadataI32SelectorI32ToD2V2F16,
+    A4V2F16B4V2F16C2V2F16MetadataI32SelectorI32ToD2V2F16,
+    A2V2F16B2V2F16C4F32MetadataI32SelectorI32ToD4F32,
+    A4V2F16B4V2F16C4F32MetadataI32SelectorI32ToD4F32,
+    A2I32B2I32C2V2F16MetadataI32SelectorI32ToD2V2F16,
     A4I32B4I32C2V2F16MetadataI32SelectorI32ToD2V2F16,
+    A2I32B2I32C4F32MetadataI32SelectorI32ToD4F32,
     A4I32B4I32C4F32MetadataI32SelectorI32ToD4F32,
     A2I32B2I32C4I32MetadataI32SelectorI32ToD4I32,
     A4I32B4I32C4I32MetadataI32SelectorI32ToD4I32,

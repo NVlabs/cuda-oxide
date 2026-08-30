@@ -776,7 +776,7 @@ use pliron_derive::{pliron_attr, pliron_op};
 
 #[pliron_attr(name = "nvvm.sparse_mma_shape", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum SparseMmaShapeAttr { M16n8k32, M16n8k64, M16n8k128 }
+pub enum SparseMmaShapeAttr { M16n8k8, M16n8k16, M16n8k32, M16n8k64, M16n8k128 }
 
 #[pliron_attr(name = "nvvm.sparse_mma_accumulator", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -784,7 +784,7 @@ pub enum SparseMmaAccumulatorAttr { F16, F32, S32 }
 
 #[pliron_attr(name = "nvvm.sparse_mma_element", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum SparseMmaElementAttr { E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }
+pub enum SparseMmaElementAttr { F16, Bf16, Tf32, E2m1, E2m3, E3m2, E4m3, E5m2, S4, U4, S8, U8 }
 
 #[pliron_attr(name = "nvvm.sparse_mma_layout", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
@@ -800,7 +800,8 @@ pub enum SparseMmaMetadataAttr { Standard, Ordered }
 
 #[pliron_attr(name = "nvvm.sparse_mma_selector", format, verifier = "succ")]
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
-pub enum SparseMmaSelectorAttr { ImmediateZeroOrOne, ImmediateZero }
+#[allow(clippy::enum_variant_names)]
+pub enum SparseMmaSelectorAttr { ImmediateZeroThroughThree, ImmediateZeroOrOne, ImmediateZero }
 
 #[pliron_op(
     name = "nvvm.sparse_mma",

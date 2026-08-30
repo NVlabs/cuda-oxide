@@ -13,9 +13,10 @@ use crate::render::collector_targets::generated_intrinsic_variant;
 use crate::render::common::intrinsic_marker;
 use crate::render::families::{
     BLACKWELL_LDMATRIX_EFFECTIVE_FLOORS, SPARSE_MMA_ORDERED_METADATA_RULE,
-    SPARSE_MMA_STANDARD_METADATA_RULE, ldmatrix, register_mma_attr_variants,
-    register_mma_constraints, register_mma_template, register_mmas, sparse_mma_carriers,
-    sparse_mma_constraints, sparse_mma_fragment_counts, sparse_mma_selector_values,
+    SPARSE_MMA_ORDERED_TF32_METADATA_RULE, SPARSE_MMA_STANDARD_METADATA_RULE, ldmatrix,
+    register_mma_attr_variants, register_mma_constraints, register_mma_template, register_mmas,
+    sparse_mma_carriers, sparse_mma_constraints, sparse_mma_fragment_counts,
+    sparse_mma_metadata_rule, sparse_mma_selector_description, sparse_mma_selector_values,
     sparse_mma_template, sparse_mmas,
 };
 use crate::util::read_json;
@@ -344,7 +345,7 @@ fn register_mma_rendering_preserves_apis_order_convergence_and_variants() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let catalog = crate::resolve::resolve(&repo_root).unwrap();
     validate_renderable(&catalog).unwrap();
-    assert_eq!(catalog.intrinsics.len(), 1016);
+    assert_eq!(catalog.intrinsics.len(), 1024);
     let records: Vec<_> = register_mmas(&catalog).collect();
     assert_eq!(records.len(), 154);
     let generated_records = records
@@ -808,7 +809,7 @@ fn sparse_mma_rendering_enforces_selector_and_keeps_family_distinct() {
         .iter()
         .filter(|record| record.sparse_mma.as_ref().unwrap().shape == SparseMmaShape::M16n8k128)
         .count();
-    assert_eq!((records.len(), k32, k64, k128), (114, 16, 82, 16));
+    assert_eq!((records.len(), k32, k64, k128), (122, 19, 82, 16));
     let standard_k64 = records
         .iter()
         .copied()
@@ -970,7 +971,7 @@ fn sparse_mma_rendering_enforces_selector_and_keeps_family_distinct() {
     }
 
     let compatibility = render_compat_sparse_mma(&catalog, "test-hash");
-    assert_eq!(compatibility.matches("pub unsafe fn ").count(), 114);
+    assert_eq!(compatibility.matches("pub unsafe fn ").count(), 122);
     assert!(
         compatibility
             .contains("c: [i32; 4], a: [u32; 2], b: [u32; 2], metadata: u32, selector: u32")
@@ -994,9 +995,13 @@ fn sparse_mma_rendering_enforces_selector_and_keeps_family_distinct() {
     assert!(dialect.contains("MmaCarrier::I32"));
     assert!(dialect.contains("MmaCarrier::U32"));
     assert!(dialect.contains("operands.len() != expected_operands"));
-    assert!(dialect.contains("SparseMmaShapeAttr { M16n8k32, M16n8k64, M16n8k128 }"));
+    assert!(
+        dialect.contains("SparseMmaShapeAttr { M16n8k8, M16n8k16, M16n8k32, M16n8k64, M16n8k128 }")
+    );
     assert!(dialect.contains("SparseMmaAccumulatorAttr { F16, F32, S32 }"));
-    assert!(dialect.contains("SparseMmaSelectorAttr { ImmediateZeroOrOne, ImmediateZero }"));
+    assert!(dialect.contains(
+        "SparseMmaSelectorAttr { ImmediateZeroThroughThree, ImmediateZeroOrOne, ImmediateZero }"
+    ));
     assert!(dialect.contains("SparseMmaElementAttr::E2m1"));
     assert!(dialect.contains("SparseMmaElementAttr::E2m3"));
     assert!(dialect.contains("SparseMmaElementAttr::E3m2"));
@@ -1068,7 +1073,11 @@ fn sparse_mma_rendering_enforces_selector_and_keeps_family_distinct() {
     assert!(targets.contains("GeneratedHardwareAlternative::ExactArchitecture(120)"));
 
     assert_eq!(raw.matches(SPARSE_MMA_STANDARD_METADATA_RULE).count(), 32);
-    assert_eq!(raw.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(), 82);
+    assert_eq!(raw.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(), 88);
+    assert_eq!(
+        raw.matches(SPARSE_MMA_ORDERED_TF32_METADATA_RULE).count(),
+        2
+    );
     assert_eq!(
         compatibility
             .matches(SPARSE_MMA_STANDARD_METADATA_RULE)
@@ -1079,7 +1088,13 @@ fn sparse_mma_rendering_enforces_selector_and_keeps_family_distinct() {
         compatibility
             .matches(SPARSE_MMA_ORDERED_METADATA_RULE)
             .count(),
-        82
+        88
+    );
+    assert_eq!(
+        compatibility
+            .matches(SPARSE_MMA_ORDERED_TF32_METADATA_RULE)
+            .count(),
+        2
     );
     assert!(
         lowering.contains("mma.sp::ordered_metadata.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32")
@@ -1135,7 +1150,37 @@ fn sparse_mma_rendering_enforces_selector_and_keeps_family_distinct() {
     );
     assert_eq!(
         reference.matches(SPARSE_MMA_ORDERED_METADATA_RULE).count(),
-        82
+        88
+    );
+    assert_eq!(
+        reference
+            .matches(SPARSE_MMA_ORDERED_TF32_METADATA_RULE)
+            .count(),
+        2
+    );
+    let tf32_k8 = records
+        .iter()
+        .find(|record| record.id == "mma_sp_ordered_metadata_m16n8k8_f32_tf32")
+        .unwrap();
+    let tf32_k16 = records
+        .iter()
+        .find(|record| record.id == "mma_sp_ordered_metadata_m16n8k16_f32_tf32")
+        .unwrap();
+    assert_eq!(
+        sparse_mma_metadata_rule(tf32_k8.sparse_mma.as_ref().unwrap()),
+        SPARSE_MMA_ORDERED_TF32_METADATA_RULE
+    );
+    assert_eq!(
+        sparse_mma_selector_description(tf32_k8),
+        "the compile-time constant `0`, `1`, `2`, or `3`"
+    );
+    assert_eq!(
+        sparse_mma_metadata_rule(tf32_k16.sparse_mma.as_ref().unwrap()),
+        SPARSE_MMA_ORDERED_TF32_METADATA_RULE
+    );
+    assert_eq!(
+        sparse_mma_selector_description(tf32_k16),
+        "the compile-time constant `0` or `1`"
     );
     let sparse_reference = reference
         .split("## Sparse-MMA contracts")
@@ -1147,7 +1192,11 @@ fn sparse_mma_rendering_enforces_selector_and_keeps_family_distinct() {
     assert!(sparse_reference.contains("Overflow mode is not applicable."));
     assert!(!sparse_reference.contains("Integer overflow is not applicable"));
     for record in &records {
-        assert!(reference.contains(&format!("- `{}`: runtime `unexecuted`", record.id)));
+        let runtime = match record.sparse_mma.as_ref().unwrap().runtime_validation {
+            RuntimeValidation::Unexecuted => "unexecuted",
+            RuntimeValidation::Executed => "executed",
+        };
+        assert!(reference.contains(&format!("- `{}`: runtime `{runtime}`", record.id)));
     }
 
     let outputs = all_outputs(&catalog, "{}\n".into(), "test-hash").unwrap();

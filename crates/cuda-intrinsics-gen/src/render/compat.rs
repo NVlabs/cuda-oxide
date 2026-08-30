@@ -205,7 +205,9 @@ pub(super) fn render_compat_sparse_mma(catalog: &CatalogFile, hash: &str) -> Str
         assert_eq!(path, &format!("cuda_device::wmma::{}", record.rust.name));
         assert!(matches!(
             mma.adapter,
-            SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32
+            SparseMmaAdapter::C2U32A2U32B2U32MetadataU32SelectorU32ToD2U32
+                | SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32
+                | SparseMmaAdapter::C4F32A2U32B2U32MetadataU32SelectorU32ToD4F32
                 | SparseMmaAdapter::C4F32A4U32B4U32MetadataU32SelectorU32ToD4F32
                 | SparseMmaAdapter::C4I32A2U32B2U32MetadataU32SelectorU32ToD4I32
                 | SparseMmaAdapter::C4I32A4U32B4U32MetadataU32SelectorU32ToD4I32

@@ -285,6 +285,105 @@ fn compact_sparse_f8f6f4_f16_admission_is_closed_and_ordered() {
 }
 
 #[test]
+fn compact_sparse_ordered_ampere_float_admission_is_closed_and_ledger_bound() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let path = repo_root.join("intrinsics/overlay/sparse_mma_ordered_ampere_float.toml");
+    let bytes = fs::read(&path).unwrap();
+    let shard: OverlayShardFile = toml::from_slice(&bytes).unwrap();
+    let admission = shard.sparse_mma_ordered_ampere_float.unwrap();
+
+    // Executed runtime validation is admitted for this family (GPU evidence backs it).
+    assert_eq!(admission.runtime_validation, RuntimeValidation::Executed);
+    let records = expand_sparse_mma_ordered_ampere_float_admission(&admission).unwrap();
+    assert_eq!(records.len(), 8);
+    assert!(records.iter().all(|record| record.abi_id.is_empty()));
+    assert!(records.iter().all(|record| {
+        record
+            .sparse_mma
+            .as_ref()
+            .is_some_and(|mma| mma.runtime_validation == RuntimeValidation::Executed)
+    }));
+
+    let mut bound = overlay_file(records.clone());
+    bind_pinned_abi_ids(&repo_root, &mut bound);
+    assert_eq!(
+        bound
+            .intrinsics
+            .iter()
+            .map(|record| record.abi_id.clone())
+            .collect::<Vec<_>>(),
+        (1017..=1024)
+            .map(|id| format!("i{id:04}"))
+            .collect::<Vec<_>>()
+    );
+
+    // First form: m16n8k8 tf32 (2-reg carrier, selector 0-3).
+    let first = &records[0];
+    assert_eq!(first.id, "mma_sp_ordered_metadata_m16n8k8_f32_tf32");
+    assert_eq!(
+        first.source_record.as_deref(),
+        Some("int_nvvm_mma_sp_ordered_metadata_m16n8k8_row_col_tf32")
+    );
+    assert_eq!(
+        first.llvm_symbol.as_deref(),
+        Some("llvm.nvvm.mma.sp.ordered.metadata.m16n8k8.row.col.tf32")
+    );
+    assert_eq!(
+        first.rust_arguments,
+        ["[f32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"]
+    );
+    assert_eq!(first.rust_result, "[f32; 4]");
+    assert_eq!(
+        first.llvm_arguments,
+        [
+            "i32", "i32", "i32", "i32", "f32", "f32", "f32", "f32", "i32", "i32"
+        ]
+    );
+    assert_eq!(first.minimum_ptx, "8.5");
+    assert_eq!(first.minimum_sm.as_deref(), Some("sm_80"));
+    assert_eq!(first.targets, "all");
+    let mma = first.sparse_mma.as_ref().unwrap();
+    assert_eq!(mma.selector, SparseMmaSelector::ImmediateZeroThroughThree);
+    assert_eq!(
+        mma.adapter,
+        SparseMmaAdapter::C4F32A2U32B2U32MetadataU32SelectorU32ToD4F32
+    );
+    assert_eq!(
+        mma.llvm_adapter,
+        SparseMmaLlvmAdapter::A2I32B2I32C4F32MetadataI32SelectorI32ToD4F32
+    );
+
+    // f16 forms carry <2 x half> multiplicands; k32 pairs drop to selector 0-1.
+    let k32_f16 = &records[6];
+    assert_eq!(k32_f16.id, "mma_sp_ordered_metadata_m16n8k32_f16_f16");
+    assert_eq!(
+        k32_f16.llvm_arguments,
+        [
+            "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "v2f16", "v2f16",
+            "v2f16", "i32", "i32"
+        ]
+    );
+    let k32_mma = k32_f16.sparse_mma.as_ref().unwrap();
+    assert_eq!(k32_mma.selector, SparseMmaSelector::ImmediateZeroOrOne);
+    assert_eq!(
+        k32_mma.adapter,
+        SparseMmaAdapter::C2U32A4U32B4U32MetadataU32SelectorU32ToD2U32
+    );
+
+    let mut reordered = admission.clone();
+    reordered.variants.swap(0, 1);
+    assert!(expand_sparse_mma_ordered_ampere_float_admission(&reordered).is_err());
+
+    let mut missing = admission.clone();
+    missing.variants.pop();
+    assert!(expand_sparse_mma_ordered_ampere_float_admission(&missing).is_err());
+
+    let mut missing_evidence = admission;
+    missing_evidence.llvm_evidence_profile.clear();
+    assert!(expand_sparse_mma_ordered_ampere_float_admission(&missing_evidence).is_err());
+}
+
+#[test]
 fn sparse_f8f6f4_f16_candidate_floor_uses_the_resolved_policy() {
     let policy = expand_sparse_mma_f8f6f4_f16_admission(&test_sparse_mma_f8f6f4_f16_admission())
         .unwrap()
@@ -1458,7 +1557,7 @@ fn pinned_sparse_mma_records_close_shape_specific_selectors_and_ranges() {
         .iter()
         .filter(|record| record.family == "sparse_mma")
         .collect::<Vec<_>>();
-    assert_eq!(records.len(), 114);
+    assert_eq!(records.len(), 122);
     assert_eq!(
         records
             .iter()
@@ -1466,6 +1565,7 @@ fn pinned_sparse_mma_records_close_shape_specific_selectors_and_ranges() {
             .collect::<BTreeSet<_>>(),
         (163..=251)
             .chain(525..=549)
+            .chain(1017..=1024)
             .map(|id| format!("i{id:04}"))
             .collect::<BTreeSet<_>>()
     );
@@ -1494,10 +1594,10 @@ fn pinned_sparse_mma_records_close_shape_specific_selectors_and_ranges() {
         assert!(derived_source_records.insert(identity.source_record.clone()));
         assert!(derived_llvm_symbols.insert(identity.llvm_symbol.clone()));
     }
-    assert_eq!(derived_ids.len(), 114);
-    assert_eq!(derived_operation_keys.len(), 114);
-    assert_eq!(derived_source_records.len(), 114);
-    assert_eq!(derived_llvm_symbols.len(), 114);
+    assert_eq!(derived_ids.len(), 122);
+    assert_eq!(derived_operation_keys.len(), 122);
+    assert_eq!(derived_source_records.len(), 122);
+    assert_eq!(derived_llvm_symbols.len(), 122);
 
     let integer_records = records
         .iter()
@@ -1511,7 +1611,16 @@ fn pinned_sparse_mma_records_close_shape_specific_selectors_and_ranges() {
         .iter()
         .copied()
         .filter(|record| {
-            record.sparse_mma.as_ref().unwrap().accumulator == SparseMmaAccumulator::F32
+            let mma = record.sparse_mma.as_ref().unwrap();
+            mma.accumulator == SparseMmaAccumulator::F32
+                && matches!(
+                    mma.a_element,
+                    SparseMmaElement::E2m1
+                        | SparseMmaElement::E2m3
+                        | SparseMmaElement::E3m2
+                        | SparseMmaElement::E4m3
+                        | SparseMmaElement::E5m2
+                )
         })
         .collect::<Vec<_>>();
     assert_eq!(f32_records.len(), 25);
@@ -1519,7 +1628,16 @@ fn pinned_sparse_mma_records_close_shape_specific_selectors_and_ranges() {
         .iter()
         .copied()
         .filter(|record| {
-            record.sparse_mma.as_ref().unwrap().accumulator == SparseMmaAccumulator::F16
+            let mma = record.sparse_mma.as_ref().unwrap();
+            mma.accumulator == SparseMmaAccumulator::F16
+                && matches!(
+                    mma.a_element,
+                    SparseMmaElement::E2m1
+                        | SparseMmaElement::E2m3
+                        | SparseMmaElement::E3m2
+                        | SparseMmaElement::E4m3
+                        | SparseMmaElement::E5m2
+                )
         })
         .collect::<Vec<_>>();
     assert_eq!(f16_records.len(), 25);
@@ -1566,6 +1684,9 @@ fn pinned_sparse_mma_records_close_shape_specific_selectors_and_ranges() {
     let mut expected_variants = BTreeSet::new();
     for shape in [SparseMmaShape::M16n8k32, SparseMmaShape::M16n8k64] {
         let metadata = match shape {
+            SparseMmaShape::M16n8k8 | SparseMmaShape::M16n8k16 => {
+                unreachable!("integer sparse-MMA test does not enumerate float shapes")
+            }
             SparseMmaShape::M16n8k32 => [
                 Some(SparseMmaMetadata::Standard),
                 Some(SparseMmaMetadata::Ordered),

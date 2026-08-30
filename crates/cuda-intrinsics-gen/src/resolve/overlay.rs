@@ -19,7 +19,7 @@ use super::guards::*;
 
 pub(super) const OVERLAY_SCHEMA: u32 = 44;
 pub(super) const MINIMUM_OVERLAY_SHARD_SCHEMA: u32 = 26;
-pub(super) const OVERLAY_SHARD_SCHEMA: u32 = 62;
+pub(super) const OVERLAY_SHARD_SCHEMA: u32 = 63;
 pub(super) const REGISTER_MMA_F8F6F4_SHARD_SCHEMA: u32 = 46;
 pub(super) const REGISTER_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 47;
 pub(super) const REGISTER_MMA_MXF8F6F4_SHARD_SCHEMA: u32 = 60;
@@ -27,6 +27,7 @@ pub(super) const REGISTER_MMA_FP8_SHARD_SCHEMA: u32 = 48;
 pub(super) const REGISTER_MMA_AMPERE_FLOAT_SHARD_SCHEMA: u32 = 49;
 pub(super) const SPARSE_MMA_F8F6F4_SHARD_SCHEMA: u32 = 27;
 pub(super) const SPARSE_MMA_F8F6F4_F16_SHARD_SCHEMA: u32 = 50;
+pub(super) const SPARSE_MMA_AMPERE_FLOAT_SHARD_SCHEMA: u32 = 63;
 pub(super) const PRMT_SHARD_SCHEMA: u32 = 28;
 pub(super) const PACKED_CONVERSION_FP8_SHARD_SCHEMA: u32 = 29;
 pub(super) const PACKED_CONVERSION_FP8_F16X2_SHARD_SCHEMA: u32 = 59;
@@ -108,6 +109,7 @@ pub(super) fn read_overlay(
         let sparse_mma_admission = shard.sparse_mma_integer.take();
         let sparse_mma_f8f6f4_admission = shard.sparse_mma_f8f6f4_f32.take();
         let sparse_mma_f8f6f4_f16_admission = shard.sparse_mma_f8f6f4_f16.take();
+        let sparse_mma_ampere_float_admission = shard.sparse_mma_ordered_ampere_float.take();
         let prmt_admission = shard.prmt.take();
         let packed_conversion_fp8_admission = shard.packed_conversion_fp8.take();
         let packed_conversion_fp8_f16x2_admission = shard.packed_conversion_fp8_f16x2.take();
@@ -137,7 +139,8 @@ pub(super) fn read_overlay(
             + usize::from(ampere_float_mma_admission.is_some())
             + usize::from(sparse_mma_admission.is_some())
             + usize::from(sparse_mma_f8f6f4_admission.is_some())
-            + usize::from(sparse_mma_f8f6f4_f16_admission.is_some());
+            + usize::from(sparse_mma_f8f6f4_f16_admission.is_some())
+            + usize::from(sparse_mma_ampere_float_admission.is_some());
         ensure!(
             compact_mma_count <= 1,
             "overlay shard {} contains more than one compact MMA admission",
@@ -219,6 +222,13 @@ pub(super) fn read_overlay(
                 "compact sparse f8f6f4 F16 MMA admission must be the only content of a sparse_mma shard"
             );
             shard.intrinsics = expand_sparse_mma_f8f6f4_f16_admission(&admission)?;
+        }
+        if let Some(admission) = sparse_mma_ampere_float_admission {
+            ensure!(
+                shard.family == "sparse_mma" && shard.intrinsics.is_empty(),
+                "compact ordered Ampere floating sparse MMA admission must be the only content of a sparse_mma shard"
+            );
+            shard.intrinsics = expand_sparse_mma_ordered_ampere_float_admission(&admission)?;
         }
         if let Some(admission) = prmt_admission {
             ensure!(
@@ -406,6 +416,12 @@ pub(super) fn validate_overlay_shard_schema_with_max(
         shard.sparse_mma_f8f6f4_f16.is_none() || shard.schema >= SPARSE_MMA_F8F6F4_F16_SHARD_SCHEMA,
         "compact sparse f8f6f4 F16 MMA admission requires overlay shard schema {}",
         SPARSE_MMA_F8F6F4_F16_SHARD_SCHEMA
+    );
+    ensure!(
+        shard.sparse_mma_ordered_ampere_float.is_none()
+            || shard.schema >= SPARSE_MMA_AMPERE_FLOAT_SHARD_SCHEMA,
+        "compact ordered Ampere floating sparse MMA admission requires overlay shard schema {}",
+        SPARSE_MMA_AMPERE_FLOAT_SHARD_SCHEMA
     );
     ensure!(
         shard.register_mma_f8f6f4_f32.is_none() || shard.schema >= REGISTER_MMA_F8F6F4_SHARD_SCHEMA,

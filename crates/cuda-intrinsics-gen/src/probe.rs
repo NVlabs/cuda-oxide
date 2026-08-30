@@ -884,6 +884,7 @@ fn validate_probe_instructions(record: &CatalogIntrinsic, ptx: &str) -> Result<(
     }
     if let Some(mma) = &record.sparse_mma {
         let selectors: &[u32] = match mma.selector {
+            SparseMmaSelector::ImmediateZeroThroughThree => &[0, 1, 2, 3],
             SparseMmaSelector::ImmediateZeroOrOne => &[0, 1],
             SparseMmaSelector::ImmediateZero => &[0],
         };

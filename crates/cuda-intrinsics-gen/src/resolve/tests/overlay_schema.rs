@@ -48,8 +48,8 @@ fn overlay_manifest_loads_sorted_family_shards() {
     let (overlay, hash) =
         read_overlay(&repo_root, &repo_root.join("intrinsics/overlay.toml")).unwrap();
     assert_eq!(overlay.schema, OVERLAY_SCHEMA);
-    assert_eq!(overlay.shards.len(), 64);
-    assert_eq!(overlay.intrinsics.len(), 1016);
+    assert_eq!(overlay.shards.len(), 65);
+    assert_eq!(overlay.intrinsics.len(), 1024);
     assert_eq!(
         overlay
             .intrinsics
@@ -144,7 +144,7 @@ fn overlay_manifest_loads_sorted_family_shards() {
             .iter()
             .filter(|record| record.family == "sparse_mma")
             .count(),
-        114
+        122
     );
     assert_eq!(
         overlay
@@ -264,6 +264,7 @@ fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         sparse_mma_integer: None,
         sparse_mma_f8f6f4_f32,
         sparse_mma_f8f6f4_f16: None,
+        sparse_mma_ordered_ampere_float: None,
         prmt,
         packed_conversion_fp8: None,
         packed_conversion_fp8_f16x2: None,
@@ -353,6 +354,29 @@ fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
             .contains("requires overlay shard schema 50")
     );
 
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let ampere_float_bytes =
+        std::fs::read(repo_root.join("intrinsics/overlay/sparse_mma_ordered_ampere_float.toml"))
+            .unwrap();
+    let mut sparse_ampere_float: OverlayShardFile = toml::from_slice(&ampere_float_bytes).unwrap();
+    assert!(
+        sparse_ampere_float
+            .sparse_mma_ordered_ampere_float
+            .is_some()
+    );
+    assert_eq!(
+        sparse_ampere_float.schema,
+        SPARSE_MMA_AMPERE_FLOAT_SHARD_SCHEMA
+    );
+    validate_overlay_shard_schema(&sparse_ampere_float, path).unwrap();
+    sparse_ampere_float.schema -= 1;
+    assert!(
+        validate_overlay_shard_schema(&sparse_ampere_float, path)
+            .unwrap_err()
+            .to_string()
+            .contains("requires overlay shard schema 63")
+    );
+
     let mut standard_fp8_mma = shard(REGISTER_MMA_FP8_SHARD_SCHEMA, None, None);
     standard_fp8_mma.family = "register_mma".into();
     standard_fp8_mma.register_mma_fp8 = Some(test_register_mma_fp8_admission());
@@ -380,6 +404,7 @@ fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         sparse_mma_integer: None,
         sparse_mma_f8f6f4_f32: None,
         sparse_mma_f8f6f4_f16: None,
+        sparse_mma_ordered_ampere_float: None,
         prmt: None,
         packed_conversion_fp8: Some(test_fp8_conversion_admission()),
         packed_conversion_fp8_f16x2: None,
@@ -424,6 +449,7 @@ fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         sparse_mma_integer: None,
         sparse_mma_f8f6f4_f32: None,
         sparse_mma_f8f6f4_f16: None,
+        sparse_mma_ordered_ampere_float: None,
         prmt: None,
         packed_conversion_fp8: None,
         packed_conversion_fp8_f16x2: None,
@@ -469,6 +495,7 @@ fn overlay_shard_schema_range_is_composable_and_new_fields_fail_closed() {
         sparse_mma_integer: None,
         sparse_mma_f8f6f4_f32: None,
         sparse_mma_f8f6f4_f16: None,
+        sparse_mma_ordered_ampere_float: None,
         prmt: None,
         packed_conversion_fp8: None,
         packed_conversion_fp8_f16x2: None,
