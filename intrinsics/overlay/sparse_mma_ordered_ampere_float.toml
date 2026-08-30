@@ -5,7 +5,7 @@ family = "sparse_mma"
 
 [sparse_mma_ordered_ampere_float]
 llvm_evidence_profile = "rust-llvm-23.1.0-16696adc"
-libnvvm_evidence_profile = "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float"
+libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33"
 runtime_validation = "executed"
 
 [[sparse_mma_ordered_ampere_float.variant]]
