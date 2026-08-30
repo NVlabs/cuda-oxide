@@ -1,6 +1,6 @@
 # tcgen05_matmul
 
-## tcgen05 Matrix Multiplication - Blackwell (sm_100+) Tensor Core GEMM
+## tcgen05 Matrix Multiplication - Datacenter Blackwell (sm_100a) Tensor Core GEMM
 
 128×128×16 matrix multiplication using Blackwell's 5th generation tensor cores with TMA for data loading and pre-tiled input matrices.
 
@@ -110,7 +110,6 @@ cargo oxide run tcgen05_matmul
 === Unified tcgen05 Matmul Example ===
 
 GPU Compute Capability: sm_100
-Loading PTX from: tcgen05_matmul.ptx
 ✓ PTX loaded successfully
 
 --- Test: tcgen05_matmul_128x128_tiled ---
@@ -139,14 +138,21 @@ SUM CHECK:
 ### On Non-Datacenter GPUs (Consumer Blackwell, Hopper, Ada):
 
 ```text
+=== Unified tcgen05 Matmul Example ===
+
 GPU Compute Capability: sm_120
 
-⚠️  tcgen05 (5th gen tensor cores) requires sm_100 (datacenter Blackwell only).
+⚠️  WARNING: tcgen05 requires sm_100 (datacenter Blackwell)!
    Your GPU is sm_120 (consumer Blackwell has no tcgen05).
    PTX was generated successfully; run on sm_100 to execute kernels.
 
 📝 PTX Verification:
-   PTX file generated at: tcgen05_matmul.ptx
+   PTX file generated at: .../tcgen05_matmul/tcgen05_matmul.ptx
+
+📝 To inspect generated PTX:
+   cat .../tcgen05_matmul/tcgen05_matmul.ptx
+
+   Look for: tcgen05.mma instructions
 ```
 
 ## Hardware Requirements
