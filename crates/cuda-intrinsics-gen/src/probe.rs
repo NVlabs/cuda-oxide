@@ -12,6 +12,10 @@ use crate::ptx::{
     InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
 };
 use crate::render::render_probe;
+use crate::resolve::{
+    FloorEvidenceFile, FloorEvidenceRecord, MINIMUM_PROBEABLE_PTX, evidence_path,
+    floor_policy_declarations, parse_version, resolve_without_floor_evidence,
+};
 use crate::resolve::{resolve, resolve_candidate};
 use crate::util::{pretty_json, sha256_bytes, sha256_file};
 use anyhow::{Context, Result, ensure};
@@ -43,6 +47,179 @@ pub(crate) struct CandidateProbeOptions {
     pub ptx_feature: String,
     pub ptxas: Option<PathBuf>,
     pub skip_terminal: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FloorProbeOptions {
+    pub llc: PathBuf,
+    pub ptxas: PathBuf,
+    pub intrinsic_id: Option<String>,
+    pub declared_floor: Option<String>,
+}
+
+pub(crate) fn run_floors(repo_root: &Path, options: FloorProbeOptions) -> Result<()> {
+    const SPELLINGS: &[&str] = &[
+        "1.0", "1.1", "1.2", "1.3", "1.4", "2.0", "2.1", "2.2", "2.3", "3.0", "3.1", "3.2", "4.0",
+        "4.1", "4.2", "4.3", "5.0", "6.0", "6.1", "6.2", "6.3", "6.4", "6.5", "7.0", "7.1", "7.2",
+        "7.3", "7.4", "7.5", "7.6", "7.7", "7.8", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5", "8.6",
+        "8.7", "8.8", "9.0",
+    ];
+    let catalog = resolve_without_floor_evidence(repo_root)?;
+    ensure!(
+        options.intrinsic_id.is_some() == options.declared_floor.is_some(),
+        "floor-probe overrides require both --intrinsic and --declared-floor"
+    );
+    let mut declarations = floor_policy_declarations(repo_root)?;
+    if let (Some(id), Some(floor)) = (&options.intrinsic_id, &options.declared_floor) {
+        let declaration = declarations
+            .iter_mut()
+            .find(|declaration| declaration.0 == *id)
+            .with_context(|| format!("unknown floor-probe intrinsic {id}"))?;
+        declaration.1 = floor.clone();
+        declarations.retain(|declaration| declaration.0 == *id);
+    }
+    let llc_identity = llc_identity(&options.llc)?;
+    let ptxas_identity = ptxas_identity(&options.ptxas)?;
+    let output_dir = repo_root.join("target/intrinsics/floor-probes");
+    fs::create_dir_all(&output_dir)?;
+    let catalog_hash = sha256_bytes(pretty_json(&catalog)?.as_bytes());
+    let minimum_probeable = parse_version(MINIMUM_PROBEABLE_PTX)?;
+    let mut records = Vec::with_capacity(declarations.len());
+
+    for (index, (id, minimum_ptx, _minimum_sm)) in declarations.iter().enumerate() {
+        eprintln!(
+            "[{}/{}] probing PTX floor for {id}",
+            index + 1,
+            declarations.len()
+        );
+        let encoded = parse_version(minimum_ptx)?;
+        if encoded < minimum_probeable {
+            records.push(FloorEvidenceRecord::Unverifiable {
+                id: id.clone(),
+                minimum_ptx: minimum_ptx.clone(),
+                reason: format!(
+                    "PTX {minimum_ptx} cannot name sm_75, the oldest target accepted by CUDA 13.2 ptxas"
+                ),
+            });
+            continue;
+        }
+        let record = catalog
+            .intrinsics
+            .iter()
+            .find(|record| record.id == *id)
+            .with_context(|| format!("catalog has no exact-ID representative for {id}"))?;
+        let target = floor_probe_target(&record.backend.gpu_target)?;
+        let input = output_dir.join(format!("{id}.ll"));
+        let positive_ptx = output_dir.join(format!("{id}.ptx"));
+        let positive_cubin = output_dir.join(format!("{id}.cubin"));
+        fs::write(&input, render_probe(&catalog, record, &catalog_hash))?;
+        let ptx = lower_candidate_ptx(
+            &options.llc,
+            &input,
+            &target,
+            &format!("+ptx{}", minimum_ptx.replace('.', "")),
+            &positive_ptx,
+        )?;
+        validate_probe_instructions(record, &ptx)?;
+        assemble_candidate_ptx(&options.ptxas, &target, &positive_ptx, &positive_cubin)
+            .with_context(|| format!("declared PTX floor {minimum_ptx} was rejected for {id}"))?;
+
+        let rejected_ptx = previous_spelling(SPELLINGS, minimum_ptx)?;
+        let negative_source = replace_ptx_version(&ptx, minimum_ptx, rejected_ptx)?;
+        let negative_ptx = output_dir.join(format!("{id}.below.ptx"));
+        let negative_cubin = output_dir.join(format!("{id}.below.cubin"));
+        fs::write(&negative_ptx, negative_source)?;
+        remove_if_present(&negative_cubin)?;
+        let output = Command::new(&options.ptxas)
+            .arg(format!("-arch={target}"))
+            .arg(&negative_ptx)
+            .arg("-o")
+            .arg(&negative_cubin)
+            .output()
+            .with_context(|| format!("run {}", options.ptxas.display()))?;
+        ensure!(
+            !output.status.success(),
+            "below-floor positive control failed: ptxas accepted {id} at PTX {rejected_ptx}, below declared PTX {minimum_ptx}"
+        );
+        let rejection_detail = String::from_utf8_lossy(&output.stderr)
+            .lines()
+            .take(4)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .replace(&output_dir.display().to_string(), "<floor-probe>");
+        ensure!(
+            !rejection_detail.trim().is_empty(),
+            "ptxas rejected {id} without a diagnostic"
+        );
+        records.push(FloorEvidenceRecord::Verified {
+            id: id.clone(),
+            minimum_ptx: minimum_ptx.clone(),
+            target,
+            accepted_ptx: minimum_ptx.clone(),
+            rejected_ptx: rejected_ptx.into(),
+            rejection_detail,
+        });
+    }
+    records.sort_by(|left, right| left.id().cmp(right.id()));
+    let evidence = FloorEvidenceFile {
+        schema: 1,
+        profile: "cuda-13.2.51-ptxas".into(),
+        tool_path: options.ptxas.display().to_string(),
+        tool_version: ptxas_identity.version,
+        tool_sha256: ptxas_identity.sha256,
+        llvm_tool_path: options.llc.display().to_string(),
+        llvm_tool_version: llc_identity.version.clone(),
+        llvm_tool_sha256: llc_identity.sha256.clone(),
+        minimum_supported_target: "sm_75".into(),
+        minimum_probeable_ptx: MINIMUM_PROBEABLE_PTX.into(),
+        records,
+    };
+    if options.intrinsic_id.is_some() {
+        println!("targeted floor probe succeeded; committed evidence was not changed");
+        return Ok(());
+    }
+    let path = evidence_path(repo_root);
+    fs::create_dir_all(path.parent().unwrap())?;
+    fs::write(&path, pretty_json(&evidence)?)?;
+    println!("recorded floor evidence: {}", path.display());
+    println!(
+        "measurement LLVM: {} ({})",
+        llc_identity.version, llc_identity.sha256
+    );
+    Ok(())
+}
+
+fn floor_probe_target(target: &str) -> Result<String> {
+    let digits: String = target
+        .strip_prefix("sm_")
+        .with_context(|| format!("invalid probe target {target}"))?
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .collect();
+    let sm: u16 = digits.parse()?;
+    Ok(if sm < 75 {
+        "sm_75".into()
+    } else {
+        target.into()
+    })
+}
+
+fn previous_spelling<'a>(spellings: &'a [&str], version: &str) -> Result<&'a str> {
+    let index = spellings
+        .iter()
+        .position(|candidate| *candidate == version)
+        .with_context(|| format!("PTX {version} is absent from the floor-probe spelling table"))?;
+    ensure!(index > 0, "PTX {version} has no lower spelling");
+    Ok(spellings[index - 1])
+}
+
+fn replace_ptx_version(ptx: &str, expected: &str, replacement: &str) -> Result<String> {
+    let directive = format!(".version {expected}");
+    ensure!(
+        ptx.matches(&directive).count() == 1,
+        "generated PTX does not contain exactly one {directive}"
+    );
+    Ok(ptx.replacen(&directive, &format!(".version {replacement}"), 1))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

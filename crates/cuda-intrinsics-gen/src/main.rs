@@ -94,6 +94,26 @@ fn try_main() -> Result<()> {
             },
             ProbeInvocation::Candidate(options) => probe::run_candidate(&repo_root, options),
         },
+        "probe-floors" => {
+            let llc = take_option(&mut arguments, "--llc")?
+                .map(PathBuf::from)
+                .context("probe-floors requires --llc FILE")?;
+            let ptxas = take_option(&mut arguments, "--ptxas")?
+                .map(PathBuf::from)
+                .context("probe-floors requires --ptxas FILE")?;
+            let intrinsic_id = take_option(&mut arguments, "--intrinsic")?;
+            let declared_floor = take_option(&mut arguments, "--declared-floor")?;
+            reject_extra(arguments)?;
+            probe::run_floors(
+                &repo_root,
+                probe::FloorProbeOptions {
+                    llc,
+                    ptxas,
+                    intrinsic_id,
+                    declared_floor,
+                },
+            )
+        }
         "check-abi-history" => {
             let base_ref = take_option(&mut arguments, "--base-ref")?
                 .context("check-abi-history requires --base-ref REF")?;
@@ -198,6 +218,7 @@ fn print_usage() {
          cuda-intrinsics-gen coverage [--family NAME] [--repo-root DIR]\n  \
          cuda-intrinsics-gen check-abi-history --base-ref REF [--repo-root DIR]\n  \
          cuda-intrinsics-gen probe [--all | --intrinsic ID] [--llc FILE] [--skip-terminal] [--per-target] [--repo-root DIR]\n  \
+         cuda-intrinsics-gen probe-floors --llc FILE --ptxas FILE [--intrinsic ID --declared-floor VERSION] [--repo-root DIR]\n  \
          cuda-intrinsics-gen probe --candidate --intrinsic ID --llc FILE --gpu-target TARGET --ptx-feature FEATURE (--ptxas FILE | --skip-terminal) [--repo-root DIR]"
     );
 }

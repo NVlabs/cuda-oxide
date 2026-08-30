@@ -7,6 +7,7 @@ mod abi_ledger;
 mod driver;
 mod evidence;
 mod families;
+mod floor_evidence;
 mod guards;
 mod materialize;
 mod overlay;
@@ -18,6 +19,10 @@ mod tests;
 pub(crate) use abi_ledger::validate_operation_key;
 pub use driver::resolve;
 pub(crate) use driver::resolve_candidate;
+pub(crate) use driver::{floor_policy_declarations, resolve_without_floor_evidence};
+pub(crate) use floor_evidence::{
+    FloorEvidenceFile, FloorEvidenceRecord, MINIMUM_PROBEABLE_PTX, evidence_path, parse_version,
+};
 // The remaining pre-split surface: nothing outside `resolve` names these
 // today, so the re-exports would otherwise trip `unused_imports`.
 #[allow(unused_imports)]

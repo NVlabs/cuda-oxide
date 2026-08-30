@@ -26,6 +26,7 @@ use std::path::Path;
 use super::abi_ledger::*;
 use super::evidence::*;
 use super::families::*;
+use super::floor_evidence::*;
 use super::materialize::*;
 use super::overlay::*;
 use super::policy::*;
@@ -70,6 +71,25 @@ pub(super) fn primary_evidence_profile<'a>(
 }
 
 pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
+    resolve_impl(repo_root, true)
+}
+
+pub(crate) fn resolve_without_floor_evidence(repo_root: &Path) -> Result<CatalogFile> {
+    resolve_impl(repo_root, false)
+}
+
+pub(crate) fn floor_policy_declarations(
+    repo_root: &Path,
+) -> Result<Vec<(String, String, Option<String>)>> {
+    Ok(load_resolution_base(repo_root)?
+        .overlay
+        .intrinsics
+        .into_iter()
+        .map(|policy| (policy.id, policy.minimum_ptx, policy.minimum_sm))
+        .collect())
+}
+
+fn resolve_impl(repo_root: &Path, validate_floors: bool) -> Result<CatalogFile> {
     let base = load_resolution_base(repo_root)?;
     let ResolutionBase {
         overlay,
@@ -82,6 +102,9 @@ pub fn resolve(repo_root: &Path) -> Result<CatalogFile> {
     let imported_by_record = index_imported_intrinsics(&imported)?;
     let llvm_revision = source.llvm_revision.clone();
     let (evidence_files, evidence_hashes) = read_evidence(repo_root)?;
+    if validate_floors {
+        validate_floor_evidence(repo_root, &overlay.intrinsics)?;
+    }
     let evidence_by_profile_id = index_evidence(&evidence_files, &llvm_revision)?;
 
     let mut intrinsics = Vec::with_capacity(overlay.intrinsics.len());
