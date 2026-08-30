@@ -1196,6 +1196,10 @@ fn mbarrier_basic_impls(catalog: &CatalogFile) -> String {
                 "convert_arrive"
             }
             (
+                MbarrierBasicOperation::ArriveNoComplete,
+                MbarrierBasicAdapter::ArriveNoCompletePointerCountToToken,
+            ) => "convert_arrive_no_complete",
+            (
                 MbarrierBasicOperation::TestWait,
                 MbarrierBasicAdapter::TestWaitPointerTokenToPredicate,
             ) => "convert_test_wait",
@@ -2059,6 +2063,10 @@ const LOWERING_INTRINSIC_HELPERS: &[(&str, &str)] = &[
         "ldmatrix::convert_generated_ldmatrix",
     ),
     ("convert_arrive", "mbarrier::convert_arrive"),
+    (
+        "convert_arrive_no_complete",
+        "mbarrier::convert_arrive_no_complete",
+    ),
     ("convert_init", "mbarrier::convert_init"),
     ("convert_inval", "mbarrier::convert_inval"),
     ("convert_test_wait", "mbarrier::convert_test_wait"),

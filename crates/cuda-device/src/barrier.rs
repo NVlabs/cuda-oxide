@@ -107,32 +107,6 @@ include!("generated/mbarrier_extended.rs");
 include!("generated/counted_barrier.rs");
 
 // =============================================================================
-// Barrier Arrive Operations
-// =============================================================================
-
-/// Arrive at barrier without returning a token (fire-and-forget).
-///
-/// Use this when the thread will not wait on this barrier.
-/// For producer threads that signal completion but don't need to wait.
-///
-/// # Safety
-///
-/// - `bar` must be initialized
-/// - Only use when this thread will NOT call `mbarrier_wait`
-///
-/// # PTX
-///
-/// ```ptx
-/// mbarrier.arrive.noComplete.shared.b64 _, [addr];
-/// ```
-#[inline(never)]
-pub unsafe fn mbarrier_arrive_no_complete(bar: *const Barrier) {
-    let _ = bar;
-    // Lowered to: call void @llvm.nvvm.mbarrier.arrive.noComplete.shared(ptr %bar)
-    unreachable!("mbarrier_arrive_no_complete called outside CUDA kernel context")
-}
-
-// =============================================================================
 // Barrier Wait Operations
 // =============================================================================
 

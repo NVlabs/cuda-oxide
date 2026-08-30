@@ -404,6 +404,10 @@ pub(super) fn render_raw_abi(catalog: &CatalogFile, hash: &str) -> Result<String
                         "/// The object must be initialized, and this arrival must be included in the current phase's expected count.\n\
                          /// Use the returned token only with the same object and phase.\n",
                     ),
+                    MbarrierBasicOperation::ArriveNoComplete => output.push_str(
+                        "/// The object must be initialized. `_arg1` must be a valid PTX arrival count and this operation must not complete the current phase.\n\
+                         /// Use the returned opaque state only with the same object and phase.\n",
+                    ),
                     MbarrierBasicOperation::TestWait => output.push_str(
                         "/// The object must be initialized. `_arg1` must be a token returned for the same object and phase.\n",
                     ),

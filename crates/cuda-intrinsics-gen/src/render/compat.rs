@@ -1770,6 +1770,10 @@ pub(super) fn render_compat_mbarrier_basic(catalog: &CatalogFile, hash: &str) ->
                 "/// The barrier must be initialized, and this arrival must be included in the current phase's expected count.\n\
                  /// Use the returned token only with this barrier and phase.\n",
             ),
+            MbarrierBasicOperation::ArriveNoComplete => output.push_str(
+                "/// The barrier must be initialized. `count` must be a valid PTX arrival count and this operation must not complete the current phase.\n\
+                 /// Use the returned opaque state only with this barrier and phase.\n",
+            ),
             MbarrierBasicOperation::TestWait => output.push_str(
                 "/// The barrier must be initialized. `token` must come from this barrier and phase.\n",
             ),
@@ -1797,6 +1801,15 @@ pub(super) fn render_compat_mbarrier_basic(catalog: &CatalogFile, hash: &str) ->
                 )
                 .unwrap();
                 output.push_str("    let _ = bar;\n");
+            }
+            MbarrierBasicOperation::ArriveNoComplete => {
+                writeln!(
+                    output,
+                    "pub unsafe fn {}(bar: *const Barrier, count: u32) -> u64 {{",
+                    record.rust.name
+                )
+                .unwrap();
+                output.push_str("    let _ = (bar, count);\n");
             }
             MbarrierBasicOperation::TestWait => {
                 writeln!(

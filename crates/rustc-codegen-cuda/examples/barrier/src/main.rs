@@ -8,6 +8,7 @@
 //! Demonstrates mbarrier (async barrier) intrinsics:
 //! - mbarrier_init: Initialize barrier
 //! - mbarrier_arrive: Arrive at barrier, get token
+//! - mbarrier_arrive_no_complete: Counted arrival that cannot complete the phase
 //! - mbarrier_wait: Wait for the phase using generated mbarrier_test_wait
 //! - mbarrier_inval: Invalidate barrier
 //!
@@ -16,7 +17,8 @@
 
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
 use cuda_device::barrier::{
-    Barrier, mbarrier_arrive, mbarrier_init, mbarrier_inval, mbarrier_wait,
+    Barrier, mbarrier_arrive, mbarrier_arrive_no_complete, mbarrier_init, mbarrier_inval,
+    mbarrier_test_wait, mbarrier_wait,
 };
 use cuda_device::{DisjointSlice, SharedArray, kernel, thread};
 use cuda_host::cuda_module;
@@ -115,6 +117,63 @@ mod kernels {
             }
         }
     }
+
+    /// Validate dynamic-count no-complete arrival and its returned opaque state.
+    ///
+    /// Phase accounting (block_size = N):
+    ///
+    ///   init(N + 1)                pending = N + 1
+    ///   arrive_no_complete(N)      pending = 1   -> test_wait = false
+    ///   arrive()                   pending = 0   -> test_wait = true
+    #[kernel]
+    pub fn barrier_no_complete_test(mut out: DisjointSlice<u32>) {
+        static mut BAR: Barrier = Barrier::UNINIT;
+
+        let tid = thread::threadIdx_x();
+        let block_size = thread::blockDim_x();
+        let mut state = 0u64;
+        let mut completed_before_final_arrival = false;
+
+        // One counted no-complete arrival removes block_size arrivals while
+        // leaving exactly one pending arrival. The count comes from a runtime
+        // special register rather than a compile-time constant.
+        if tid == 0 {
+            unsafe {
+                mbarrier_init(&raw mut BAR, block_size + 1);
+            }
+        }
+        thread::sync_threads();
+
+        if tid == 0 {
+            state = unsafe { mbarrier_arrive_no_complete(&raw const BAR, block_size) };
+            completed_before_final_arrival = unsafe { mbarrier_test_wait(&raw const BAR, state) };
+        }
+        thread::sync_threads();
+
+        // Complete the remaining single arrival from another thread.
+        if tid == 1 {
+            let _ = unsafe { mbarrier_arrive(&raw const BAR) };
+        }
+        thread::sync_threads();
+
+        if tid == 0 {
+            let completed_after_final_arrival =
+                unsafe { mbarrier_test_wait(&raw const BAR, state) };
+            // SAFETY: the host provides exactly two output slots, and only
+            // thread 0 writes them in this regression kernel.
+            unsafe {
+                *out.get_unchecked_mut(0) = completed_before_final_arrival as u32;
+                *out.get_unchecked_mut(1) = completed_after_final_arrival as u32;
+            }
+        }
+
+        thread::sync_threads();
+        if tid == 0 {
+            unsafe {
+                mbarrier_inval(&raw mut BAR);
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -206,6 +265,25 @@ fn main() {
                 .take(10)
                 .collect();
             println!("  First mismatches: {:?}", mismatches);
+            std::process::exit(1);
+        }
+    }
+
+    // Test 3: barrier_no_complete_test
+    println!("\n--- Test 3: barrier_no_complete_test ---");
+    {
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, 2).unwrap();
+
+        // SAFETY: launch shape/resources match the kernel; output has two elements.
+        unsafe { module.barrier_no_complete_test((stream).as_ref(), cfg, &mut out_dev) }
+            .expect("Kernel launch failed");
+
+        stream.synchronize().unwrap();
+        let result = out_dev.to_host_vec(&stream).unwrap();
+        if result == [0, 1] {
+            println!("✓ noComplete kept the phase open and returned a usable opaque state");
+        } else {
+            println!("✗ noComplete result mismatch: expected [0, 1], got {result:?}");
             std::process::exit(1);
         }
     }

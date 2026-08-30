@@ -726,7 +726,7 @@ fn cp_async_mbarrier_recipes_fail_closed() {
 #[test]
 fn pinned_mbarrier_basic_records_match_the_closed_recipes() {
     let records = pinned_mbarrier_basic_records();
-    assert_eq!(records.len(), 4);
+    assert_eq!(records.len(), 5);
 
     for (policy, declaration) in records.values() {
         validate_imported_policy(policy, declaration).unwrap();
@@ -769,6 +769,19 @@ fn mbarrier_basic_recipes_fail_closed() {
     reject(
         &wrong_adapter,
         init_declaration,
+        "operation, state space, and adapter disagree",
+    );
+
+    let (no_complete, no_complete_declaration) = &records["mbarrier_arrive_no_complete"];
+    let mut wrong_no_complete_adapter = no_complete.clone();
+    wrong_no_complete_adapter
+        .mbarrier_basic
+        .as_mut()
+        .unwrap()
+        .adapter = MbarrierBasicAdapter::ArrivePointerToToken;
+    reject(
+        &wrong_no_complete_adapter,
+        no_complete_declaration,
         "operation, state space, and adapter disagree",
     );
 

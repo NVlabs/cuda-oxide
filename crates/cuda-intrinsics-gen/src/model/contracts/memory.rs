@@ -284,6 +284,7 @@ pub struct MbarrierBasic {
 pub enum MbarrierBasicOperation {
     Init,
     Arrive,
+    ArriveNoComplete,
     TestWait,
     Inval,
 }
@@ -301,6 +302,8 @@ pub enum MbarrierBasicAdapter {
     InitPointerCountToVoid,
     #[serde(rename = "pointer_to_token")]
     ArrivePointerToToken,
+    #[serde(rename = "pointer_count_to_token")]
+    ArriveNoCompletePointerCountToToken,
     #[serde(rename = "pointer_token_to_predicate")]
     TestWaitPointerTokenToPredicate,
     #[serde(rename = "pointer_to_void")]

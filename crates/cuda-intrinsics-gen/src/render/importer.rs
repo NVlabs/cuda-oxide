@@ -2061,6 +2061,13 @@ fn mbarrier_basic_arms(catalog: &CatalogFile) -> String {
                 debug_assert_eq!(mbarrier.adapter, MbarrierBasicAdapter::ArrivePointerToToken);
                 (&["barrier"][..], true)
             }
+            MbarrierBasicOperation::ArriveNoComplete => {
+                debug_assert_eq!(
+                    mbarrier.adapter,
+                    MbarrierBasicAdapter::ArriveNoCompletePointerCountToToken
+                );
+                (&["barrier", "count"][..], true)
+            }
             MbarrierBasicOperation::TestWait => {
                 debug_assert_eq!(
                     mbarrier.adapter,

@@ -662,12 +662,13 @@ fn basic_mbarrier_rendering_preserves_existing_paths_shapes_and_routes() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let catalog = crate::resolve::resolve(&repo_root).unwrap();
     validate_renderable(&catalog).unwrap();
-    assert_eq!(mbarrier_basics(&catalog).count(), 4);
+    assert_eq!(mbarrier_basics(&catalog).count(), 5);
 
     let compatibility = render_compat_mbarrier_basic(&catalog, "test-hash");
     for signature in [
         "pub unsafe fn mbarrier_init(bar: *mut Barrier, expected_count: u32)",
         "pub unsafe fn mbarrier_arrive(bar: *const Barrier) -> u64",
+        "pub unsafe fn mbarrier_arrive_no_complete(bar: *const Barrier, count: u32) -> u64",
         "pub unsafe fn mbarrier_test_wait(bar: *const Barrier, token: u64) -> bool",
         "pub unsafe fn mbarrier_inval(bar: *mut Barrier)",
     ] {
@@ -754,6 +755,21 @@ fn basic_mbarrier_rendering_preserves_existing_paths_shapes_and_routes() {
                     "declare i64 @{}(ptr addrspace(3))",
                     llvm(record).symbol
                 )));
+            }
+            MbarrierBasicOperation::ArriveNoComplete => {
+                assert!(
+                    importer
+                        .contains("MbarrierArriveNoCompleteSharedOp::build(ctx, barrier, count)")
+                );
+                assert!(lowering.contains(
+                    "convert_arrive_no_complete(ctx, rewriter, self.get_operation(), operands_info)"
+                ));
+                assert!(probe.contains(&format!(
+                    "declare i64 @{}(ptr addrspace(3), i32)",
+                    llvm(record).symbol
+                )));
+                assert!(probe.contains("i32 %count"));
+                assert!(probe.contains("ret i64 %state"));
             }
             MbarrierBasicOperation::TestWait => {
                 assert!(importer.contains("MbarrierTestWaitSharedOp::build(ctx, barrier, token)"));
