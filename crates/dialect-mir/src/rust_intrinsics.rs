@@ -180,10 +180,24 @@ pub const CALLEE_COSH_F64: &str = placeholder!("coshf64");
 pub const CALLEE_TANH_F32: &str = placeholder!("tanhf32");
 /// Placeholder call used for `f64::tanh` / `std::sys::cmath::tanh`.
 pub const CALLEE_TANH_F64: &str = placeholder!("tanhf64");
-// Note: `f{32,64}::{asinh,acosh,atanh}` are pure-Rust formulas in `std`
-// (compositions of `ln`/`sqrt`/`ln_1p`), not `std::sys::cmath` calls, so
-// they need no placeholder of their own. `atanh` works once `ln_1p` (below)
-// is intercepted.
+// The inverse hyperbolics were pure-Rust formulas in `std` (compositions of
+// `ln`/`sqrt`/`ln_1p`). nightly-2026-08-28 (rustc e457a7b0d) reworked
+// asinh/acosh into `std::sys::cmath::{asinh,acosh}{,f}` shims like the rest
+// of this family, so they need placeholders of their own; atanh is still the
+// pure-Rust `ln_1p` formula there and cmath declares no atanh, so its
+// placeholders are defensive, for when std makes the same move.
+/// Placeholder call used for `f32::asinh` / `std::sys::cmath::asinhf`.
+pub const CALLEE_ASINH_F32: &str = placeholder!("asinhf32");
+/// Placeholder call used for `f64::asinh` / `std::sys::cmath::asinh`.
+pub const CALLEE_ASINH_F64: &str = placeholder!("asinhf64");
+/// Placeholder call used for `f32::acosh` / `std::sys::cmath::acoshf`.
+pub const CALLEE_ACOSH_F32: &str = placeholder!("acoshf32");
+/// Placeholder call used for `f64::acosh` / `std::sys::cmath::acosh`.
+pub const CALLEE_ACOSH_F64: &str = placeholder!("acoshf64");
+/// Placeholder call used for `f32::atanh` / `std::sys::cmath::atanhf`.
+pub const CALLEE_ATANH_F32: &str = placeholder!("atanhf32");
+/// Placeholder call used for `f64::atanh` / `std::sys::cmath::atanh`.
+pub const CALLEE_ATANH_F64: &str = placeholder!("atanhf64");
 /// Placeholder call used for `f32::exp_m1` / `std::sys::cmath::expm1f`.
 pub const CALLEE_EXPM1_F32: &str = placeholder!("expm1f32");
 /// Placeholder call used for `f64::exp_m1` / `std::sys::cmath::expm1`.
@@ -324,6 +338,12 @@ pub fn is_libdevice_backed_placeholder(callee: &str) -> bool {
             | CALLEE_COSH_F64
             | CALLEE_TANH_F32
             | CALLEE_TANH_F64
+            | CALLEE_ASINH_F32
+            | CALLEE_ASINH_F64
+            | CALLEE_ACOSH_F32
+            | CALLEE_ACOSH_F64
+            | CALLEE_ATANH_F32
+            | CALLEE_ATANH_F64
             | CALLEE_EXPM1_F32
             | CALLEE_EXPM1_F64
             | CALLEE_LOG1P_F32
@@ -420,6 +440,12 @@ mod tests {
         CALLEE_COSH_F64,
         CALLEE_TANH_F32,
         CALLEE_TANH_F64,
+        CALLEE_ASINH_F32,
+        CALLEE_ASINH_F64,
+        CALLEE_ACOSH_F32,
+        CALLEE_ACOSH_F64,
+        CALLEE_ATANH_F32,
+        CALLEE_ATANH_F64,
         CALLEE_EXPM1_F32,
         CALLEE_EXPM1_F64,
         CALLEE_LOG1P_F32,

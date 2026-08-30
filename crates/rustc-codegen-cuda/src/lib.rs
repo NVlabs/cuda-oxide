@@ -332,13 +332,12 @@ mod materialize;
 
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CompiledModule, CompiledModules, CrateInfo, ModuleKind};
-use rustc_data_structures::fx::FxIndexMap;
 use rustc_metadata::EncodedMetadata;
-use rustc_middle::dep_graph::{WorkProduct, WorkProductId};
+use rustc_middle::dep_graph::WorkProductMap;
 use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::print::with_no_trimmed_paths;
-use rustc_session::Session;
 use rustc_session::config::OutputFilenames;
+use rustc_session::{IncrCompSession, Session};
 use std::any::Any;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -518,7 +517,7 @@ impl CodegenBackend for CudaCodegenBackend {
     ///       └──▶ 4. llvm_backend.codegen_crate(tcx)
     ///               Let LLVM handle ALL host code
     /// ```
-    fn codegen_crate(&self, tcx: TyCtxt<'_>, crate_info: &CrateInfo) -> Box<dyn Any> {
+    fn codegen_crate(&self, tcx: TyCtxt<'_>) -> Box<dyn Any> {
         // Wrap entire function in with_no_trimmed_paths! to prevent diagnostic state issues.
         // This is necessary because we use tcx.def_path_str() and other functions that
         // trigger trimmed_def_paths. rust-gpu uses the same pattern.
@@ -779,7 +778,7 @@ impl CodegenBackend for CudaCodegenBackend {
 
             // Step 3: Delegate ALL host codegen to LLVM backend
             // (No logging here - it fires for every crate including dependencies)
-            let host_result = self.llvm_backend.codegen_crate(tcx, crate_info);
+            let host_result = self.llvm_backend.codegen_crate(tcx);
 
             // Return the LLVM backend's result
             Box::new(CudaOngoingCodegen {
@@ -793,13 +792,20 @@ impl CodegenBackend for CudaCodegenBackend {
         &self,
         ongoing_codegen: Box<dyn Any>,
         sess: &Session,
+        incr_comp_session: Option<&IncrCompSession>,
         outputs: &OutputFilenames,
-    ) -> (CompiledModules, FxIndexMap<WorkProductId, WorkProduct>) {
+        crate_info: &CrateInfo,
+    ) -> (CompiledModules, WorkProductMap) {
         let ongoing = *ongoing_codegen
             .downcast::<CudaOngoingCodegen>()
             .expect("rustc_codegen_cuda received unexpected ongoing codegen state");
-        let (mut compiled_modules, work_products) =
-            self.llvm_backend.join_codegen(ongoing.host, sess, outputs);
+        let (mut compiled_modules, work_products) = self.llvm_backend.join_codegen(
+            ongoing.host,
+            sess,
+            incr_comp_session,
+            outputs,
+            crate_info,
+        );
         for (index, object) in ongoing.artifact_objects.into_iter().enumerate() {
             compiled_modules.modules.push(CompiledModule {
                 name: format!("oxide_artifact_embed_{index}"),
@@ -809,6 +815,7 @@ impl CodegenBackend for CudaCodegenBackend {
                 bytecode: None,
                 assembly: None,
                 llvm_ir: None,
+                global_asm_object: None,
                 links_from_incr_cache: Vec::new(),
             });
         }

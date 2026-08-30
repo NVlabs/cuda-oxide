@@ -9,7 +9,7 @@
 //! upstream in [`pliron_llvm`]; this crate is a thin shim that re-exports it so
 //! existing `llvm_export::{ops,types,attributes,op_interfaces}` paths keep
 //! resolving, plus the small set of GPU-specific extensions pliron-llvm does
-//! not carry (named address spaces, syncscope enum, fp16 bit helpers). The
+//! not carry (named address spaces, fp16 bit helpers). The
 //! pure-Rust textual `.ll` exporter ([`export`]) stays here: pliron-llvm only
 //! emits real `.ll` via an `llvm-sys` bridge, which is exactly what cuda-oxide
 //! is avoiding.
@@ -116,8 +116,8 @@ pub mod types {
     }
 }
 
-/// LLVM attributes: re-exported from pliron-llvm, plus the syncscope enum and
-/// the cuda-oxide names for atomic ordering / rmw-kind.
+/// LLVM attributes: re-exported from pliron-llvm, plus the cuda-oxide names
+/// for atomic ordering / rmw-kind.
 pub mod attributes {
     pub use pliron_llvm::attributes::*;
 
@@ -129,31 +129,6 @@ pub mod attributes {
     pub use pliron_llvm::attributes::{
         AtomicOrderingAttr as LlvmAtomicOrdering, AtomicRmwKindAttr as LlvmAtomicRmwKind,
     };
-
-    /// Synchronization scope for atomics. pliron-llvm models syncscope as a
-    /// free-form `Option<String>` (None = system); cuda-oxide only emits these
-    /// three scopes, so we keep the enum at the lowering boundary and translate
-    /// to pliron's representation via [`LlvmSyncScope::to_pliron`].
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum LlvmSyncScope {
-        /// System-wide scope (`syncscope("")` / default).
-        System,
-        /// Device (GPU) scope.
-        Device,
-        /// Block / CTA scope.
-        Block,
-    }
-
-    impl LlvmSyncScope {
-        /// Map to pliron's free-form syncscope string (`None` = system).
-        pub fn to_pliron(self) -> Option<String> {
-            match self {
-                LlvmSyncScope::System => None,
-                LlvmSyncScope::Device => Some("device".to_string()),
-                LlvmSyncScope::Block => Some("block".to_string()),
-            }
-        }
-    }
 }
 
 /// LLVM ops: re-exported from pliron-llvm, plus the builtin `ConstantOp` and

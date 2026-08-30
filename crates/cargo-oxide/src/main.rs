@@ -1035,7 +1035,12 @@ fn main() {
             commands::list_examples(&ctx, json);
         }
         Commands::Fmt { check } => {
-            let ctx = commands::resolve_context();
+            // Formatting compiles no device code. `format_all` reads only
+            // `workspace_root`, `codegen_crate` and `examples_dir`, which the
+            // passive resolver fills in identically, so eager resolution only
+            // added a backend build -- and a clone on a fresh checkout -- ahead
+            // of the first file being formatted.
+            let ctx = commands::resolve_passive_context();
             commands::format_all(&ctx, check);
         }
         Commands::New { name, async_mode } => {

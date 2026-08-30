@@ -40,6 +40,7 @@ use pliron::input_err_noloc;
 use pliron::location::Located;
 use pliron::op::Op;
 use pliron::operation::Operation;
+use rustc_public::CrateDefType;
 
 // Re-export rustc_public types for convenience
 use rustc_hash::FxHashMap;

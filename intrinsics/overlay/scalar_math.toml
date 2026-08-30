@@ -4,7 +4,7 @@ schema = 58
 family = "scalar_math"
 
 [scalar_math]
-llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383"
+llvm_evidence_profile = "rust-llvm-23.1.0-16696adc"
 libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-scalar-math"
 runtime_validation = "unexecuted"
 

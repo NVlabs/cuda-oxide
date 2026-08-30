@@ -7082,3 +7082,66 @@ status = "active"
 catalog_id = "ex2_approx_f16"
 operation_key = "scalar.math.ex2.approx.f16"
 raw_rust_signature = { safe = true, arguments = ["u16"], result = "u16" }
+
+[[entry]]
+abi_id = "i1017"
+status = "active"
+catalog_id = "mbarrier_arrive_no_complete"
+operation_key = "barrier.mbarrier.arrive.no_complete.shared.cta"
+raw_rust_signature = { safe = false, arguments = ["*const u64", "u32"], result = "u64" }
+
+[[entry]]
+abi_id = "i1018"
+status = "active"
+catalog_id = "mma_sp_ordered_metadata_m16n8k8_f32_tf32"
+operation_key = "matrix.mma.sp.m16n8k8.row.col.f32.tf32.tf32.f32.not_applicable.ordered_metadata"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i1019"
+status = "active"
+catalog_id = "mma_sp_ordered_metadata_m16n8k16_f32_tf32"
+operation_key = "matrix.mma.sp.m16n8k16.row.col.f32.tf32.tf32.f32.not_applicable.ordered_metadata"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i1020"
+status = "active"
+catalog_id = "mma_sp_ordered_metadata_m16n8k16_f32_bf16"
+operation_key = "matrix.mma.sp.m16n8k16.row.col.f32.bf16.bf16.f32.not_applicable.ordered_metadata"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i1021"
+status = "active"
+catalog_id = "mma_sp_ordered_metadata_m16n8k16_f16_f16"
+operation_key = "matrix.mma.sp.m16n8k16.row.col.f16.f16.f16.f16.not_applicable.ordered_metadata"
+raw_rust_signature = { safe = false, arguments = ["[u32; 2]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i1022"
+status = "active"
+catalog_id = "mma_sp_ordered_metadata_m16n8k16_f32_f16"
+operation_key = "matrix.mma.sp.m16n8k16.row.col.f32.f16.f16.f32.not_applicable.ordered_metadata"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 2]", "[u32; 2]", "u32", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i1023"
+status = "active"
+catalog_id = "mma_sp_ordered_metadata_m16n8k32_f32_bf16"
+operation_key = "matrix.mma.sp.m16n8k32.row.col.f32.bf16.bf16.f32.not_applicable.ordered_metadata"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[f32; 4]" }
+
+[[entry]]
+abi_id = "i1024"
+status = "active"
+catalog_id = "mma_sp_ordered_metadata_m16n8k32_f16_f16"
+operation_key = "matrix.mma.sp.m16n8k32.row.col.f16.f16.f16.f16.not_applicable.ordered_metadata"
+raw_rust_signature = { safe = false, arguments = ["[u32; 2]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[u32; 2]" }
+
+[[entry]]
+abi_id = "i1025"
+status = "active"
+catalog_id = "mma_sp_ordered_metadata_m16n8k32_f32_f16"
+operation_key = "matrix.mma.sp.m16n8k32.row.col.f32.f16.f16.f32.not_applicable.ordered_metadata"
+raw_rust_signature = { safe = false, arguments = ["[f32; 4]", "[u32; 4]", "[u32; 4]", "u32", "u32"], result = "[f32; 4]" }

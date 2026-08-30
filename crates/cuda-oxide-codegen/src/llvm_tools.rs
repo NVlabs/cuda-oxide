@@ -27,7 +27,7 @@
 //! 2. Otherwise the `opt` sitting next to the chosen `llc` (LLVM installs
 //!    keep tools side by side) is preferred, provided its major matches.
 //! 3. Otherwise the remaining candidates (sysroot llvm-tools `opt`,
-//!    `opt-22` / `opt-21` / `opt` on `PATH`) are considered, filtered to
+//!    `opt-23` / `opt-22` / `opt-21` / `opt` on `PATH`) are considered, filtered to
 //!    the same major as `llc`.
 //! 4. If no same-major `opt` exists, resolution records a diagnostic naming
 //!    every rejected candidate. The experimental API treats requested
@@ -111,7 +111,7 @@ impl LlvmToolchain {
             {
                 others.push(t);
             }
-            for name in ["opt-22", "opt-21", "opt"] {
+            for name in ["opt-23", "opt-22", "opt-21", "opt"] {
                 if let Some(t) = probe_runnable(name) {
                     others.push(t);
                 }
@@ -150,9 +150,9 @@ impl LlvmToolchain {
 /// Resolves the `llc` binary with the documented precedence:
 /// `opts.llc_override` (historically `CUDA_OXIDE_LLC`; used exclusively,
 /// even if it cannot be probed - the pinned binary's own errors must
-/// surface), then the Rust toolchain's llvm-tools `llc`, then `llc-22` /
-/// `llc-21` on `PATH` (first runnable wins). Returns `(path, major,
-/// from_override)`.
+/// surface), then the Rust toolchain's llvm-tools `llc`, then `llc-23` /
+/// `llc-22` / `llc-21` on `PATH` (first runnable wins). Returns `(path,
+/// major, from_override)`.
 fn resolve_llc(opts: &BackendOptions) -> Option<(String, Option<u32>, bool)> {
     if let Some(path) = &opts.llc_override {
         let path = path.to_string_lossy().into_owned();
@@ -164,6 +164,7 @@ fn resolve_llc(opts: &BackendOptions) -> Option<(String, Option<u32>, bool)> {
     if let Some(p) = sysroot_tool("llc") {
         candidates.push(p);
     }
+    candidates.push("llc-23".to_string());
     candidates.push("llc-22".to_string());
     candidates.push("llc-21".to_string());
 
@@ -359,7 +360,12 @@ pub(crate) fn resolve_sibling_tool(
     {
         candidates.push(t);
     }
-    for name in [format!("{tool}-22"), format!("{tool}-21"), tool.to_string()] {
+    for name in [
+        format!("{tool}-23"),
+        format!("{tool}-22"),
+        format!("{tool}-21"),
+        tool.to_string(),
+    ] {
         if let Some(t) = probe_runnable(&name) {
             candidates.push(t);
         }

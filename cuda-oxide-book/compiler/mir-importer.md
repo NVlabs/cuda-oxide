@@ -294,8 +294,8 @@ match name {
 ```
 
 Most arms are not written out by hand. Anything described by
-`intrinsics/catalog.json` has its arm generated into
-`crates/mir-importer/src/translator/terminator/intrinsics/generated.rs`.
+`intrinsics/catalog.json` has its arm generated into a per-family module under
+`crates/mir-importer/src/translator/terminator/intrinsics/generated/`.
 Both arms above are of that kind, and so are the warp shuffles: the matched
 strings are the masked `_sync` forms (`shuffle_xor_sync`,
 `shuffle_xor_f32_sync`, `shuffle_xor_u64_sync`, and the

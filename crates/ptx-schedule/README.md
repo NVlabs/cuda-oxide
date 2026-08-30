@@ -30,6 +30,7 @@ places where another thread's progress can be observed:
 | `Fence` | `fence.*` / `membar.*` ordering |
 | `OrderedMemory` | a load or store carrying an explicit ordering qualifier (`.volatile`, `.acquire`, `.relaxed`, ...) |
 | `WarpCollective` | `shfl`, `vote`, `match`, `redux` and friends |
+| `AsyncProxy` | the asynchronous proxy pipeline: `cp.async.*`, `cp.reduce.async.*`, `wgmma.*`, `tcgen05.*` and `clusterlaunchcontrol.*` -- the bulk-copy, bulk-reduce and matrix issues and the commit/wait pairs that order them |
 | `Backedge` | a `bra` back to the same or an earlier block -- a conservative loop detector |
 
 Each site keeps its ordinal, enclosing callable, byte span, the instruction

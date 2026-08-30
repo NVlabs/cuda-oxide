@@ -22,17 +22,23 @@ value through that one pointer layer before extracting its length.
 ## Reproducing the original failure
 
 The interceptor only sees the call when rustc's MIR inliner leaves it intact.
-The default release pipeline inlines `len()` into the kernel.
-To reproduce the problem, disable MIR inlining:
+At default release settings rustc inlines `len()` into the kernel and the
+pattern disappears. This example therefore disables MIR inlining for its own
+crate via `profile-rustflags` in its `Cargo.toml`:
 
-```bash
-RUSTFLAGS="-Zinline-mir=no" cargo oxide run disjoint_slice_len
+```toml
+[profile.release.package.disjoint_slice_len]
+rustflags = ["-Zinline-mir=no"]
 ```
 
-Before the fix, this failed with the verification error above.
-After the fix, it compiles and runs identically to the default build.
+Before the fix, every build of this example failed with the verification
+error above. After the fix, it compiles and runs identically to an inlined
+build.
 
-`scripts/smoketest.sh` pins this flag for this example (see `NOINLINE_MIR_EXAMPLES`)
+The flag is scoped to this one package on purpose: a global
+`RUSTFLAGS="-Zinline-mir=no"` re-keys every dependency unit and forces a
+full second dependency-tree build, while the guarded MIR pattern lives only
+in this crate's kernel (MIR inlining rewrites the caller).
 
 ## What the kernel checks
 

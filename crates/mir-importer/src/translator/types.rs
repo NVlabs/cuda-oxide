@@ -40,6 +40,7 @@ use pliron::context::Context;
 use pliron::r#type::TypeHandle;
 use pliron::{input_err_noloc, input_error_noloc};
 use rustc_public::CrateDef;
+use rustc_public::CrateDefType;
 use rustc_public_bridge::IndexedVal;
 
 // Re-export types from dialect_mir for convenience
@@ -392,7 +393,7 @@ fn translate_pointer_like(
             // (ptr, len), `PtrMetadata` extraction, fat-value copies) all
             // applies unchanged. Field access through the fat pointer
             // extracts the data pointer (the struct's address) first; see
-            // the place-address walker in `rvalue.rs`.
+            // the place-address walker in `rvalue/place_addr.rs`.
             let struct_model = translate_type(ctx, pointee)?;
             Ok(facts::mint_slice_type(ctx, struct_model, origin).into())
         }
@@ -1396,6 +1397,28 @@ pub fn translate_type(
             // Def-path name, stable across runs (the Debug form's numeric id
             // is first-touch-order dependent).
             let name = format!("FnDef_{}", fn_def.name());
+            Ok(dialect_mir::types::MirStructType::get_with_full_layout(
+                ctx,
+                name,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                0,
+                0,
+            )
+            .into())
+        }
+        // Foreign (`extern { type ... }`) opaque types, e.g. `core::ops::Code`
+        // behind the `NonNull<Code>` that `<fn(..) as FnPtr>::as_ptr` returns
+        // since nightly-2026-08-28 (`feature(fn_static)`). Extern types are
+        // unsized and opaque: values never materialise, only thin pointers to
+        // them, so an empty named struct (like `FnPtrTarget` above) preserves
+        // the thin-pointer layout wherever the pointee type is consulted.
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Foreign(def)) => {
+            // Def-path name, stable across runs (the Debug form's numeric id
+            // is first-touch-order dependent).
+            let name = format!("Foreign_{}", def.name());
             Ok(dialect_mir::types::MirStructType::get_with_full_layout(
                 ctx,
                 name,

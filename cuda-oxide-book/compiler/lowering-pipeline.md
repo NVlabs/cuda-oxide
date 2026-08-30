@@ -81,9 +81,9 @@ The conversion functions are organized into modules by category:
 | Category      | Module                        | What It Handles                                                                  |
 | :------------ | :---------------------------- | :--------------------------------------------------------------------------------|
 | Arithmetic    | `convert/ops/arithmetic.rs`   | `add`→`add`, `sub`→`sub`, `checked_add`→`add`+`extractvalue`                     |
-| Memory        | `convert/ops/memory.rs`       | `mir.load`→`load`, `mir.store`→`store`, `shared_alloc`→global + `addrspacecast`  |
+| Memory        | `convert/ops/memory/*.rs`     | `mir.load`→`load`, `mir.store`→`store`, `shared_alloc`→global + `addrspacecast`  |
 | Control Flow  | `convert/ops/control_flow.rs` | `mir.goto`→`br`, `mir.cond_br`→`cond_br`, `mir.return`→`return`                  |
-| Aggregate     | `convert/ops/aggregate.rs`    | Struct/tuple field access → GEP or `extractvalue`/`insertvalue`                  |
+| Aggregate     | `convert/ops/aggregate/*.rs`  | Struct/tuple field access → GEP or `extractvalue`/`insertvalue`                  |
 | Cast          | `convert/ops/cast.rs`         | `IntToInt`→`zext`/`sext`/`trunc`, `FloatToFloat`→`fpext`/`fptrunc`, etc.         |
 | Call          | `convert/ops/call.rs`         | `mir.call`→`call`, with argument flattening and `::` to `__` name conversion     |
 | GPU Intrinsic | `convert/intrinsics/*.rs`     | NVVM ops → LLVM intrinsic calls or inline PTX                                    |
@@ -548,13 +548,14 @@ that cuda-oxide emits.
 | :------- | :-------------------------------------------------------- | :-------------------------------------------------------------------- |
 | 1st      | `$CUDA_OXIDE_LLC` (if set)                                | Caller-supplied override; whatever binary you point it at.            |
 | 2nd      | Rust toolchain's `llvm-tools` llc                         | `<sysroot>/lib/rustlib/<host>/bin/llc` (auto-installed via `rustup`). |
-| 3rd      | `llc-22` on `PATH`                                        | Distro / `apt.llvm.org` install of LLVM 22.                           |
-| 4th      | `llc-21` on `PATH`                                        | Distro / `apt.llvm.org` install of LLVM 21.                           |
-| 5th      | `llc` on `PATH`                                           | Reporting fallback only; rejected at runtime if older than LLVM 21.   |
+| 3rd      | `llc-23` on `PATH`                                        | Distro / `apt.llvm.org` install of LLVM 23.                           |
+| 4th      | `llc-22` on `PATH`                                        | Distro / `apt.llvm.org` install of LLVM 22.                           |
+| 5th      | `llc-21` on `PATH`                                        | Distro / `apt.llvm.org` install of LLVM 21.                           |
+| 6th      | `llc` on `PATH`                                           | Reporting fallback only; rejected at runtime if older than LLVM 21.   |
 
-The pinned Rust toolchain (`nightly-2026-04-03`) ships LLVM 22 with NVPTX
+The pinned Rust toolchain (`nightly-2026-08-28`) ships LLVM 23 with NVPTX
 enabled, so `rustup component add llvm-tools` is the recommended onboarding
-path. The PATH probes for `llc-22` / `llc-21` are kept as a fallback for
+path. The PATH probes for `llc-23` / `llc-22` / `llc-21` are kept as a fallback for
 users with an existing LLVM install. If none of the probes succeed the
 pipeline fails with a clear error. You can opt into a specific (possibly
 older) binary by setting `CUDA_OXIDE_LLC=/path/to/llc`, but simple kernels

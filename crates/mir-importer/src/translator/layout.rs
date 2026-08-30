@@ -5,8 +5,9 @@
 //!
 //! Both the type importer (`translator/types.rs`, which records tag and
 //! field byte offsets on `MirEnumType`) and constant decoding
-//! (`translator/rvalue.rs`, which slices payload bytes out of constant
-//! allocations) need the same offset lookups. Keeping them here means the
+//! (`translator/rvalue/const_enum.rs` and `const_alloc.rs`, which slice
+//! payload bytes out of constant allocations) need the same offset
+//! lookups. Keeping them here means the
 //! two consumers cannot drift apart on how an offset is derived.
 
 use pliron::location::Location;

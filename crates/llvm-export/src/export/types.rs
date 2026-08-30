@@ -216,7 +216,8 @@ impl<'a> ModuleExportState<'a> {
                 a *= 2;
             }
             a
-        } else if let Some(struct_ty) = ty_ref.downcast_ref::<StructType>() {
+        } else {
+            let struct_ty = ty_ref.downcast_ref::<StructType>()?;
             if struct_ty.layout() == StructLayout::Packed {
                 1
             } else {
@@ -228,8 +229,6 @@ impl<'a> ModuleExportState<'a> {
                 }
                 max
             }
-        } else {
-            return None;
         };
         align.is_power_of_two().then_some(align)
     }

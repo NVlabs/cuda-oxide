@@ -85,7 +85,7 @@
         "llvm_symbol": "llvm.nvvm.ex2.approx",
         "facts": {
           "llvm_arguments": [
-            "anonymous_14"
+            "anonymous_8"
           ],
           "llvm_results": [
             "anyfloat"

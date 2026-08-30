@@ -127,7 +127,7 @@
             "i1"
           ],
           "llvm_results": [
-            "i32"
+            "anonymous_9933"
           ]
         }
       }
@@ -180,7 +180,7 @@
             "i1"
           ],
           "llvm_results": [
-            "i32"
+            "anonymous_9933"
           ]
         }
       }
@@ -232,7 +232,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v2i32"
+            "anonymous_9937"
           ]
         }
       }
@@ -285,7 +285,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v2i32"
+            "anonymous_9937"
           ]
         }
       }
@@ -337,7 +337,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v4i32"
+            "anonymous_9941"
           ]
         }
       }
@@ -390,7 +390,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v4i32"
+            "anonymous_9941"
           ]
         }
       }
@@ -442,7 +442,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v8i32"
+            "anonymous_9945"
           ]
         }
       }
@@ -495,7 +495,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v8i32"
+            "anonymous_9945"
           ]
         }
       }
@@ -547,7 +547,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v16i32"
+            "anonymous_9949"
           ]
         }
       }
@@ -600,7 +600,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v16i32"
+            "anonymous_9949"
           ]
         }
       }
@@ -652,7 +652,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v32i32"
+            "anonymous_9953"
           ]
         }
       }
@@ -705,7 +705,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v32i32"
+            "anonymous_9953"
           ]
         }
       }
@@ -757,7 +757,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v64i32"
+            "anonymous_9957"
           ]
         }
       }
@@ -810,7 +810,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v64i32"
+            "anonymous_9957"
           ]
         }
       }
@@ -862,7 +862,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v128i32"
+            "anonymous_9961"
           ]
         }
       }
@@ -915,7 +915,7 @@
             "i1"
           ],
           "llvm_results": [
-            "v128i32"
+            "anonymous_9961"
           ]
         }
       }
@@ -964,7 +964,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "i32",
+            "anonymous_9933",
             "i1"
           ],
           "llvm_results": []
@@ -1016,7 +1016,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "i32",
+            "anonymous_9933",
             "i1"
           ],
           "llvm_results": []
@@ -1067,7 +1067,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v2i32",
+            "anonymous_9937",
             "i1"
           ],
           "llvm_results": []
@@ -1119,7 +1119,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v2i32",
+            "anonymous_9937",
             "i1"
           ],
           "llvm_results": []
@@ -1170,7 +1170,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v4i32",
+            "anonymous_9941",
             "i1"
           ],
           "llvm_results": []
@@ -1222,7 +1222,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v4i32",
+            "anonymous_9941",
             "i1"
           ],
           "llvm_results": []
@@ -1273,7 +1273,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v8i32",
+            "anonymous_9945",
             "i1"
           ],
           "llvm_results": []
@@ -1325,7 +1325,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v8i32",
+            "anonymous_9945",
             "i1"
           ],
           "llvm_results": []
@@ -1376,7 +1376,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v16i32",
+            "anonymous_9949",
             "i1"
           ],
           "llvm_results": []
@@ -1428,7 +1428,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v16i32",
+            "anonymous_9949",
             "i1"
           ],
           "llvm_results": []
@@ -1479,7 +1479,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v32i32",
+            "anonymous_9953",
             "i1"
           ],
           "llvm_results": []
@@ -1531,7 +1531,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v32i32",
+            "anonymous_9953",
             "i1"
           ],
           "llvm_results": []
@@ -1582,7 +1582,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v64i32",
+            "anonymous_9957",
             "i1"
           ],
           "llvm_results": []
@@ -1634,7 +1634,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v64i32",
+            "anonymous_9957",
             "i1"
           ],
           "llvm_results": []
@@ -1685,7 +1685,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v128i32",
+            "anonymous_9961",
             "i1"
           ],
           "llvm_results": []
@@ -1737,7 +1737,7 @@
           "llvm_arguments": [
             "tmem_ptr",
             "i64",
-            "v128i32",
+            "anonymous_9961",
             "i1"
           ],
           "llvm_results": []

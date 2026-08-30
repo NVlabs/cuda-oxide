@@ -113,7 +113,7 @@ pub fn translate_terminator(
     rustc_mono_successors: &[usize],
     legaliser: &mut Legaliser,
 ) -> TranslationResult<Ptr<Operation>> {
-    let loc = span_to_location(ctx, term.span);
+    let loc = span_to_location(ctx, term.source_info.span);
 
     match &term.kind {
         mir::TerminatorKind::Return => {
@@ -867,10 +867,16 @@ fn translate_drop(
 // Call Translation (includes intrinsic dispatch)
 // ============================================================================
 
-/// True when `fn_def` is `core::ptr::drop_in_place` itself, the only
-/// function whose monomorphizations resolve to rustc's drop-glue shims.
-/// Same crate + path-segment matching idiom as the callable-trait
+/// True when `fn_def` is `core::ptr::drop_in_place` or `core::ptr::drop_glue`,
+/// the only functions whose monomorphizations resolve to rustc's drop-glue
+/// shims. Same crate + path-segment matching idiom as the callable-trait
 /// detection below.
+///
+/// `drop_glue` (`#[lang = "drop_glue"]`) exists since nightly-2026-08-28:
+/// `drop_in_place` is now an ordinary `core` function whose body forwards to
+/// the compiler-replaced `drop_glue` shim, so a translated `drop_in_place`
+/// body contains a plain Call to `drop_glue::<T>` that needs the same
+/// noop-elision as direct `drop_in_place` calls.
 fn is_drop_in_place_callee(fn_def: &rustc_public::ty::FnDef) -> bool {
     if fn_def.krate().name.as_str() != "core" {
         return false;
@@ -882,7 +888,7 @@ fn is_drop_in_place_callee(fn_def: &rustc_public::ty::FnDef) -> bool {
     };
     let parent_name = parent_def.name();
     let parent = parent_name.as_str().rsplit("::").next().unwrap_or("");
-    method == "drop_in_place" && parent == "ptr"
+    (method == "drop_in_place" || method == "drop_glue") && parent == "ptr"
 }
 
 /// Emit a branch to `target` as the only effect of a call we are eliding:
@@ -1991,7 +1997,7 @@ pub fn emit_dropped_panic_trap(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
 ) -> Ptr<Operation> {
-    let loc = span_to_location(ctx, term.span);
+    let loc = span_to_location(ctx, term.source_info.span);
     emit_trap_unreachable_after(ctx, block_ptr, prev_op, loc)
 }
 

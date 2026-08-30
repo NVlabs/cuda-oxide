@@ -7,7 +7,7 @@ Rustc emits `Subslice` for the `middle @ ..` portion of array and slice patterns
 - arrays use `Subslice { from, to, from_end: false }`; the result is the sized array place `[T; to - from]` starting at element `from`;
 - slices use `Subslice { from, to, from_end: true }`; the result keeps a data pointer advanced by `from` elements and metadata `old_len - from - to`.
 
-Before this fix, `crates/mir-importer/src/translator/rvalue.rs` had no `Subslice` lowering. The value walker reported `Projection element ... not yet implemented in iterative mode`, while the address walker returned `Ok(None)`. Mutable borrows then failed loudly because falling back to a reference to a copy would lose write-through semantics.
+Before this fix, the place walkers under `crates/mir-importer/src/translator/rvalue/` had no `Subslice` lowering. The value walker reported `Projection element ... not yet implemented in iterative mode`, while the address walker returned `Ok(None)`. Mutable borrows then failed loudly because falling back to a reference to a copy would lose write-through semantics.
 
 ## Coverage
 

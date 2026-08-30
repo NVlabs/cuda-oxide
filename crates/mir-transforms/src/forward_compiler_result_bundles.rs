@@ -22,7 +22,8 @@
 //! * the alloca has no other stores, copies, escapes, or unknown pointer users;
 //! * every read is a non-volatile load through constant projections, or through
 //!   one terminal array projection whose unsigned runtime index is proven to be
-//!   `value % C` with a small constant candidate set;
+//!   `value % C` or guarded by an exact `assert(index < C)` with a small constant
+//!   candidate set;
 //! * the producer/store dominate every rewritten load.
 //!
 //! Any failed proof leaves the IR untouched.  Ordinary Rust aggregates are
@@ -31,9 +32,9 @@
 use dialect_mir::{
     attributes::{COMPILER_RESULT_BUNDLE_ATTR_KEY, CompilerResultBundleAttr},
     ops::{
-        MAX_SCALARIZED_CANDIDATES, MirAllocaOp, MirArrayElementAddrOp, MirConstantOp,
+        MAX_SCALARIZED_CANDIDATES, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirConstantOp,
         MirConstructArrayOp, MirConstructStructOp, MirConstructTupleOp, MirExtractArrayElementOp,
-        MirFieldAddrOp, MirLoadOp, MirRemOp, MirStoreOp,
+        MirFieldAddrOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
     },
     types::MirArrayType,
 };
@@ -41,7 +42,7 @@ use pliron::{
     basic_block::BasicBlock,
     builtin::types::{IntegerType, Signedness},
     context::{Context, Ptr},
-    graph::dominance::DomInfo,
+    graph::{ControlFlowGraph, dominance::DomInfo},
     irbuild::{
         listener::Recorder,
         rewriter::{IRRewriter, Rewriter},
@@ -58,11 +59,17 @@ use pliron::{
 use rustc_hash::FxHashSet;
 
 #[derive(Clone, Copy)]
+enum BoundedIndex {
+    Direct(Value),
+    Asserted { index: Value, bound: Value },
+}
+
+#[derive(Clone, Copy)]
 enum LoadReplacement {
     Direct(Value),
     BoundedArrayElement {
         array: Value,
-        index: Value,
+        index: BoundedIndex,
         result_type: TypeHandle,
     },
 }
@@ -267,8 +274,9 @@ fn analyze_projection(
 
     // Static projections continue to extend `path`. A non-constant array
     // projection is accepted only as the terminal projection into one of this
-    // compiler-owned bundle's constructed arrays, and only when its candidate
-    // set is already explicit as an unsigned `value % C`.
+    // compiler-owned bundle's constructed arrays. Its candidate set must be
+    // proven separately for each load, either by an unsigned `value % C` or by
+    // an exact dominating `assert(index < C)`.
     let bounded_array = if let Some(field) = Operation::get_op::<MirFieldAddrOp>(projection, ctx) {
         path.push(field.get_attr_field_index(ctx)?.0 as usize);
         None
@@ -290,9 +298,8 @@ fn analyze_projection(
             let array_type_ref = array_type.deref(ctx);
             let array_info = array_type_ref.downcast_ref::<MirArrayType>()?;
             let element_type = array_info.element_type();
-            validate_bounded_dynamic_index(ctx, index, array_info.size())?;
 
-            Some((array, index, element_type))
+            Some((array, index, element_type, array_info.size()))
         }
     } else {
         return None;
@@ -314,10 +321,15 @@ fn analyze_projection(
             }
 
             let result_type = user.deref(ctx).get_result(0).get_type(ctx);
-            let replacement = if let Some((array, index, element_type)) = bounded_array {
+            let replacement = if let Some((array, index, element_type, array_size)) = bounded_array
+            {
                 if result_type != element_type {
                     return None;
                 }
+                let projection_block = projection.deref(ctx).get_parent_block()?;
+                let load_block = user.deref(ctx).get_parent_block()?;
+                let index =
+                    bounded_dynamic_index(ctx, index, projection_block, load_block, array_size)?;
                 LoadReplacement::BoundedArrayElement {
                     array,
                     index,
@@ -395,7 +407,20 @@ fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
     (integer.bw() <= 64).then(|| integer.to_u64())
 }
 
-fn validate_bounded_dynamic_index(ctx: &Context, index: Value, array_size: u64) -> Option<()> {
+fn validate_candidate_count(candidate_count: u64, array_size: u64) -> Option<()> {
+    (candidate_count > 0
+        && candidate_count <= array_size
+        && candidate_count <= MAX_SCALARIZED_CANDIDATES)
+        .then_some(())
+}
+
+fn bounded_dynamic_index(
+    ctx: &Context,
+    index: Value,
+    projection_block: Ptr<BasicBlock>,
+    load_block: Ptr<BasicBlock>,
+    array_size: u64,
+) -> Option<BoundedIndex> {
     let index_type = index.get_type(ctx);
     let index_type_ref = index_type.deref(ctx);
     let integer_type = index_type_ref.downcast_ref::<IntegerType>()?;
@@ -403,18 +428,58 @@ fn validate_bounded_dynamic_index(ctx: &Context, index: Value, array_size: u64) 
         return None;
     }
 
-    let remainder = index.defining_op()?;
-    Operation::get_op::<MirRemOp>(remainder, ctx)?;
-    let divisor = remainder.deref(ctx).get_operand(1);
-    if divisor.get_type(ctx) != index_type {
+    if let Some(remainder) = index.defining_op()
+        && Operation::get_op::<MirRemOp>(remainder, ctx).is_some()
+    {
+        let divisor = remainder.deref(ctx).get_operand(1);
+        if divisor.get_type(ctx) != index_type {
+            return None;
+        }
+        let candidate_count = integer_constant_u64(ctx, divisor)?;
+        validate_candidate_count(candidate_count, array_size)?;
+        return Some(BoundedIndex::Direct(index));
+    }
+
+    // Keep the assertion proof deliberately narrow. The dynamic projection
+    // and its load must be in the same block, that block must have one
+    // predecessor, and the predecessor must terminate in the exact successful
+    // edge of `assert(index < constant)`. The comparison must use this precise
+    // SSA index value. This is sufficient to establish domination without
+    // introducing a general range analysis.
+    if projection_block != load_block {
+        return None;
+    }
+    let region = load_block.deref(ctx).get_parent_region()?;
+    let predecessors = region.predecessors(ctx, &load_block);
+    let [assert_block] = predecessors.as_slice() else {
+        return None;
+    };
+
+    let terminator = assert_block.deref(ctx).get_terminator(ctx)?;
+    Operation::get_op::<MirAssertOp>(terminator, ctx)?;
+    if terminator.deref(ctx).get_num_successors() != 1
+        || terminator.deref(ctx).get_successor(0) != load_block
+    {
         return None;
     }
 
-    let candidate_count = integer_constant_u64(ctx, divisor)?;
-    (candidate_count > 0
-        && candidate_count <= array_size
-        && candidate_count <= MAX_SCALARIZED_CANDIDATES)
-        .then_some(())
+    let condition = terminator.deref(ctx).get_operand(0);
+    let comparison = condition.defining_op()?;
+    Operation::get_op::<MirLtOp>(comparison, ctx)?;
+    if comparison.deref(ctx).get_parent_block() != Some(*assert_block)
+        || comparison.deref(ctx).get_operand(0) != index
+    {
+        return None;
+    }
+
+    let bound = comparison.deref(ctx).get_operand(1);
+    if bound.get_type(ctx) != index_type {
+        return None;
+    }
+    let candidate_count = integer_constant_u64(ctx, bound)?;
+    validate_candidate_count(candidate_count, array_size)?;
+
+    Some(BoundedIndex::Asserted { index, bound })
 }
 
 fn resolve_construct_path(ctx: &Context, mut value: Value, path: &[usize]) -> Option<Value> {
@@ -495,11 +560,30 @@ fn rewrite_plan(ctx: &mut Context, plan: ForwardingPlan) -> usize {
                 result_type,
             } => {
                 let location = forwarding.load.deref(ctx).loc().clone();
+                let bounded_index = match index {
+                    BoundedIndex::Direct(index) => index,
+                    BoundedIndex::Asserted { index, bound } => {
+                        // The assertion proves `index < bound`, so this remainder
+                        // is value-preserving. It carries the candidate count in
+                        // the canonical form already consumed by mir-lower.
+                        let remainder = Operation::new(
+                            ctx,
+                            MirRemOp::get_concrete_op_info(),
+                            vec![index.get_type(ctx)],
+                            vec![index, bound],
+                            vec![],
+                            0,
+                        );
+                        remainder.deref_mut(ctx).set_loc(location.clone());
+                        remainder.insert_before(ctx, forwarding.load);
+                        remainder.deref(ctx).get_result(0)
+                    }
+                };
                 let extract = Operation::new(
                     ctx,
                     MirExtractArrayElementOp::get_concrete_op_info(),
                     vec![result_type],
-                    vec![array, index],
+                    vec![array, bounded_index],
                     vec![],
                     0,
                 );
@@ -537,7 +621,7 @@ mod tests {
     use super::*;
     use dialect_mir::{
         attributes::{CompilerResultBundleAttr, FieldIndexAttr},
-        ops::{MirCallOp, MirFuncOp, MirGotoOp, MirReturnOp},
+        ops::{MirAssertOp, MirCallOp, MirFuncOp, MirGotoOp, MirLtOp, MirReturnOp},
         types::{MirArrayType, MirPtrType, MirStructType},
     };
     use pliron::{
@@ -567,6 +651,10 @@ mod tests {
         Dynamic,
         BoundedRem { divisor: u64 },
         SignedRem { divisor: u64 },
+        Asserted { bound: u64 },
+        SignedAsserted { bound: u64 },
+        MismatchedAsserted { bound: u64 },
+        DynamicAssertedBound,
     }
 
     fn build_fixture(ctx: &mut Context, marked: bool, extra_store: bool, width: usize) -> Fixture {
@@ -672,18 +760,8 @@ mod tests {
             store.insert_at_back(entry, ctx);
         }
 
-        let goto = Operation::new(
-            ctx,
-            MirGotoOp::get_concrete_op_info(),
-            vec![],
-            vec![],
-            vec![body],
-            0,
-        );
-        goto.insert_at_back(entry, ctx);
-
         let signedness = match index_shape {
-            IndexShape::SignedRem { .. } => Signedness::Signed,
+            IndexShape::SignedRem { .. } | IndexShape::SignedAsserted { .. } => Signedness::Signed,
             _ => Signedness::Unsigned,
         };
         let index_type = IntegerType::get(ctx, 64, signedness);
@@ -691,6 +769,16 @@ mod tests {
 
         let index_value = match index_shape {
             IndexShape::ConstantLast => {
+                let goto = Operation::new(
+                    ctx,
+                    MirGotoOp::get_concrete_op_info(),
+                    vec![],
+                    vec![],
+                    vec![body],
+                    0,
+                );
+                goto.insert_at_back(entry, ctx);
+
                 let index = Operation::new(
                     ctx,
                     MirConstantOp::get_concrete_op_info(),
@@ -710,6 +798,16 @@ mod tests {
                 index.deref(ctx).get_result(0)
             }
             IndexShape::Dynamic | IndexShape::BoundedRem { .. } | IndexShape::SignedRem { .. } => {
+                let goto = Operation::new(
+                    ctx,
+                    MirGotoOp::get_concrete_op_info(),
+                    vec![],
+                    vec![],
+                    vec![body],
+                    0,
+                );
+                goto.insert_at_back(entry, ctx);
+
                 let raw_index = Operation::new(
                     ctx,
                     MirCallOp::get_concrete_op_info(),
@@ -755,8 +853,106 @@ mod tests {
                         remainder.insert_at_back(body, ctx);
                         remainder.deref(ctx).get_result(0)
                     }
-                    IndexShape::ConstantLast => unreachable!(),
+                    _ => unreachable!(),
                 }
+            }
+            IndexShape::Asserted { .. }
+            | IndexShape::SignedAsserted { .. }
+            | IndexShape::MismatchedAsserted { .. }
+            | IndexShape::DynamicAssertedBound => {
+                let raw_index = Operation::new(
+                    ctx,
+                    MirCallOp::get_concrete_op_info(),
+                    vec![index_handle],
+                    vec![],
+                    vec![],
+                    0,
+                );
+                MirCallOp::new(raw_index)
+                    .set_attr_callee(ctx, StringAttr::new("runtime_index".to_string()));
+                raw_index.insert_at_back(entry, ctx);
+                let raw_index_value = raw_index.deref(ctx).get_result(0);
+
+                let compared_index = if matches!(index_shape, IndexShape::MismatchedAsserted { .. })
+                {
+                    let other_index = Operation::new(
+                        ctx,
+                        MirCallOp::get_concrete_op_info(),
+                        vec![index_handle],
+                        vec![],
+                        vec![],
+                        0,
+                    );
+                    MirCallOp::new(other_index)
+                        .set_attr_callee(ctx, StringAttr::new("other_runtime_index".to_string()));
+                    other_index.insert_at_back(entry, ctx);
+                    other_index.deref(ctx).get_result(0)
+                } else {
+                    raw_index_value
+                };
+
+                let bound_value = match index_shape {
+                    IndexShape::DynamicAssertedBound => {
+                        let bound = Operation::new(
+                            ctx,
+                            MirCallOp::get_concrete_op_info(),
+                            vec![index_handle],
+                            vec![],
+                            vec![],
+                            0,
+                        );
+                        MirCallOp::new(bound)
+                            .set_attr_callee(ctx, StringAttr::new("runtime_bound".to_string()));
+                        bound.insert_at_back(entry, ctx);
+                        bound.deref(ctx).get_result(0)
+                    }
+                    IndexShape::Asserted { bound }
+                    | IndexShape::SignedAsserted { bound }
+                    | IndexShape::MismatchedAsserted { bound } => {
+                        let constant = Operation::new(
+                            ctx,
+                            MirConstantOp::get_concrete_op_info(),
+                            vec![index_handle],
+                            vec![],
+                            vec![],
+                            0,
+                        );
+                        MirConstantOp::new(constant).set_attr_value(
+                            ctx,
+                            IntegerAttr::new(
+                                index_type,
+                                APInt::from_u64(bound, NonZeroUsize::new(64).unwrap()),
+                            ),
+                        );
+                        constant.insert_at_back(entry, ctx);
+                        constant.deref(ctx).get_result(0)
+                    }
+                    _ => unreachable!(),
+                };
+
+                let i1_type: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
+                let comparison = Operation::new(
+                    ctx,
+                    MirLtOp::get_concrete_op_info(),
+                    vec![i1_type],
+                    vec![compared_index, bound_value],
+                    vec![],
+                    0,
+                );
+                comparison.insert_at_back(entry, ctx);
+                let condition = comparison.deref(ctx).get_result(0);
+
+                let assert = Operation::new(
+                    ctx,
+                    MirAssertOp::get_concrete_op_info(),
+                    vec![],
+                    vec![condition],
+                    vec![body],
+                    0,
+                );
+                assert.insert_at_back(entry, ctx);
+
+                raw_index_value
             }
         };
 
@@ -1055,6 +1251,155 @@ mod tests {
             .defining_op()
             .expect("bounded result must be produced by an extraction op");
         assert!(Operation::get_op::<MirExtractArrayElementOp>(result_definer, &ctx).is_some());
+    }
+
+    #[test]
+    fn asserted_dynamic_index_forwards_to_ssa_extraction() {
+        let mut ctx = Context::new();
+        let fixture =
+            build_fixture_with_index(&mut ctx, true, false, 32, IndexShape::Asserted { bound: 4 });
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 1);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirArrayElementAddrOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirStoreOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 1);
+        assert_eq!(
+            count::<MirRemOp>(&ctx, fixture.module),
+            1,
+            "assert-proven indices must be canonicalized to bounded remainder form"
+        );
+        assert_eq!(
+            count::<MirConstructArrayOp>(&ctx, fixture.module),
+            1,
+            "the SSA array constructor must remain live for dynamic extraction"
+        );
+    }
+
+    #[test]
+    fn maximum_asserted_candidate_count_is_forwarded() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            64,
+            IndexShape::Asserted {
+                bound: MAX_SCALARIZED_CANDIDATES,
+            },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 1);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 0);
+    }
+
+    #[test]
+    fn oversized_asserted_candidate_count_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            64,
+            IndexShape::Asserted {
+                bound: MAX_SCALARIZED_CANDIDATES + 1,
+            },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+        assert_eq!(count::<MirStoreOp>(&ctx, fixture.module), 1);
+    }
+
+    #[test]
+    fn asserted_candidate_count_larger_than_array_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture =
+            build_fixture_with_index(&mut ctx, true, false, 4, IndexShape::Asserted { bound: 5 });
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+    }
+
+    #[test]
+    fn signed_asserted_index_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            8,
+            IndexShape::SignedAsserted { bound: 4 },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+    }
+
+    #[test]
+    fn assertion_about_different_index_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture = build_fixture_with_index(
+            &mut ctx,
+            true,
+            false,
+            8,
+            IndexShape::MismatchedAsserted { bound: 4 },
+        );
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
+    }
+
+    #[test]
+    fn dynamic_assert_bound_fails_closed() {
+        let mut ctx = Context::new();
+        let fixture =
+            build_fixture_with_index(&mut ctx, true, false, 8, IndexShape::DynamicAssertedBound);
+        let mut analyses = AnalysisManager::default();
+
+        let forwarded =
+            forward_compiler_result_bundles(fixture.module, &mut ctx, &mut analyses, false)
+                .unwrap();
+
+        assert_eq!(forwarded, 0);
+        assert_eq!(count::<MirExtractArrayElementOp>(&ctx, fixture.module), 0);
+        assert_eq!(count::<MirLoadOp>(&ctx, fixture.module), 1);
     }
 
     #[test]

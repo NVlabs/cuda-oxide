@@ -18,11 +18,12 @@
 //! carrying a `gpu_kernel` *attribute* on the func op. There is no calling
 //! convention to set by hand and no naming convention. The chain is:
 //!
-//!   1. `mir-lower`'s `is_kernel_func` (crates/mir-lower/src/convert/types.rs)
+//!   1. `mir-lower`'s `is_kernel_func`
+//!      (crates/mir-lower/src/convert/types/func_abi.rs)
 //!      returns `true` iff the func op's `attributes` contain a `StringAttr`
 //!      under the identifier `gpu_kernel`. The *value* is not inspected, only
 //!      presence; the rest of the pipeline writes `"true"`.
-//!   2. During lowering (lowering.rs:132) `propagate_kernel_attrs` copies a
+//!   2. During lowering, `lowering.rs`'s `propagate_kernel_attrs` copies a
 //!      `gpu_kernel="true"` `StringAttr` onto the produced `llvm::FuncOp` (plus
 //!      any optional `cluster_dim_*`/`maxntid`/`minctasm` ints).
 //!   3. `llvm-export`'s `PtxExportConfig::emit_ptx_kernel_keyword()` is `true`,

@@ -13,7 +13,7 @@ Replaces the previous `xtask` pattern with a proper cargo subcommand that works 
 Install with the project's pinned nightly toolchain:
 
 ```bash
-cargo +nightly-2026-04-03 install --git https://github.com/NVlabs/cuda-oxide.git cargo-oxide
+cargo +nightly-2026-08-28 install --git https://github.com/NVlabs/cuda-oxide.git cargo-oxide
 ```
 
 On first run, `cargo-oxide` will automatically fetch and build the codegen backend if it's not already available.
@@ -443,7 +443,7 @@ crates/cargo-oxide/
     ├── main.rs       # CLI definitions (clap) + dispatch
     ├── backend.rs    # Backend discovery + build logic
     ├── artifact_identity.rs  # Embedded artifact identity/provenance
-    └── commands.rs   # All command implementations
+    └── commands/     # Command implementations, one module per command group
 ```
 
 ## Future Commands

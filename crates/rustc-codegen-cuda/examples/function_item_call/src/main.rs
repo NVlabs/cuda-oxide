@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#![feature(never_type)]
-
 //! Regression for lowering function-item receivers in rust-call paths.
 //!
 //! Passing a function item to a generic `FnOnce` helper makes MIR call

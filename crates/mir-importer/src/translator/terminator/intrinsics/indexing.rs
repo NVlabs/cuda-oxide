@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(block.deref(&ctx).iter(&ctx).count(), 0);
     }
 
-    /// The sreg reads behind `index_1d` are dispatched from `generated.rs`,
+    /// The sreg reads behind `index_1d` are dispatched from `generated/sreg.rs`,
     /// which stamps each op with a marker literal. Assert the three markers
     /// against the target table the backend reads back at verification time,
     /// so a renumbering that reached only one of the two generated artifacts

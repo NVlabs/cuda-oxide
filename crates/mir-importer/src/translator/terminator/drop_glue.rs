@@ -138,7 +138,9 @@ pub fn drop_instance_is_noop(instance: &Instance) -> bool {
 /// 2. Obtains its mangled name (matching what the collector exported)
 /// 3. Legalises the name through the same `Legaliser` used for all call sites
 /// 4. Computes the dropped place's internal in-memory address
-/// 5. Establishes the callee's declared `*mut T` type at the Rust ABI boundary
+/// 5. Establishes the callee's declared pointer type (`*mut T`, or `&mut T`
+///    for the nightly-2026-08-28 `core::ptr::drop_glue` shims) at the Rust
+///    ABI boundary
 /// 6. Emits a `mir.call` to the drop function with that pointer as argument
 /// 7. Branches to the successor block
 ///
@@ -176,14 +178,23 @@ pub(super) fn emit_drop_glue(
             )
         ));
     };
+    // Historically the drop shim was `drop_in_place::<T>(*mut T)`. Since
+    // nightly-2026-08-28 rustc builds it from `core::ptr::drop_glue`
+    // (`#[lang = "drop_glue"]`, rustc_mir_transform::shim::build_drop_shim),
+    // whose declared parameter is `&mut T`. Both spellings are the same
+    // single-pointer ABI; accept either and let the translated parameter
+    // type drive the ABI-boundary pointer establishment below.
     if !matches!(
         declared_parameter.ty.kind(),
-        TyKind::RigidTy(RigidTy::RawPtr(_, mir::Mutability::Mut))
+        TyKind::RigidTy(
+            RigidTy::RawPtr(_, mir::Mutability::Mut) | RigidTy::Ref(_, _, mir::Mutability::Mut)
+        )
     ) {
         return Err(input_error!(
             loc,
             TranslationErr::unsupported(
-                "drop glue: drop_in_place's parameter is not the expected *mut pointer".to_string()
+                "drop glue: drop shim's parameter is not the expected *mut/&mut pointer"
+                    .to_string()
             )
         ));
     }
@@ -214,7 +225,7 @@ pub(super) fn emit_drop_glue(
         return Err(input_error!(
             loc,
             TranslationErr::unsupported(
-                "drop glue: dropped-place address does not match drop_in_place's *mut parameter"
+                "drop glue: dropped-place address does not match the drop shim's pointer parameter"
                     .to_string()
             )
         ));
@@ -464,8 +475,7 @@ fn statement_is_noop(kind: &mir::StatementKind) -> bool {
         | StatementKind::Coverage(_)
         | StatementKind::PlaceMention(_)
         | StatementKind::FakeRead(..)
-        | StatementKind::AscribeUserType { .. }
-        | StatementKind::Retag(..) => true,
+        | StatementKind::AscribeUserType { .. } => true,
 
         // MIR rvalues are pure (they compute a value; only the
         // assignment's destination writes anything), so an assignment
