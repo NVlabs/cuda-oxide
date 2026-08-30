@@ -5,6 +5,18 @@
 
 //! Shared CUDA target parsing and recorded target-to-PTX policy.
 //!
+//! This crate is the one owner of the target vocabulary: parse a target
+//! string once at the boundary, then pass the typed value around.
+//!
+//! ```text
+//! before:  "sm_90a" --> ptx path parses --> nvvm path parses --> probe parses
+//! after:   "sm_90a" --> CudaArch { capability: 90, suffix: Some('a') }
+//!                       (one parse; every later check takes &CudaArch)
+//! ```
+//!
+//! The same idea covers PTX ISA spellings: [`PtxSpelling`] can only be
+//! built from the supported set, so holding one is the membership proof.
+//!
 //! The floors in [`RECORDED_PTX_FLOORS`] describe the defaults emitted by the
 //! pinned LLVM 23 NVPTX backend. They are not backend-independent CUDA facts;
 //! in particular, LLVM 21 does not accept every target recorded here.
@@ -156,7 +168,8 @@ pub struct TargetPtxFloor {
 /// Exact target floors recorded from the pinned LLVM 23 NVPTX backend.
 ///
 /// These entries describe backend defaults, not backend-independent CUDA
-/// facts. There are no wildcard or suffix-fallback entries.
+/// facts. There are no wildcard or suffix-fallback entries. Entry order is the
+/// target-selection preference: base targets first, then `a` and `f` families.
 pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
     TargetPtxFloor {
         capability: 70,
@@ -204,44 +217,49 @@ pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
         floor: 78,
     },
     TargetPtxFloor {
+        capability: 100,
+        suffix: None,
+        floor: 86,
+    },
+    TargetPtxFloor {
+        capability: 101,
+        suffix: None,
+        floor: 86,
+    },
+    TargetPtxFloor {
+        capability: 103,
+        suffix: None,
+        floor: 88,
+    },
+    TargetPtxFloor {
+        capability: 110,
+        suffix: None,
+        floor: 90,
+    },
+    TargetPtxFloor {
+        capability: 120,
+        suffix: None,
+        floor: 87,
+    },
+    TargetPtxFloor {
+        capability: 121,
+        suffix: None,
+        floor: 88,
+    },
+    TargetPtxFloor {
         capability: 90,
         suffix: Some('a'),
         floor: 80,
     },
     TargetPtxFloor {
         capability: 100,
-        suffix: None,
-        floor: 86,
-    },
-    TargetPtxFloor {
-        capability: 100,
         suffix: Some('a'),
-        floor: 86,
-    },
-    TargetPtxFloor {
-        capability: 100,
-        suffix: Some('f'),
-        floor: 88,
-    },
-    TargetPtxFloor {
-        capability: 101,
-        suffix: None,
         floor: 86,
     },
     TargetPtxFloor {
         capability: 101,
         suffix: Some('a'),
         floor: 86,
-    },
-    TargetPtxFloor {
-        capability: 101,
-        suffix: Some('f'),
-        floor: 88,
-    },
-    TargetPtxFloor {
-        capability: 103,
-        suffix: None,
-        floor: 88,
     },
     TargetPtxFloor {
         capability: 103,
@@ -249,29 +267,9 @@ pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
         floor: 88,
     },
     TargetPtxFloor {
-        capability: 103,
-        suffix: Some('f'),
-        floor: 88,
-    },
-    TargetPtxFloor {
-        capability: 110,
-        suffix: None,
-        floor: 90,
-    },
-    TargetPtxFloor {
         capability: 110,
         suffix: Some('a'),
         floor: 90,
-    },
-    TargetPtxFloor {
-        capability: 110,
-        suffix: Some('f'),
-        floor: 90,
-    },
-    TargetPtxFloor {
-        capability: 120,
-        suffix: None,
-        floor: 87,
     },
     TargetPtxFloor {
         capability: 120,
@@ -279,18 +277,33 @@ pub const RECORDED_PTX_FLOORS: &[TargetPtxFloor] = &[
         floor: 87,
     },
     TargetPtxFloor {
-        capability: 120,
+        capability: 121,
+        suffix: Some('a'),
+        floor: 88,
+    },
+    TargetPtxFloor {
+        capability: 100,
         suffix: Some('f'),
         floor: 88,
     },
     TargetPtxFloor {
-        capability: 121,
-        suffix: None,
+        capability: 101,
+        suffix: Some('f'),
         floor: 88,
     },
     TargetPtxFloor {
-        capability: 121,
-        suffix: Some('a'),
+        capability: 103,
+        suffix: Some('f'),
+        floor: 88,
+    },
+    TargetPtxFloor {
+        capability: 110,
+        suffix: Some('f'),
+        floor: 90,
+    },
+    TargetPtxFloor {
+        capability: 120,
+        suffix: Some('f'),
         floor: 88,
     },
     TargetPtxFloor {
@@ -333,22 +346,68 @@ pub fn recorded_ptx_floor(arch: &CudaArch) -> Result<u16, UnsupportedTargetError
 /// Discrete PTX ISA feature spellings supported by the pinned LLVM backend.
 pub const PTX_ISA_SPELLINGS: &[u16] = &[62, 65, 70, 71, 73, 78, 80, 86, 87, 88, 90];
 
+/// A proof-carrying member of the supported PTX ISA spelling vocabulary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PtxSpelling(u16);
+
+impl PtxSpelling {
+    /// Construct a spelling exactly when it belongs to the supported vocabulary.
+    pub const fn from_spelling(spelling: u16) -> Option<Self> {
+        let mut index = 0;
+        while index < PTX_ISA_SPELLINGS.len() {
+            if PTX_ISA_SPELLINGS[index] == spelling {
+                return Some(Self(spelling));
+            }
+            index += 1;
+        }
+        None
+    }
+
+    /// Return the smallest supported spelling at least `floor`.
+    pub fn round_up(floor: u16) -> Option<Self> {
+        PTX_ISA_SPELLINGS
+            .iter()
+            .copied()
+            .find(|spelling| *spelling >= floor)
+            .and_then(Self::from_spelling)
+    }
+
+    /// Return the encoded `major * 10 + minor` spelling.
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+
+    /// Render this supported spelling as an LLVM `-mattr` feature.
+    pub const fn feature(self) -> &'static str {
+        match self.0 {
+            62 => "+ptx62",
+            65 => "+ptx65",
+            70 => "+ptx70",
+            71 => "+ptx71",
+            73 => "+ptx73",
+            78 => "+ptx78",
+            80 => "+ptx80",
+            86 => "+ptx86",
+            87 => "+ptx87",
+            88 => "+ptx88",
+            90 => "+ptx90",
+            _ => unreachable!(),
+        }
+    }
+
+    /// Render this feature only when it is newer than a recorded target floor.
+    pub fn feature_beyond_floor(self, recorded_floor: u16) -> Option<&'static str> {
+        if self.get() <= recorded_floor {
+            None
+        } else {
+            Some(self.feature())
+        }
+    }
+}
+
 /// Render one supported PTX ISA spelling as an LLVM `-mattr` feature.
 pub fn spelling_feature(spelling: u16) -> Option<&'static str> {
-    match spelling {
-        62 => Some("+ptx62"),
-        65 => Some("+ptx65"),
-        70 => Some("+ptx70"),
-        71 => Some("+ptx71"),
-        73 => Some("+ptx73"),
-        78 => Some("+ptx78"),
-        80 => Some("+ptx80"),
-        86 => Some("+ptx86"),
-        87 => Some("+ptx87"),
-        88 => Some("+ptx88"),
-        90 => Some("+ptx90"),
-        _ => None,
-    }
+    PtxSpelling::from_spelling(spelling).map(PtxSpelling::feature)
 }
 
 /// Return the smallest supported PTX feature spelling at least `floor`.
@@ -356,10 +415,7 @@ pub fn spelling_feature(spelling: u16) -> Option<&'static str> {
 /// Returns `None` when the requested floor is newer than every supported
 /// spelling.
 pub fn spelling_at_least(floor: u16) -> Option<u16> {
-    PTX_ISA_SPELLINGS
-        .iter()
-        .copied()
-        .find(|spelling| *spelling >= floor)
+    PtxSpelling::round_up(floor).map(PtxSpelling::get)
 }
 
 #[cfg(test)]
@@ -391,6 +447,41 @@ mod tests {
         }
     }
 
+    /// Entry order in [`RECORDED_PTX_FLOORS`] is load-bearing: target
+    /// selection walks the list front to back and takes the first
+    /// satisfying candidate. So the list must stay in this order:
+    ///
+    /// ```text
+    /// [ base targets, ascending ]  [ 'a' family, ascending ]  [ 'f' family, ascending ]
+    ///   sm_70 .. sm_121             sm_90a .. sm_121a          sm_100f .. sm_121f
+    ///   preferred first  ------------------------------------------>  last resort
+    /// ```
+    ///
+    /// An entry inserted out of section order would silently reshuffle
+    /// which target wins selection; this test turns that into a red build.
+    #[test]
+    fn recorded_floors_keep_selection_preference_order() {
+        let section = |suffix: Option<char>| match suffix {
+            None => 0,
+            Some('a') => 1,
+            Some('f') => 2,
+            other => panic!("unknown suffix section {other:?}"),
+        };
+        for pair in RECORDED_PTX_FLOORS.windows(2) {
+            let (prev, next) = (&pair[0], &pair[1]);
+            let ordered =
+                (section(prev.suffix), prev.capability) < (section(next.suffix), next.capability);
+            assert!(
+                ordered,
+                "sm_{}{} must come before sm_{}{}",
+                prev.capability,
+                prev.suffix.map(String::from).unwrap_or_default(),
+                next.capability,
+                next.suffix.map(String::from).unwrap_or_default(),
+            );
+        }
+    }
+
     #[test]
     fn construction_from_parts_and_text_agree() {
         for entry in RECORDED_PTX_FLOORS {
@@ -406,11 +497,31 @@ mod tests {
 
     #[test]
     fn every_ptx_spelling_has_one_canonical_feature() {
-        for spelling in PTX_ISA_SPELLINGS {
-            let expected = format!("+ptx{spelling}");
-            assert_eq!(spelling_feature(*spelling), Some(expected.as_str()));
+        for raw in PTX_ISA_SPELLINGS {
+            let expected = format!("+ptx{raw}");
+            assert_eq!(spelling_feature(*raw), Some(expected.as_str()));
+            let spelling = PtxSpelling::from_spelling(*raw).unwrap();
+            assert_eq!(spelling.get(), *raw);
+            assert_eq!(spelling.feature(), expected);
         }
         assert_eq!(spelling_feature(74), None);
+        assert_eq!(PtxSpelling::from_spelling(74), None);
+        assert_eq!(PtxSpelling::round_up(74).map(PtxSpelling::get), Some(78));
+        assert_eq!(PtxSpelling::round_up(91), None);
+    }
+
+    #[test]
+    fn feature_beyond_floor_only_renders_supported_newer_spellings() {
+        for (spelling, floor, expected) in
+            [(78, 73, Some("+ptx78")), (73, 73, None), (70, 73, None)]
+        {
+            assert_eq!(
+                PtxSpelling::from_spelling(spelling)
+                    .unwrap()
+                    .feature_beyond_floor(floor),
+                expected
+            );
+        }
     }
 
     #[cfg(unix)]

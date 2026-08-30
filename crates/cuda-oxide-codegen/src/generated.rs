@@ -2130,11 +2130,11 @@ mod tests {
         )
         .unwrap();
         assert!(crate::target::generated_target_satisfied(
-            "sm_103a",
+            &"sm_103a".parse().unwrap(),
             &f16_requirements
         ));
         assert!(crate::target::generated_target_satisfied(
-            "sm_100f",
+            &"sm_100f".parse().unwrap(),
             &f16_requirements
         ));
 
@@ -2147,22 +2147,23 @@ mod tests {
         )
         .unwrap();
         assert!(!crate::target::generated_target_satisfied(
-            "sm_103a",
+            &"sm_103a".parse().unwrap(),
             &i8_requirements
         ));
         assert!(!crate::target::generated_target_satisfied(
-            "sm_100f",
+            &"sm_100f".parse().unwrap(),
             &i8_requirements
         ));
         assert!(crate::target::generated_target_satisfied(
-            "sm_101a",
+            &"sm_101a".parse().unwrap(),
             &i8_requirements
         ));
         let switched = i8_requirements
             .clone()
             .for_backend(GeneratedIntrinsicBackend::LibNvvm);
         assert!(!crate::target::generated_target_satisfied(
-            "sm_101a", &switched
+            &"sm_101a".parse().unwrap(),
+            &switched
         ));
 
         let f16 =
@@ -2185,9 +2186,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["f16", "i8"]
         );
-        assert!(!crate::target::generated_target_satisfied("sm_103a", &both));
-        assert!(!crate::target::generated_target_satisfied("sm_100f", &both));
-        assert!(crate::target::generated_target_satisfied("sm_100a", &both));
+        assert!(!crate::target::generated_target_satisfied(
+            &"sm_103a".parse().unwrap(),
+            &both
+        ));
+        assert!(!crate::target::generated_target_satisfied(
+            &"sm_100f".parse().unwrap(),
+            &both
+        ));
+        assert!(crate::target::generated_target_satisfied(
+            &"sm_100a".parse().unwrap(),
+            &both
+        ));
 
         let f16 =
             tcgen05_mma_shared_op(&mut ctx, Some(Tcgen05MmaKindAttr::F16), Some(target.marker));
@@ -2199,11 +2209,11 @@ mod tests {
         )
         .unwrap();
         assert!(!crate::target::generated_target_satisfied(
-            "sm_101a",
+            &"sm_101a".parse().unwrap(),
             &libnvvm_f16
         ));
         assert!(crate::target::generated_target_satisfied(
-            "sm_103a",
+            &"sm_103a".parse().unwrap(),
             &libnvvm_f16
         ));
 
@@ -2216,11 +2226,11 @@ mod tests {
         )
         .unwrap();
         assert!(!crate::target::generated_target_satisfied(
-            "sm_101a",
+            &"sm_101a".parse().unwrap(),
             &libnvvm_i8
         ));
         assert!(crate::target::generated_target_satisfied(
-            "sm_110a",
+            &"sm_110a".parse().unwrap(),
             &libnvvm_i8
         ));
     }

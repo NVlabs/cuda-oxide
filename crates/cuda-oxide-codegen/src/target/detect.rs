@@ -814,13 +814,13 @@ pub fn detect_features_in_llvm_text(contents: &str) -> DetectedFeatures {
 pub(super) fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleRequirements {
     let mut ptx_isa = PtxIsaRequirement::Default;
     if contains_packed_f16_atomic_features(contents) {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx62);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(62));
     }
     if contains_ldmatrix_features(contents)
         || contains_mma_m8n8k16_int8_features(contents)
         || contains_mma_m8n8k32_int4_features(contents)
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx65);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(65));
     }
     if contains_mbarrier_features(contents)
         || contents.contains("redux.sync")
@@ -832,16 +832,16 @@ pub(super) fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleR
         || contains_b1_xor_mma_features(contents)
         || contains_mma_m8n8k4_f64_features(contents)
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx70);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(70));
     }
     if contains_mbarrier_ptx71_features(contents) {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx71);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(71));
     }
     if contains_b1_and_mma_features(contents) {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx71);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(71));
     }
     if contains_dynamic_stack_features(contents) {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx73);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(73));
     }
     if contains_movmatrix_features(contents)
         || contains_stmatrix_features(contents)
@@ -850,7 +850,7 @@ pub(super) fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleR
         || contains_mbarrier_ptx78_features(contents)
         || contains_packed_bf16_atomic_features(contents)
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx78);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(78));
     }
     if contains_cp_async_bulk_features(contents)
         || contains_wgmma_features(contents)
@@ -860,7 +860,7 @@ pub(super) fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleR
         || contents.contains("fence.mbarrier_init")
         || contents.contains("fence.proxy.async")
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx80);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(80));
     }
     if contains_blackwell_matrix_features(contents)
         || contains_tma_cta_group_features(contents)
@@ -873,7 +873,7 @@ pub(super) fn detect_module_requirements_in_llvm_text(contents: &str) -> ModuleR
         || contains_redux_f32_features(contents)
         || contains_f32x2_features(contents)
     {
-        ptx_isa = ptx_isa.max(PtxIsaRequirement::Ptx86);
+        ptx_isa = ptx_isa.max(PtxIsaRequirement::new(86));
     }
 
     ModuleRequirements {

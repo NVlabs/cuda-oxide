@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use super::arch::{arch_compute_capability_and_suffix, is_known_cuda_target};
 use super::features::{ModuleRequirements, PtxIsaRequirement};
 use crate::generated::{
     GeneratedModuleRequirements, GeneratedResolvedRequirement, GeneratedResolvedTarget,
@@ -12,7 +11,7 @@ use crate::generated_intrinsic_targets::{
     GeneratedHardwareAlternative, GeneratedHardwareTarget, GeneratedTargetContract,
     GeneratedTargetRequirement,
 };
-use cuda_target_spec::spelling_at_least;
+use cuda_target_spec::{CudaArch, PtxSpelling, recorded_ptx_floor};
 
 /// Convert catalog PTX floors to the discrete `llc` feature spellings this
 /// compiler supports. A floor between two spellings rounds upward; a future
@@ -42,14 +41,15 @@ pub(crate) fn generated_ptx_isa_requirement(
 /// Resolve the PTX floor for the selected hardware alternative.
 pub(crate) fn generated_ptx_isa_requirement_for_target(
     generated: &GeneratedModuleRequirements,
-    arch: &str,
+    arch: &CudaArch,
 ) -> Result<PtxIsaRequirement, String> {
     let mut requirement = PtxIsaRequirement::Default;
     for resolved in generated.resolved_targets() {
         let target_requirement = resolved_requirement(generated, resolved)?;
         let floor = resolved_requirement_ptx_floor(arch, target_requirement).ok_or_else(|| {
             format!(
-                "CUDA target {arch} cannot lower generated intrinsic `{}` (`{}`); requires {}",
+                "CUDA target {} cannot lower generated intrinsic `{}` (`{}`); requires {}",
+                arch.sm(),
                 resolved.target.id,
                 resolved.target.marker,
                 describe_resolved_requirement(target_requirement)
@@ -102,8 +102,8 @@ pub(super) fn ptx_isa_requirement_for_floor(
     if encoded <= 60 {
         return Ok(PtxIsaRequirement::Default);
     }
-    spelling_at_least(encoded)
-        .and_then(PtxIsaRequirement::from_spelling)
+    PtxSpelling::round_up(encoded)
+        .map(PtxIsaRequirement::from_spelling)
         .ok_or_else(|| format!(
             "generated intrinsic `{id}` (`{marker}`) requires PTX {}.{}, newer than cuda-oxide can request",
             encoded / 10,
@@ -122,7 +122,7 @@ pub(crate) fn merge_generated_module_requirements(
 pub(crate) fn merge_generated_module_requirements_for_target(
     mut text: ModuleRequirements,
     generated: &GeneratedModuleRequirements,
-    arch: &str,
+    arch: &CudaArch,
 ) -> Result<ModuleRequirements, String> {
     text.ptx_isa = text
         .ptx_isa
@@ -132,23 +132,22 @@ pub(crate) fn merge_generated_module_requirements_for_target(
 }
 
 /// Reject LLVM target names whose meaning changes at a newer PTX ISA.
-fn validate_sm101_ptx_pair(arch: &str, requirement: PtxIsaRequirement) -> Result<(), String> {
-    let Some((capability, suffix)) = arch_compute_capability_and_suffix(arch) else {
-        return Ok(());
-    };
+fn validate_sm101_ptx_pair(arch: &CudaArch, requirement: PtxIsaRequirement) -> Result<(), String> {
+    let (capability, suffix) = (arch.capability(), arch.suffix());
     if capability == 101
         && matches!(suffix, Some('a' | 'f'))
-        && requirement >= PtxIsaRequirement::Ptx90
+        && requirement >= PtxIsaRequirement::new(90)
     {
         return Err(format!(
-            "CUDA target {arch} cannot be combined with PTX 9.0 or newer; LLVM renamed the sm_101 target to sm_110 at that PTX level"
+            "CUDA target {} cannot be combined with PTX 9.0 or newer; LLVM renamed the sm_101 target to sm_110 at that PTX level",
+            arch.sm()
         ));
     }
     Ok(())
 }
 
 pub(crate) fn generated_target_satisfied(
-    arch: &str,
+    arch: &CudaArch,
     generated: &GeneratedModuleRequirements,
 ) -> bool {
     generated.resolved_targets().iter().all(|resolved| {
@@ -163,7 +162,7 @@ pub(crate) fn generated_target_satisfied(
     })
 }
 
-fn resolved_hardware_satisfied(arch: &str, requirement: GeneratedResolvedRequirement) -> bool {
+fn resolved_hardware_satisfied(arch: &CudaArch, requirement: GeneratedResolvedRequirement) -> bool {
     match requirement {
         GeneratedResolvedRequirement::Target(requirement) => {
             generated_hardware_satisfied(arch, requirement.hardware)
@@ -174,11 +173,9 @@ fn resolved_hardware_satisfied(arch: &str, requirement: GeneratedResolvedRequire
     }
 }
 
-fn generated_hardware_satisfied(arch: &str, hardware: GeneratedHardwareTarget) -> bool {
-    let Some((capability, suffix)) = arch_compute_capability_and_suffix(arch) else {
-        return false;
-    };
-    if !is_known_cuda_target(capability, suffix) {
+fn generated_hardware_satisfied(arch: &CudaArch, hardware: GeneratedHardwareTarget) -> bool {
+    let (capability, suffix) = (arch.capability(), arch.suffix());
+    if recorded_ptx_floor(arch).is_err() {
         return false;
     }
 
@@ -195,11 +192,9 @@ fn generated_hardware_satisfied(arch: &str, hardware: GeneratedHardwareTarget) -
     }
 }
 
-fn generated_contract_satisfied(arch: &str, contract: &GeneratedTargetContract) -> bool {
-    let Some((capability, suffix)) = arch_compute_capability_and_suffix(arch) else {
-        return false;
-    };
-    is_known_cuda_target(capability, suffix)
+fn generated_contract_satisfied(arch: &CudaArch, contract: &GeneratedTargetContract) -> bool {
+    let (capability, suffix) = (arch.capability(), arch.suffix());
+    recorded_ptx_floor(arch).is_ok()
         && contract.alternatives.iter().any(|alternative| {
             generated_hardware_alternative_satisfied(capability, suffix, alternative.hardware)
         })
@@ -233,13 +228,17 @@ pub(super) fn for_each_resolved_hardware_alternative(
     }
 }
 
-pub(super) fn generated_hardware_candidate(alternative: GeneratedHardwareAlternative) -> String {
+pub(super) fn generated_hardware_candidate(alternative: GeneratedHardwareAlternative) -> CudaArch {
     match alternative {
-        GeneratedHardwareAlternative::MinimumSm(capability) => format!("sm_{capability}"),
-        GeneratedHardwareAlternative::ExactArchitecture(capability) => {
-            format!("sm_{capability}a")
+        GeneratedHardwareAlternative::MinimumSm(capability) => {
+            CudaArch::new(u32::from(capability), None).expect("catalog CUDA target")
         }
-        GeneratedHardwareAlternative::FamilyTarget(capability) => format!("sm_{capability}f"),
+        GeneratedHardwareAlternative::ExactArchitecture(capability) => {
+            CudaArch::new(u32::from(capability), Some('a')).expect("catalog CUDA target")
+        }
+        GeneratedHardwareAlternative::FamilyTarget(capability) => {
+            CudaArch::new(u32::from(capability), Some('f')).expect("catalog CUDA target")
+        }
     }
 }
 
@@ -275,11 +274,11 @@ fn generated_hardware_alternative_satisfied(
 }
 
 pub(super) fn generated_requirement_ptx_floor(
-    arch: &str,
+    arch: &CudaArch,
     requirement: GeneratedTargetRequirement,
 ) -> Option<u16> {
-    let (capability, suffix) = arch_compute_capability_and_suffix(arch)?;
-    if !is_known_cuda_target(capability, suffix) {
+    let (capability, suffix) = (arch.capability(), arch.suffix());
+    if recorded_ptx_floor(arch).is_err() {
         return None;
     }
     match requirement.hardware {
@@ -302,7 +301,7 @@ pub(super) fn generated_requirement_ptx_floor(
 }
 
 fn resolved_requirement_ptx_floor(
-    arch: &str,
+    arch: &CudaArch,
     requirement: GeneratedResolvedRequirement,
 ) -> Option<u16> {
     match requirement {
@@ -310,8 +309,8 @@ fn resolved_requirement_ptx_floor(
             generated_requirement_ptx_floor(arch, requirement)
         }
         GeneratedResolvedRequirement::Contract(contract) => {
-            let (capability, suffix) = arch_compute_capability_and_suffix(arch)?;
-            is_known_cuda_target(capability, suffix).then_some(())?;
+            let (capability, suffix) = (arch.capability(), arch.suffix());
+            recorded_ptx_floor(arch).ok()?;
             contract
                 .alternatives
                 .iter()
@@ -329,14 +328,15 @@ fn resolved_requirement_ptx_floor(
 }
 
 pub(crate) fn validate_generated_target(
-    arch: &str,
+    arch: &CudaArch,
     generated: &GeneratedModuleRequirements,
 ) -> Result<(), String> {
     for resolved in generated.resolved_targets() {
         let requirement = resolved_requirement(generated, resolved)?;
         if !resolved_hardware_satisfied(arch, requirement) {
             return Err(format!(
-                "CUDA target {arch} cannot lower generated intrinsic `{}` (`{}`); requires {}",
+                "CUDA target {} cannot lower generated intrinsic `{}` (`{}`); requires {}",
+                arch.sm(),
                 resolved.target.id,
                 resolved.target.marker,
                 describe_resolved_requirement(requirement)

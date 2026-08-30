@@ -4,8 +4,7 @@
  */
 
 use super::features::DetectedFeatures;
-use cuda_target_spec::recorded_ptx_floor;
-use libnvvm_sys::CudaArch;
+use cuda_target_spec::{CudaArch, recorded_ptx_floor};
 
 /// Does `arch` (e.g. `"sm_120a"`, `"sm_90"`) support the kernel's detected
 /// features?
@@ -21,11 +20,9 @@ use libnvvm_sys::CudaArch;
 /// Used to decide whether the GPU in this machine (the `CUDA_OXIDE_DEVICE_ARCH`
 /// hint) can actually run the kernel, or whether we must build for the arch the
 /// IR requires instead.
-pub fn arch_satisfies(arch: &str, features: DetectedFeatures) -> bool {
-    let Some((capability, suffix)) = arch_compute_capability_and_suffix(arch) else {
-        return false;
-    };
-    if !is_known_cuda_target(capability, suffix) {
+pub fn arch_satisfies(arch: &CudaArch, features: DetectedFeatures) -> bool {
+    let (capability, suffix) = (arch.capability(), arch.suffix());
+    if recorded_ptx_floor(arch).is_err() {
         return false;
     }
     features
@@ -127,10 +124,6 @@ fn is_known_blackwell_capability(capability: u32) -> bool {
     matches!(capability, 100 | 101 | 103 | 110 | 120 | 121)
 }
 
-pub(super) fn is_known_cuda_target(capability: u32, suffix: Option<char>) -> bool {
-    CudaArch::new(capability, suffix).is_ok_and(|arch| recorded_ptx_floor(&arch).is_ok())
-}
-
 /// Extract the compute-capability *major* version from an `sm_…` target string.
 ///
 /// CUDA concatenates major+minor without a separator, so `"sm_120a"` is cc 12.0
@@ -147,6 +140,7 @@ pub(super) fn arch_compute_capability(arch: &str) -> Option<u32> {
     arch_compute_capability_and_suffix(arch).map(|(capability, _)| capability)
 }
 
+#[cfg(test)]
 pub(super) fn arch_compute_capability_and_suffix(arch: &str) -> Option<(u32, Option<char>)> {
     if !arch.starts_with("sm_") {
         return None;

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-use cuda_target_spec::PTX_ISA_SPELLINGS;
+use cuda_target_spec::PtxSpelling;
 
 /// GPU feature requirements detected in one LLVM module.
 ///
@@ -149,51 +149,25 @@ impl std::ops::BitOr for DetectedFeatures {
 /// For example, a module may need sm_80 because it uses `cp.async` and still
 /// need PTX 7.8 because it also uses `movmatrix`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PtxIsaRequirement {
-    Default,
-    Ptx62,
-    Ptx65,
-    Ptx70,
-    Ptx71,
-    Ptx73,
-    Ptx78,
-    Ptx80,
-    Ptx86,
-    Ptx87,
-    Ptx88,
-    Ptx90,
-}
+pub struct PtxIsaRequirement(Option<PtxSpelling>);
 
 impl PtxIsaRequirement {
-    pub(super) fn from_spelling(spelling: u16) -> Option<Self> {
-        Some(match spelling {
-            62 => Self::Ptx62,
-            65 => Self::Ptx65,
-            70 => Self::Ptx70,
-            71 => Self::Ptx71,
-            73 => Self::Ptx73,
-            78 => Self::Ptx78,
-            80 => Self::Ptx80,
-            86 => Self::Ptx86,
-            87 => Self::Ptx87,
-            88 => Self::Ptx88,
-            90 => Self::Ptx90,
-            _ => return None,
-        })
-    }
+    #[allow(non_upper_case_globals)]
+    pub const Default: Self = Self(None);
 
-    pub(super) fn spelling(self) -> Option<u16> {
-        match self {
-            Self::Default => None,
-            requirement => PTX_ISA_SPELLINGS
-                .iter()
-                .copied()
-                .find(|spelling| Self::from_spelling(*spelling) == Some(requirement)),
+    pub(crate) const fn new(spelling: u16) -> Self {
+        match PtxSpelling::from_spelling(spelling) {
+            Some(spelling) => Self(Some(spelling)),
+            None => panic!("unsupported PTX ISA spelling"),
         }
     }
 
-    pub(super) fn feature(self) -> Option<&'static str> {
-        self.spelling().and_then(cuda_target_spec::spelling_feature)
+    pub(super) const fn from_spelling(spelling: PtxSpelling) -> Self {
+        Self(Some(spelling))
+    }
+
+    pub(super) fn spelling(self) -> Option<PtxSpelling> {
+        self.0
     }
 }
 

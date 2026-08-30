@@ -121,10 +121,19 @@ fn f32x2_family_detection_requires_sm100_and_ptx86() {
         assert!(contains_f32x2_features(mnemonic));
         let requirements = detect_module_requirements_in_llvm_text(mnemonic);
         assert_eq!(requirements.features, DetectedFeatures::Sm100);
-        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx86);
-        assert!(!arch_satisfies("sm_90", requirements.features));
-        assert!(arch_satisfies("sm_100", requirements.features));
-        assert!(arch_satisfies("sm_120", requirements.features));
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86));
+        assert!(!arch_satisfies(
+            &"sm_90".parse().unwrap(),
+            requirements.features
+        ));
+        assert!(arch_satisfies(
+            &"sm_100".parse().unwrap(),
+            requirements.features
+        ));
+        assert!(arch_satisfies(
+            &"sm_120".parse().unwrap(),
+            requirements.features
+        ));
     }
 
     for near_miss in [
@@ -164,10 +173,10 @@ fn dense_bf16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
-    assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
+    assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_80");
 
     let lower_target = resolve_ptx_target(
         Some("sm_75"),
@@ -189,7 +198,7 @@ fn dense_bf16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         requirements.features,
     )
     .unwrap();
-    assert_eq!(target, "sm_80");
+    assert_eq!(target.sm(), "sm_80");
 
     for near_miss in [
         "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
@@ -220,7 +229,7 @@ fn dense_bf16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         detect_module_requirements_in_llvm_text(&combined),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
 }
@@ -245,11 +254,11 @@ fn packed_atomic_detection_enforces_native_architecture_and_ptx_floors() {
         assert_eq!(detect_features_in_llvm_text(f16), DetectedFeatures::Basic);
         assert_eq!(
             detect_module_requirements_in_llvm_text(f16).ptx_isa,
-            PtxIsaRequirement::Ptx62
+            PtxIsaRequirement::new(62)
         );
     }
     assert_eq!(
-        required_ptx_feature("sm_70", PtxIsaRequirement::Ptx62).unwrap(),
+        required_ptx_feature(&"sm_70".parse().unwrap(), PtxIsaRequirement::new(62)).unwrap(),
         Some("+ptx62")
     );
     assert_eq!(
@@ -260,7 +269,8 @@ fn packed_atomic_detection_enforces_native_architecture_and_ptx_floors() {
             DetectedFeatures::Basic
         )
         .unwrap()
-        .0,
+        .0
+        .sm(),
         "sm_70"
     );
 
@@ -274,10 +284,10 @@ fn packed_atomic_detection_enforces_native_architecture_and_ptx_floors() {
         assert_eq!(detect_features_in_llvm_text(bf16), DetectedFeatures::Sm90);
         assert_eq!(
             detect_module_requirements_in_llvm_text(bf16).ptx_isa,
-            PtxIsaRequirement::Ptx78
+            PtxIsaRequirement::new(78)
         );
     }
-    assert_eq!(select_target(DetectedFeatures::Sm90).unwrap(), "sm_90");
+    assert_eq!(select_target(DetectedFeatures::Sm90).unwrap().sm(), "sm_90");
     let rejected = resolve_ptx_target(
         Some("sm_80"),
         "CUDA_OXIDE_TARGET",
@@ -301,7 +311,7 @@ fn packed_atomic_detection_enforces_native_architecture_and_ptx_floors() {
                     atom.global.add.noftz.bf16x2 $0, [$1], $2;";
     let requirements = detect_module_requirements_in_llvm_text(both);
     assert_eq!(requirements.features, DetectedFeatures::Sm90);
-    assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx78);
+    assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(78));
 
     let dense_bf16_mma =
         "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};";
@@ -312,11 +322,11 @@ fn packed_atomic_detection_enforces_native_architecture_and_ptx_floors() {
         mma_f16_requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
     assert_eq!(
-        select_target(mma_f16_requirements.features).unwrap(),
+        select_target(mma_f16_requirements.features).unwrap().sm(),
         "sm_80"
     );
 
@@ -327,11 +337,11 @@ fn packed_atomic_detection_enforces_native_architecture_and_ptx_floors() {
         mma_bf16_requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
     assert_eq!(
-        select_target(mma_bf16_requirements.features).unwrap(),
+        select_target(mma_bf16_requirements.features).unwrap().sm(),
         "sm_90"
     );
 
@@ -382,11 +392,11 @@ fn fp64_mma_and_packed_atomics_take_the_strongest_target_floor() {
         fp64_f16_requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
     assert_eq!(
-        select_target(fp64_f16_requirements.features).unwrap(),
+        select_target(fp64_f16_requirements.features).unwrap().sm(),
         "sm_80"
     );
 
@@ -397,11 +407,11 @@ fn fp64_mma_and_packed_atomics_take_the_strongest_target_floor() {
         fp64_bf16_requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
     assert_eq!(
-        select_target(fp64_bf16_requirements.features).unwrap(),
+        select_target(fp64_bf16_requirements.features).unwrap().sm(),
         "sm_90"
     );
 
@@ -415,11 +425,11 @@ fn fp64_mma_and_packed_atomics_take_the_strongest_target_floor() {
         all_four_requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm90 | DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
     assert_eq!(
-        select_target(all_four_requirements.features).unwrap(),
+        select_target(all_four_requirements.features).unwrap().sm(),
         "sm_90"
     );
 }
@@ -451,10 +461,10 @@ fn dense_f16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
-    assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
+    assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_80");
 
     let lower_target = resolve_ptx_target(
         Some("sm_75"),
@@ -476,7 +486,7 @@ fn dense_f16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         requirements.features,
     )
     .unwrap();
-    assert_eq!(target, "sm_80");
+    assert_eq!(target.sm(), "sm_80");
 
     for near_miss in [
         "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};",
@@ -507,7 +517,7 @@ fn dense_f16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         detect_module_requirements_in_llvm_text(&combined),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
 }
@@ -539,10 +549,10 @@ fn tf32_mma_detection_applies_exact_sm80_and_ptx70_floors() {
 
     let requirements = detect_module_requirements_in_llvm_text(mnemonic);
     assert_eq!(requirements.features, DetectedFeatures::Sm80);
-    assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx70);
+    assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(70));
     let (target, _) = resolve_ptx_target(None, "CUDA_OXIDE_TARGET", None, requirements.features)
         .expect("auto-resolve");
-    assert_eq!(target, "sm_80");
+    assert_eq!(target.sm(), "sm_80");
 
     for near_miss in [
         "mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {$0}, {$1}, {$2}, {$3};",
@@ -587,7 +597,7 @@ fn tf32_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         detect_module_requirements_in_llvm_text(&combined),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
 }
@@ -611,7 +621,7 @@ fn int8_mma_detection_applies_exact_sm80_and_ptx70_floors() {
                         detect_module_requirements_in_llvm_text(&spelling),
                         ModuleRequirements {
                             features: DetectedFeatures::Sm80,
-                            ptx_isa: PtxIsaRequirement::Ptx70,
+                            ptx_isa: PtxIsaRequirement::new(70),
                         },
                         "{spelling}"
                     );
@@ -643,7 +653,7 @@ fn int8_mma_detection_applies_exact_sm80_and_ptx70_floors() {
     let requirements = detect_module_requirements_in_llvm_text(representative);
     let (target, _) = resolve_ptx_target(None, "CUDA_OXIDE_TARGET", None, requirements.features)
         .expect("auto-resolve");
-    assert_eq!(target, "sm_80");
+    assert_eq!(target.sm(), "sm_80");
 
     for near_miss in [
         "mma.sync.aligned.m16n8k8.row.col.s32.s8.s8.s32 {$0}, {$1}, {$2}, {$3};",
@@ -697,7 +707,7 @@ fn int8_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         detect_module_requirements_in_llvm_text(&combined),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
 }
@@ -729,7 +739,7 @@ fn dense_int4_mma_detection_applies_exact_sm80_and_ptx70_floors() {
                         detect_module_requirements_in_llvm_text(&spelling),
                         ModuleRequirements {
                             features: DetectedFeatures::Sm80,
-                            ptx_isa: PtxIsaRequirement::Ptx70,
+                            ptx_isa: PtxIsaRequirement::new(70),
                         },
                         "{spelling}"
                     );
@@ -763,16 +773,16 @@ fn dense_int4_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
-    assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
+    assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_80");
     assert_eq!(
-        required_ptx_feature("sm_75", requirements.ptx_isa).unwrap(),
+        required_ptx_feature(&"sm_75".parse().unwrap(), requirements.ptx_isa).unwrap(),
         Some("+ptx70")
     );
     assert_eq!(
-        required_ptx_feature("sm_80", requirements.ptx_isa).unwrap(),
+        required_ptx_feature(&"sm_80".parse().unwrap(), requirements.ptx_isa).unwrap(),
         None
     );
 
@@ -797,7 +807,7 @@ fn dense_int4_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         "sm_80", "sm_86", "sm_89", "sm_90", "sm_90a", "sm_100", "sm_100a", "sm_120", "sm_120a",
     ] {
         assert!(
-            arch_satisfies(target, requirements.features),
+            arch_satisfies(&target.parse().unwrap(), requirements.features),
             "rejected {target}"
         );
     }
@@ -811,7 +821,7 @@ fn dense_int4_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         detect_module_requirements_in_llvm_text(&mixed),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
 
@@ -820,7 +830,7 @@ fn dense_int4_mma_detection_applies_exact_sm80_and_ptx70_floors() {
         detect_module_requirements_in_llvm_text(&newer_ptx),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
 }
@@ -864,37 +874,37 @@ fn dense_b1_mma_detection_applies_exact_operation_floors() {
             "m8n8k128",
             "xor",
             DetectedFeatures::Sm75,
-            PtxIsaRequirement::Ptx70,
+            PtxIsaRequirement::new(70),
         ),
         (
             "m16n8k128",
             "xor",
             DetectedFeatures::Sm80,
-            PtxIsaRequirement::Ptx70,
+            PtxIsaRequirement::new(70),
         ),
         (
             "m16n8k256",
             "xor",
             DetectedFeatures::Sm80,
-            PtxIsaRequirement::Ptx70,
+            PtxIsaRequirement::new(70),
         ),
         (
             "m8n8k128",
             "and",
             DetectedFeatures::Sm80,
-            PtxIsaRequirement::Ptx71,
+            PtxIsaRequirement::new(71),
         ),
         (
             "m16n8k128",
             "and",
             DetectedFeatures::Sm80,
-            PtxIsaRequirement::Ptx71,
+            PtxIsaRequirement::new(71),
         ),
         (
             "m16n8k256",
             "and",
             DetectedFeatures::Sm80,
-            PtxIsaRequirement::Ptx71,
+            PtxIsaRequirement::new(71),
         ),
     ];
 
@@ -920,9 +930,12 @@ fn dense_b1_mma_detection_applies_exact_operation_floors() {
         "{$0, $1}, {$4}, {$5}, {$2, $3};"
     );
     let m8_requirements = detect_module_requirements_in_llvm_text(m8_xor);
-    assert_eq!(select_target(m8_requirements.features).unwrap(), "sm_75");
     assert_eq!(
-        required_ptx_feature("sm_75", m8_requirements.ptx_isa).unwrap(),
+        select_target(m8_requirements.features).unwrap().sm(),
+        "sm_75"
+    );
+    assert_eq!(
+        required_ptx_feature(&"sm_75".parse().unwrap(), m8_requirements.ptx_isa).unwrap(),
         Some("+ptx70")
     );
 
@@ -931,9 +944,12 @@ fn dense_b1_mma_detection_applies_exact_operation_floors() {
         "{$0, $1, $2, $3}, {$8, $9, $10, $11}, {$12, $13}, {$4, $5, $6, $7};"
     );
     let and_requirements = detect_module_requirements_in_llvm_text(m16_and);
-    assert_eq!(select_target(and_requirements.features).unwrap(), "sm_80");
     assert_eq!(
-        required_ptx_feature("sm_80", and_requirements.ptx_isa).unwrap(),
+        select_target(and_requirements.features).unwrap().sm(),
+        "sm_80"
+    );
+    assert_eq!(
+        required_ptx_feature(&"sm_80".parse().unwrap(), and_requirements.ptx_isa).unwrap(),
         Some("+ptx71")
     );
     let sm_75: CudaArch = "sm_75".parse().unwrap();
@@ -946,7 +962,7 @@ fn dense_b1_mma_detection_applies_exact_operation_floors() {
         detect_module_requirements_in_llvm_text(&combined),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
-            ptx_isa: PtxIsaRequirement::Ptx71,
+            ptx_isa: PtxIsaRequirement::new(71),
         }
     );
 }
@@ -1009,8 +1025,8 @@ fn generated_b1_floors_match_text_detection_on_both_backends() {
             );
             for arch in ["sm_70", "sm_75", "sm_80", "sm_90"] {
                 assert_eq!(
-                    generated_target_satisfied(arch, &generated),
-                    arch_satisfies(arch, detected.features),
+                    generated_target_satisfied(&arch.parse().unwrap(), &generated),
+                    arch_satisfies(&arch.parse().unwrap(), detected.features),
                     "{marker} {backend:?} {arch}"
                 );
             }
@@ -1040,7 +1056,7 @@ fn m8n8k16_int8_mma_detection_applies_exact_sm75_and_ptx65_floors() {
                     detect_module_requirements_in_llvm_text(&spelling),
                     ModuleRequirements {
                         features: DetectedFeatures::Sm75,
-                        ptx_isa: PtxIsaRequirement::Ptx65,
+                        ptx_isa: PtxIsaRequirement::new(65),
                     },
                     "{spelling}"
                 );
@@ -1071,13 +1087,13 @@ fn m8n8k16_int8_mma_detection_applies_exact_sm75_and_ptx65_floors() {
     let requirements = detect_module_requirements_in_llvm_text(representative);
     let (target, _) = resolve_ptx_target(None, "CUDA_OXIDE_TARGET", None, requirements.features)
         .expect("auto-resolve");
-    assert_eq!(target, "sm_75");
+    assert_eq!(target.sm(), "sm_75");
     assert_eq!(
-        required_ptx_feature("sm_75", requirements.ptx_isa).unwrap(),
+        required_ptx_feature(&"sm_75".parse().unwrap(), requirements.ptx_isa).unwrap(),
         Some("+ptx65")
     );
     assert_eq!(
-        required_ptx_feature("sm_80", requirements.ptx_isa).unwrap(),
+        required_ptx_feature(&"sm_80".parse().unwrap(), requirements.ptx_isa).unwrap(),
         None
     );
 
@@ -1136,7 +1152,7 @@ fn m8n8k16_int8_mma_detection_applies_exact_sm75_and_ptx65_floors() {
         detect_module_requirements_in_llvm_text(m16),
         ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
 
@@ -1146,7 +1162,7 @@ fn m8n8k16_int8_mma_detection_applies_exact_sm75_and_ptx65_floors() {
         combined_requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
     let (target, _) = resolve_ptx_target(
@@ -1156,7 +1172,7 @@ fn m8n8k16_int8_mma_detection_applies_exact_sm75_and_ptx65_floors() {
         combined_requirements.features,
     )
     .expect("combined m8 and m16 MMA should auto-resolve");
-    assert_eq!(target, "sm_80");
+    assert_eq!(target.sm(), "sm_80");
 }
 
 #[test]
@@ -1185,7 +1201,7 @@ fn m8n8k32_int4_mma_detection_applies_exact_sm75_and_ptx65_floors() {
                     detect_module_requirements_in_llvm_text(&spelling),
                     ModuleRequirements {
                         features: DetectedFeatures::Sm75,
-                        ptx_isa: PtxIsaRequirement::Ptx65,
+                        ptx_isa: PtxIsaRequirement::new(65),
                     },
                     "{spelling}"
                 );
@@ -1218,16 +1234,16 @@ fn m8n8k32_int4_mma_detection_applies_exact_sm75_and_ptx65_floors() {
         requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm75,
-            ptx_isa: PtxIsaRequirement::Ptx65,
+            ptx_isa: PtxIsaRequirement::new(65),
         }
     );
-    assert_eq!(select_target(requirements.features).unwrap(), "sm_75");
+    assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_75");
     assert_eq!(
-        required_ptx_feature("sm_75", requirements.ptx_isa).unwrap(),
+        required_ptx_feature(&"sm_75".parse().unwrap(), requirements.ptx_isa).unwrap(),
         Some("+ptx65")
     );
     assert_eq!(
-        required_ptx_feature("sm_80", requirements.ptx_isa).unwrap(),
+        required_ptx_feature(&"sm_80".parse().unwrap(), requirements.ptx_isa).unwrap(),
         None
     );
 
@@ -1292,12 +1308,15 @@ fn m8n8k32_int4_mma_requirements_compose_and_are_forward_compatible() {
         "sm_75", "sm_80", "sm_86", "sm_89", "sm_90", "sm_90a", "sm_100", "sm_100a", "sm_120",
         "sm_120a",
     ] {
-        assert!(arch_satisfies(target, features), "rejected {target}");
+        assert!(
+            arch_satisfies(&target.parse().unwrap(), features),
+            "rejected {target}"
+        );
     }
-    assert!(!arch_satisfies("sm_72", features));
+    assert!(!arch_satisfies(&"sm_72".parse().unwrap(), features));
     assert_eq!(
         resolve_ptx_target(None, "CUDA_OXIDE_TARGET", Some("sm_120"), features).unwrap(),
-        ("sm_120".to_string(), "detected GPU")
+        ("sm_120".parse().unwrap(), "detected GPU")
     );
 
     let m16_int8 = concat!(
@@ -1310,17 +1329,20 @@ fn m8n8k32_int4_mma_requirements_compose_and_are_forward_compatible() {
         mixed_requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Sm75,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
-    assert_eq!(select_target(mixed_requirements.features).unwrap(), "sm_80");
+    assert_eq!(
+        select_target(mixed_requirements.features).unwrap().sm(),
+        "sm_80"
+    );
 
     let newer_ptx = format!("{int4}\nmovmatrix.sync.aligned.m8n8.trans.b16 $0, $1;");
     assert_eq!(
         detect_module_requirements_in_llvm_text(&newer_ptx),
         ModuleRequirements {
             features: DetectedFeatures::Sm75 | DetectedFeatures::Movmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
 }
@@ -1354,10 +1376,10 @@ fn mma_m8n8k4_f64_detection_enforces_sm80_and_ptx70() {
         requirements,
         ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         }
     );
-    assert_eq!(select_target(requirements.features).unwrap(), "sm_80");
+    assert_eq!(select_target(requirements.features).unwrap().sm(), "sm_80");
 
     for near_miss in [
         "mma.sync.aligned.m16n8k4.row.col.f64.f64.f64.f64 {$0, $1}, {$2}, {$3}, {$4, $5};",
@@ -1408,7 +1430,7 @@ fn mma_m8n8k4_f64_detection_enforces_sm80_and_ptx70() {
         detect_module_requirements_in_llvm_text(&combined),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
 }
@@ -1430,10 +1452,13 @@ fn test_movmatrix_detection_separates_sm75_from_the_ptx78_floor() {
         detect_features_in_llvm_text(mnemonic),
         DetectedFeatures::Movmatrix
     );
-    assert_eq!(select_target(DetectedFeatures::Movmatrix).unwrap(), "sm_75");
+    assert_eq!(
+        select_target(DetectedFeatures::Movmatrix).unwrap().sm(),
+        "sm_75"
+    );
     assert_eq!(
         detect_module_requirements_in_llvm_text(mnemonic).ptx_isa,
-        PtxIsaRequirement::Ptx78
+        PtxIsaRequirement::new(78)
     );
 
     for near_miss in [
@@ -1461,7 +1486,7 @@ fn test_movmatrix_detection_separates_sm75_from_the_ptx78_floor() {
         detect_module_requirements_in_llvm_text(&combined),
         ModuleRequirements {
             features: DetectedFeatures::Sm80 | DetectedFeatures::Movmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         },
         "the architecture and PTX ISA floors must compose independently"
     );
@@ -1475,24 +1500,24 @@ fn test_movmatrix_detection_separates_sm75_from_the_ptx78_floor() {
 
     for target in ["sm_75", "sm_80", "sm_86", "sm_87"] {
         assert_eq!(
-            required_ptx_feature(target, PtxIsaRequirement::Ptx78).unwrap(),
+            required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::new(78)).unwrap(),
             Some("+ptx78"),
             "{target} needs an explicit PTX 7.8 floor"
         );
     }
     assert_eq!(
-        required_ptx_feature("sm_90", PtxIsaRequirement::Ptx78).unwrap(),
+        required_ptx_feature(&"sm_90".parse().unwrap(), PtxIsaRequirement::new(78)).unwrap(),
         None
     );
     for target in ["sm_88", "sm_89"] {
         assert_eq!(
-            required_ptx_feature(target, PtxIsaRequirement::Ptx78).unwrap(),
+            required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::new(78)).unwrap(),
             None,
             "{target} already requires PTX 7.8 or newer"
         );
     }
     assert_eq!(
-        required_ptx_feature("sm_75", PtxIsaRequirement::Default).unwrap(),
+        required_ptx_feature(&"sm_75".parse().unwrap(), PtxIsaRequirement::Default).unwrap(),
         None
     );
 }
@@ -1504,7 +1529,7 @@ fn matrix_memory_detection_composes_architecture_and_ptx_isa_floors() {
         detect_module_requirements_in_llvm_text(base_ldmatrix),
         ModuleRequirements {
             features: DetectedFeatures::Ldmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx65,
+            ptx_isa: PtxIsaRequirement::new(65),
         }
     );
 
@@ -1513,7 +1538,7 @@ fn matrix_memory_detection_composes_architecture_and_ptx_isa_floors() {
         detect_module_requirements_in_llvm_text(cta_ldmatrix),
         ModuleRequirements {
             features: DetectedFeatures::Ldmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         }
     );
 
@@ -1525,7 +1550,7 @@ fn matrix_memory_detection_composes_architecture_and_ptx_isa_floors() {
             detect_module_requirements_in_llvm_text(stmatrix),
             ModuleRequirements {
                 features: DetectedFeatures::Sm90,
-                ptx_isa: PtxIsaRequirement::Ptx78,
+                ptx_isa: PtxIsaRequirement::new(78),
             }
         );
     }
@@ -1544,7 +1569,7 @@ fn matrix_memory_detection_composes_architecture_and_ptx_isa_floors() {
                     } else {
                         DetectedFeatures::Sm90
                     },
-                ptx_isa: PtxIsaRequirement::Ptx86,
+                ptx_isa: PtxIsaRequirement::new(86),
             },
             "{newer}"
         );
@@ -1558,21 +1583,21 @@ fn matrix_memory_detection_composes_architecture_and_ptx_isa_floors() {
         detect_module_requirements_in_llvm_text(&mixed),
         ModuleRequirements {
             features: DetectedFeatures::Movmatrix | DetectedFeatures::Ldmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx78,
+            ptx_isa: PtxIsaRequirement::new(78),
         },
         "the strongest PTX ISA floor must survive equal sm_75 feature families"
     );
 
     assert_eq!(
-        required_ptx_feature("sm_75", PtxIsaRequirement::Ptx65).unwrap(),
+        required_ptx_feature(&"sm_75".parse().unwrap(), PtxIsaRequirement::new(65)).unwrap(),
         Some("+ptx65")
     );
     assert_eq!(
-        required_ptx_feature("sm_80", PtxIsaRequirement::Ptx65).unwrap(),
+        required_ptx_feature(&"sm_80".parse().unwrap(), PtxIsaRequirement::new(65)).unwrap(),
         None
     );
     assert_eq!(
-        required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx86).unwrap(),
+        required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(86)).unwrap(),
         None
     );
 
@@ -1584,7 +1609,7 @@ fn matrix_memory_detection_composes_architecture_and_ptx_isa_floors() {
         detect_module_requirements_in_llvm_text(adjacent_unrelated_b8),
         ModuleRequirements {
             features: DetectedFeatures::Ldmatrix,
-            ptx_isa: PtxIsaRequirement::Ptx65,
+            ptx_isa: PtxIsaRequirement::new(65),
         },
         "an unrelated b8 instruction must not raise the ldmatrix family"
     );

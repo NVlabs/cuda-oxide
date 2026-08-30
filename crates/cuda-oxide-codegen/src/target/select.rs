@@ -11,15 +11,14 @@ use super::generated_requirements::{
 };
 use crate::error::PipelineError;
 use crate::generated::GeneratedModuleRequirements;
-use cuda_target_spec::recorded_ptx_floor;
-use libnvvm_sys::CudaArch;
+use cuda_target_spec::{CudaArch, RECORDED_PTX_FLOORS, recorded_ptx_floor};
 
 /// Select a concrete architecture that satisfies every detected feature.
 ///
 /// The first candidate preserves the established default for a module's most
 /// restrictive-looking feature. The remaining candidates handle intersections
 /// such as WGMMA + TMA multicast, whose only common target is `sm_90a`.
-pub fn select_target(features: DetectedFeatures) -> Result<&'static str, String> {
+pub fn select_target(features: DetectedFeatures) -> Result<CudaArch, String> {
     let preferred = if features.contains(DetectedFeatures::Blackwell)
         || features.contains(DetectedFeatures::TmaCtaGroup)
         || features.contains(DetectedFeatures::BlackwellAccelerated)
@@ -57,8 +56,9 @@ pub fn select_target(features: DetectedFeatures) -> Result<&'static str, String>
     for candidate in [
         preferred, "sm_100a", "sm_90a", "sm_100", "sm_90", "sm_80", "sm_75",
     ] {
-        if arch_satisfies(candidate, features) {
-            return Ok(candidate);
+        let arch = candidate.parse().expect("known CUDA target candidate");
+        if arch_satisfies(&arch, features) {
+            return Ok(arch);
         }
     }
 
@@ -76,14 +76,14 @@ pub fn select_target(features: DetectedFeatures) -> Result<&'static str, String>
 pub(crate) fn select_target_with_generated(
     features: DetectedFeatures,
     generated: &GeneratedModuleRequirements,
-) -> Result<String, String> {
+) -> Result<CudaArch, String> {
     let preferred = select_target(features)?;
     if generated.is_empty() {
-        return Ok(preferred.to_string());
+        return Ok(preferred);
     }
 
-    let mut candidates = vec![preferred.to_string()];
-    let mut push_candidate = |candidate: String| {
+    let mut candidates = vec![preferred];
+    let mut push_candidate = |candidate: CudaArch| {
         if !candidates.contains(&candidate) {
             candidates.push(candidate);
         }
@@ -99,11 +99,13 @@ pub(crate) fn select_target_with_generated(
         });
     }
 
-    // This is the reviewed set accepted by `is_known_cuda_target`. Family and
-    // architecture spellings are included because a generated requirement may
-    // need to intersect with an existing text-detected feature.
-    for candidate in KNOWN_CUDA_TARGET_CANDIDATES {
-        push_candidate(candidate.to_string());
+    // Family and architecture spellings are included because a generated
+    // requirement may need to intersect with an existing text-detected feature.
+    for entry in RECORDED_PTX_FLOORS {
+        push_candidate(
+            CudaArch::new(entry.capability, entry.suffix)
+                .expect("recorded target floor must identify a valid CUDA target"),
+        );
     }
 
     if let Some(candidate) = candidates.into_iter().find(|candidate| {
@@ -132,19 +134,12 @@ pub(crate) fn select_target_with_generated(
     ))
 }
 
-pub(super) const KNOWN_CUDA_TARGET_CANDIDATES: &[&str] = &[
-    "sm_70", "sm_72", "sm_75", "sm_80", "sm_86", "sm_87", "sm_88", "sm_89", "sm_90", "sm_100",
-    "sm_101", "sm_103", "sm_110", "sm_120", "sm_121", "sm_90a", "sm_100a", "sm_101a", "sm_103a",
-    "sm_110a", "sm_120a", "sm_121a", "sm_100f", "sm_101f", "sm_103f", "sm_110f", "sm_120f",
-    "sm_121f",
-];
-
 pub fn validate_target_features(
     target: &CudaArch,
     features: DetectedFeatures,
 ) -> Result<(), String> {
     let compatible_default = select_target(features)?;
-    if arch_satisfies(&target.sm(), features) {
+    if arch_satisfies(target, features) {
         return Ok(());
     }
 
@@ -152,7 +147,7 @@ pub fn validate_target_features(
         "CUDA target {} cannot lower detected feature {features:?}; \
          cuda-oxide requires a target compatible with {} for this module",
         target.sm(),
-        compatible_default
+        compatible_default.sm()
     ))
 }
 
@@ -162,7 +157,7 @@ pub fn resolve_ptx_target(
     explicit_override_source: &'static str,
     device_hint: Option<&str>,
     detected: DetectedFeatures,
-) -> Result<(String, &'static str), PipelineError> {
+) -> Result<(CudaArch, &'static str), PipelineError> {
     resolve_ptx_target_with_generated(
         explicit_override,
         explicit_override_source,
@@ -178,7 +173,7 @@ pub(crate) fn resolve_ptx_target_with_generated(
     device_hint: Option<&str>,
     detected: DetectedFeatures,
     generated: &GeneratedModuleRequirements,
-) -> Result<(String, &'static str), PipelineError> {
+) -> Result<(CudaArch, &'static str), PipelineError> {
     if let Some(target) = explicit_override {
         let parsed =
             target
@@ -195,19 +190,26 @@ pub(crate) fn resolve_ptx_target_with_generated(
                 reason: format!("{reason} (target from {explicit_override_source})"),
             }
         })?;
-        validate_generated_target(&parsed.sm(), generated).map_err(|reason| {
+        validate_generated_target(&parsed, generated).map_err(|reason| {
             PipelineError::TargetSelection {
                 target: parsed.sm(),
                 reason: format!("{reason} (target from {explicit_override_source})"),
             }
         })?;
-        return Ok((parsed.sm(), explicit_override_source));
+        return Ok((parsed, explicit_override_source));
     }
 
-    if let Some(device) = device_hint.filter(|target| {
-        arch_satisfies(target, detected) && generated_target_satisfied(target, generated)
-    }) {
-        return Ok((device.to_string(), "detected GPU"));
+    if let Some(device) = device_hint
+        // Preserve the legacy PTX-path behavior: device hints used to pass
+        // through an `sm_`-only parser, while NVVM accepts and normalizes
+        // `compute_` spellings at its separate boundary.
+        .filter(|target| target.starts_with("sm_"))
+        .and_then(|target| target.parse::<CudaArch>().ok())
+        .filter(|target| {
+            arch_satisfies(target, detected) && generated_target_satisfied(target, generated)
+        })
+    {
+        return Ok((device, "detected GPU"));
     }
 
     let target =
@@ -221,23 +223,13 @@ pub(crate) fn resolve_ptx_target_with_generated(
 /// feature floor. Raise that ISA only when the selected CPU's default is too
 /// old; never force a newer target back to an older PTX version.
 pub fn required_ptx_feature(
-    target: &str,
+    target: &CudaArch,
     requirement: PtxIsaRequirement,
 ) -> Result<Option<&'static str>, String> {
-    if !target.starts_with("sm_") {
-        return Err(format!("invalid CUDA target `{target}`: expected `sm_XX`"));
-    }
-    let arch = target
-        .parse::<CudaArch>()
-        .map_err(|error| error.to_string())?;
-    let minimum = recorded_ptx_floor(&arch).map_err(|error| error.to_string())?;
-    let Some(requested) = requirement.spelling() else {
-        return Ok(None);
-    };
-    if requested <= minimum {
-        return Ok(None);
-    }
-    Ok(requirement.feature())
+    let minimum = recorded_ptx_floor(target).map_err(|error| error.to_string())?;
+    Ok(requirement
+        .spelling()
+        .and_then(|spelling| spelling.feature_beyond_floor(minimum)))
 }
 
 /// Reject targets that the supported LLVM 21 backend silently mishandles.
@@ -248,20 +240,19 @@ pub fn required_ptx_feature(
 /// cuda-oxide's supported toolchain set that emits valid PTX for them. An
 /// unknown backend version is rejected because it cannot prove support, while
 /// unknown targets remain the responsibility of the normal target validators.
-pub fn validate_target_for_llvm_major(target: &str, llc_major: Option<u32>) -> Result<(), String> {
-    let requires_llvm_22 = target.starts_with("sm_")
-        && target
-            .parse::<CudaArch>()
-            .ok()
-            .and_then(|arch| recorded_ptx_floor(&arch).ok())
-            .is_some_and(|floor| floor >= 90);
+pub fn validate_target_for_llvm_major(
+    target: &CudaArch,
+    llc_major: Option<u32>,
+) -> Result<(), String> {
+    let requires_llvm_22 = recorded_ptx_floor(target).is_ok_and(|floor| floor >= 90);
     if requires_llvm_22 && llc_major.is_none_or(|major| major < 22) {
         let backend = llc_major.map_or_else(
             || "an LLVM backend with an unknown version".to_string(),
             |major| format!("LLVM {major}"),
         );
         return Err(format!(
-            "CUDA target {target} requires LLVM 22 or newer; {backend} does not reliably emit valid PTX for this PTX 9.0 target"
+            "CUDA target {} requires LLVM 22 or newer; {backend} does not reliably emit valid PTX for this PTX 9.0 target",
+            target.sm()
         ));
     }
     Ok(())
@@ -271,7 +262,7 @@ pub(crate) fn validate_ptx_isa_for_llvm_major(
     requirement: PtxIsaRequirement,
     llc_major: Option<u32>,
 ) -> Result<(), String> {
-    if requirement >= PtxIsaRequirement::Ptx90 && llc_major.is_none_or(|major| major < 22) {
+    if requirement >= PtxIsaRequirement::new(90) && llc_major.is_none_or(|major| major < 22) {
         let backend = llc_major.map_or_else(
             || "an LLVM backend with an unknown version".to_string(),
             |major| format!("LLVM {major}"),

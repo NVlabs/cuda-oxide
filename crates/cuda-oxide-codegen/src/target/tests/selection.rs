@@ -31,7 +31,11 @@ fn test_select_target_prefers_required_architecture() {
         (DetectedFeatures::Ldmatrix, "sm_75"),
         (DetectedFeatures::Basic, "sm_80"),
     ] {
-        assert_eq!(select_target(features).unwrap(), expected, "{features:?}");
+        assert_eq!(
+            select_target(features).unwrap().sm(),
+            expected,
+            "{features:?}"
+        );
     }
 }
 
@@ -42,9 +46,15 @@ fn target_selection_enforces_feature_intersections() {
     let hopper_requirements = detect_features_in_llvm_text(&hopper_pair);
     assert!(hopper_requirements.contains(DetectedFeatures::TmaMulticast));
     assert!(hopper_requirements.contains(DetectedFeatures::Wgmma));
-    assert_eq!(select_target(hopper_requirements).unwrap(), "sm_90a");
-    assert!(arch_satisfies("sm_90a", hopper_requirements));
-    assert!(!arch_satisfies("sm_100a", hopper_requirements));
+    assert_eq!(select_target(hopper_requirements).unwrap().sm(), "sm_90a");
+    assert!(arch_satisfies(
+        &"sm_90a".parse().unwrap(),
+        hopper_requirements
+    ));
+    assert!(!arch_satisfies(
+        &"sm_100a".parse().unwrap(),
+        hopper_requirements
+    ));
 
     let blackwell_pair = format!(
         "{multicast};\n{}",
@@ -53,9 +63,18 @@ fn target_selection_enforces_feature_intersections() {
     let blackwell_requirements = detect_features_in_llvm_text(&blackwell_pair);
     assert!(blackwell_requirements.contains(DetectedFeatures::TmaMulticast));
     assert!(blackwell_requirements.contains(DetectedFeatures::MatrixBlackwell));
-    assert_eq!(select_target(blackwell_requirements).unwrap(), "sm_100a");
-    assert!(arch_satisfies("sm_100a", blackwell_requirements));
-    assert!(!arch_satisfies("sm_90a", blackwell_requirements));
+    assert_eq!(
+        select_target(blackwell_requirements).unwrap().sm(),
+        "sm_100a"
+    );
+    assert!(arch_satisfies(
+        &"sm_100a".parse().unwrap(),
+        blackwell_requirements
+    ));
+    assert!(!arch_satisfies(
+        &"sm_90a".parse().unwrap(),
+        blackwell_requirements
+    ));
 
     let impossible = DetectedFeatures::Wgmma | DetectedFeatures::MatrixBlackwell;
     let error = select_target(impossible).expect_err("families have no common target");
@@ -124,34 +143,33 @@ fn test_arch_major_parses_cuda_spelling() {
 fn ptx9_targets_require_an_llvm22_backend() {
     for target in ["sm_88", "sm_110", "sm_110a", "sm_110f"] {
         assert!(
-            validate_target_for_llvm_major(target, Some(21)).is_err(),
+            validate_target_for_llvm_major(&target.parse().unwrap(), Some(21)).is_err(),
             "{target}"
         );
         assert!(
-            validate_target_for_llvm_major(target, None).is_err(),
+            validate_target_for_llvm_major(&target.parse().unwrap(), None).is_err(),
             "{target}"
         );
         assert!(
-            validate_target_for_llvm_major(target, Some(22)).is_ok(),
+            validate_target_for_llvm_major(&target.parse().unwrap(), Some(22)).is_ok(),
             "{target}"
         );
         assert!(
-            validate_target_for_llvm_major(target, Some(23)).is_ok(),
+            validate_target_for_llvm_major(&target.parse().unwrap(), Some(23)).is_ok(),
             "{target}"
         );
     }
     for target in ["sm_87", "sm_103a", "sm_120a", "sm_121f"] {
         assert!(
-            validate_target_for_llvm_major(target, Some(21)).is_ok(),
+            validate_target_for_llvm_major(&target.parse().unwrap(), Some(21)).is_ok(),
             "{target}"
         );
     }
-    for target in ["sm_999a", "not-a-target", "compute_88"] {
-        assert!(
-            validate_target_for_llvm_major(target, Some(21)).is_ok(),
-            "unknown or non-sm target {target} must remain owned by other validators"
-        );
-    }
+    let target = "sm_999a";
+    assert!(
+        validate_target_for_llvm_major(&target.parse().unwrap(), Some(21)).is_ok(),
+        "unknown target {target} must remain owned by other validators"
+    );
     for (target, floor) in [
         ("sm_90a", 80),
         ("sm_100a", 86),
@@ -170,27 +188,36 @@ fn test_arch_satisfies_sm100_only_features() {
     // consumer Blackwell (sm_120) and Hopper (sm_90) cannot run them, even
     // though 120 > 100. This is the gemm_sol regression guard.
     for f in [DetectedFeatures::Blackwell, DetectedFeatures::TmaCtaGroup] {
-        assert!(arch_satisfies("sm_100a", f), "sm_100a must satisfy {f:?}");
-        assert!(arch_satisfies("sm_103a", f), "sm_103a must satisfy {f:?}");
-        assert!(arch_satisfies("sm_103f", f), "sm_103f must satisfy {f:?}");
         assert!(
-            !arch_satisfies("sm_100", f),
+            arch_satisfies(&"sm_100a".parse().unwrap(), f),
+            "sm_100a must satisfy {f:?}"
+        );
+        assert!(
+            arch_satisfies(&"sm_103a".parse().unwrap(), f),
+            "sm_103a must satisfy {f:?}"
+        );
+        assert!(
+            arch_satisfies(&"sm_103f".parse().unwrap(), f),
+            "sm_103f must satisfy {f:?}"
+        );
+        assert!(
+            !arch_satisfies(&"sm_100".parse().unwrap(), f),
             "generic sm_100 must NOT satisfy {f:?}"
         );
         assert!(
-            !arch_satisfies("sm_120a", f),
+            !arch_satisfies(&"sm_120a".parse().unwrap(), f),
             "sm_120a must NOT satisfy {f:?}"
         );
         assert!(
-            !arch_satisfies("sm_90a", f),
+            !arch_satisfies(&"sm_90a".parse().unwrap(), f),
             "sm_90a must NOT satisfy {f:?}"
         );
         assert!(
-            !arch_satisfies("sm_102a", f),
+            !arch_satisfies(&"sm_102a".parse().unwrap(), f),
             "unknown architecture-specific targets must not be accepted"
         );
         assert!(
-            !arch_satisfies("sm_102f", f),
+            !arch_satisfies(&"sm_102f".parse().unwrap(), f),
             "unknown family-specific targets must not be accepted"
         );
     }
@@ -202,13 +229,13 @@ fn test_arch_satisfies_base_tma_multicast_targets() {
         "sm_90", "sm_90a", "sm_100", "sm_100a", "sm_103f", "sm_110a", "sm_120", "sm_120a",
     ] {
         assert!(
-            arch_satisfies(arch, DetectedFeatures::TmaMulticast),
+            arch_satisfies(&arch.parse().unwrap(), DetectedFeatures::TmaMulticast),
             "{arch}"
         );
     }
     for arch in ["sm_80", "sm_89", "sm_102a", "sm_102f"] {
         assert!(
-            !arch_satisfies(arch, DetectedFeatures::TmaMulticast),
+            !arch_satisfies(&arch.parse().unwrap(), DetectedFeatures::TmaMulticast),
             "{arch}"
         );
     }
@@ -216,10 +243,22 @@ fn test_arch_satisfies_base_tma_multicast_targets() {
 
 #[test]
 fn test_arch_satisfies_wgmma_is_hopper_only() {
-    assert!(arch_satisfies("sm_90a", DetectedFeatures::Wgmma));
-    assert!(!arch_satisfies("sm_90", DetectedFeatures::Wgmma));
-    assert!(!arch_satisfies("sm_100a", DetectedFeatures::Wgmma));
-    assert!(!arch_satisfies("sm_120a", DetectedFeatures::Wgmma));
+    assert!(arch_satisfies(
+        &"sm_90a".parse().unwrap(),
+        DetectedFeatures::Wgmma
+    ));
+    assert!(!arch_satisfies(
+        &"sm_90".parse().unwrap(),
+        DetectedFeatures::Wgmma
+    ));
+    assert!(!arch_satisfies(
+        &"sm_100a".parse().unwrap(),
+        DetectedFeatures::Wgmma
+    ));
+    assert!(!arch_satisfies(
+        &"sm_120a".parse().unwrap(),
+        DetectedFeatures::Wgmma
+    ));
 }
 
 #[test]
@@ -229,7 +268,7 @@ fn test_arch_satisfies_blackwell_matrix_family_targets() {
         "sm_120f", "sm_121f",
     ] {
         assert!(
-            arch_satisfies(arch, DetectedFeatures::MatrixBlackwell),
+            arch_satisfies(&arch.parse().unwrap(), DetectedFeatures::MatrixBlackwell),
             "{arch}"
         );
     }
@@ -238,43 +277,61 @@ fn test_arch_satisfies_blackwell_matrix_family_targets() {
         "sm_120f", "sm_121f",
     ] {
         assert!(
-            arch_satisfies(arch, DetectedFeatures::BlackwellFamily),
+            arch_satisfies(&arch.parse().unwrap(), DetectedFeatures::BlackwellFamily),
             "{arch}"
         );
     }
     for arch in ["sm_101a", "sm_101f"] {
-        assert!(!arch_satisfies(arch, DetectedFeatures::MatrixBlackwell));
+        assert!(!arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::MatrixBlackwell
+        ));
     }
     for arch in ["sm_103a", "sm_121a"] {
-        assert!(!arch_satisfies(arch, DetectedFeatures::BlackwellFamily));
+        assert!(!arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::BlackwellFamily
+        ));
     }
     for arch in [
         "sm_100a", "sm_101a", "sm_103a", "sm_110a", "sm_100f", "sm_103f", "sm_110f",
     ] {
         assert!(
-            arch_satisfies(arch, DetectedFeatures::BlackwellAccelerated),
+            arch_satisfies(
+                &arch.parse().unwrap(),
+                DetectedFeatures::BlackwellAccelerated
+            ),
             "{arch}"
         );
     }
     for arch in ["sm_100", "sm_120a", "sm_120f", "sm_102f"] {
         assert!(
-            !arch_satisfies(arch, DetectedFeatures::BlackwellAccelerated),
+            !arch_satisfies(
+                &arch.parse().unwrap(),
+                DetectedFeatures::BlackwellAccelerated
+            ),
             "{arch}"
         );
     }
     for arch in ["sm_100", "sm_103", "sm_110", "sm_120", "sm_121a"] {
-        assert!(arch_satisfies(arch, DetectedFeatures::Sm100), "{arch}");
+        assert!(
+            arch_satisfies(&arch.parse().unwrap(), DetectedFeatures::Sm100),
+            "{arch}"
+        );
     }
     for arch in ["sm_90a", "sm_102", "sm_102a"] {
-        assert!(!arch_satisfies(arch, DetectedFeatures::Sm100), "{arch}");
+        assert!(
+            !arch_satisfies(&arch.parse().unwrap(), DetectedFeatures::Sm100),
+            "{arch}"
+        );
     }
     for arch in ["sm_90a", "sm_100", "sm_102f", "sm_120"] {
         assert!(
-            !arch_satisfies(arch, DetectedFeatures::MatrixBlackwell),
+            !arch_satisfies(&arch.parse().unwrap(), DetectedFeatures::MatrixBlackwell),
             "{arch}"
         );
         assert!(
-            !arch_satisfies(arch, DetectedFeatures::BlackwellFamily),
+            !arch_satisfies(&arch.parse().unwrap(), DetectedFeatures::BlackwellFamily),
             "{arch}"
         );
     }
@@ -288,28 +345,91 @@ fn test_arch_satisfies_forward_compatible_features() {
     // So a consumer sm_120 GPU is a valid target for these (it runs locally
     // instead of being downgraded to the feature floor).
     for arch in ["sm_90a", "sm_100a", "sm_120a"] {
-        assert!(arch_satisfies(arch, DetectedFeatures::Tma));
-        assert!(arch_satisfies(arch, DetectedFeatures::Cluster));
-        assert!(arch_satisfies(arch, DetectedFeatures::Sm90));
-        assert!(arch_satisfies(arch, DetectedFeatures::Sm80));
-        assert!(arch_satisfies(arch, DetectedFeatures::Movmatrix));
-        assert!(arch_satisfies(arch, DetectedFeatures::Ldmatrix));
-        assert!(arch_satisfies(arch, DetectedFeatures::Basic));
+        assert!(arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::Tma
+        ));
+        assert!(arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::Cluster
+        ));
+        assert!(arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::Sm90
+        ));
+        assert!(arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::Sm80
+        ));
+        assert!(arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::Movmatrix
+        ));
+        assert!(arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::Ldmatrix
+        ));
+        assert!(arch_satisfies(
+            &arch.parse().unwrap(),
+            DetectedFeatures::Basic
+        ));
     }
-    assert!(arch_satisfies("sm_80", DetectedFeatures::Sm80));
-    assert!(!arch_satisfies("sm_75", DetectedFeatures::Sm80));
-    assert!(arch_satisfies("sm_75", DetectedFeatures::Movmatrix));
-    assert!(arch_satisfies("sm_80", DetectedFeatures::Movmatrix));
-    assert!(!arch_satisfies("sm_70", DetectedFeatures::Movmatrix));
-    assert!(arch_satisfies("sm_75", DetectedFeatures::Ldmatrix));
-    assert!(!arch_satisfies("sm_70", DetectedFeatures::Ldmatrix));
-    assert!(arch_satisfies("sm_80", DetectedFeatures::Basic));
-    assert!(arch_satisfies("sm_75", DetectedFeatures::Basic));
-    assert!(arch_satisfies("sm_70", DetectedFeatures::Basic));
-    assert!(!arch_satisfies("sm_80", DetectedFeatures::Tma));
-    assert!(!arch_satisfies("sm_80", DetectedFeatures::Sm90));
-    assert!(!arch_satisfies("sm_80a", DetectedFeatures::Basic));
-    assert!(!arch_satisfies("sm_90f", DetectedFeatures::Tma));
+    assert!(arch_satisfies(
+        &"sm_80".parse().unwrap(),
+        DetectedFeatures::Sm80
+    ));
+    assert!(!arch_satisfies(
+        &"sm_75".parse().unwrap(),
+        DetectedFeatures::Sm80
+    ));
+    assert!(arch_satisfies(
+        &"sm_75".parse().unwrap(),
+        DetectedFeatures::Movmatrix
+    ));
+    assert!(arch_satisfies(
+        &"sm_80".parse().unwrap(),
+        DetectedFeatures::Movmatrix
+    ));
+    assert!(!arch_satisfies(
+        &"sm_70".parse().unwrap(),
+        DetectedFeatures::Movmatrix
+    ));
+    assert!(arch_satisfies(
+        &"sm_75".parse().unwrap(),
+        DetectedFeatures::Ldmatrix
+    ));
+    assert!(!arch_satisfies(
+        &"sm_70".parse().unwrap(),
+        DetectedFeatures::Ldmatrix
+    ));
+    assert!(arch_satisfies(
+        &"sm_80".parse().unwrap(),
+        DetectedFeatures::Basic
+    ));
+    assert!(arch_satisfies(
+        &"sm_75".parse().unwrap(),
+        DetectedFeatures::Basic
+    ));
+    assert!(arch_satisfies(
+        &"sm_70".parse().unwrap(),
+        DetectedFeatures::Basic
+    ));
+    assert!(!arch_satisfies(
+        &"sm_80".parse().unwrap(),
+        DetectedFeatures::Tma
+    ));
+    assert!(!arch_satisfies(
+        &"sm_80".parse().unwrap(),
+        DetectedFeatures::Sm90
+    ));
+    assert!(!arch_satisfies(
+        &"sm_80a".parse().unwrap(),
+        DetectedFeatures::Basic
+    ));
+    assert!(!arch_satisfies(
+        &"sm_90f".parse().unwrap(),
+        DetectedFeatures::Tma
+    ));
 }
 
 #[test]
@@ -321,8 +441,21 @@ fn resolve_ptx_target_threads_a_caller_supplied_source_label() {
         DetectedFeatures::Basic,
     )
     .unwrap();
-    assert_eq!(target, "sm_80");
+    assert_eq!(target.sm(), "sm_80");
     assert_eq!(source, "the requested Target");
+}
+
+#[test]
+fn resolve_ptx_target_ignores_compute_spelled_device_hints() {
+    let (target, source) = resolve_ptx_target(
+        None,
+        "CUDA_OXIDE_TARGET",
+        Some("compute_80"),
+        DetectedFeatures::Basic,
+    )
+    .unwrap();
+    assert_eq!(target.sm(), "sm_80");
+    assert_eq!(source, "feature requirement");
 }
 
 #[test]
@@ -352,4 +485,38 @@ fn resolve_ptx_target_failure_does_not_assume_an_env_var_source() {
         !parse_error.to_string().contains("CUDA_OXIDE_TARGET"),
         "{parse_error}"
     );
+}
+
+#[test]
+fn malformed_low_width_targets_keep_override_errors_and_ignore_device_hints() {
+    for (spelling, expected_reason) in [
+        (
+            "sm_05",
+            "invalid CUDA target `sm_5`: compute capability must contain at least two digits (target from test override)",
+        ),
+        (
+            "sm_",
+            "invalid CUDA target `sm_`: compute capability is not a valid integer (target from test override)",
+        ),
+    ] {
+        let explicit = resolve_ptx_target(
+            Some(spelling),
+            "test override",
+            None,
+            DetectedFeatures::Basic,
+        )
+        .unwrap_err();
+        assert!(matches!(explicit, PipelineError::TargetSelection { .. }));
+        assert_eq!(explicit.to_string(), expected_reason);
+
+        let (target, source) = resolve_ptx_target(
+            None,
+            "test override",
+            Some(spelling),
+            DetectedFeatures::Basic,
+        )
+        .unwrap();
+        assert_eq!(target.sm(), "sm_80");
+        assert_eq!(source, "feature requirement");
+    }
 }

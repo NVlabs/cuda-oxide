@@ -14,7 +14,6 @@ use crate::target::detect::*;
 use crate::target::features::*;
 use crate::target::generated_requirements::*;
 use crate::target::select::*;
-use cuda_target_spec::{PTX_ISA_SPELLINGS, RECORDED_PTX_FLOORS};
 use libnvvm_sys::CudaArch;
 
 #[test]
@@ -23,67 +22,90 @@ fn paired_target_floors_compose_with_target_cpu_minima() {
 
     assert_eq!(
         generated_ptx_isa_requirement(&generated).unwrap(),
-        PtxIsaRequirement::Ptx86
+        PtxIsaRequirement::new(86)
     );
     for target in ["sm_100a", "sm_101a", "sm_103a", "sm_110a"] {
-        assert!(generated_target_satisfied(target, &generated), "{target}");
+        assert!(
+            generated_target_satisfied(&target.parse().unwrap(), &generated),
+            "{target}"
+        );
     }
     for (target, requirement) in [
-        ("sm_100a", PtxIsaRequirement::Ptx86),
-        ("sm_101a", PtxIsaRequirement::Ptx86),
-        ("sm_103a", PtxIsaRequirement::Ptx88),
-        ("sm_110a", PtxIsaRequirement::Ptx90),
+        ("sm_100a", PtxIsaRequirement::new(86)),
+        ("sm_101a", PtxIsaRequirement::new(86)),
+        ("sm_103a", PtxIsaRequirement::new(88)),
+        ("sm_110a", PtxIsaRequirement::new(90)),
     ] {
         assert_eq!(
-            generated_ptx_isa_requirement_for_target(&generated, target).unwrap(),
+            generated_ptx_isa_requirement_for_target(&generated, &target.parse().unwrap()).unwrap(),
             requirement
         );
-        assert_eq!(required_ptx_feature(target, requirement).unwrap(), None);
+        assert_eq!(
+            required_ptx_feature(&target.parse().unwrap(), requirement).unwrap(),
+            None
+        );
     }
     assert_eq!(
-        generated_requirement_ptx_floor("sm_103a", TCGEN_F16.requirement),
+        generated_requirement_ptx_floor(&"sm_103a".parse().unwrap(), TCGEN_F16.requirement),
         Some(88)
     );
     assert_eq!(
-        generated_requirement_ptx_floor("sm_110a", TCGEN_F16.requirement),
+        generated_requirement_ptx_floor(&"sm_110a".parse().unwrap(), TCGEN_F16.requirement),
         Some(90)
     );
     for target in ["sm_120a", "sm_121a"] {
-        assert!(!generated_target_satisfied(target, &generated), "{target}");
+        assert!(
+            !generated_target_satisfied(&target.parse().unwrap(), &generated),
+            "{target}"
+        );
     }
     for target in ["sm_100f", "sm_101f", "sm_103f", "sm_110f"] {
-        assert!(generated_target_satisfied(target, &generated), "{target}");
+        assert!(
+            generated_target_satisfied(&target.parse().unwrap(), &generated),
+            "{target}"
+        );
     }
     assert_eq!(
-        select_target_with_generated(DetectedFeatures::Basic, &generated).unwrap(),
+        select_target_with_generated(DetectedFeatures::Basic, &generated)
+            .unwrap()
+            .sm(),
         "sm_100a"
     );
 
     let generated = GeneratedModuleRequirements::from_targets(vec![&TCGEN_I8]);
     assert_eq!(
         generated_ptx_isa_requirement(&generated).unwrap(),
-        PtxIsaRequirement::Ptx86
+        PtxIsaRequirement::new(86)
     );
     assert_eq!(
-        generated_ptx_isa_requirement_for_target(&generated, "sm_100a").unwrap(),
-        PtxIsaRequirement::Ptx86
+        generated_ptx_isa_requirement_for_target(&generated, &"sm_100a".parse().unwrap()).unwrap(),
+        PtxIsaRequirement::new(86)
     );
     assert_eq!(
-        required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx86).unwrap(),
+        required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(86)).unwrap(),
         None
     );
     for (target, requirement) in [
-        ("sm_101a", PtxIsaRequirement::Ptx86),
-        ("sm_110a", PtxIsaRequirement::Ptx90),
+        ("sm_101a", PtxIsaRequirement::new(86)),
+        ("sm_110a", PtxIsaRequirement::new(90)),
     ] {
         assert_eq!(
-            generated_ptx_isa_requirement_for_target(&generated, target).unwrap(),
+            generated_ptx_isa_requirement_for_target(&generated, &target.parse().unwrap()).unwrap(),
             requirement
         );
-        assert_eq!(required_ptx_feature(target, requirement).unwrap(), None);
+        assert_eq!(
+            required_ptx_feature(&target.parse().unwrap(), requirement).unwrap(),
+            None
+        );
     }
-    assert!(!generated_target_satisfied("sm_103a", &generated));
-    assert!(!generated_target_satisfied("sm_100f", &generated));
+    assert!(!generated_target_satisfied(
+        &"sm_103a".parse().unwrap(),
+        &generated
+    ));
+    assert!(!generated_target_satisfied(
+        &"sm_100f".parse().unwrap(),
+        &generated
+    ));
 }
 
 #[test]
@@ -91,7 +113,8 @@ fn sm101_aliases_reject_an_aggregate_ptx90_requirement() {
     let generated = GeneratedModuleRequirements::from_targets(vec![&TCGEN_F16, &PTX90]);
 
     for target in ["sm_101a", "sm_101f"] {
-        let error = generated_ptx_isa_requirement_for_target(&generated, target).unwrap_err();
+        let error = generated_ptx_isa_requirement_for_target(&generated, &target.parse().unwrap())
+            .unwrap_err();
         assert!(
             error.contains("renamed the sm_101 target to sm_110"),
             "{error}"
@@ -100,9 +123,11 @@ fn sm101_aliases_reject_an_aggregate_ptx90_requirement() {
         let f16 = GeneratedModuleRequirements::from_targets(vec![&TCGEN_F16]);
         let text = ModuleRequirements {
             features: DetectedFeatures::Basic,
-            ptx_isa: PtxIsaRequirement::Ptx90,
+            ptx_isa: PtxIsaRequirement::new(90),
         };
-        let error = merge_generated_module_requirements_for_target(text, &f16, target).unwrap_err();
+        let error =
+            merge_generated_module_requirements_for_target(text, &f16, &target.parse().unwrap())
+                .unwrap_err();
         assert!(
             error.contains("renamed the sm_101 target to sm_110"),
             "{error}"
@@ -126,7 +151,7 @@ fn dynamic_stack_calls_require_ptx73_and_sm52() {
                 .contains(DetectedFeatures::DynamicStack),
             "{llvm}"
         );
-        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::Ptx73, "{llvm}");
+        assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(73), "{llvm}");
     }
 
     for near_match in [
@@ -207,63 +232,36 @@ fn dynamic_stack_mentions_without_calls_do_not_raise_requirements() {
 fn ptx73_feature_is_requested_only_when_the_target_default_is_older() {
     assert_eq!(
         ptx_isa_requirement_for_floor(72, "test", "test").unwrap(),
-        PtxIsaRequirement::Ptx73
+        PtxIsaRequirement::new(73)
     );
     assert_eq!(
         ptx_isa_requirement_for_floor(73, "test", "test").unwrap(),
-        PtxIsaRequirement::Ptx73
+        PtxIsaRequirement::new(73)
     );
     assert_eq!(
         ptx_isa_requirement_for_floor(74, "test", "test").unwrap(),
-        PtxIsaRequirement::Ptx78
+        PtxIsaRequirement::new(78)
     );
     for target in ["sm_70", "sm_80", "sm_86"] {
         assert_eq!(
-            required_ptx_feature(target, PtxIsaRequirement::Ptx73).unwrap(),
+            required_ptx_feature(&target.parse().unwrap(), PtxIsaRequirement::new(73)).unwrap(),
             Some("+ptx73"),
             "{target}"
         );
     }
     assert_eq!(
-        required_ptx_feature("sm_87", PtxIsaRequirement::Ptx73).unwrap(),
+        required_ptx_feature(&"sm_87".parse().unwrap(), PtxIsaRequirement::new(73)).unwrap(),
         None
     );
 }
 
 #[test]
-fn every_shared_ptx_spelling_round_trips() {
-    for spelling in PTX_ISA_SPELLINGS {
-        let requirement = PtxIsaRequirement::from_spelling(*spelling).unwrap();
-        assert_eq!(requirement.spelling(), Some(*spelling));
-        assert!(requirement.feature().is_some());
-    }
-}
-
-#[test]
-fn selection_candidates_cover_exactly_the_recorded_target_set() {
-    let candidates = KNOWN_CUDA_TARGET_CANDIDATES
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
-    let recorded = RECORDED_PTX_FLOORS
-        .iter()
-        .map(|entry| match entry.suffix {
-            Some(suffix) => format!("sm_{}{suffix}", entry.capability),
-            None => format!("sm_{}", entry.capability),
-        })
-        .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        candidates,
-        recorded.iter().map(String::as_str).collect(),
-        "selection preference list and shared recorded-floor keys drifted"
-    );
-}
-
-#[test]
 fn unrecorded_target_fails_closed_for_explicit_ptx() {
-    let error = required_ptx_feature("sm_89a", PtxIsaRequirement::Ptx80).unwrap_err();
+    let error =
+        required_ptx_feature(&"sm_89a".parse().unwrap(), PtxIsaRequirement::new(80)).unwrap_err();
     assert!(error.contains("no recorded PTX ISA floor"));
-    let error = required_ptx_feature("sm_999a", PtxIsaRequirement::Default).unwrap_err();
+    let error =
+        required_ptx_feature(&"sm_999a".parse().unwrap(), PtxIsaRequirement::Default).unwrap_err();
     assert!(error.contains("no recorded PTX ISA floor"));
 }
 
@@ -293,10 +291,22 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
     let libnvvm = GeneratedModuleRequirements::from_targets(vec![&TCGEN_I8])
         .for_backend(GeneratedIntrinsicBackend::LibNvvm);
 
-    assert!(generated_target_satisfied("sm_101a", &llvm));
-    assert!(!generated_target_satisfied("sm_101a", &libnvvm));
-    assert!(!generated_target_satisfied("sm_103a", &llvm));
-    assert!(generated_target_satisfied("sm_110a", &libnvvm));
+    assert!(generated_target_satisfied(
+        &"sm_101a".parse().unwrap(),
+        &llvm
+    ));
+    assert!(!generated_target_satisfied(
+        &"sm_101a".parse().unwrap(),
+        &libnvvm
+    ));
+    assert!(!generated_target_satisfied(
+        &"sm_103a".parse().unwrap(),
+        &llvm
+    ));
+    assert!(generated_target_satisfied(
+        &"sm_110a".parse().unwrap(),
+        &libnvvm
+    ));
 
     assert_eq!(
         resolve_ptx_target_with_generated(
@@ -307,7 +317,7 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
             &llvm,
         )
         .unwrap(),
-        ("sm_101a".into(), "CUDA_OXIDE_TARGET")
+        ("sm_101a".parse().unwrap(), "CUDA_OXIDE_TARGET")
     );
     assert!(
         resolve_ptx_target_with_generated(
@@ -328,7 +338,7 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
             &llvm,
         )
         .unwrap(),
-        ("sm_101a".into(), "detected GPU")
+        ("sm_101a".parse().unwrap(), "detected GPU")
     );
     assert_eq!(
         resolve_ptx_target_with_generated(
@@ -339,7 +349,7 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
             &libnvvm,
         )
         .unwrap(),
-        ("sm_100a".into(), "feature requirement")
+        ("sm_100a".parse().unwrap(), "feature requirement")
     );
     assert_eq!(
         resolve_ptx_target_with_generated(
@@ -350,7 +360,7 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
             &llvm
         )
         .unwrap(),
-        ("sm_100a".into(), "feature requirement")
+        ("sm_100a".parse().unwrap(), "feature requirement")
     );
 
     let base = ModuleRequirements {
@@ -358,16 +368,16 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
         ptx_isa: PtxIsaRequirement::Default,
     };
     assert_eq!(
-        merge_generated_module_requirements_for_target(base, &llvm, "sm_101a")
+        merge_generated_module_requirements_for_target(base, &llvm, &"sm_101a".parse().unwrap())
             .unwrap()
             .ptx_isa,
-        PtxIsaRequirement::Ptx86
+        PtxIsaRequirement::new(86)
     );
     assert_eq!(
-        merge_generated_module_requirements_for_target(base, &llvm, "sm_110a")
+        merge_generated_module_requirements_for_target(base, &llvm, &"sm_110a".parse().unwrap())
             .unwrap()
             .ptx_isa,
-        PtxIsaRequirement::Ptx90
+        PtxIsaRequirement::new(90)
     );
 
     let error =
@@ -395,33 +405,38 @@ fn generated_ptx87_exact_sm120a_requirement_is_preserved() {
 
     assert_eq!(
         generated_ptx_isa_requirement(&generated).unwrap(),
-        PtxIsaRequirement::Ptx87
+        PtxIsaRequirement::new(87)
     );
-    assert!(PtxIsaRequirement::Ptx86 < PtxIsaRequirement::Ptx87);
+    assert!(PtxIsaRequirement::new(86) < PtxIsaRequirement::new(87));
     assert_eq!(
-        required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx87).unwrap(),
+        required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(87)).unwrap(),
         Some("+ptx87")
     );
     assert_eq!(
-        required_ptx_feature("sm_120a", PtxIsaRequirement::Ptx87).unwrap(),
+        required_ptx_feature(&"sm_120a".parse().unwrap(), PtxIsaRequirement::new(87)).unwrap(),
         None
     );
     assert_eq!(
-        required_ptx_feature("sm_100f", PtxIsaRequirement::Ptx87).unwrap(),
+        required_ptx_feature(&"sm_100f".parse().unwrap(), PtxIsaRequirement::new(87)).unwrap(),
         None
     );
     assert_eq!(
-        required_ptx_feature("sm_120f", PtxIsaRequirement::Ptx87).unwrap(),
+        required_ptx_feature(&"sm_120f".parse().unwrap(), PtxIsaRequirement::new(87)).unwrap(),
         None
     );
     assert_eq!(
-        select_target_with_generated(DetectedFeatures::Basic, &generated).unwrap(),
+        select_target_with_generated(DetectedFeatures::Basic, &generated)
+            .unwrap()
+            .sm(),
         "sm_120a"
     );
-    assert!(generated_target_satisfied("sm_120a", &generated));
+    assert!(generated_target_satisfied(
+        &"sm_120a".parse().unwrap(),
+        &generated
+    ));
     for incompatible in ["sm_120", "sm_120f", "sm_121a"] {
         assert!(
-            !generated_target_satisfied(incompatible, &generated),
+            !generated_target_satisfied(&incompatible.parse().unwrap(), &generated),
             "{incompatible}"
         );
     }
@@ -432,35 +447,35 @@ fn generated_ptx88_and_ptx90_floors_are_preserved() {
     let generated = GeneratedModuleRequirements::from_targets(vec![&PTX88]);
     assert_eq!(
         generated_ptx_isa_requirement(&generated).unwrap(),
-        PtxIsaRequirement::Ptx88
+        PtxIsaRequirement::new(88)
     );
     assert_eq!(
-        required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx88).unwrap(),
+        required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(88)).unwrap(),
         Some("+ptx88")
     );
     assert_eq!(
-        required_ptx_feature("sm_103a", PtxIsaRequirement::Ptx88).unwrap(),
+        required_ptx_feature(&"sm_103a".parse().unwrap(), PtxIsaRequirement::new(88)).unwrap(),
         None
     );
     assert_eq!(
         ptx_isa_requirement_for_floor(89, "test", "test").unwrap(),
-        PtxIsaRequirement::Ptx90
+        PtxIsaRequirement::new(90)
     );
     assert_eq!(
-        required_ptx_feature("sm_100a", PtxIsaRequirement::Ptx90).unwrap(),
+        required_ptx_feature(&"sm_100a".parse().unwrap(), PtxIsaRequirement::new(90)).unwrap(),
         Some("+ptx90")
     );
     assert_eq!(
-        required_ptx_feature("sm_110a", PtxIsaRequirement::Ptx90).unwrap(),
+        required_ptx_feature(&"sm_110a".parse().unwrap(), PtxIsaRequirement::new(90)).unwrap(),
         None
     );
-    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx87, Some(21)).unwrap();
-    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, None).unwrap();
-    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, Some(21)).unwrap();
-    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx88, Some(22)).unwrap();
-    assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, None).is_err());
-    assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, Some(21)).is_err());
-    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::Ptx90, Some(22)).unwrap();
+    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(87), Some(21)).unwrap();
+    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(88), None).unwrap();
+    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(88), Some(21)).unwrap();
+    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(88), Some(22)).unwrap();
+    assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(90), None).is_err());
+    assert!(validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(90), Some(21)).is_err());
+    validate_ptx_isa_for_llvm_major(PtxIsaRequirement::new(90), Some(22)).unwrap();
 
     let generated = GeneratedModuleRequirements::from_targets(vec![&PTX91_FUTURE]);
     let error = generated_ptx_isa_requirement(&generated).unwrap_err();
@@ -484,12 +499,12 @@ fn generated_redux_floor_matches_the_lowered_ptx_detector() {
         generated_ptx_isa_requirement(&generated).unwrap(),
         detected.ptx_isa
     );
-    assert_eq!(detected.ptx_isa, PtxIsaRequirement::Ptx70);
+    assert_eq!(detected.ptx_isa, PtxIsaRequirement::new(70));
     assert!(detected.features.contains(DetectedFeatures::Sm80));
     for arch in ["sm_75", "sm_80", "sm_90"] {
         assert_eq!(
-            generated_target_satisfied(arch, &generated),
-            arch_satisfies(arch, detected.features),
+            generated_target_satisfied(&arch.parse().unwrap(), &generated),
+            arch_satisfies(&arch.parse().unwrap(), detected.features),
             "{arch}"
         );
     }
@@ -504,21 +519,30 @@ fn generated_packed_atomic_floors_are_backend_specific() {
     let f16 = generated_intrinsic_target_by_marker("v1:i0014").unwrap();
     let llvm = GeneratedModuleRequirements::from_targets(vec![f16])
         .for_backend(GeneratedIntrinsicBackend::LlvmNvptx);
-    assert!(generated_target_satisfied("sm_70", &llvm));
+    assert!(generated_target_satisfied(&"sm_70".parse().unwrap(), &llvm));
     assert_eq!(
         generated_ptx_isa_requirement(&llvm).unwrap(),
-        PtxIsaRequirement::Ptx62
+        PtxIsaRequirement::new(62)
     );
 
     let libnvvm = GeneratedModuleRequirements::from_targets(vec![f16])
         .for_backend(GeneratedIntrinsicBackend::LibNvvm);
-    assert!(!generated_target_satisfied("sm_70", &libnvvm));
-    assert!(generated_target_satisfied("sm_75", &libnvvm));
+    assert!(!generated_target_satisfied(
+        &"sm_70".parse().unwrap(),
+        &libnvvm
+    ));
+    assert!(generated_target_satisfied(
+        &"sm_75".parse().unwrap(),
+        &libnvvm
+    ));
 
     let bf16 = generated_intrinsic_target_by_marker("v1:i0015").unwrap();
     let bf16 = GeneratedModuleRequirements::from_targets(vec![bf16]);
-    assert!(!generated_target_satisfied("sm_89", &bf16));
-    assert!(generated_target_satisfied("sm_90", &bf16));
+    assert!(!generated_target_satisfied(
+        &"sm_89".parse().unwrap(),
+        &bf16
+    ));
+    assert!(generated_target_satisfied(&"sm_90".parse().unwrap(), &bf16));
     let error = resolve_ptx_target_with_generated(
         Some("sm_89"),
         "CUDA_OXIDE_TARGET",
@@ -554,45 +578,45 @@ fn generated_non_mma_tcgen05_targets_preserve_the_backend_split() {
 
         assert_eq!(
             generated_ptx_isa_requirement(&llvm).unwrap(),
-            PtxIsaRequirement::Ptx86,
+            PtxIsaRequirement::new(86),
             "{}",
             target.id
         );
         assert_eq!(
             generated_ptx_isa_requirement(&libnvvm).unwrap(),
-            PtxIsaRequirement::Ptx86,
+            PtxIsaRequirement::new(86),
             "{}",
             target.id
         );
         for arch in ["sm_100a", "sm_103a", "sm_110a"] {
             assert!(
-                generated_target_satisfied(arch, &llvm),
+                generated_target_satisfied(&arch.parse().unwrap(), &llvm),
                 "{} {arch}",
                 target.id
             );
             assert!(
-                generated_target_satisfied(arch, &libnvvm),
+                generated_target_satisfied(&arch.parse().unwrap(), &libnvvm),
                 "{} {arch}",
                 target.id
             );
         }
         assert!(
-            generated_target_satisfied("sm_101a", &llvm),
+            generated_target_satisfied(&"sm_101a".parse().unwrap(), &llvm),
             "{}",
             target.id
         );
         assert!(
-            !generated_target_satisfied("sm_101a", &libnvvm),
+            !generated_target_satisfied(&"sm_101a".parse().unwrap(), &libnvvm),
             "{}",
             target.id
         );
         assert!(
-            !generated_target_satisfied("sm_120a", &llvm),
+            !generated_target_satisfied(&"sm_120a".parse().unwrap(), &llvm),
             "{}",
             target.id
         );
         assert!(
-            !generated_target_satisfied("sm_120a", &libnvvm),
+            !generated_target_satisfied(&"sm_120a".parse().unwrap(), &libnvvm),
             "{}",
             target.id
         );
@@ -617,12 +641,19 @@ fn generated_packed_conversion_floors_require_ampere() {
                 GeneratedModuleRequirements::from_targets(vec![target]).for_backend(backend);
             assert_eq!(
                 generated_ptx_isa_requirement(&generated).unwrap(),
-                PtxIsaRequirement::Ptx70,
+                PtxIsaRequirement::new(70),
                 "{marker} {backend:?}"
             );
-            assert!(!generated_target_satisfied("sm_75", &generated), "{marker}");
-            assert!(generated_target_satisfied("sm_80", &generated), "{marker}");
-            let error = validate_generated_target("sm_75", &generated).unwrap_err();
+            assert!(
+                !generated_target_satisfied(&"sm_75".parse().unwrap(), &generated),
+                "{marker}"
+            );
+            assert!(
+                generated_target_satisfied(&"sm_80".parse().unwrap(), &generated),
+                "{marker}"
+            );
+            let error =
+                validate_generated_target(&"sm_75".parse().unwrap(), &generated).unwrap_err();
             assert!(error.contains(target.id), "{error}");
             assert!(error.contains("sm_80 or newer"), "{error}");
         }
@@ -649,12 +680,19 @@ fn generated_cp_async_floors_require_ampere() {
                 GeneratedModuleRequirements::from_targets(vec![target]).for_backend(backend);
             assert_eq!(
                 generated_ptx_isa_requirement(&generated).unwrap(),
-                PtxIsaRequirement::Ptx70,
+                PtxIsaRequirement::new(70),
                 "{marker} {backend:?}"
             );
-            assert!(!generated_target_satisfied("sm_75", &generated), "{marker}");
-            assert!(generated_target_satisfied("sm_80", &generated), "{marker}");
-            let error = validate_generated_target("sm_75", &generated).unwrap_err();
+            assert!(
+                !generated_target_satisfied(&"sm_75".parse().unwrap(), &generated),
+                "{marker}"
+            );
+            assert!(
+                generated_target_satisfied(&"sm_80".parse().unwrap(), &generated),
+                "{marker}"
+            );
+            let error =
+                validate_generated_target(&"sm_75".parse().unwrap(), &generated).unwrap_err();
             assert!(error.contains(target.id), "{error}");
             assert!(error.contains("sm_80 or newer"), "{error}");
         }
@@ -676,14 +714,20 @@ fn generated_dot_product_floors_record_sm61_and_split_backend_support() {
             GeneratedHardwareTarget::AnyOf(alternatives)
                 if alternatives == [GeneratedHardwareAlternative::MinimumSm(61)]
         ));
-        assert!(!generated_target_satisfied("sm_60", &llvm), "{marker}");
-        assert!(generated_target_satisfied("sm_70", &llvm), "{marker}");
+        assert!(
+            !generated_target_satisfied(&"sm_60".parse().unwrap(), &llvm),
+            "{marker}"
+        );
+        assert!(
+            generated_target_satisfied(&"sm_70".parse().unwrap(), &llvm),
+            "{marker}"
+        );
         assert_eq!(
             generated_ptx_isa_requirement(&llvm).unwrap(),
             PtxIsaRequirement::Default
         );
 
-        let error = validate_generated_target("sm_60", &llvm)
+        let error = validate_generated_target(&"sm_60".parse().unwrap(), &llvm)
             .unwrap_err()
             .to_string();
         assert!(error.contains(target.id), "{error}");
@@ -691,7 +735,13 @@ fn generated_dot_product_floors_record_sm61_and_split_backend_support() {
 
         let libnvvm = GeneratedModuleRequirements::from_targets(vec![target])
             .for_backend(GeneratedIntrinsicBackend::LibNvvm);
-        assert!(!generated_target_satisfied("sm_74", &libnvvm));
-        assert!(generated_target_satisfied("sm_75", &libnvvm));
+        assert!(!generated_target_satisfied(
+            &"sm_74".parse().unwrap(),
+            &libnvvm
+        ));
+        assert!(generated_target_satisfied(
+            &"sm_75".parse().unwrap(),
+            &libnvvm
+        ));
     }
 }

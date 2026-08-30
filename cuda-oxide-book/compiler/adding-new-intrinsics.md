@@ -1,13 +1,16 @@
 # Adding New Intrinsics
 
-So you want to teach cuda-oxide a new GPU trick. Maybe NVIDIA just shipped a new
-instruction, or you need an existing PTX operation that nobody has wired up yet.
-Good news: the process is mechanical. Five crates, five steps, and roughly thirty
-minutes once you have done it before.
+cuda-oxide has two intrinsic contribution paths. Most device intrinsics are
+**catalog-generated**: contributors edit reviewed catalog inputs and let
+`cuda-intrinsics-gen` produce the API, dialect, importer, lowering, target,
+reference, and probe surfaces together. Operations with bespoke verification or
+lowering that the catalog cannot express remain hand-written.
 
-This chapter walks through the full pipeline using two real examples -- one
-trivially simple, one with a few twists -- so you can see exactly what happens at
-each stage.
+Start with [Catalog-Generated Intrinsics](catalog-generated-intrinsics.md) unless
+you have established that the existing catalog model cannot represent the
+operation. This chapter documents the compiler stages and the hand-written path,
+using generated intrinsics as concrete examples of the representations that
+flow through those stages.
 
 ---
 
@@ -92,6 +95,10 @@ The op used as the example just below is one of them: `tid.x` is a catalog
 intrinsic and its op lives in `ops/generated/sreg.rs` today. Adding an op there
 by hand is undone by the next generator run.
 
+For the contributor workflow that owns those generated files, including
+overlays, the append-only ABI ledger, regeneration, evidence, and local CI gates, see
+[Catalog-Generated Intrinsics](catalog-generated-intrinsics.md).
+
 The modules named above are the hand-written ones -- ops with bespoke
 verification or lowering that the catalog does not describe. The code in this
 section shows the shape an op takes either way; write it yourself only for that
@@ -165,8 +172,8 @@ before the intrinsic check.
 The `emit_generated_nvvm_intrinsic()` helper works for *any* zero-argument,
 single-result NVVM intrinsic. It creates the operation, tags it with its
 catalog ABI marker, stores the result in the value map, and emits a branch to
-the next basic block. You never write this arm yourself: describing the
-intrinsic in `intrinsics/catalog.json` makes `cuda-intrinsics-gen` emit it.
+the next basic block. You never write this arm yourself: once the reviewed overlay,
+ABI, and evidence inputs resolve into `intrinsics/catalog.json`, `cuda-intrinsics-gen` emits it.
 Hand-written arms in `terminator/mod.rs` exist only for what the catalog
 cannot describe.
 
@@ -373,7 +380,7 @@ the results of `mir.load`s from each operand's alloca slot, or
 operation. (These are not SSA values yet; `pliron::opts::mem2reg` will
 collapse the load/store chains once translation is complete.) For a catalog
 intrinsic you never write any of this: `cuda-intrinsics-gen` derives it from
-the entry in `intrinsics/catalog.json`.
+the resolved generated catalog.
 
 ### Stage 4 -- Lower to the LLVM dialect
 
@@ -569,9 +576,12 @@ describe), every file you need to touch, in order:
 6. **`llvm-export/src/export/`** -- *only if convergent*: add to
    `is_convergent_intrinsic()`.
 
-For a catalog intrinsic, steps 2 through 4 are not yours to write: add the
-entry to `intrinsics/catalog.json` and `cuda-intrinsics-gen` regenerates the
-op, the dispatch arm, and the conversion impl.
+For a catalog intrinsic, steps 2 through 4 are not yours to write. Extend the
+appropriate `intrinsics/overlay/*.toml` family, append the ABI entry in
+`intrinsics/abi-v1.toml`, add evidence only when the route requires it, and
+regenerate. `intrinsics/catalog.json` is generated and must not be edited by
+hand. See [Catalog-Generated Intrinsics](catalog-generated-intrinsics.md) for the
+complete workflow.
 
 ---
 
@@ -588,8 +598,6 @@ op, the dispatch arm, and the conversion impl.
 
 ---
 
-That is the entire process. Five files, each with a clear and narrow
-responsibility. The pattern is mechanical enough that adding a new intrinsic
-should take about thirty minutes once you have done it once -- most of that
-time spent reading the PTX ISA spec to figure out exactly what instruction
-you want.
+That is the hand-written pipeline end to end. For the majority catalog-generated
+path, use the overlay, ABI, evidence, generation, and validation workflow in
+[Catalog-Generated Intrinsics](catalog-generated-intrinsics.md).

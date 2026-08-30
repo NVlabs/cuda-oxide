@@ -13,7 +13,6 @@ use crate::target::{
     required_ptx_feature, resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
     validate_target_features, validate_target_for_llvm_major,
 };
-use libnvvm_sys::CudaArch;
 use llvm_export::export::DebugKind;
 use ptx_parse::{Document, EditScript, split_top_level};
 use std::path::{Path, PathBuf};
@@ -330,7 +329,7 @@ fn ptx_isa_with_debug_floor(
     debug_kind: DebugKind,
 ) -> PtxIsaRequirement {
     if debug_kind.variables_enabled() {
-        requirement.max(PtxIsaRequirement::Ptx78)
+        requirement.max(PtxIsaRequirement::new(78))
     } else {
         requirement
     }
@@ -547,7 +546,10 @@ fn generate_ptx_impl(
         record_diagnostic(
             &mut diagnostics,
             diagnostic_sink,
-            format!("Target: {target} (from {target_source}; detected {detected:?})"),
+            format!(
+                "Target: {} (from {target_source}; detected {detected:?})",
+                target.sm()
+            ),
         );
     }
 
@@ -633,18 +635,9 @@ fn generate_ptx_impl(
     let requirements =
         merge_generated_module_requirements_for_target(requirements, generated, &target)
             .map_err(PipelineError::PtxGeneration)?;
-    let parsed_target =
-        target
-            .parse::<CudaArch>()
-            .map_err(|error| PipelineError::TargetSelection {
-                target: target.clone(),
-                reason: format!(
-                    "{error} (while validating requirements from the final LLVM input)"
-                ),
-            })?;
-    validate_target_features(&parsed_target, requirements.features).map_err(|reason| {
+    validate_target_features(&target, requirements.features).map_err(|reason| {
         PipelineError::TargetSelection {
-            target: target.clone(),
+            target: target.sm(),
             reason: format!("{reason} (requirements from the final LLVM input)"),
         }
     })?;
@@ -673,7 +666,7 @@ fn generate_ptx_impl(
     }
 
     let mut llc_cmd = std::process::Command::new(&toolchain.llc_path);
-    llc_cmd.args(base_llc_args(&target));
+    llc_cmd.args(base_llc_args(&target.sm()));
     if let Some(feature) = required_ptx_feature(
         &target,
         ptx_isa_with_debug_floor(requirements.ptx_isa, debug_kind),
@@ -1105,15 +1098,15 @@ mod tests {
     fn full_debug_raises_the_ptx_isa_floor_only_when_below() {
         assert_eq!(
             ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full),
-            PtxIsaRequirement::Ptx78
+            PtxIsaRequirement::new(78)
         );
         assert_eq!(
-            ptx_isa_with_debug_floor(PtxIsaRequirement::Ptx70, DebugKind::Full),
-            PtxIsaRequirement::Ptx78
+            ptx_isa_with_debug_floor(PtxIsaRequirement::new(70), DebugKind::Full),
+            PtxIsaRequirement::new(78)
         );
         assert_eq!(
-            ptx_isa_with_debug_floor(PtxIsaRequirement::Ptx86, DebugKind::Full),
-            PtxIsaRequirement::Ptx86
+            ptx_isa_with_debug_floor(PtxIsaRequirement::new(86), DebugKind::Full),
+            PtxIsaRequirement::new(86)
         );
         assert_eq!(
             ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::LineTables),
@@ -1127,7 +1120,7 @@ mod tests {
         // feature; at sm_90a (floor 8.0) it is already satisfied.
         assert_eq!(
             required_ptx_feature(
-                "sm_80",
+                &"sm_80".parse().unwrap(),
                 ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full)
             )
             .unwrap(),
@@ -1135,7 +1128,7 @@ mod tests {
         );
         assert_eq!(
             required_ptx_feature(
-                "sm_90a",
+                &"sm_90a".parse().unwrap(),
                 ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full)
             )
             .unwrap(),
@@ -1166,11 +1159,11 @@ mod tests {
 
         let source = ModuleRequirements {
             features: DetectedFeatures::Sm80,
-            ptx_isa: PtxIsaRequirement::Ptx70,
+            ptx_isa: PtxIsaRequirement::new(70),
         };
         let llc_input = ModuleRequirements {
             features: DetectedFeatures::DynamicStack,
-            ptx_isa: PtxIsaRequirement::Ptx73,
+            ptx_isa: PtxIsaRequirement::new(73),
         };
 
         let merged = merge_module_requirements(source, llc_input);
@@ -1178,9 +1171,9 @@ mod tests {
             merged.features,
             DetectedFeatures::Sm80 | DetectedFeatures::DynamicStack
         );
-        assert_eq!(merged.ptx_isa, PtxIsaRequirement::Ptx73);
+        assert_eq!(merged.ptx_isa, PtxIsaRequirement::new(73));
         assert_eq!(
-            required_ptx_feature("sm_80", merged.ptx_isa).unwrap(),
+            required_ptx_feature(&"sm_80".parse().unwrap(), merged.ptx_isa).unwrap(),
             Some("+ptx73")
         );
     }
