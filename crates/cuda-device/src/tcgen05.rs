@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Tensor Core Gen 5 (tcgen05) for Blackwell architectures (sm_100+).
+//! Tensor Core Gen 5 (tcgen05) for datacenter Blackwell architectures (sm_100a family).
 //!
 //! tcgen05 is Blackwell's tensor core instruction set, replacing WGMMA from Hopper.
 //! The key architectural change is **single-thread MMA semantics** - one thread can
@@ -70,8 +70,14 @@
 //!
 //! # Hardware Support
 //!
-//! - **sm_100/sm_100a**: B100, B200 (Data Center)
-//! - **sm_120/sm_120a**: RTX 5090 (Consumer)
+//! - **sm_100/sm_100a**: B100, B200 (Datacenter Blackwell)
+//! - **sm_101a, sm_103a, sm_110a**: B300 (Blackwell Ultra), Jetson Thor
+//!   (robotics/embedded); rest of the TMEM-capable `compute_100` family
+//!   (same set the tcgen05 examples gate execution on: cc 10.0 / 10.1 /
+//!   10.3 / 11.0)
+//!
+//! Note: Consumer Blackwell (sm_120, RTX 50 series) does not implement TMEM or
+//! the tcgen05 instruction set; tensor operations on sm_120 use register-based `mma.sync`.
 
 use core::marker::PhantomData;
 

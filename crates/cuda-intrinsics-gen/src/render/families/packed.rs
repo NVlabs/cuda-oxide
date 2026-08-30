@@ -380,7 +380,7 @@ pub(in crate::render) fn packed_conversion_constraint(record: &CatalogIntrinsic)
 
 /// Whether the conversion lowers through a typed NVVM intrinsic call rather
 /// than inline PTX. Only the scalar-`f32` pair narrowed to FP8 does; see the
-/// matching predicate in `resolve.rs` for why.
+/// matching predicate in `resolve/families/packed_conversion.rs` for why.
 fn packed_conversion_uses_typed_nvvm(record: &CatalogIntrinsic) -> bool {
     let conversion = record
         .packed_conversion

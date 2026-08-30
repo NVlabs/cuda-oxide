@@ -130,12 +130,15 @@ runtime `Index`.
 
 ## Root cause
 
-In `crates/mir-importer/src/translator/rvalue.rs`, the `Rvalue::Ref` arm has
-five cases. Case 2 (`[Deref, Field, …]`) emits a `MirFieldAddrOp` for the
-first field, then walks the remaining projections in an inner loop that only
-handles further `Field`s — every other variant hits `_ => break`. After the
-loop, the function unconditionally returns the partial field address,
-**silently discarding** any tail projections, including a runtime `Index`.
+Before this fix, the `Rvalue::Ref` arm had five cases. Case 2
+(`[Deref, Field, …]`) emitted a `MirFieldAddrOp` for the first field, then
+walked the remaining projections in an inner loop that only handled further
+`Field`s; every other variant hit `_ => break`. After the loop, the function
+unconditionally returned the partial field address, **silently discarding**
+any tail projections, including a runtime `Index`.
+
+That arm lives in `crates/mir-importer/src/translator/rvalue/expr.rs`, and the
+address walk it delegates to in `…/rvalue/place_addr.rs`.
 
 The fix delegates the tail walk to the existing
 `translate_place_addr_from_slot` helper (which is now also extended to handle

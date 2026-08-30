@@ -815,7 +815,7 @@ pub(in crate::resolve) struct MbarrierBasicRecipe {
     pub(in crate::resolve) ptx_result: &'static str,
     pub(in crate::resolve) selection: &'static str,
     pub(in crate::resolve) selection_asm: &'static str,
-    pub(in crate::resolve) ptx_modifier: &'static str,
+    pub(in crate::resolve) ptx_modifiers: &'static [&'static str],
     pub(in crate::resolve) ptx_isa_section: &'static str,
     pub(in crate::resolve) ptx_isa_url: &'static str,
     pub(in crate::resolve) llvm_nvptx_mechanism: BackendLoweringMechanism,
@@ -848,7 +848,7 @@ pub(in crate::resolve) fn mbarrier_basic_recipe(
             ptx_result: "()",
             selection: "MBARRIER_INIT_SHARED",
             selection_asm: "mbarrier.init.shared.b64 \t[$addr], $count;",
-            ptx_modifier: "init",
+            ptx_modifiers: &["init", "shared", "b64"],
             ptx_isa_section: "9.7.14.16.12 Parallel Synchronization and Communication Instructions: mbarrier.init",
             ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-init",
             llvm_nvptx_mechanism: BackendLoweringMechanism::TypedNvvm,
@@ -876,13 +876,41 @@ pub(in crate::resolve) fn mbarrier_basic_recipe(
             ptx_result: "u64",
             selection: "MBARRIER_ARRIVE_SHARED",
             selection_asm: "mbarrier.arrive.shared.b64 \t$state, [$addr];",
-            ptx_modifier: "arrive",
+            ptx_modifiers: &["arrive", "shared", "b64"],
             ptx_isa_section: "9.7.14.16.16 Parallel Synchronization and Communication Instructions: mbarrier.arrive",
             ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive",
             llvm_nvptx_mechanism: BackendLoweringMechanism::TypedNvvm,
             lib_nvvm_mechanism: BackendLoweringMechanism::InlinePtx,
             properties: &["IntrConvergent", "IntrNoCallback"],
             summary: "Arrives at a CTA shared-memory barrier and returns its phase token.",
+        },
+        MbarrierBasicOperation::ArriveNoComplete => MbarrierBasicRecipe {
+            id: "mbarrier_arrive_no_complete",
+            abi_id: "i1017",
+            operation_key: "barrier.mbarrier.arrive.no_complete.shared.cta",
+            rust_arguments: &["*const u64", "u32"],
+            rust_result: "u64",
+            must_use: true,
+            adapter: MbarrierBasicAdapter::ArriveNoCompletePointerCountToToken,
+            dialect_op_type: "MbarrierArriveNoCompleteSharedOp",
+            dialect_op_name: "nvvm.mbarrier_arrive_no_complete_shared",
+            dialect_operands: &["ptr", "i32"],
+            dialect_results: &["i64"],
+            source_record: "int_nvvm_mbarrier_arrive_noComplete_shared",
+            llvm_symbol: "llvm.nvvm.mbarrier.arrive.noComplete.shared",
+            llvm_arguments: &["shared_ptr", "i32"],
+            llvm_results: &["i64"],
+            memory: "read_write",
+            ptx_result: "u64",
+            selection: "MBARRIER_ARRIVE_NOCOMPLETE_SHARED",
+            selection_asm: "mbarrier.arrive.noComplete.shared.b64 \t$state, [$addr], $count;",
+            ptx_modifiers: &["arrive", "noComplete", "shared", "b64"],
+            ptx_isa_section: "9.7.14.16.16 Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+            ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive",
+            llvm_nvptx_mechanism: BackendLoweringMechanism::TypedNvvm,
+            lib_nvvm_mechanism: BackendLoweringMechanism::InlinePtx,
+            properties: &["IntrConvergent", "IntrNoCallback"],
+            summary: "Arrives at a CTA shared-memory barrier by a dynamic count without completing the current phase and returns its prior opaque state.",
         },
         MbarrierBasicOperation::TestWait => MbarrierBasicRecipe {
             id: "mbarrier_test_wait",
@@ -904,7 +932,7 @@ pub(in crate::resolve) fn mbarrier_basic_recipe(
             ptx_result: "bool",
             selection: "MBARRIER_TEST_WAIT_SHARED",
             selection_asm: "mbarrier.test_wait.shared.b64 \t$res, [$addr], $state;",
-            ptx_modifier: "test_wait",
+            ptx_modifiers: &["test_wait", "shared", "b64"],
             ptx_isa_section: "9.7.14.16.19 Parallel Synchronization and Communication Instructions: mbarrier.test_wait / mbarrier.try_wait",
             ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-test-wait-mbarrier-try-wait",
             llvm_nvptx_mechanism: BackendLoweringMechanism::InlinePtx,
@@ -932,7 +960,7 @@ pub(in crate::resolve) fn mbarrier_basic_recipe(
             ptx_result: "()",
             selection: "MBARRIER_INVAL_SHARED",
             selection_asm: "mbarrier.inval.shared.b64 \t[$addr];",
-            ptx_modifier: "inval",
+            ptx_modifiers: &["inval", "shared", "b64"],
             ptx_isa_section: "9.7.14.16.13 Parallel Synchronization and Communication Instructions: mbarrier.inval",
             ptx_isa_url: "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-inval",
             llvm_nvptx_mechanism: BackendLoweringMechanism::TypedNvvm,
@@ -960,6 +988,11 @@ pub(in crate::resolve) fn mbarrier_expected_operands(
         MbarrierBasicOperation::Arrive => {
             vec![OperandPattern::Register, OperandPattern::Address]
         }
+        MbarrierBasicOperation::ArriveNoComplete => vec![
+            OperandPattern::Register,
+            OperandPattern::Address,
+            OperandPattern::Register,
+        ],
         MbarrierBasicOperation::TestWait => vec![
             OperandPattern::Register,
             OperandPattern::Address,
@@ -1078,7 +1111,12 @@ pub(in crate::resolve) fn validate_mbarrier_basic_policy(
     );
     ensure!(
         policy.expected_ptx.mnemonic == "mbarrier"
-            && policy.expected_ptx.modifiers == [recipe.ptx_modifier, "shared", "b64"]
+            && policy
+                .expected_ptx
+                .modifiers
+                .iter()
+                .map(String::as_str)
+                .eq(recipe.ptx_modifiers.iter().copied())
             && policy.expected_ptx.operands == mbarrier_expected_operands(mbarrier.operation),
         "{} expected PTX does not match its mbarrier recipe",
         policy.id

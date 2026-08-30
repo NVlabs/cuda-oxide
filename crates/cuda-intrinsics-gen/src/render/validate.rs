@@ -1027,6 +1027,20 @@ pub(super) fn validate_renderable(catalog: &CatalogFile) -> Result<()> {
                                         && record.dialect.results == ["i64"]
                                 }
                                 (
+                                    MbarrierBasicOperation::ArriveNoComplete,
+                                    MbarrierBasicAdapter::ArriveNoCompletePointerCountToToken,
+                                ) => {
+                                    record.rust.arguments == ["*const u64", "u32"]
+                                        && record.rust.result == "u64"
+                                        && record.rust.must_use
+                                        && record.llvm.as_ref().is_some_and(|llvm| {
+                                            llvm.arguments == ["shared_ptr", "i32"]
+                                                && llvm.results == ["i64"]
+                                        })
+                                        && record.dialect.operands == ["ptr", "i32"]
+                                        && record.dialect.results == ["i64"]
+                                }
+                                (
                                     MbarrierBasicOperation::TestWait,
                                     MbarrierBasicAdapter::TestWaitPointerTokenToPredicate,
                                 ) => {

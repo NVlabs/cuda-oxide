@@ -24,7 +24,7 @@
 //! MMA tiles. All tcgen05 instructions in a kernel must use the same
 //! cta_group value.
 //!
-//! NOTE: tcgen05 is Blackwell-only (sm_100/sm_120).
+//! NOTE: tcgen05 is Blackwell datacenter-only (sm_100a).
 //!
 //! Build and run with:
 //!   cargo oxide run tcgen05

@@ -7,13 +7,13 @@ use dialect_mir::types::{MirPtrType, address_space};
 use dialect_nvvm::ops::{
     ClusterBarrierModeAttr, ClusterBarrierOp, CpAsyncCa4Op, CpAsyncCaZfill4Op,
     CpAsyncMbarrierArriveNoIncOp, CpAsyncMbarrierArriveNoIncSharedOp, CpAsyncMbarrierArriveOp,
-    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, MbarrierArriveSharedOp,
-    MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp, ReadPtxSregClusterIdxOp,
-    ReadPtxSregNclusterIdOp, ScalarArithmeticFormatAttr, ScalarArithmeticOp,
-    ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr, ScalarArithmeticSaturationAttr,
-    ScalarArithmeticSubnormalAttr, ScalarConversionOp, ScalarConversionRoundingAttr,
-    ScalarConversionSaturationAttr, Tcgen05AllocOp, Tcgen05CommitMulticastCg2Op,
-    Tcgen05Ld16x32bx2X1RawOp, Tcgen05Ld16x256bPureOp, Tcgen05MmaF16Op,
+    CpAsyncMbarrierArriveSharedOp, CpAsyncWaitGroupOp, MbarrierArriveNoCompleteSharedOp,
+    MbarrierArriveSharedOp, MbarrierInitSharedOp, MbarrierInvalSharedOp, MbarrierTestWaitSharedOp,
+    ReadPtxSregClusterIdxOp, ReadPtxSregNclusterIdOp, ScalarArithmeticFormatAttr,
+    ScalarArithmeticOp, ScalarArithmeticOperationAttr, ScalarArithmeticRoundingAttr,
+    ScalarArithmeticSaturationAttr, ScalarArithmeticSubnormalAttr, ScalarConversionOp,
+    ScalarConversionRoundingAttr, ScalarConversionSaturationAttr, Tcgen05AllocOp,
+    Tcgen05CommitMulticastCg2Op, Tcgen05Ld16x32bx2X1RawOp, Tcgen05Ld16x256bPureOp, Tcgen05MmaF16Op,
 };
 
 use pliron::{
@@ -695,6 +695,12 @@ fn generated_mbarrier_builders_and_verifiers_are_closed_over_their_shapes() {
         assert!(MbarrierInitSharedOp::new(init).verify(&ctx).is_ok());
         let arrive = MbarrierArriveSharedOp::build(&mut ctx, barrier);
         assert!(MbarrierArriveSharedOp::new(arrive).verify(&ctx).is_ok());
+        let arrive_no_complete = MbarrierArriveNoCompleteSharedOp::build(&mut ctx, barrier, count);
+        assert!(
+            MbarrierArriveNoCompleteSharedOp::new(arrive_no_complete)
+                .verify(&ctx)
+                .is_ok()
+        );
         let test_wait = MbarrierTestWaitSharedOp::build(&mut ctx, barrier, token);
         assert!(
             MbarrierTestWaitSharedOp::new(test_wait)
@@ -722,6 +728,26 @@ fn generated_mbarrier_builders_and_verifiers_are_closed_over_their_shapes() {
     );
     assert!(
         MbarrierArriveSharedOp::new(bad_arrive_result)
+            .verify(&ctx)
+            .is_err()
+    );
+    let bad_no_complete_count =
+        MbarrierArriveNoCompleteSharedOp::build(&mut ctx, shared, signless_i32);
+    assert!(
+        MbarrierArriveNoCompleteSharedOp::new(bad_no_complete_count)
+            .verify(&ctx)
+            .is_err()
+    );
+    let bad_no_complete_result = Operation::new(
+        &mut ctx,
+        MbarrierArriveNoCompleteSharedOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![shared, count],
+        vec![],
+        0,
+    );
+    assert!(
+        MbarrierArriveNoCompleteSharedOp::new(bad_no_complete_result)
             .verify(&ctx)
             .is_err()
     );

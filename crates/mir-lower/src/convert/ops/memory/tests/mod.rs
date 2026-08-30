@@ -10,7 +10,7 @@
 //! driver and not constructible standalone. So each test builds a small
 //! MIR module, runs the full `lower_mir_to_llvm` pass on it, and asserts
 //! the lowered module contains the expected `dialect-llvm` shape — same
-//! pattern as `tests/lowering_test.rs`.
+//! pattern as the `tests/lowering_test/` integration suite.
 
 // Tests build kinded fixture types directly; production minting lives in mir-importer's facts.rs.
 #![allow(clippy::disallowed_methods)]

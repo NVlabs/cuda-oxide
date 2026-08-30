@@ -4065,9 +4065,10 @@ fn scaffold_sync_template_uses_launch_contract_and_docs() {
     assert!(files.gitignore.contains("/target/"));
     // The template uses the launch_bounds / launch_contract attribute
     // macros, so the cuda_device import must bring them in; a scaffolded
-    // project fails to compile without this exact line.
-    assert!(files.main_rs.starts_with(
-        "use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};"
+    // project fails to compile without these names. The order is rustfmt's,
+    // pinned by `scaffold_templates_are_rustfmt_clean`.
+    assert!(files.main_rs.contains(
+        "use cuda_device::{DisjointSlice, kernel, launch_bounds, launch_contract, thread};"
     ));
     assert!(
         files
@@ -4094,6 +4095,57 @@ fn scaffold_async_template_keeps_async_deps_and_docs() {
     assert!(files.main_rs.contains("vecadd_async"));
     assert!(files.main_rs.contains("use cuda_host::cuda_module;"));
     assert!(!files.main_rs.contains("use cuda_device::{cuda_module"));
+}
+
+/// A scaffolded project must already be `rustfmt`-clean.
+///
+/// CONTRIBUTING points contributors at `cargo oxide fmt`, so a template that is
+/// not canonical makes a brand-new project fail its very first format check on
+/// code the user never wrote.
+///
+/// This runs the real `rustfmt` over the rendered template instead of
+/// re-deriving its import ordering here. A hand-written ordering check would
+/// agree with a stale template as readily as with a correct one, and would not
+/// notice drift anywhere else in the file --
+/// `release_depfile_path_matches_real_cargo_uplift_for_hyphenated_bin` shells
+/// out to real `cargo` for the same reason.
+///
+/// The edition is read back out of the scaffolded `Cargo.toml` so this cannot
+/// drift from the manifest it is meant to describe.
+#[test]
+fn scaffold_templates_are_rustfmt_clean() {
+    for (async_mode, label) in [(false, "sync"), (true, "async")] {
+        let files = scaffold_files("demo_kernel", async_mode);
+
+        let edition = files
+            .cargo_toml
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("edition = "))
+            .map(|value| value.trim().trim_matches('"').to_string())
+            .unwrap_or_else(|| panic!("{label} scaffold Cargo.toml declares no edition"));
+
+        let root = unique_temp_dir(&format!("cargo_oxide_scaffold_fmt_{label}"));
+        std::fs::create_dir_all(&root).unwrap();
+        let main_rs = root.join("main.rs");
+        std::fs::write(&main_rs, &files.main_rs).unwrap();
+
+        // A scaffolded project carries no rustfmt.toml, so plain defaults for
+        // its edition are exactly what `cargo fmt` applies there.
+        let check = Command::new("rustfmt")
+            .args(["--edition", edition.as_str(), "--check"])
+            .arg(&main_rs)
+            .output()
+            .expect("failed to run rustfmt; it is in rust-toolchain.toml's component list");
+
+        let diff = String::from_utf8_lossy(&check.stdout).into_owned();
+        std::fs::remove_dir_all(&root).unwrap();
+
+        assert!(
+            check.status.success() && diff.is_empty(),
+            "the {label} scaffold template is not rustfmt-clean, so `cargo oxide fmt \
+             --check` fails in a freshly scaffolded project:\n{diff}"
+        );
+    }
 }
 
 #[test]

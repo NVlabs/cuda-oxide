@@ -11,8 +11,8 @@
   },
   "inputs": {
     "imported_sha256": "3f54245b231a5b6e19f3225710c3865b7e1a106242cce873250ef5fdc32e532e",
-    "overlay_sha256": "40694465c7ce2c976800f5e80a5b08fe82ee9dd0df52e675e5f6d8c3cd94bd04",
-    "abi_ledger_sha256": "a9092483a256cb48c4dc6ef98a15bb7568dad8f0586aa35866c0318d2e9ffafd",
+    "overlay_sha256": "27bd921ce4ea1a6f8ad82f2b9a0435f43abacc327b734cd034729a24cb43c401",
+    "abi_ledger_sha256": "a34301233f6b8cfda7d876a07377d5478922e85f9ba58bdacd37b676f9f6fba8",
     "evidence_sha256": [
       "cuda-12.0-libnvvm-12.0.140-ex2-f16.json:7102ea7d567ff2d2eb75a0384148d2e5eb6e605c26a5b98c71371fa3c46adef6",
       "cuda-12.9-libnvvm-12.9.86-f32x2.json:bc5bb505677989affa9ac1044da772b4eb349700dc65e16f09fffffa1f5c493e",
@@ -25,7 +25,7 @@
       "cuda-13.3-libnvvm-13.3.33-debug-control.json:184227ee2b4791011f563f597d8f6fb2393430b327a72c758c34ceec44c9469b",
       "cuda-13.3-libnvvm-13.3.33-elect.json:2938ffa5d489034e248616c6bce0a584d454839cefe3856a61ac9ceae883f2ab",
       "cuda-13.3-libnvvm-13.3.33-extended-minmax.json:4bd3343bcc6ecfae415772ce83349bfa47b3b46dde99dc26be5424a0b49b4351",
-      "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:b1c9636c05dec3836f3adac8163c52d90f3f68c529e3eb2ea69d39c9731e4533",
+      "cuda-13.3-libnvvm-13.3.33-mbarrier-basic.json:dc5ffaa725aa8bd0201e17c1ec9375e70aa33c164bedd1aaf989653d2ed92bea",
       "cuda-13.3-libnvvm-13.3.33-mbarrier-extended.json:3e01efcd940547e514dcc750aa5fb83fd59cc53f8d2b888788044bcefc1152cd",
       "cuda-13.3-libnvvm-13.3.33-movmatrix.json:4063d72012f78cc980a2d8d7a2f7f888e1ebc5bee41ccf4969ab6f5077cf2d87",
       "cuda-13.3-libnvvm-13.3.33-packed-conversion-fp8-f16x2.json:4e1c360c16059f862409d3e6b73182ca0fcebf8b499068845aa0f49d7facc7eb",
@@ -85,7 +85,7 @@
       "rust-llvm-23.1.0-16696adc-extended-minmax.json:9ab3c99ff30d06ce44af46be5de9e5d960113b106bf53e90f4fd317763380c18",
       "rust-llvm-23.1.0-16696adc-f32x2.json:2b8ac4914be67e2d97c730914713cad930628cf3ffef86e6114612b408d030e6",
       "rust-llvm-23.1.0-16696adc-integer-minmax.json:bf56449724c0ed5325586222a6e03bc2f53cad25ba50ac894fd6e75e86296e48",
-      "rust-llvm-23.1.0-16696adc-mbarrier-basic.json:acf620ee4e499bfa2258a26aa96fa4009d0de02355c0b5a5f55c3b7aa2f5b518",
+      "rust-llvm-23.1.0-16696adc-mbarrier-basic.json:2663376dd611ba3c38bfdd00948ec45c6a4ad004e972f9392097eec7d19c8292",
       "rust-llvm-23.1.0-16696adc-mbarrier-extended.json:c53bd6fcbf47833fc102e7a6c94ca53c858ffc7e09429841bf4385b42526eb02",
       "rust-llvm-23.1.0-16696adc-packed-conversion-fp8-f16x2.json:ff5c15aa45ad7177f83a669e293faaf44cf7302d5fc2b0f4163245652933d9c1",
       "rust-llvm-23.1.0-16696adc-packed-conversion-fp8.json:5d14d86b3ee6e17bcf6b07647c686649e97a27cc06dd45d8c31307b4705c4564",
@@ -94131,6 +94131,257 @@
         ]
       },
       "summary": "Arrives at a CTA-shared barrier with cluster-scope transaction tracking."
+    },
+    {
+      "id": "mbarrier_arrive_no_complete",
+      "operation_key": "barrier.mbarrier.arrive.no_complete.shared.cta",
+      "family": "mbarrier_basic",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mbarrier_arrive_noComplete_shared"
+      },
+      "selections": [
+        {
+          "source_record": "MBARRIER_ARRIVE_NOCOMPLETE_SHARED",
+          "asm": "mbarrier.arrive.noComplete.shared.b64 \t$state, [$addr], $count;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 70"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1017",
+        "module": "barrier",
+        "name": "mbarrier_arrive_no_complete",
+        "arguments": [
+          "*const u64",
+          "u32"
+        ],
+        "result": "u64",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1017",
+        "public_path": "cuda_intrinsics::barrier::mbarrier_arrive_no_complete",
+        "compatibility_paths": [
+          "cuda_device::barrier::mbarrier_arrive_no_complete"
+        ]
+      },
+      "dialect": {
+        "op_type": "MbarrierArriveNoCompleteSharedOp",
+        "op_name": "nvvm.mbarrier_arrive_no_complete_shared",
+        "operands": [
+          "ptr",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mbarrier.arrive.noComplete.shared",
+        "arguments": [
+          "shared_ptr",
+          "i32"
+        ],
+        "results": [
+          "i64"
+        ],
+        "properties": [
+          "IntrConvergent",
+          "IntrNoCallback"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "read_write",
+        "convergent": true,
+        "execution_scope": "cta"
+      },
+      "target": {
+        "minimum_ptx": "7.0",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "u64",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.14.16.16 Parallel Synchronization and Communication Instructions: mbarrier.arrive",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "validated",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx70"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "typed_nvvm",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed llvm.nvvm.mbarrier.arrive.noComplete.shared declaration",
+              "stage": "declaration_canonicalization",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "LLVM canonicalized the counted shared-pointer declaration with convergent and nocallback attributes.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "typed counted shared-memory mbarrier no-complete arrival",
+              "stage": "backend_codegen",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "The selected Rust LLVM backend emitted exact mbarrier.arrive.noComplete.shared.b64 PTX.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx70"
+              ],
+              "representation": "PTX emitted by the selected Rust LLVM mbarrier probe",
+              "stage": "ptx_assembly",
+              "mechanism": "typed_nvvm",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 ptxas accepted the emitted PTX for sm_80.",
+              "artifact_kind": null,
+              "tool_path": "/usr/local/cuda-13.3/bin/ptxas",
+              "tool_version": "CUDA 13.3 V13.3.33 build cuda_13.3.r13.3/compiler.37862127_0",
+              "tool_sha256": "7fdd01a4cf50e30746da98989c9272a907f491e6fd7fecfda14642e4375f88fb"
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-13.3-libnvvm-13.3.33",
+          "target": {
+            "minimum_ptx": "7.0",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 13.3; nvcc/libNVVM release V13.3.33",
+          "sha256": "b6a5db233133fb0ed693f8cb8aeb1d405254ce0ab10364478985292ec98cfcf0",
+          "artifact_path": "/usr/local/cuda-13.3/nvvm/lib64/libnvvm.so.4.0.0",
+          "build_id_prefix": "2330c0",
+          "status": "validated",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "convergent side-effecting inline PTX mbarrier.arrive.noComplete.shared.b64 with =l,l,r,~{memory}",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 libNVVM compiled the production barrier no-complete regression to 7,056-byte LTOIR (SHA-256 3a7f7b31681ec0b1db3cf883967abd5e61a2d19449182bb83791ba1d94b38e42), retaining the dynamic count input and returned barrier state.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx93"
+              ],
+              "representation": "retained production barrier no-complete regression kernel",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 13.3 nvJitLink produced a 12,704-byte sm_80 cubin (SHA-256 7193ea511d07aef4a88079f7b7fa606aa31820671c597477322dfd3c43d9e546); cuobjdump confirmed .text, .nv.info, .nv.constant0, and .nv.shared sections for barrier_no_complete_test, with the counted arrival lowered as ATOMS.ADD on the barrier state.",
+              "artifact_kind": "cubin",
+              "tool_path": "/usr/local/cuda-13.3/lib64/libnvJitLink.so.13.3.33",
+              "tool_version": "V13.3.33",
+              "tool_sha256": "3ba1e744347cd68617b862eccfd98b125482e882b7a6319f42abc9a768513db8"
+            }
+          ]
+        }
+      ],
+      "mbarrier_basic": {
+        "operation": "arrive_no_complete",
+        "state_space": "shared",
+        "adapter": "pointer_count_to_token",
+        "runtime_validation": "unexecuted"
+      },
+      "lowering": "generated_mbarrier_basic",
+      "expected_ptx": {
+        "mnemonic": "mbarrier",
+        "modifiers": [
+          "arrive",
+          "noComplete",
+          "shared",
+          "b64"
+        ],
+        "operands": [
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "address"
+          },
+          {
+            "kind": "register"
+          }
+        ]
+      },
+      "summary": "Arrives at a CTA shared-memory barrier by a dynamic count without completing the current phase and returns its prior opaque state."
     },
     {
       "id": "mbarrier_init",
@@ -189487,7 +189738,7 @@
         }
       ],
       "rust": {
-        "abi_id": "i1020",
+        "abi_id": "i1021",
         "module": "matrix",
         "name": "mma_sp_ordered_metadata_m16n8k16_f16_f16",
         "arguments": [
@@ -189501,7 +189752,7 @@
         "safe": false,
         "must_use": true,
         "safe_allowlist_reason": null,
-        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1020",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1021",
         "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k16_f16_f16",
         "compatibility_paths": [
           "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k16_f16_f16"
@@ -189816,7 +190067,7 @@
         }
       ],
       "rust": {
-        "abi_id": "i1019",
+        "abi_id": "i1020",
         "module": "matrix",
         "name": "mma_sp_ordered_metadata_m16n8k16_f32_bf16",
         "arguments": [
@@ -189830,7 +190081,7 @@
         "safe": false,
         "must_use": true,
         "safe_allowlist_reason": null,
-        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1019",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1020",
         "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k16_f32_bf16",
         "compatibility_paths": [
           "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k16_f32_bf16"
@@ -190153,7 +190404,7 @@
         }
       ],
       "rust": {
-        "abi_id": "i1021",
+        "abi_id": "i1022",
         "module": "matrix",
         "name": "mma_sp_ordered_metadata_m16n8k16_f32_f16",
         "arguments": [
@@ -190167,7 +190418,7 @@
         "safe": false,
         "must_use": true,
         "safe_allowlist_reason": null,
-        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1021",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1022",
         "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k16_f32_f16",
         "compatibility_paths": [
           "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k16_f32_f16"
@@ -190490,7 +190741,7 @@
         }
       ],
       "rust": {
-        "abi_id": "i1018",
+        "abi_id": "i1019",
         "module": "matrix",
         "name": "mma_sp_ordered_metadata_m16n8k16_f32_tf32",
         "arguments": [
@@ -190504,7 +190755,7 @@
         "safe": false,
         "must_use": true,
         "safe_allowlist_reason": null,
-        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1018",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1019",
         "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k16_f32_tf32",
         "compatibility_paths": [
           "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k16_f32_tf32"
@@ -190835,7 +191086,7 @@
         }
       ],
       "rust": {
-        "abi_id": "i1023",
+        "abi_id": "i1024",
         "module": "matrix",
         "name": "mma_sp_ordered_metadata_m16n8k32_f16_f16",
         "arguments": [
@@ -190849,7 +191100,7 @@
         "safe": false,
         "must_use": true,
         "safe_allowlist_reason": null,
-        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1023",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1024",
         "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k32_f16_f16",
         "compatibility_paths": [
           "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k32_f16_f16"
@@ -191172,7 +191423,7 @@
         }
       ],
       "rust": {
-        "abi_id": "i1022",
+        "abi_id": "i1023",
         "module": "matrix",
         "name": "mma_sp_ordered_metadata_m16n8k32_f32_bf16",
         "arguments": [
@@ -191186,7 +191437,7 @@
         "safe": false,
         "must_use": true,
         "safe_allowlist_reason": null,
-        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1022",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1023",
         "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k32_f32_bf16",
         "compatibility_paths": [
           "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k32_f32_bf16"
@@ -191517,7 +191768,7 @@
         }
       ],
       "rust": {
-        "abi_id": "i1024",
+        "abi_id": "i1025",
         "module": "matrix",
         "name": "mma_sp_ordered_metadata_m16n8k32_f32_f16",
         "arguments": [
@@ -191531,7 +191782,7 @@
         "safe": false,
         "must_use": true,
         "safe_allowlist_reason": null,
-        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1024",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1025",
         "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k32_f32_f16",
         "compatibility_paths": [
           "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k32_f32_f16"
@@ -222296,7 +222547,7 @@
         }
       ],
       "rust": {
-        "abi_id": "i1017",
+        "abi_id": "i1018",
         "module": "matrix",
         "name": "mma_sp_ordered_metadata_m16n8k8_f32_tf32",
         "arguments": [
@@ -222310,7 +222561,7 @@
         "safe": false,
         "must_use": true,
         "safe_allowlist_reason": null,
-        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1017",
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1018",
         "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k8_f32_tf32",
         "compatibility_paths": [
           "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k8_f32_tf32"

@@ -235,8 +235,8 @@ Rust is different:
 |---------------|-------------------------------------------|------------------------------------------------|
 | Layout query  | `mir-importer/src/translator/types.rs`    | Query `fields_by_offset_order()` and `offsets` |
 | MIR type      | `dialect-mir/src/types.rs`                | Store offsets in `MirStructType`               |
-| LLVM lowering | `mir-lower/src/convert/types.rs`          | Build struct with explicit padding             |
-| Field access  | `mir-lower/src/convert/ops/aggregate.rs`  | Map declaration → memory index                 |
+| LLVM lowering | `mir-lower/src/convert/types/struct_layout.rs` | Build struct with explicit padding        |
+| Field access  | `mir-lower/src/convert/ops/aggregate/fields.rs` | Map declaration → memory index           |
 
 ### Pipeline Output
 

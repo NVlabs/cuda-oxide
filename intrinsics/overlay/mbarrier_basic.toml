@@ -86,6 +86,47 @@ expected_ptx = { mnemonic = "mbarrier", modifiers = ["arrive", "shared", "b64"],
 summary = "Arrives at a CTA shared-memory barrier and returns its phase token."
 
 [[intrinsic]]
+id = "mbarrier_arrive_no_complete"
+abi_id = "i1017"
+operation_key = "barrier.mbarrier.arrive.no_complete.shared.cta"
+family = "mbarrier_basic"
+source_record = "int_nvvm_mbarrier_arrive_noComplete_shared"
+rust_module = "barrier"
+rust_name = "mbarrier_arrive_no_complete"
+rust_arguments = ["*const u64", "u32"]
+rust_result = "u64"
+safe = false
+must_use = true
+public_rust_path = "cuda_intrinsics::barrier::mbarrier_arrive_no_complete"
+compatibility_rust_paths = ["cuda_device::barrier::mbarrier_arrive_no_complete"]
+dialect_op_type = "MbarrierArriveNoCompleteSharedOp"
+dialect_op_name = "nvvm.mbarrier_arrive_no_complete_shared"
+dialect_operands = ["ptr", "i32"]
+dialect_results = ["i64"]
+llvm_symbol = "llvm.nvvm.mbarrier.arrive.noComplete.shared"
+llvm_arguments = ["shared_ptr", "i32"]
+llvm_results = ["i64"]
+pure = false
+memory = "read_write"
+convergent = true
+execution_scope = "cta"
+minimum_ptx = "7.0"
+minimum_sm = "sm_80"
+ptx_result = "u64"
+targets = "all"
+ptx_isa_version = "9.3"
+ptx_isa_section = "9.7.14.16.16 Parallel Synchronization and Communication Instructions: mbarrier.arrive"
+ptx_isa_url = "https://docs.nvidia.com/cuda/parallel-thread-execution/#parallel-synchronization-and-communication-instructions-mbarrier-arrive"
+lowering = "generated_mbarrier_basic"
+backend_lowerings = [
+    { backend = "llvm_nvptx", mechanism = "typed_nvvm", evidence_profile = "rust-llvm-23.1.0-16696adc" },
+    { backend = "lib_nvvm", mechanism = "inline_ptx", evidence_profile = "cuda-13.3-libnvvm-13.3.33" },
+]
+mbarrier_basic = { operation = "arrive_no_complete", state_space = "shared", adapter = "pointer_count_to_token", runtime_validation = "unexecuted" }
+expected_ptx = { mnemonic = "mbarrier", modifiers = ["arrive", "noComplete", "shared", "b64"], operands = [{ kind = "register" }, { kind = "address" }, { kind = "register" }] }
+summary = "Arrives at a CTA shared-memory barrier by a dynamic count without completing the current phase and returns its prior opaque state."
+
+[[intrinsic]]
 id = "mbarrier_test_wait"
 abi_id = "i0099"
 operation_key = "barrier.mbarrier.test_wait.shared.cta"

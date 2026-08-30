@@ -41,6 +41,7 @@ pub enum SiteKind {
     Fence,
     OrderedMemory,
     WarpCollective,
+    AsyncProxy,
     Backedge,
 }
 
@@ -333,6 +334,40 @@ fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
     .any(|prefix| head.starts_with(prefix))
     {
         return Some(SiteKind::WarpCollective);
+    }
+
+    // The asynchronous proxy pipeline: the bulk-copy and matrix issues, and
+    // the commit/wait pairs that order them against the synchronous proxy.
+    // None of the arms above reach these. `cp.async.bulk.tensor...` carries
+    // `mbarrier::complete_tx::bytes` in its qualifier list but does not start
+    // with `mbarrier.`, so the barrier arm walks past it; `wgmma.fence` is a
+    // fence that does not start with `fence.`; and `tcgen05.ld` splits to a
+    // base of `tcgen05` rather than `ld`, so the ordered-memory arm below
+    // returns before seeing it. `clusterlaunchcontrol.try_cancel.async`
+    // completes through an mbarrier exactly as the bulk-tensor copy does, and
+    // its `query_cancel` reads that result, so the family is taken whole --
+    // the same shape as the three above.
+    //
+    // An opcode that classifies as nothing is not a site of any kind, so it
+    // receives no injection and never appears in a report. That left the
+    // pipeline a Hopper or Blackwell kernel is built around as the part a
+    // campaign could not reach.
+    //
+    // * `cp.reduce.async` needs its own prefix: the TMA reduce path emits
+    //   `cp.reduce.async.bulk.tensor.2d.global.shared::cta.add.tile.bulk_group`,
+    //   and `cp.async` does not match it (reduce sits before async), yet its
+    //   commit/wait pair does match `cp.async` -- half-covered without this.
+    if [
+        "cp.async",
+        "cp.reduce.async",
+        "wgmma.",
+        "tcgen05.",
+        "clusterlaunchcontrol.",
+    ]
+    .iter()
+    .any(|prefix| head.starts_with(prefix))
+    {
+        return Some(SiteKind::AsyncProxy);
     }
 
     let mut parts = head.split('.');
@@ -657,5 +692,133 @@ L_loop:
         .unwrap();
         assert_eq!(rewrite.report.sites_injected, 0);
         assert!(!rewrite.ptx.contains("nanosleep.u32"));
+    }
+
+    /// Every spelling here is one the backend actually emits: they were taken
+    /// verbatim from the `.ptx` the example corpus builds, not hand-written.
+    /// The one exception is `cp.reduce.async.bulk.tensor...`, which no example
+    /// emits today; its spelling is the mir-lower TMA-reduce inline-asm
+    /// template, verbatim.
+    /// `mbarrier.arrive` and `fence.proxy.async` sit alongside them on purpose,
+    /// as the controls for the two arms this classification could have stolen
+    /// from.
+    const ASYNC_PROXY: &str = r#".version 8.7
+.target sm_100a
+.address_size 64
+
+.visible .entry async_proxy(
+    .param .u64 data
+)
+{
+    .reg .pred %p0;
+    .reg .b32 %r0;
+    .reg .b64 %rd1;
+    cp.async.ca.shared.global [%r0], [%rd1], 4;
+    cp.async.commit_group;
+    cp.async.wait_all;
+    cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%r0], [%rd1], [%r0];
+    cp.reduce.async.bulk.tensor.2d.global.shared::cta.add.tile.bulk_group [%rd1, {%r0, %r0}], [%r0];
+    wgmma.fence.sync.aligned;
+    wgmma.commit_group.sync.aligned;
+    wgmma.wait_group.sync.aligned 0;
+    tcgen05.commit.cta_group::1.mbarrier::arrive::one.shared::cluster.b64 [%r0];
+    tcgen05.ld.sync.aligned.16x256b.x1.b32 %r0, [%r0];
+    tcgen05.wait::ld.sync.aligned;
+    tcgen05.dealloc.cta_group::1.sync.aligned.b32 %r0, 32;
+    tcgen05.relinquish_alloc_permit.cta_group::2.sync.aligned;
+    clusterlaunchcontrol.try_cancel.async.shared::cta.mbarrier::complete_tx::bytes.b128 [%r0], [%r0];
+    clusterlaunchcontrol.query_cancel.is_canceled.pred.b128 %p0, %rd1;
+    mbarrier.arrive.shared.b64 %rd1, [%r0];
+    fence.proxy.async.shared::cta;
+    ret;
+}
+"#;
+
+    #[test]
+    fn async_proxy_pipeline_instructions_are_sites() {
+        let analysis = analyze_ptx(ASYNC_PROXY).unwrap();
+        let async_sites: Vec<_> = analysis
+            .sites()
+            .iter()
+            .filter(|site| site.kind == SiteKind::AsyncProxy)
+            .collect();
+        // The fifteen async-proxy instructions in the fixture: three
+        // cp.async, one bulk-tensor issue, one bulk-tensor reduce, three
+        // wgmma, five tcgen05 and two clusterlaunchcontrol.
+        assert_eq!(async_sites.len(), 15, "{:?}", async_sites);
+        for prefix in [
+            "cp.async",
+            "cp.reduce.async",
+            "wgmma.",
+            "tcgen05.",
+            "clusterlaunchcontrol.",
+        ] {
+            assert!(
+                async_sites.iter().any(|site| site.head.starts_with(prefix)),
+                "no AsyncProxy site for {prefix}"
+            );
+        }
+    }
+
+    /// The two arms this sits between, and which of them could actually take
+    /// one of these instructions away.
+    ///
+    /// `wgmma.fence.sync.aligned` is the live collision: it contains
+    /// `fence.`, so relaxing the fence arm from a prefix test to a substring
+    /// test silently reclassifies it, and this test fails when that is done.
+    ///
+    /// The barrier arm is not a collision, and the reason is worth recording:
+    /// `cp.async.bulk.tensor...mbarrier::complete_tx::bytes` spells that
+    /// qualifier with `::`, so it never contains the `mbarrier.` the barrier
+    /// arm looks for. The assertions on `mbarrier.` and `fence.` below are
+    /// there to pin that the two real instructions keep their own kinds.
+    #[test]
+    fn async_proxy_classification_leaves_mbarrier_and_fence_alone() {
+        let analysis = analyze_ptx(ASYNC_PROXY).unwrap();
+        let kind_of = |prefix: &str| {
+            analysis
+                .sites()
+                .iter()
+                .find(|site| site.head.starts_with(prefix))
+                .map(|site| site.kind)
+        };
+        assert_eq!(kind_of("mbarrier."), Some(SiteKind::Barrier));
+        assert_eq!(kind_of("fence."), Some(SiteKind::Fence));
+        assert_eq!(kind_of("wgmma.fence"), Some(SiteKind::AsyncProxy));
+    }
+
+    /// A campaign has to be able to reach the pipeline, which is the whole
+    /// point of classifying it.
+    #[test]
+    fn an_async_proxy_site_can_be_perturbed() {
+        let rewrite = perturb_ptx(
+            ASYNC_PROXY,
+            &InjectionOptions {
+                seed: 7,
+                intensity: 1.0,
+                ..InjectionOptions::default()
+            },
+        )
+        .unwrap();
+        let injected = rewrite
+            .report
+            .decisions
+            .iter()
+            .filter(|decision| decision.site.kind == SiteKind::AsyncProxy)
+            .filter(|decision| decision.before_ns > 0 || decision.after_ns > 0)
+            .count();
+        assert!(injected > 0, "{:?}", rewrite.report.decisions);
+        assert!(rewrite.ptx.contains("nanosleep.u32"));
+        // The rewrite must still be analyzable, and must not have dropped or
+        // corrupted the instructions it wrapped.
+        let reanalyzed = analyze_ptx(&rewrite.ptx).unwrap();
+        assert!(
+            reanalyzed
+                .sites()
+                .iter()
+                .filter(|site| site.kind == SiteKind::AsyncProxy)
+                .count()
+                >= 15
+        );
     }
 }

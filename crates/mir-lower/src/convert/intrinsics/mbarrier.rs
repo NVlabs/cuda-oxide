@@ -13,6 +13,7 @@
 //! |--------------------|----------------|-------------------------------------|
 //! | `Init`             | Backend route  | Initialize barrier with thread count|
 //! | `Arrive`           | Backend route  | Signal arrival                      |
+//! | `ArriveNoComplete` | Backend route  | Counted arrival without completion  |
 //! | `ArriveExpectTx`   | Inline PTX     | Signal arrival with expected bytes  |
 //! | `TestWait`         | Inline PTX     | Non-blocking wait check             |
 //! | `TryWait`          | Inline PTX     | Blocking wait with hint             |
@@ -117,6 +118,54 @@ pub(crate) fn convert_arrive(
             vec![bar_ptr],
             "mbarrier.arrive.shared.b64 $0, [$1];",
             "=l,l,~{memory}",
+        ),
+    };
+    rewriter.replace_operation(ctx, op, producer);
+    Ok(())
+}
+
+/// mbarrier.arrive.noComplete.shared: (ptr, count) -> i64
+pub(crate) fn convert_arrive_no_complete(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
+    let operands: Vec<_> = op.deref(ctx).operands().collect();
+    if operands.len() != 2 {
+        return pliron::input_err_noloc!("mbarrier_arrive_no_complete requires 2 operands");
+    }
+    let bar_ptr = cast_to_shared_addrspace(ctx, rewriter, operands[0]);
+    let count = operands[1];
+
+    let producer = match context::lowering_options(ctx).intrinsic_backend {
+        IntrinsicBackend::LlvmNvptx => {
+            let ptr_ty = llvm_types::PointerType::get(ctx, llvm_types::address_space::SHARED);
+            let func_ty = llvm_types::FuncType::get(
+                ctx,
+                i64_ty.into(),
+                vec![ptr_ty.into(), i32_ty.into()],
+                false,
+            );
+            call_intrinsic(
+                ctx,
+                rewriter,
+                op,
+                "llvm_nvvm_mbarrier_arrive_noComplete_shared",
+                func_ty,
+                vec![bar_ptr, count],
+            )?
+        }
+        IntrinsicBackend::LibNvvm => inline_asm_convergent(
+            ctx,
+            rewriter,
+            op,
+            i64_ty.into(),
+            vec![bar_ptr, count],
+            "mbarrier.arrive.noComplete.shared.b64 $0, [$1], $2;",
+            "=l,l,r,~{memory}",
         ),
     };
     rewriter.replace_operation(ctx, op, producer);

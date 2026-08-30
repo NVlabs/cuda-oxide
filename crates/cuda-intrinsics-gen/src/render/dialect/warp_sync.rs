@@ -492,6 +492,7 @@ use pliron_derive::pliron_op;
 enum MbarrierBasicShape {
     Init,
     Arrive,
+    ArriveNoComplete,
     TestWait,
     Inval,
 }
@@ -531,8 +532,9 @@ fn verify_mbarrier_basic(
 ) -> Result<(), Error> {
     let op = operation.deref(ctx);
     let (operands, results) = match shape {
-        MbarrierBasicShape::Init | MbarrierBasicShape::TestWait => (2, usize::from(matches!(shape, MbarrierBasicShape::TestWait))),
+        MbarrierBasicShape::Init => (2, 0),
         MbarrierBasicShape::Arrive => (1, 1),
+        MbarrierBasicShape::ArriveNoComplete | MbarrierBasicShape::TestWait => (2, 1),
         MbarrierBasicShape::Inval => (1, 0),
     };
     if op.get_num_operands() != operands || op.get_num_results() != results {
@@ -548,6 +550,13 @@ fn verify_mbarrier_basic(
         MbarrierBasicShape::Arrive => {
             if !is_integer(ctx, op.get_result(0), 64, Signedness::Unsigned) {
                 return verify_err!(op.loc(), "mbarrier arrival token must be u64");
+            }
+        }
+        MbarrierBasicShape::ArriveNoComplete => {
+            if !is_integer(ctx, op.get_operand(1), 32, Signedness::Unsigned)
+                || !is_integer(ctx, op.get_result(0), 64, Signedness::Unsigned)
+            {
+                return verify_err!(op.loc(), "mbarrier no-complete arrival requires a u32 count and u64 opaque state");
             }
         }
         MbarrierBasicShape::TestWait => {
@@ -587,6 +596,18 @@ fn verify_mbarrier_basic(
                     1,
                     "Arrive",
                     "    pub fn build(ctx: &mut Context, barrier: Value) -> Ptr<Operation> {\n        let token_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![token_ty.into()], vec![barrier], vec![], 0)\n    }\n",
+                )
+            }
+            MbarrierBasicOperation::ArriveNoComplete => {
+                debug_assert_eq!(
+                    mbarrier.adapter,
+                    MbarrierBasicAdapter::ArriveNoCompletePointerCountToToken
+                );
+                (
+                    2,
+                    1,
+                    "ArriveNoComplete",
+                    "    pub fn build(ctx: &mut Context, barrier: Value, count: Value) -> Ptr<Operation> {\n        let token_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);\n        Operation::new(ctx, Self::get_concrete_op_info(), vec![token_ty.into()], vec![barrier, count], vec![], 0)\n    }\n",
                 )
             }
             MbarrierBasicOperation::TestWait => {

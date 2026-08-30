@@ -443,7 +443,7 @@ crates/cargo-oxide/
     ├── main.rs       # CLI definitions (clap) + dispatch
     ├── backend.rs    # Backend discovery + build logic
     ├── artifact_identity.rs  # Embedded artifact identity/provenance
-    └── commands.rs   # All command implementations
+    └── commands/     # Command implementations, one module per command group
 ```
 
 ## Future Commands

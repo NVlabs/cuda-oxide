@@ -312,7 +312,7 @@ fn compact_sparse_ordered_ampere_float_admission_is_closed_and_ledger_bound() {
             .iter()
             .map(|record| record.abi_id.clone())
             .collect::<Vec<_>>(),
-        (1017..=1024)
+        (1018..=1025)
             .map(|id| format!("i{id:04}"))
             .collect::<Vec<_>>()
     );
@@ -1565,7 +1565,7 @@ fn pinned_sparse_mma_records_close_shape_specific_selectors_and_ranges() {
             .collect::<BTreeSet<_>>(),
         (163..=251)
             .chain(525..=549)
-            .chain(1017..=1024)
+            .chain(1018..=1025)
             .map(|id| format!("i{id:04}"))
             .collect::<BTreeSet<_>>()
     );

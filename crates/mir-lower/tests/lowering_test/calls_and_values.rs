@@ -450,7 +450,7 @@ fn test_cmp_predicate_lowering() -> Result<(), anyhow::Error> {
 
     // One comparison op per table row, in a fixed program order. The raw
     // `Operation::new` construction mirrors how the importer builds these
-    // ops (mir-importer translator/rvalue.rs BinaryOp arm).
+    // ops (mir-importer translator/rvalue/expr.rs, `Rvalue::BinaryOp` arm).
     let cmp_infos = [
         // Floats: all six predicates.
         (mir::MirEqOp::get_concrete_op_info(), fa, fb),

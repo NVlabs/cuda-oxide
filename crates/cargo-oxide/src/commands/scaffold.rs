@@ -137,11 +137,11 @@ cuda-core = {{ git = "{GIT_REPO}" }}
 
 fn scaffold_main_rs(async_mode: bool) -> String {
     if async_mode {
-        r#"use cuda_device::{kernel, thread, DisjointSlice};
-use cuda_host::cuda_module;
-use cuda_async::device_context::init_device_contexts;
+        r#"use cuda_async::device_context::init_device_contexts;
 use cuda_async::device_operation::DeviceOperation;
 use cuda_core::LaunchConfig;
+use cuda_device::{DisjointSlice, kernel, thread};
+use cuda_host::cuda_module;
 
 #[cuda_module]
 mod kernels {
@@ -231,9 +231,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 "#
         .to_string()
     } else {
-        r#"use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};
+        r#"use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
+use cuda_device::{DisjointSlice, kernel, launch_bounds, launch_contract, thread};
 use cuda_host::cuda_module;
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
 
 #[cuda_module]
 mod kernels {

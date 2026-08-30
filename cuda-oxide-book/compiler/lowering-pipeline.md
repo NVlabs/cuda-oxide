@@ -81,9 +81,9 @@ The conversion functions are organized into modules by category:
 | Category      | Module                        | What It Handles                                                                  |
 | :------------ | :---------------------------- | :--------------------------------------------------------------------------------|
 | Arithmetic    | `convert/ops/arithmetic.rs`   | `add`→`add`, `sub`→`sub`, `checked_add`→`add`+`extractvalue`                     |
-| Memory        | `convert/ops/memory.rs`       | `mir.load`→`load`, `mir.store`→`store`, `shared_alloc`→global + `addrspacecast`  |
+| Memory        | `convert/ops/memory/*.rs`     | `mir.load`→`load`, `mir.store`→`store`, `shared_alloc`→global + `addrspacecast`  |
 | Control Flow  | `convert/ops/control_flow.rs` | `mir.goto`→`br`, `mir.cond_br`→`cond_br`, `mir.return`→`return`                  |
-| Aggregate     | `convert/ops/aggregate.rs`    | Struct/tuple field access → GEP or `extractvalue`/`insertvalue`                  |
+| Aggregate     | `convert/ops/aggregate/*.rs`  | Struct/tuple field access → GEP or `extractvalue`/`insertvalue`                  |
 | Cast          | `convert/ops/cast.rs`         | `IntToInt`→`zext`/`sext`/`trunc`, `FloatToFloat`→`fpext`/`fptrunc`, etc.         |
 | Call          | `convert/ops/call.rs`         | `mir.call`→`call`, with argument flattening and `::` to `__` name conversion     |
 | GPU Intrinsic | `convert/intrinsics/*.rs`     | NVVM ops → LLVM intrinsic calls or inline PTX                                    |

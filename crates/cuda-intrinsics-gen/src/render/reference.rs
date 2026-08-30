@@ -489,6 +489,9 @@ pub(super) fn render_reference(catalog: &CatalogFile, hash: &str) -> String {
             MbarrierBasicOperation::Arrive => {
                 "records one expected arrival and returns a token for the same barrier phase"
             }
+            MbarrierBasicOperation::ArriveNoComplete => {
+                "records a dynamic arrival count without completing the current phase and returns the prior opaque state"
+            }
             MbarrierBasicOperation::TestWait => {
                 "tests one token from the same barrier phase with convergent, side-effecting inline PTX"
             }

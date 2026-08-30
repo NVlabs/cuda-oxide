@@ -296,11 +296,11 @@ they become `call` instructions to `@llvm.nvvm.*` intrinsics.
 
 ### Architecture Coverage
 
-At catalog SHA-256 `91c449f0` (the stamp in every `ops/generated/` file
-header), the dialect holds 575 operations across 42 modules, and they come
+At catalog SHA-256 `20bc41c2` (the stamp in every `ops/generated/` file
+header), the dialect holds 576 operations across 42 modules, and they come
 from two different places. The split is the first thing to know about it,
 because it decides where -- and whether -- you would add one. If the header
-stamp no longer starts with `91c449f0`, the counts on this page predate the
+stamp no longer starts with `20bc41c2`, the counts on this page predate the
 catalog you are reading.
 
 **Hand-written**, directly under `crates/dialect-nvvm/src/ops/`. These are the
@@ -320,7 +320,7 @@ describe. There are seven modules and 26 operations:
 **Generated**, under `ops/generated/`, from `intrinsics/catalog.json` by
 `cuda-intrinsics-gen`. Every file there opens with `// @generated ... DO NOT
 EDIT.`, and editing one by hand is undone by the next generator run. This is
-the large majority -- 35 modules and 549 operations, resolved from 1024 catalog
+the large majority -- 35 modules and 550 operations, resolved from 1025 catalog
 entries, since several intrinsics can share one structural op:
 
 | Area                        | Modules                                                                       | Ops |
@@ -329,7 +329,7 @@ entries, since several intrinsics can share one structural op:
 | Tensor Memory Accelerator   | `tma`                                                                         | 111 |
 | Special registers           | `sreg`                                                                        |  44 |
 | Packed (SIMD-in-register)   | `packed_alu`, `packed_conversion`, `packed_atomic`                            |  51 |
-| Async copy and barriers     | `cp_async`, `mbarrier_extended`, `mbarrier_basic`, `sync`                     |  34 |
+| Async copy and barriers     | `cp_async`, `mbarrier_extended`, `mbarrier_basic`, `sync`                     |  35 |
 | Warp-level                  | `warp_shuffle`, `redux`, `vote`, `warp_match`, `warp_barrier`, `active_mask`, `elect` |  39 |
 | Matrix fragment movement    | `ldmatrix`, `register_mma`, `stmatrix`, `wgmma_control`, `movmatrix`, `sparse_mma` |  22 |
 | Execution and debug control | `execution_control`, `debug_control`                                          |  11 |

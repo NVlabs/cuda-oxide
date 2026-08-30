@@ -1070,6 +1070,30 @@ pub(crate) fn render_probe(catalog: &CatalogFile, record: &CatalogIntrinsic, has
                 .unwrap();
                 output.push_str("  ret i64 %token\n}\n");
             }
+            MbarrierBasicOperation::ArriveNoComplete => {
+                writeln!(
+                    output,
+                    "declare i64 @{}(ptr addrspace(3), i32)\n",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                writeln!(
+                    output,
+                    "define i64 @probe_{}(ptr %barrier_generic, i32 %count) {{",
+                    record.id
+                )
+                .unwrap();
+                output.push_str(
+                    "  %barrier = addrspacecast ptr %barrier_generic to ptr addrspace(3)\n",
+                );
+                writeln!(
+                    output,
+                    "  %state = call i64 @{}(ptr addrspace(3) %barrier, i32 %count)",
+                    llvm(record).symbol
+                )
+                .unwrap();
+                output.push_str("  ret i64 %state\n}\n");
+            }
             MbarrierBasicOperation::TestWait => {
                 writeln!(
                     output,
