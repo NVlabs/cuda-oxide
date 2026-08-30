@@ -11,11 +11,12 @@
   },
   "inputs": {
     "imported_sha256": "3f54245b231a5b6e19f3225710c3865b7e1a106242cce873250ef5fdc32e532e",
-    "overlay_sha256": "8efecd8698b59175e08f188d8a187766d7fa2201f6cbb2370b2d9a6dae7f4cad",
-    "abi_ledger_sha256": "598477ba5afa075a76df9e1fd907885e6251649b061cdc1f1f578b7b0d951678",
+    "overlay_sha256": "79ed6245b63d59adf0d8255e692bb3f1715c130e0bcd17bf46660a5d079eb71e",
+    "abi_ledger_sha256": "a9092483a256cb48c4dc6ef98a15bb7568dad8f0586aa35866c0318d2e9ffafd",
     "evidence_sha256": [
       "cuda-12.0-libnvvm-12.0.140-ex2-f16.json:7102ea7d567ff2d2eb75a0384148d2e5eb6e605c26a5b98c71371fa3c46adef6",
       "cuda-12.9-libnvvm-12.9.86-f32x2.json:bc5bb505677989affa9ac1044da772b4eb349700dc65e16f09fffffa1f5c493e",
+      "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float.json:083fc9da4b1049abecde81cbb9739578d8a9e19eaca416b1ff6f4c5a80b04042",
       "cuda-13.3-libnvvm-13.3.33-blackwell-ldmatrix.json:806155f5468d672b6bd969b72d9821155cc6a1c4422eb210ca0fc0a78eb295fb",
       "cuda-13.3-libnvvm-13.3.33-clc.json:0a3e049a8b606276302acf6d2f3dd1d41b632b04dd72799a7def8ebbec414752",
       "cuda-13.3-libnvvm-13.3.33-cluster-barrier.json:069e53acf46319a89ea69de86225724c8193d84a54df3c179818d8f2c782f4cc",
@@ -106,6 +107,7 @@
       "rust-llvm-23.1.0-16696adc-scalar-math.json:1a9e7994e07b5b53390df11a7e1805aa46176d21c8ed7e988433aee578c4dd47",
       "rust-llvm-23.1.0-16696adc-sparse-mma-int8-m16n8k64.json:2c0588c11569a4057647c099cfca9adfc449f3b3aea4e387f440a47e79d9b241",
       "rust-llvm-23.1.0-16696adc-sparse-mma-int8.json:9023c5c47bf1ad7266a13be8c4024d34e4e7d1efed6582affbbb9cdcdcfbea01",
+      "rust-llvm-23.1.0-16696adc-sparse-mma-ordered-ampere-float.json:4c80351dd79d8a04c87779cdf21542b7e11182b198b0b2b39e220157f45501a1",
       "rust-llvm-23.1.0-16696adc-sparse-mma-ordered-f8f6f4-f16.json:8569d7303b1a5af418214f2548e4b10c825c06c524dbecbc35b8ab0d4e2cf7ba",
       "rust-llvm-23.1.0-16696adc-sparse-mma-ordered-f8f6f4-f32.json:d6b99f5f4fb88b145f24dba9da662e052137b05a6d2616731d08ab858a4e0541",
       "rust-llvm-23.1.0-16696adc-sparse-mma-ordered-int4-m16n8k128.json:3a65cb8976f0fb35ca50a7e58943ed092d4e33a8dba84b637402bd3224d7ef21",
@@ -189467,6 +189469,2381 @@
       "summary": "Multiplies warp-distributed sparse unsigned A and unsigned B INT4 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
     },
     {
+      "id": "mma_sp_ordered_metadata_m16n8k16_f16_f16",
+      "operation_key": "matrix.mma.sp.m16n8k16.row.col.f16.f16.f16.f16.not_applicable.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k16_row_col_f16_f16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_19554",
+          "asm": "mma.sp::ordered_metadata.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16\n\t\t{{$rd0, $rd1}},\n\t\t{{$ra0, $ra1}},\n\t\t{{$rb0, $rb1}},\n\t\t{{$rc0, $rc1}},\n\t\t$metadata,\n\t\t$selector;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 85"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1020",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k16_f16_f16",
+        "arguments": [
+          "[u32; 2]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[u32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1020",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k16_f16_f16",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k16_f16_f16"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k16.row.col.f16.f16",
+        "arguments": [
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "v2f16",
+          "v2f16"
+        ],
+        "properties": [
+          "ImmArg<arg7>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg7,0,4>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[u32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "executed",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "eight typed LLVM declarations lowered through the selected convergent inline-PTX route",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 23.1.0-rust emitted all eight exact ordered-metadata sparse floating MMA heads in 5,919-byte PTX (SHA-256 ad099cdc834110da56254abc01034b4d9284e33dc20f4f90f8d2afc079bf1c3b). sm_75/+ptx85 and sm_80/+ptx80 failed selection; sm_80, sm_86, sm_89, and sm_90/+ptx85 plus sm_100/+ptx86 succeeded.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 5,919-byte PTX 8.5 fixture and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx85"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 12.9; libNVVM/ptxas release V12.9.86",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx88"
+              ],
+              "representation": "eight convergent side-effecting ordered-metadata sparse floating inline PTX calls in NVVM IR 2.0",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 4,379-byte IR fixture and emitted every reviewed instruction exactly once in 9,825-byte PTX (SHA-256 3bebcae52bbd17d0b2f1b9ff7630f6545623b1e95b5e430f442b29fd007c3264) plus 4,740-byte LTOIR (SHA-256 06bb14b236103564646bff3dfb6dd3099d911fa9631adeb38649b91f93fc2987).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "CUDA 12.9 libNVVM PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 9,825-byte libNVVM PTX and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "the 4,740-byte all-variant libNVVM LTOIR linked for sm_80",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 nvJitLink accepted the real libNVVM LTOIR and produced a valid 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/lib/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "71386c8355bddbdf428691f36ee31f462217b5054be1001170ed0c1ed0a70622"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx88"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k16",
+        "accumulator": "f16",
+        "a_element": "f16",
+        "b_element": "f16",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "not_applicable",
+        "metadata": "ordered",
+        "selector": "immediate_zero_through_three",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_u32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d2_u32",
+        "llvm_adapter": "a2_v2_f16_b2_v2_f16_c2_v2_f16_metadata_i32_selector_i32_to_d2_v2_f16",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "executed"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k16",
+          "row",
+          "col",
+          "f16",
+          "f16",
+          "f16",
+          "f16"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed ordered sparse f16 A and B fragments and adds a packed f16 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k16_f32_bf16",
+      "operation_key": "matrix.mma.sp.m16n8k16.row.col.f32.bf16.bf16.f32.not_applicable.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k16_row_col_bf16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_19524",
+          "asm": "mma.sp::ordered_metadata.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32\n\t\t{{$rd0, $rd1, $rd2, $rd3}},\n\t\t{{$ra0, $ra1}},\n\t\t{{$rb0, $rb1}},\n\t\t{{$rc0, $rc1, $rc2, $rc3}},\n\t\t$metadata,\n\t\t$selector;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 85"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1019",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k16_f32_bf16",
+        "arguments": [
+          "[f32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[f32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1019",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k16_f32_bf16",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k16_f32_bf16"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k16.row.col.bf16",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,4>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[f32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "executed",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "eight typed LLVM declarations lowered through the selected convergent inline-PTX route",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 23.1.0-rust emitted all eight exact ordered-metadata sparse floating MMA heads in 5,919-byte PTX (SHA-256 ad099cdc834110da56254abc01034b4d9284e33dc20f4f90f8d2afc079bf1c3b). sm_75/+ptx85 and sm_80/+ptx80 failed selection; sm_80, sm_86, sm_89, and sm_90/+ptx85 plus sm_100/+ptx86 succeeded.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 5,919-byte PTX 8.5 fixture and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx85"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 12.9; libNVVM/ptxas release V12.9.86",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx88"
+              ],
+              "representation": "eight convergent side-effecting ordered-metadata sparse floating inline PTX calls in NVVM IR 2.0",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 4,379-byte IR fixture and emitted every reviewed instruction exactly once in 9,825-byte PTX (SHA-256 3bebcae52bbd17d0b2f1b9ff7630f6545623b1e95b5e430f442b29fd007c3264) plus 4,740-byte LTOIR (SHA-256 06bb14b236103564646bff3dfb6dd3099d911fa9631adeb38649b91f93fc2987).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "CUDA 12.9 libNVVM PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 9,825-byte libNVVM PTX and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "the 4,740-byte all-variant libNVVM LTOIR linked for sm_80",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 nvJitLink accepted the real libNVVM LTOIR and produced a valid 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/lib/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "71386c8355bddbdf428691f36ee31f462217b5054be1001170ed0c1ed0a70622"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx88"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k16",
+        "accumulator": "f32",
+        "a_element": "bf16",
+        "b_element": "bf16",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "not_applicable",
+        "metadata": "ordered",
+        "selector": "immediate_zero_through_three",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_f32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_f32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_f32_metadata_i32_selector_i32_to_d4_f32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "executed"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k16",
+          "row",
+          "col",
+          "f32",
+          "bf16",
+          "bf16",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed ordered sparse bf16 A and B fragments and adds a f32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k16_f32_f16",
+      "operation_key": "matrix.mma.sp.m16n8k16.row.col.f32.f16.f16.f32.not_applicable.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k16_row_col_f32_f32"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_19558",
+          "asm": "mma.sp::ordered_metadata.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32\n\t\t{{$rd0, $rd1, $rd2, $rd3}},\n\t\t{{$ra0, $ra1}},\n\t\t{{$rb0, $rb1}},\n\t\t{{$rc0, $rc1, $rc2, $rc3}},\n\t\t$metadata,\n\t\t$selector;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 85"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1021",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k16_f32_f16",
+        "arguments": [
+          "[f32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[f32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1021",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k16_f32_f16",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k16_f32_f16"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k16.row.col.f32.f32",
+        "arguments": [
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,4>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[f32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "executed",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "eight typed LLVM declarations lowered through the selected convergent inline-PTX route",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 23.1.0-rust emitted all eight exact ordered-metadata sparse floating MMA heads in 5,919-byte PTX (SHA-256 ad099cdc834110da56254abc01034b4d9284e33dc20f4f90f8d2afc079bf1c3b). sm_75/+ptx85 and sm_80/+ptx80 failed selection; sm_80, sm_86, sm_89, and sm_90/+ptx85 plus sm_100/+ptx86 succeeded.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 5,919-byte PTX 8.5 fixture and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx85"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 12.9; libNVVM/ptxas release V12.9.86",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx88"
+              ],
+              "representation": "eight convergent side-effecting ordered-metadata sparse floating inline PTX calls in NVVM IR 2.0",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 4,379-byte IR fixture and emitted every reviewed instruction exactly once in 9,825-byte PTX (SHA-256 3bebcae52bbd17d0b2f1b9ff7630f6545623b1e95b5e430f442b29fd007c3264) plus 4,740-byte LTOIR (SHA-256 06bb14b236103564646bff3dfb6dd3099d911fa9631adeb38649b91f93fc2987).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "CUDA 12.9 libNVVM PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 9,825-byte libNVVM PTX and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "the 4,740-byte all-variant libNVVM LTOIR linked for sm_80",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 nvJitLink accepted the real libNVVM LTOIR and produced a valid 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/lib/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "71386c8355bddbdf428691f36ee31f462217b5054be1001170ed0c1ed0a70622"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx88"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k16",
+        "accumulator": "f32",
+        "a_element": "f16",
+        "b_element": "f16",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "not_applicable",
+        "metadata": "ordered",
+        "selector": "immediate_zero_through_three",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_f32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_f32",
+        "llvm_adapter": "a2_v2_f16_b2_v2_f16_c4_f32_metadata_i32_selector_i32_to_d4_f32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "executed"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k16",
+          "row",
+          "col",
+          "f32",
+          "f16",
+          "f16",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed ordered sparse f16 A and B fragments and adds a f32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k16_f32_tf32",
+      "operation_key": "matrix.mma.sp.m16n8k16.row.col.f32.tf32.tf32.f32.not_applicable.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k16_row_col_tf32"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_19546",
+          "asm": "mma.sp::ordered_metadata.sync.aligned.m16n8k16.row.col.f32.tf32.tf32.f32\n\t\t{{$rd0, $rd1, $rd2, $rd3}},\n\t\t{{$ra0, $ra1, $ra2, $ra3}},\n\t\t{{$rb0, $rb1, $rb2, $rb3}},\n\t\t{{$rc0, $rc1, $rc2, $rc3}},\n\t\t$metadata,\n\t\t$selector;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 85"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1018",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k16_f32_tf32",
+        "arguments": [
+          "[f32; 4]",
+          "[u32; 4]",
+          "[u32; 4]",
+          "u32",
+          "u32"
+        ],
+        "result": "[f32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1018",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k16_f32_tf32",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k16_f32_tf32"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k16.row.col.tf32",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ],
+        "properties": [
+          "ImmArg<arg13>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg13,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[f32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "executed",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "eight typed LLVM declarations lowered through the selected convergent inline-PTX route",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 23.1.0-rust emitted all eight exact ordered-metadata sparse floating MMA heads in 5,919-byte PTX (SHA-256 ad099cdc834110da56254abc01034b4d9284e33dc20f4f90f8d2afc079bf1c3b). sm_75/+ptx85 and sm_80/+ptx80 failed selection; sm_80, sm_86, sm_89, and sm_90/+ptx85 plus sm_100/+ptx86 succeeded.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 5,919-byte PTX 8.5 fixture and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx85"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 12.9; libNVVM/ptxas release V12.9.86",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx88"
+              ],
+              "representation": "eight convergent side-effecting ordered-metadata sparse floating inline PTX calls in NVVM IR 2.0",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 4,379-byte IR fixture and emitted every reviewed instruction exactly once in 9,825-byte PTX (SHA-256 3bebcae52bbd17d0b2f1b9ff7630f6545623b1e95b5e430f442b29fd007c3264) plus 4,740-byte LTOIR (SHA-256 06bb14b236103564646bff3dfb6dd3099d911fa9631adeb38649b91f93fc2987).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "CUDA 12.9 libNVVM PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 9,825-byte libNVVM PTX and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "the 4,740-byte all-variant libNVVM LTOIR linked for sm_80",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 nvJitLink accepted the real libNVVM LTOIR and produced a valid 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/lib/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "71386c8355bddbdf428691f36ee31f462217b5054be1001170ed0c1ed0a70622"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx88"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k16",
+        "accumulator": "f32",
+        "a_element": "tf32",
+        "b_element": "tf32",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "not_applicable",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_f32_a4_u32_b4_u32_metadata_u32_selector_u32_to_d4_f32",
+        "llvm_adapter": "a4_i32_b4_i32_c4_f32_metadata_i32_selector_i32_to_d4_f32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "executed"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k16",
+          "row",
+          "col",
+          "f32",
+          "tf32",
+          "tf32",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed ordered sparse tf32 A and B fragments and adds a f32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k32_f16_f16",
+      "operation_key": "matrix.mma.sp.m16n8k32.row.col.f16.f16.f16.f16.not_applicable.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_f16_f16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_19566",
+          "asm": "mma.sp::ordered_metadata.sync.aligned.m16n8k32.row.col.f16.f16.f16.f16\n\t\t{{$rd0, $rd1}},\n\t\t{{$ra0, $ra1, $ra2, $ra3}},\n\t\t{{$rb0, $rb1, $rb2, $rb3}},\n\t\t{{$rc0, $rc1}},\n\t\t$metadata,\n\t\t$selector;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 85"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1023",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k32_f16_f16",
+        "arguments": [
+          "[u32; 2]",
+          "[u32; 4]",
+          "[u32; 4]",
+          "u32",
+          "u32"
+        ],
+        "result": "[u32; 2]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1023",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k32_f16_f16",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k32_f16_f16"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "i32",
+          "i32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "i32",
+          "i32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.f16.f16",
+        "arguments": [
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "v2f16",
+          "v2f16"
+        ],
+        "properties": [
+          "ImmArg<arg11>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg11,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[u32; 2]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "executed",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "eight typed LLVM declarations lowered through the selected convergent inline-PTX route",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 23.1.0-rust emitted all eight exact ordered-metadata sparse floating MMA heads in 5,919-byte PTX (SHA-256 ad099cdc834110da56254abc01034b4d9284e33dc20f4f90f8d2afc079bf1c3b). sm_75/+ptx85 and sm_80/+ptx80 failed selection; sm_80, sm_86, sm_89, and sm_90/+ptx85 plus sm_100/+ptx86 succeeded.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 5,919-byte PTX 8.5 fixture and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx85"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 12.9; libNVVM/ptxas release V12.9.86",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx88"
+              ],
+              "representation": "eight convergent side-effecting ordered-metadata sparse floating inline PTX calls in NVVM IR 2.0",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 4,379-byte IR fixture and emitted every reviewed instruction exactly once in 9,825-byte PTX (SHA-256 3bebcae52bbd17d0b2f1b9ff7630f6545623b1e95b5e430f442b29fd007c3264) plus 4,740-byte LTOIR (SHA-256 06bb14b236103564646bff3dfb6dd3099d911fa9631adeb38649b91f93fc2987).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "CUDA 12.9 libNVVM PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 9,825-byte libNVVM PTX and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "the 4,740-byte all-variant libNVVM LTOIR linked for sm_80",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 nvJitLink accepted the real libNVVM LTOIR and produced a valid 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/lib/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "71386c8355bddbdf428691f36ee31f462217b5054be1001170ed0c1ed0a70622"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx88"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k32",
+        "accumulator": "f16",
+        "a_element": "f16",
+        "b_element": "f16",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "not_applicable",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c2_u32_a4_u32_b4_u32_metadata_u32_selector_u32_to_d2_u32",
+        "llvm_adapter": "a4_v2_f16_b4_v2_f16_c2_v2_f16_metadata_i32_selector_i32_to_d2_v2_f16",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "executed"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k32",
+          "row",
+          "col",
+          "f16",
+          "f16",
+          "f16",
+          "f16"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed ordered sparse f16 A and B fragments and adds a packed f16 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k32_f32_bf16",
+      "operation_key": "matrix.mma.sp.m16n8k32.row.col.f32.bf16.bf16.f32.not_applicable.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_bf16"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_19532",
+          "asm": "mma.sp::ordered_metadata.sync.aligned.m16n8k32.row.col.f32.bf16.bf16.f32\n\t\t{{$rd0, $rd1, $rd2, $rd3}},\n\t\t{{$ra0, $ra1, $ra2, $ra3}},\n\t\t{{$rb0, $rb1, $rb2, $rb3}},\n\t\t{{$rc0, $rc1, $rc2, $rc3}},\n\t\t$metadata,\n\t\t$selector;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 85"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1022",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k32_f32_bf16",
+        "arguments": [
+          "[f32; 4]",
+          "[u32; 4]",
+          "[u32; 4]",
+          "u32",
+          "u32"
+        ],
+        "result": "[f32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1022",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k32_f32_bf16",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k32_f32_bf16"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.bf16",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ],
+        "properties": [
+          "ImmArg<arg13>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg13,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[f32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "executed",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "eight typed LLVM declarations lowered through the selected convergent inline-PTX route",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 23.1.0-rust emitted all eight exact ordered-metadata sparse floating MMA heads in 5,919-byte PTX (SHA-256 ad099cdc834110da56254abc01034b4d9284e33dc20f4f90f8d2afc079bf1c3b). sm_75/+ptx85 and sm_80/+ptx80 failed selection; sm_80, sm_86, sm_89, and sm_90/+ptx85 plus sm_100/+ptx86 succeeded.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 5,919-byte PTX 8.5 fixture and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx85"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 12.9; libNVVM/ptxas release V12.9.86",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx88"
+              ],
+              "representation": "eight convergent side-effecting ordered-metadata sparse floating inline PTX calls in NVVM IR 2.0",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 4,379-byte IR fixture and emitted every reviewed instruction exactly once in 9,825-byte PTX (SHA-256 3bebcae52bbd17d0b2f1b9ff7630f6545623b1e95b5e430f442b29fd007c3264) plus 4,740-byte LTOIR (SHA-256 06bb14b236103564646bff3dfb6dd3099d911fa9631adeb38649b91f93fc2987).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "CUDA 12.9 libNVVM PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 9,825-byte libNVVM PTX and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "the 4,740-byte all-variant libNVVM LTOIR linked for sm_80",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 nvJitLink accepted the real libNVVM LTOIR and produced a valid 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/lib/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "71386c8355bddbdf428691f36ee31f462217b5054be1001170ed0c1ed0a70622"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx88"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k32",
+        "accumulator": "f32",
+        "a_element": "bf16",
+        "b_element": "bf16",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "not_applicable",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_f32_a4_u32_b4_u32_metadata_u32_selector_u32_to_d4_f32",
+        "llvm_adapter": "a4_i32_b4_i32_c4_f32_metadata_i32_selector_i32_to_d4_f32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "executed"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k32",
+          "row",
+          "col",
+          "f32",
+          "bf16",
+          "bf16",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed ordered sparse bf16 A and B fragments and adds a f32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k32_f32_f16",
+      "operation_key": "matrix.mma.sp.m16n8k32.row.col.f32.f16.f16.f32.not_applicable.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k32_row_col_f32_f32"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_19570",
+          "asm": "mma.sp::ordered_metadata.sync.aligned.m16n8k32.row.col.f32.f16.f16.f32\n\t\t{{$rd0, $rd1, $rd2, $rd3}},\n\t\t{{$ra0, $ra1, $ra2, $ra3}},\n\t\t{{$rb0, $rb1, $rb2, $rb3}},\n\t\t{{$rc0, $rc1, $rc2, $rc3}},\n\t\t$metadata,\n\t\t$selector;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 85"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1024",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k32_f32_f16",
+        "arguments": [
+          "[f32; 4]",
+          "[u32; 4]",
+          "[u32; 4]",
+          "u32",
+          "u32"
+        ],
+        "result": "[f32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1024",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k32_f32_f16",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k32_f32_f16"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k32.row.col.f32.f32",
+        "arguments": [
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "v2f16",
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ],
+        "properties": [
+          "ImmArg<arg13>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg13,0,2>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[f32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "executed",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "eight typed LLVM declarations lowered through the selected convergent inline-PTX route",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 23.1.0-rust emitted all eight exact ordered-metadata sparse floating MMA heads in 5,919-byte PTX (SHA-256 ad099cdc834110da56254abc01034b4d9284e33dc20f4f90f8d2afc079bf1c3b). sm_75/+ptx85 and sm_80/+ptx80 failed selection; sm_80, sm_86, sm_89, and sm_90/+ptx85 plus sm_100/+ptx86 succeeded.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 5,919-byte PTX 8.5 fixture and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx85"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 12.9; libNVVM/ptxas release V12.9.86",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx88"
+              ],
+              "representation": "eight convergent side-effecting ordered-metadata sparse floating inline PTX calls in NVVM IR 2.0",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 4,379-byte IR fixture and emitted every reviewed instruction exactly once in 9,825-byte PTX (SHA-256 3bebcae52bbd17d0b2f1b9ff7630f6545623b1e95b5e430f442b29fd007c3264) plus 4,740-byte LTOIR (SHA-256 06bb14b236103564646bff3dfb6dd3099d911fa9631adeb38649b91f93fc2987).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "CUDA 12.9 libNVVM PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 9,825-byte libNVVM PTX and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "the 4,740-byte all-variant libNVVM LTOIR linked for sm_80",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 nvJitLink accepted the real libNVVM LTOIR and produced a valid 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/lib/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "71386c8355bddbdf428691f36ee31f462217b5054be1001170ed0c1ed0a70622"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx88"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k32",
+        "accumulator": "f32",
+        "a_element": "f16",
+        "b_element": "f16",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "not_applicable",
+        "metadata": "ordered",
+        "selector": "immediate_zero_or_one",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_f32_a4_u32_b4_u32_metadata_u32_selector_u32_to_d4_f32",
+        "llvm_adapter": "a4_v2_f16_b4_v2_f16_c4_f32_metadata_i32_selector_i32_to_d4_f32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "executed"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k32",
+          "row",
+          "col",
+          "f32",
+          "f16",
+          "f16",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed ordered sparse f16 A and B fragments and adds a f32 accumulator."
+    },
+    {
       "id": "mma_sp_ordered_metadata_m16n8k32_s32_s8",
       "operation_key": "matrix.mma.sp.m16n8k32.row.col.s32.s8.s8.s32.wrapping.ordered_metadata",
       "family": "sparse_mma",
@@ -219899,6 +222276,343 @@
         ]
       },
       "summary": "Multiplies warp-distributed sparse unsigned A and unsigned B INT8 fragments with ordered sparsity metadata and adds a saturating s32 accumulator."
+    },
+    {
+      "id": "mma_sp_ordered_metadata_m16n8k8_f32_tf32",
+      "operation_key": "matrix.mma.sp.m16n8k8.row.col.f32.tf32.tf32.f32.not_applicable.ordered_metadata",
+      "family": "sparse_mma",
+      "source": {
+        "kind": "llvm_imported",
+        "source_record": "int_nvvm_mma_sp_ordered_metadata_m16n8k8_row_col_tf32"
+      },
+      "selections": [
+        {
+          "source_record": "anonymous_19540",
+          "asm": "mma.sp::ordered_metadata.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32\n\t\t{{$rd0, $rd1, $rd2, $rd3}},\n\t\t{{$ra0, $ra1}},\n\t\t{{$rb0, $rb1}},\n\t\t{{$rc0, $rc1, $rc2, $rc3}},\n\t\t$metadata,\n\t\t$selector;",
+          "predicates": [
+            "Subtarget->getSmVersion() >= 80",
+            "Subtarget->getPTXVersion() >= 85"
+          ]
+        }
+      ],
+      "rust": {
+        "abi_id": "i1017",
+        "module": "matrix",
+        "name": "mma_sp_ordered_metadata_m16n8k8_f32_tf32",
+        "arguments": [
+          "[f32; 4]",
+          "[u32; 2]",
+          "[u32; 2]",
+          "u32",
+          "u32"
+        ],
+        "result": "[f32; 4]",
+        "safe": false,
+        "must_use": true,
+        "safe_allowlist_reason": null,
+        "canonical_path": "cuda_intrinsics::__cuda_oxide_intrinsic_abi_v1::i1017",
+        "public_path": "cuda_intrinsics::matrix::mma_sp_ordered_metadata_m16n8k8_f32_tf32",
+        "compatibility_paths": [
+          "cuda_device::wmma::mma_sp_ordered_metadata_m16n8k8_f32_tf32"
+        ]
+      },
+      "dialect": {
+        "op_type": "SparseMmaOp",
+        "op_name": "nvvm.sparse_mma",
+        "operands": [
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32",
+          "u32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ]
+      },
+      "llvm": {
+        "symbol": "llvm.nvvm.mma.sp.ordered.metadata.m16n8k8.row.col.tf32",
+        "arguments": [
+          "i32",
+          "i32",
+          "i32",
+          "i32",
+          "f32",
+          "f32",
+          "f32",
+          "f32",
+          "i32",
+          "i32"
+        ],
+        "results": [
+          "f32",
+          "f32",
+          "f32",
+          "f32"
+        ],
+        "properties": [
+          "ImmArg<arg9>",
+          "IntrNoCallback",
+          "IntrNoMem",
+          "Range<arg9,0,4>"
+        ],
+        "result_facts": {
+          "no_undef": false,
+          "range": null
+        }
+      },
+      "semantics": {
+        "pure": false,
+        "memory": "none",
+        "convergent": true,
+        "execution_scope": "warp"
+      },
+      "target": {
+        "minimum_ptx": "8.5",
+        "hardware": {
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 80
+            }
+          ]
+        },
+        "ptx_result": "[f32; 4]",
+        "targets": "all",
+        "ptx_isa_version": "9.3",
+        "ptx_isa_section": "9.7.15.6.3 Multiply-and-Accumulate Instruction: mma.sp",
+        "ptx_isa_url": "https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma-sp"
+      },
+      "backend": {
+        "profile": "rust-llvm-23.1.0-16696adc",
+        "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+        "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+        "status": "executed",
+        "target_triple": "nvptx64-nvidia-cuda",
+        "gpu_target": "sm_80",
+        "ptx_feature": "+ptx85"
+      },
+      "backend_lowerings": [
+        {
+          "backend": "llvm_nvptx",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "rust-llvm-23.1.0-16696adc",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "LLVM version 23.1.0-rust-1.100.0-nightly",
+          "sha256": "2e5bc688625ca7d98bca9b5f0f0d14525d2eb59e8a9842964e480df3ffd1f921",
+          "artifact_path": null,
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "eight typed LLVM declarations lowered through the selected convergent inline-PTX route",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Pinned LLVM 23.1.0-rust emitted all eight exact ordered-metadata sparse floating MMA heads in 5,919-byte PTX (SHA-256 ad099cdc834110da56254abc01034b4d9284e33dc20f4f90f8d2afc079bf1c3b). sm_75/+ptx85 and sm_80/+ptx80 failed selection; sm_80, sm_86, sm_89, and sm_90/+ptx85 plus sm_100/+ptx86 succeeded.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx85"
+              ],
+              "representation": "exact-floor PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 5,919-byte PTX 8.5 fixture and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx85"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        },
+        {
+          "backend": "lib_nvvm",
+          "mechanism": "inline_ptx",
+          "evidence_profile": "cuda-12.9-libnvvm-12.9.86-sparse-mma-ordered-ampere-float",
+          "target": {
+            "minimum_ptx": "8.5",
+            "hardware": {
+              "kind": "any_of",
+              "alternatives": [
+                {
+                  "kind": "minimum_sm",
+                  "sm": 80
+                }
+              ]
+            }
+          },
+          "version": "CUDA toolkit 12.9; libNVVM/ptxas release V12.9.86",
+          "sha256": "79729301061c2abe547c749073ad658a1582d33fb5d003e2c097285e5ddafb2e",
+          "artifact_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/nvvm/lib64/libnvvm.so.4",
+          "build_id_prefix": null,
+          "status": "executed",
+          "stages": [
+            {
+              "targets": [
+                "compute_80",
+                "ptx88"
+              ],
+              "representation": "eight convergent side-effecting ordered-metadata sparse floating inline PTX calls in NVVM IR 2.0",
+              "stage": "backend_codegen",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 libNVVM compiled the 4,379-byte IR fixture and emitted every reviewed instruction exactly once in 9,825-byte PTX (SHA-256 3bebcae52bbd17d0b2f1b9ff7630f6545623b1e95b5e430f442b29fd007c3264) plus 4,740-byte LTOIR (SHA-256 06bb14b236103564646bff3dfb6dd3099d911fa9631adeb38649b91f93fc2987).",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "CUDA 12.9 libNVVM PTX containing all eight ordered sparse floating MMA forms",
+              "stage": "ptx_assembly",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 ptxas accepted the 9,825-byte libNVVM PTX and produced a 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/bin/ptxas",
+              "tool_version": "CUDA 12.9 V12.9.86 build cuda_12.9.r12.9/compiler.36037853_0",
+              "tool_sha256": "fb46c0843eba5215f909a6d279f4a25e34d0a48472c6d6f14e4711b00edf9b73"
+            },
+            {
+              "targets": [
+                "sm_80",
+                "ptx88"
+              ],
+              "representation": "the 4,740-byte all-variant libNVVM LTOIR linked for sm_80",
+              "stage": "device_link",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "CUDA 12.9.86 nvJitLink accepted the real libNVVM LTOIR and produced a valid 960-byte cubin with SHA-256 49ead52030d9bccae833c39468fe4e63c89fbedfcfc7e57d77f86d93033b6375.",
+              "artifact_kind": "cubin",
+              "tool_path": "/home/sam/Workspaces/dinov3-candle/.pixi/envs/default/lib/libnvJitLink.so.12.9.86",
+              "tool_version": "CUDA 12.9 nvJitLink V12.9.86",
+              "tool_sha256": "71386c8355bddbdf428691f36ee31f462217b5054be1001170ed0c1ed0a70622"
+            },
+            {
+              "targets": [
+                "sm_120",
+                "ptx88"
+              ],
+              "representation": "all eight generated ordered sparse floating MMA APIs checked across all 32 lanes and four logical accumulators per lane against an independent host GEMM oracle",
+              "stage": "runtime",
+              "mechanism": "inline_ptx",
+              "outcome": "succeeded",
+              "detail": "Re-measured with the asymmetric oracle on NVIDIA GeForce RTX 5090 (compute capability 12.0), NVIDIA driver 580.173.02, CUDA toolkit 13.3 V13.3.33. Command: cargo oxide run sparse_mma_ordered_float. Result: exit code 0; SUCCESS: all 8 variants; all 32 lanes and 4 logical accumulators/lane match host GEMM; positionally distinct A/B/C, all six ordered metadata codes (tf32: both), and a nonzero selector per selector domain executed; compute-sanitizer memcheck reports 0 errors.",
+              "artifact_kind": null,
+              "tool_path": null,
+              "tool_version": null,
+              "tool_sha256": null
+            }
+          ]
+        }
+      ],
+      "sparse_mma": {
+        "shape": "m16n8k8",
+        "accumulator": "f32",
+        "a_element": "tf32",
+        "b_element": "tf32",
+        "a_layout": "row",
+        "b_layout": "col",
+        "overflow": "not_applicable",
+        "metadata": "ordered",
+        "selector": "immediate_zero_through_three",
+        "participation": "all_warp_lanes_same_instruction_and_qualifiers_no_exited_lanes",
+        "adapter": "c4_f32_a2_u32_b2_u32_metadata_u32_selector_u32_to_d4_f32",
+        "llvm_adapter": "a2_i32_b2_i32_c4_f32_metadata_i32_selector_i32_to_d4_f32",
+        "compatibility_source": "generated_stub",
+        "runtime_validation": "executed"
+      },
+      "lowering": "generated_sparse_mma",
+      "expected_ptx": {
+        "mnemonic": "mma",
+        "modifiers": [
+          "sp::ordered_metadata",
+          "sync",
+          "aligned",
+          "m16n8k8",
+          "row",
+          "col",
+          "f32",
+          "tf32",
+          "tf32",
+          "f32"
+        ],
+        "operands": [
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 2
+          },
+          {
+            "kind": "register_list",
+            "length": 4
+          },
+          {
+            "kind": "register"
+          },
+          {
+            "kind": "immediate"
+          }
+        ]
+      },
+      "summary": "Multiplies warp-distributed ordered sparse tf32 A and B fragments and adds a f32 accumulator."
     },
     {
       "id": "movmatrix_trans_b16",
