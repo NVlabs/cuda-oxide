@@ -447,6 +447,41 @@ mod tests {
         }
     }
 
+    /// Entry order in [`RECORDED_PTX_FLOORS`] is load-bearing: target
+    /// selection walks the list front to back and takes the first
+    /// satisfying candidate. So the list must stay in this order:
+    ///
+    /// ```text
+    /// [ base targets, ascending ]  [ 'a' family, ascending ]  [ 'f' family, ascending ]
+    ///   sm_70 .. sm_121             sm_90a .. sm_121a          sm_100f .. sm_121f
+    ///   preferred first  ------------------------------------------>  last resort
+    /// ```
+    ///
+    /// An entry inserted out of section order would silently reshuffle
+    /// which target wins selection; this test turns that into a red build.
+    #[test]
+    fn recorded_floors_keep_selection_preference_order() {
+        let section = |suffix: Option<char>| match suffix {
+            None => 0,
+            Some('a') => 1,
+            Some('f') => 2,
+            other => panic!("unknown suffix section {other:?}"),
+        };
+        for pair in RECORDED_PTX_FLOORS.windows(2) {
+            let (prev, next) = (&pair[0], &pair[1]);
+            let ordered =
+                (section(prev.suffix), prev.capability) < (section(next.suffix), next.capability);
+            assert!(
+                ordered,
+                "sm_{}{} must come before sm_{}{}",
+                prev.capability,
+                prev.suffix.map(String::from).unwrap_or_default(),
+                next.capability,
+                next.suffix.map(String::from).unwrap_or_default(),
+            );
+        }
+    }
+
     #[test]
     fn construction_from_parts_and_text_agree() {
         for entry in RECORDED_PTX_FLOORS {
