@@ -176,6 +176,10 @@ pipeline example:
 smoketest *args:
     scripts/smoketest.sh {{args}}
 
+# Schedule-fuzz regression for gemm_sol's TILE_INFO mailbox handshake, gated on sm_100 (see scripts/regress-gemm-sol-schedule.sh --help)
+regress-gemm-sol *args:
+    scripts/regress-gemm-sol-schedule.sh {{args}}
+
 # Build the book exactly as the CI gate does. Needs python3; nothing else.
 #
 # `-W` turns every Sphinx warning into an error, so a broken cross-reference, a
