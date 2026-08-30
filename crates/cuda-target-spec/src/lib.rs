@@ -5,6 +5,18 @@
 
 //! Shared CUDA target parsing and recorded target-to-PTX policy.
 //!
+//! This crate is the one owner of the target vocabulary: parse a target
+//! string once at the boundary, then pass the typed value around.
+//!
+//! ```text
+//! before:  "sm_90a" --> ptx path parses --> nvvm path parses --> probe parses
+//! after:   "sm_90a" --> CudaArch { capability: 90, suffix: Some('a') }
+//!                       (one parse; every later check takes &CudaArch)
+//! ```
+//!
+//! The same idea covers PTX ISA spellings: [`PtxSpelling`] can only be
+//! built from the supported set, so holding one is the membership proof.
+//!
 //! The floors in [`RECORDED_PTX_FLOORS`] describe the defaults emitted by the
 //! pinned LLVM 23 NVPTX backend. They are not backend-independent CUDA facts;
 //! in particular, LLVM 21 does not accept every target recorded here.
