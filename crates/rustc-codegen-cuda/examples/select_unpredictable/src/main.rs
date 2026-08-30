@@ -17,7 +17,9 @@
 //! `select_unpredictable` and once with a plain `if` — and writes the
 //! `select_unpredictable` result; the host asserts it matches the branchy
 //! reference. `i32` exercises the scalar path; `usize` mirrors the index-typed
-//! selects libcore's sort emits.
+//! selects libcore's sort emits. A compile-only raw-pointer kernel also forces
+//! libcore to instantiate the intrinsic for both `*mut T` and its internal
+//! `MaybeUninit<*mut T>` carrier, guarding pointer-kind preservation.
 //!
 //! Usage:
 //!   cargo oxide run select_unpredictable
@@ -47,6 +49,17 @@ mod kernels {
             let (x, y) = (a[i] as usize, b[i] as usize);
             *slot = core::hint::select_unpredictable(x <= y, x, y) as u64;
         }
+    }
+
+    /// Compile-only provenance control. For `T = *mut u32`, libcore's
+    /// implementation invokes the intrinsic on raw pointers while choosing
+    /// its drop guards and again on `MaybeUninit<*mut u32>` for the value.
+    #[kernel]
+    pub fn select_raw_mut(a: *mut u32, b: *mut u32, selector: u32) {
+        let selected = core::hint::select_unpredictable(selector & 1 == 0, a, b);
+        // SAFETY: this kernel is a compile-only control; callers remain
+        // responsible for passing valid writable device pointers.
+        unsafe { selected.write(selector) };
     }
 }
 

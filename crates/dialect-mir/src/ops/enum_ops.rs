@@ -284,6 +284,17 @@ impl Verify for MirGetDiscriminantOp {
 /// | Name                             | Type               | Description             |
 /// |----------------------------------|--------------------|-------------------------|
 /// | `set_discriminant_variant_index` | `VariantIndexAttr` | Variant to make active. |
+/// | `set_discriminant_enum_ty`       | `TypeAttr`         | The enum being written. |
+/// ```
+///
+/// Why carry the enum type when the operand already points to it? Lowering
+/// runs after the operand becomes an opaque `llvm.ptr`, and operand type
+/// HISTORY breaks across value-forwarded kind-only casts. The attribute
+/// rides the op, so the tag/niche layout always comes from the right enum:
+///
+/// ```text
+/// build time:  ptr: mir.ptr<E, mut> ──► enum_ty attr = E   (stamped once)
+/// lowering:    tag offset / carrier bits from enum_ty      (no history)
 /// ```
 ///
 /// # Results
@@ -293,12 +304,16 @@ impl Verify for MirGetDiscriminantOp {
 /// # Verification
 ///
 /// - First operand must be a `MirPtrType` pointing to a `MirEnumType`.
+/// - `set_discriminant_enum_ty` must be present and equal that pointee.
 /// - The target variant must exist and be inhabited.
 #[pliron_op(
     name = "mir.set_discriminant",
     format,
     interfaces = [NOpdsInterface<1>, OneOpdInterface, NResultsInterface<0>],
-    attributes = (set_discriminant_variant_index: VariantIndexAttr)
+    attributes = (
+        set_discriminant_variant_index: VariantIndexAttr,
+        set_discriminant_enum_ty: pliron::builtin::attributes::TypeAttr
+    )
 )]
 pub struct MirSetDiscriminantOp;
 
@@ -340,6 +355,19 @@ impl Verify for MirSetDiscriminantOp {
                 let pointee = ptr_type.pointee.deref(ctx);
                 match pointee.downcast_ref::<MirEnumType>() {
                     Some(enum_ty) => {
+                        let Some(enum_ty_attr) = self.get_attr_set_discriminant_enum_ty(ctx) else {
+                            return verify_err!(
+                                op.loc(),
+                                "MirSetDiscriminantOp missing set_discriminant_enum_ty"
+                            );
+                        };
+                        if enum_ty_attr.get_type(ctx) != ptr_type.pointee {
+                            return verify_err!(
+                                op.loc(),
+                                "MirSetDiscriminantOp enum_ty attribute must equal the \
+                                 operand pointee"
+                            );
+                        }
                         let Some(target) = self.get_attr_set_discriminant_variant_index(ctx) else {
                             return verify_err!(
                                 op.loc(),

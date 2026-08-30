@@ -60,23 +60,27 @@ pub mod intrinsics;
 
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
+use crate::translator::facts::{
+    eval_usize_const, is_cuda_device_fn, is_std_precondition_check, self_ty_is_shared_array,
+};
 use crate::translator::location::span_to_location;
 use crate::translator::rvalue;
 use crate::translator::values::{ValueMap, maybe_ptr_coerce};
+use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
 use dialect_mir::ops::{
     MirAssertOp, MirCondBranchOp, MirConstantOp, MirEqOp, MirGotoOp, MirNotOp, MirReturnOp,
     MirUnrollHintOp,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
-use pliron::builtin::types::{IntegerType, Signedness};
+use pliron::builtin::types::{FunctionType, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::identifier::Legaliser;
 use pliron::linked_list::ContainsLinkedList;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
-use pliron::r#type::Typed;
+use pliron::r#type::{TypeHandle, Typed};
 use pliron::{input_err, input_error};
 use rustc_public::CrateDef;
 use rustc_public::mir;
@@ -109,7 +113,7 @@ pub fn translate_terminator(
     rustc_mono_successors: &[usize],
     legaliser: &mut Legaliser,
 ) -> TranslationResult<Ptr<Operation>> {
-    let loc = span_to_location(ctx, term.span);
+    let loc = span_to_location(ctx, term.source_info.span);
 
     match &term.kind {
         mir::TerminatorKind::Return => {
@@ -863,10 +867,16 @@ fn translate_drop(
 // Call Translation (includes intrinsic dispatch)
 // ============================================================================
 
-/// True when `fn_def` is `core::ptr::drop_in_place` itself, the only
-/// function whose monomorphizations resolve to rustc's drop-glue shims.
-/// Same crate + path-segment matching idiom as the callable-trait
+/// True when `fn_def` is `core::ptr::drop_in_place` or `core::ptr::drop_glue`,
+/// the only functions whose monomorphizations resolve to rustc's drop-glue
+/// shims. Same crate + path-segment matching idiom as the callable-trait
 /// detection below.
+///
+/// `drop_glue` (`#[lang = "drop_glue"]`) exists since nightly-2026-08-28:
+/// `drop_in_place` is now an ordinary `core` function whose body forwards to
+/// the compiler-replaced `drop_glue` shim, so a translated `drop_in_place`
+/// body contains a plain Call to `drop_glue::<T>` that needs the same
+/// noop-elision as direct `drop_in_place` calls.
 fn is_drop_in_place_callee(fn_def: &rustc_public::ty::FnDef) -> bool {
     if fn_def.krate().name.as_str() != "core" {
         return false;
@@ -878,7 +888,7 @@ fn is_drop_in_place_callee(fn_def: &rustc_public::ty::FnDef) -> bool {
     };
     let parent_name = parent_def.name();
     let parent = parent_name.as_str().rsplit("::").next().unwrap_or("");
-    method == "drop_in_place" && parent == "ptr"
+    (method == "drop_in_place" || method == "drop_glue") && parent == "ptr"
 }
 
 /// Emit a branch to `target` as the only effect of a call we are eliding:
@@ -971,53 +981,27 @@ fn translate_call(
     let target_usize = target.map(|t| t);
 
     // Extract function info
-    let (pattern_name, call_name, substs_str, type_substs) = extract_func_info(func, &loc)?;
+    let (pattern_name, call_name, substs_args, type_substs) = extract_func_info(func, &loc)?;
+    let loc = call_debug_location(pattern_name.as_deref(), loc);
 
-    // Helper to check if substitutions contain a type
-    let substs_contains =
-        |pattern: &str| -> bool { substs_str.as_ref().is_some_and(|s| s.contains(pattern)) };
+    // Is the trait-method Self type SharedArray? Shared with
+    // `values::classify_call` so intrinsic dispatch and destination-slot
+    // classification can't drift.
+    let on_shared_array = substs_args.as_ref().is_some_and(self_ty_is_shared_array);
 
     // Skip precondition_check calls - these are UB check assertions that are
     // dead code because we return false for RuntimeChecks(UbChecks).
     // The MIR still contains these calls, but they're in dead branches.
-    if let Some(ref name) = pattern_name
-        && name.contains("precondition_check")
+    if let Some(target_idx) = target_usize
+        && let mir::Operand::Constant(const_op) = func
+        && let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, _)) =
+            const_op.const_.ty().kind()
+        && is_std_precondition_check(&fn_def)
     {
         // Just emit a goto to the target block, skipping the call entirely
-        if let Some(target_idx) = target_usize {
-            let actual_prev_op = if let Some(p) = prev_op {
-                p
-            } else {
-                // Create a dummy i1 constant (false) as a placeholder operation
-                use pliron::builtin::attributes::IntegerAttr;
-                use pliron::utils::apint::APInt;
-                use std::num::NonZeroUsize;
-
-                let bool_ty = IntegerType::get(ctx, 1, Signedness::Signless);
-                let dummy = Operation::new(
-                    ctx,
-                    MirConstantOp::get_concrete_op_info(),
-                    vec![bool_ty.into()],
-                    vec![],
-                    vec![],
-                    0,
-                );
-                dummy.deref_mut(ctx).set_loc(loc.clone());
-                let const_op = MirConstantOp::new(dummy);
-                let false_val = APInt::from_u64(0, NonZeroUsize::new(1).unwrap());
-                const_op.set_attr_value(ctx, IntegerAttr::new(bool_ty, false_val));
-                let dummy = const_op.get_operation();
-                dummy.insert_at_front(block_ptr, ctx);
-                dummy
-            };
-            return Ok(helpers::emit_goto(
-                ctx,
-                target_idx,
-                actual_prev_op,
-                block_map,
-                loc,
-            ));
-        }
+        return Ok(emit_elided_call_goto(
+            ctx, target_idx, block_ptr, prev_op, block_map, loc,
+        ));
     }
 
     // Elide a call to provably no-op drop glue. An explicit
@@ -1131,34 +1115,41 @@ fn translate_call(
         return Ok(helpers::emit_goto(ctx, target, hint, block_map, loc));
     }
 
-    // Handle DynamicSharedArray specially to extract the ALIGN const generic
+    // Handle DynamicSharedArray specially to extract the ALIGN const generic.
+    // The crate anchor tightens the name-substring gate: a user fn merely
+    // named like it falls through to ordinary call handling. Kept in
+    // lockstep with the classifier in `values::classify_call`.
     if let Some(ref name) = pattern_name
         && name.contains("DynamicSharedArray")
         && (name.contains("::get") || name.contains("::offset"))
+        && is_cuda_device_fn(func)
     {
-        // Extract the ALIGN const generic from the function type
-        // DynamicSharedArray<T, ALIGN> has T as first generic, ALIGN as second
-        let alignment = if let mir::Operand::Constant(const_op) = func {
-            if let rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(_, substs)) =
-                const_op.const_.ty().kind()
-            {
-                // The ALIGN const generic is the second generic argument (index 1)
-                // First is T (type), second is ALIGN (const)
-                if let Some(rustc_public::ty::GenericArgKind::Const(c)) = substs.0.get(1) {
-                    use rustc_public::ty::TyConstKind;
-                    match c.kind() {
-                        TyConstKind::Value(_, alloc) => alloc.read_uint().unwrap_or(16) as u64,
-                        _ => c.eval_target_usize().unwrap_or(16),
-                    }
-                } else {
-                    16 // Default alignment (matches nvcc)
-                }
-            } else {
-                16
-            }
-        } else {
-            16
+        // DynamicSharedArray substs arrive in declaration order, with the
+        // ALIGN default already materialized by rustc:
+        //
+        //   DynamicSharedArray<T, ALIGN = 16>
+        //     [0] T      type
+        //     [1] ALIGN  const usize
+        //
+        // A read failure here must be an error, never a guessed 16: a
+        // silently 16-aligned extern smem symbol corrupts TMA at runtime.
+        let Some(substs) = substs_args.as_ref() else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(
+                    "DynamicSharedArray call carries no generic substitutions"
+                )
+            );
         };
+        let Some(rustc_public::ty::GenericArgKind::Const(c)) = substs.0.get(1) else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(
+                    "DynamicSharedArray substs missing the ALIGN const generic at position 1"
+                )
+            );
+        };
+        let alignment: u64 = eval_usize_const(c, "DynamicSharedArray ALIGN", Some(&loc))?;
 
         if name.contains("::get") {
             // Both get() and get_raw() use the same handler with offset 0
@@ -1271,7 +1262,7 @@ fn translate_call(
             value_map,
             block_map,
             loc.clone(),
-            &substs_contains,
+            on_shared_array,
             &type_substs,
         )?
     {
@@ -1341,6 +1332,13 @@ fn translate_call(
     let raw_name = call_name.unwrap_or_else(|| "unknown_function".to_string());
     let legal_name = legaliser.legalise(&raw_name);
 
+    // Foreign items have no `mir.func` body to provide an independent symbol
+    // signature. Preserve the exact resolved rustc declaration on the call so
+    // final module verification can still reject pointer-kind laundering at
+    // this ABI boundary. This must be derived from `func`, not reconstructed
+    // from the already-created call operands or destination.
+    let external_callee_type = translate_foreign_callee_type(ctx, func)?;
+
     // Type the call result from the caller's destination place, not from the
     // callee's declared signature. The declared signature of a trait method
     // is written against the trait, so its return type can be an unresolved
@@ -1361,6 +1359,7 @@ fn translate_call(
         args,
         destination,
         return_type,
+        external_callee_type,
         &target_usize,
         block_ptr,
         prev_op,
@@ -1368,6 +1367,125 @@ fn translate_call(
         block_map,
         loc,
     )
+}
+
+/// Translate the exact signature of a resolved Rust foreign item.
+///
+/// Ordinary Rust callees are independently typed by their `mir.func` op and
+/// therefore return `None`. Foreign declarations have no MIR body, so this
+/// `FunctionType` is attached to the call with `AbiBoundary` authority and is
+/// checked again by the final dialect verifier.
+fn translate_foreign_callee_type(
+    ctx: &mut Context,
+    func: &mir::Operand,
+) -> TranslationResult<Option<TypeHandle>> {
+    use dialect_mir::types::MirTupleType;
+    use rustc_public::mir::mono::Instance;
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    let mir::Operand::Constant(constant) = func else {
+        return Ok(None);
+    };
+    if *constant.const_.kind() != ConstantKind::ZeroSized {
+        return Ok(None);
+    }
+    let TyKind::RigidTy(RigidTy::FnDef(fn_def, substs)) = constant.const_.ty().kind() else {
+        return Ok(None);
+    };
+    let Some(instance) = Instance::resolve(fn_def, &substs).ok() else {
+        return Ok(None);
+    };
+    if !instance.is_foreign_item() {
+        return Ok(None);
+    }
+
+    let fn_ty = instance.ty();
+    let Some(signature) = fn_ty.kind().fn_sig() else {
+        return input_err!(
+            pliron::location::Location::Unknown,
+            TranslationErr::unsupported(format!(
+                "resolved foreign item `{}` has no function signature",
+                instance.name()
+            ))
+        );
+    };
+    let signature = signature.skip_binder();
+    ensure_foreign_callee_is_not_variadic(&instance.name().to_string(), signature.c_variadic)?;
+    let mut arguments = Vec::with_capacity(signature.inputs().len());
+    for argument in signature.inputs() {
+        arguments.push(types::translate_type(ctx, argument)?);
+    }
+
+    let output = signature.output();
+    let output = types::translate_type(ctx, &output)?;
+    let is_unit = output
+        .deref(ctx)
+        .downcast_ref::<MirTupleType>()
+        .is_some_and(|tuple| tuple.get_types().is_empty());
+    let results = if is_unit { vec![] } else { vec![output] };
+
+    Ok(Some(FunctionType::get(ctx, arguments, results).into()))
+}
+
+/// The builtin source `FunctionType` and MIR call operation are fixed-arity.
+/// Refuse a C-variadic foreign declaration instead of recording only its fixed
+/// prefix and incorrectly presenting that incomplete type as the exact ABI.
+fn ensure_foreign_callee_is_not_variadic(
+    callee_name: &str,
+    c_variadic: bool,
+) -> TranslationResult<()> {
+    if c_variadic {
+        return input_err!(
+            pliron::location::Location::Unknown,
+            TranslationErr::unsupported(format!(
+                "resolved foreign item `{callee_name}` is C-variadic; variadic foreign calls are not supported"
+            ))
+        );
+    }
+    Ok(())
+}
+
+// stable-MIR reports the function's canonical definition path rather than the
+// `cuda_device::thread::__internal` re-export spelling emitted by the macro,
+// but accept both spellings like the metadata markers below so a toolchain
+// bump changing visible-path selection cannot silently drop the match.
+const KERNEL_SCOPE_CONSTRUCTORS: &[&str] = &[
+    "cuda_device::__internal::make_kernel_scope",
+    "cuda_device::thread::__internal::make_kernel_scope",
+];
+
+// These start-of-kernel calls are compiler metadata, not source statements.
+// They are removed during import, but the replacement control-flow edge must
+// also stay off the attribute line which caused the macro to inject them.
+const KERNEL_METADATA_MARKERS: &[&str] = &[
+    "cuda_device::__launch_bounds_config",
+    "cuda_device::thread::__launch_bounds_config",
+    "cuda_device::__launch_contract_config",
+    "cuda_device::thread::__launch_contract_config",
+    "cuda_device::__launch_contract_block_config",
+    "cuda_device::thread::__launch_contract_block_config",
+    "cuda_device::__unchecked_indexing_config",
+    "cuda_device::thread::__unchecked_indexing_config",
+    "cuda_device::cluster::__cluster_config",
+    "cuda_device::shared::__dynamic_shared_alignment",
+];
+
+/// Keep the macro-injected launch-context constructor out of user line tables.
+///
+/// Its Rust span intentionally stays at the proc-macro invocation so any
+/// type-checker or borrow-checker diagnostic points into the user's item. The
+/// call itself is compiler-generated setup, though, and must not make a
+/// function breakpoint stop on `#[kernel]` (or whichever adjacent attribute
+/// happened to invoke the macro). Separating the debug location here lets the
+/// diagnostic span and runtime line table serve those different purposes.
+fn call_debug_location(pattern_name: Option<&str>, loc: Location) -> Location {
+    if pattern_name.is_some_and(|name| {
+        KERNEL_SCOPE_CONSTRUCTORS.contains(&name) || KERNEL_METADATA_MARKERS.contains(&name)
+    }) {
+        llvm_export::artificial_debug_location()
+    } else {
+        loc
+    }
 }
 
 /// Handle `FnOnce::call_once`, `FnMut::call_mut`, or `Fn::call` when the
@@ -1550,11 +1668,9 @@ fn translate_closure_call(
     legaliser: &mut Legaliser,
 ) -> TranslationResult<Ptr<Operation>> {
     use dialect_mir::ops::{MirCallOp, MirExtractFieldOp};
-    use pliron::builtin::attributes::{IntegerAttr, StringAttr};
+    use pliron::builtin::attributes::StringAttr;
     use pliron::identifier::Identifier;
     use pliron::r#type::Typed;
-    use pliron::utils::apint::APInt;
-    use std::num::NonZeroUsize;
 
     // Same reasoning as the regular-call path: the trait-level signature of
     // `FnOnce::call_once` types its result as the projection
@@ -1562,15 +1678,22 @@ fn translate_closure_call(
     // carries the already-resolved concrete type, so use that.
     let return_type = types::translate_destination_type(ctx, body, destination, &loc)?;
 
-    // Extract the closure body's name from the closure type in args[0]. This
-    // avoids targeting a ClosureOnce adapter when instance resolution selected
-    // one, while remaining correct for calls that resolve directly to the body.
-    let closure_body_name = extract_closure_body_name(&args[0], body);
-
-    let raw_callee = closure_body_name
-        .or_else(|| call_name.as_ref().map(|s| s.to_string()))
-        .unwrap_or_else(|| "unknown_closure".to_string());
-    let callee = legaliser.legalise(&raw_callee).to_string();
+    // Resolve the body independently from the callable-trait method. Besides
+    // selecting the body rather than a ClosureOnce adapter, this gives us the
+    // body's actual first parameter. That parameter is authoritative for the
+    // receiver kind: `&Closure` is SharedRef, `&mut Closure` is UniqueRef, and
+    // an FnOnce body receives the closure by value.
+    let Some(closure_body) = extract_closure_body_target(&args[0], body) else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "failed to resolve the closure body and receiver ABI for `{}`",
+                call_name.as_deref().unwrap_or("unknown closure")
+            ))
+        );
+    };
+    let callee = legaliser.legalise(&closure_body.name).to_string();
+    let expected_receiver_type = types::translate_type(ctx, &closure_body.receiver_ty)?;
 
     // Translate self argument (args[0])
     let (self_value, mut last_op) = rvalue::translate_operand(
@@ -1595,58 +1718,100 @@ fn translate_closure_call(
     )?;
     last_op = tuple_last_op;
 
-    // Determine whether bypassing a resolved adapter shim requires us to
-    // reproduce its receiver borrow. A ClosureOnce shim for an `Fn`/`FnMut`
-    // closure receives the closure by value but calls a body that expects a
-    // reference. A genuine by-value `FnOnce` closure resolves directly to its
-    // body and must stay by value. A receiver that MIR already passes by
-    // reference needs no extra borrow.
-    let receiver_needs_borrow = resolved_is_shim
-        && operand_type(&args[0], body).is_some_and(|ty| {
-            !matches!(
-                ty.kind(),
-                rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, _, _))
-            )
-        });
-
-    let self_arg = if receiver_needs_borrow {
-        // Reproduce the adapter shim's borrow before calling the body directly.
-        let self_ty = self_value.get_type(ctx);
-        let ptr_ty = dialect_mir::types::MirPtrType::get(ctx, self_ty, true, 0);
-
-        let ref_op = Operation::new(
-            ctx,
-            dialect_mir::ops::MirRefOp::get_concrete_op_info(),
-            vec![ptr_ty.into()],
-            vec![self_value],
-            vec![],
-            0,
-        );
-        ref_op.deref_mut(ctx).set_loc(loc.clone());
-
-        // Set mutable attribute (true for &mut)
-        let bool_type = IntegerType::get(ctx, 1, Signedness::Unsigned);
-        let mutable_attr =
-            IntegerAttr::new(bool_type, APInt::from_i64(1, NonZeroUsize::new(1).unwrap()));
-        ref_op
-            .deref_mut(ctx)
-            .attributes
-            .set(Identifier::try_from("mutable").unwrap(), mutable_attr);
-
-        // Insert after previous op
-        if let Some(prev) = last_op {
-            ref_op.insert_after(ctx, prev);
-        } else {
-            ref_op.insert_at_front(block_ptr, ctx);
+    // Derive the exact receiver reference from the closure body's first
+    // parameter. A ClosureOnce adapter may pass the closure by value and need
+    // a synthesized borrow. A direct `FnMut::call_mut` can also resolve to an
+    // `Fn` closure body: MIR then supplies `&mut Closure` while that body
+    // expects `&Closure`, so preserve the existing address with an explicit
+    // reborrow instead of taking the address of the reference value itself.
+    let receiver_borrow_mutability = match closure_body.receiver_ty.kind() {
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(_, _, mutability))
+            if self_value.get_type(ctx) != expected_receiver_type =>
+        {
+            Some(mutability)
         }
-        last_op = Some(ref_op);
+        _ => None,
+    };
 
-        // Use the reference as self arg
-        ref_op.deref(ctx).get_result(0)
+    let self_arg = if let Some(mutability) = receiver_borrow_mutability {
+        let is_mutable = mutability == mir::Mutability::Mut;
+
+        if self_value
+            .get_type(ctx)
+            .deref(ctx)
+            .is::<dialect_mir::types::MirPtrType>()
+        {
+            // The callable-trait receiver is already an address. Retype the
+            // same pointee at the Rust reborrow boundary (`&mut C -> &C` for
+            // an Fn closure invoked through FnMut is the common case).
+            let cast_op = Operation::new(
+                ctx,
+                dialect_mir::ops::MirCastOp::get_concrete_op_info(),
+                vec![expected_receiver_type],
+                vec![self_value],
+                vec![],
+                0,
+            );
+            cast_op.deref_mut(ctx).set_loc(loc.clone());
+            let cast = dialect_mir::ops::MirCastOp::new(cast_op);
+            cast.set_attr_cast_kind(ctx, MirCastKindAttr::PtrToPtr);
+            cast.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
+            if let Some(prev) = last_op {
+                cast_op.insert_after(ctx, prev);
+            } else {
+                cast_op.insert_at_front(block_ptr, ctx);
+            }
+            last_op = Some(cast_op);
+            cast_op.deref(ctx).get_result(0)
+        } else {
+            if !resolved_is_shim {
+                return input_err!(
+                    loc,
+                    TranslationErr::unsupported(
+                        "closure body expects a borrowed receiver but the direct callable-trait argument is not a pointer"
+                            .to_string()
+                    )
+                );
+            }
+
+            // Reproduce the ClosureOnce adapter's borrow before calling the
+            // closure body directly.
+            let ref_op = Operation::new(
+                ctx,
+                dialect_mir::ops::MirRefOp::get_concrete_op_info(),
+                vec![expected_receiver_type],
+                vec![self_value],
+                vec![],
+                0,
+            );
+            ref_op.deref_mut(ctx).set_loc(loc.clone());
+            let ref_op_wrapper = dialect_mir::ops::MirRefOp::new(ref_op);
+            ref_op_wrapper.set_mutable(ctx, is_mutable);
+            ref_op_wrapper.set_pointer_kind_authority(ctx, MirPointerKindAuthorityAttr::Reborrow);
+
+            if let Some(prev) = last_op {
+                ref_op.insert_after(ctx, prev);
+            } else {
+                ref_op.insert_at_front(block_ptr, ctx);
+            }
+            last_op = Some(ref_op);
+            ref_op.deref(ctx).get_result(0)
+        }
     } else {
-        // For call_mut/call: self is already a reference, use as-is
+        // For call_mut/call the MIR operand is already the body's exact
+        // reference type; for FnOnce the body receives the value unchanged.
         self_value
     };
+
+    if self_arg.get_type(ctx) != expected_receiver_type {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(
+                "closure call receiver type does not match the resolved closure body parameter"
+                    .to_string()
+            )
+        );
+    }
 
     // Build unpacked arguments, starting with the original or adapted receiver.
     let mut unpacked_args = vec![self_arg];
@@ -1832,7 +1997,7 @@ pub fn emit_dropped_panic_trap(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
 ) -> Ptr<Operation> {
-    let loc = span_to_location(ctx, term.span);
+    let loc = span_to_location(ctx, term.source_info.span);
     emit_trap_unreachable_after(ctx, block_ptr, prev_op, loc)
 }
 
@@ -1976,7 +2141,12 @@ fn callable_trait_call_info(func: &mir::Operand) -> Option<CallableTraitCallInfo
     })
 }
 
-/// Extracts the closure body's mangled name from a closure operand.
+struct ClosureBodyTarget {
+    name: String,
+    receiver_ty: rustc_public::ty::Ty,
+}
+
+/// Resolves the closure body and its actual receiver parameter.
 ///
 /// When instance resolution selects an adapter shim for a call like:
 ///   `<{closure} as FnOnce<(u32,)>>::call_once(closure_ref, args_tuple)`
@@ -1988,7 +2158,10 @@ fn callable_trait_call_info(func: &mir::Operand) -> Option<CallableTraitCallInfo
 /// - A direct closure value (type is `Closure(def, substs)`)
 /// - A reference to a closure (type is `Ref(_, Closure(def, substs), _)`)
 /// - A mutable reference (same pattern)
-fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Option<String> {
+fn extract_closure_body_target(
+    closure_arg: &mir::Operand,
+    body: &mir::Body,
+) -> Option<ClosureBodyTarget> {
     let closure_ty = operand_type(closure_arg, body)?;
 
     // Unwrap references to get the actual closure type
@@ -2016,14 +2189,16 @@ fn extract_closure_body_name(closure_arg: &mir::Operand, body: &mir::Body) -> Op
     // Create an FnDef from the closure's DefId
     let fn_def = FnDef(closure_def.def_id());
 
-    if let Ok(instance) = Instance::resolve(fn_def, &substs) {
-        return Some(instance.mangled_name());
-    }
+    let instance = Instance::resolve(fn_def, &substs).ok().or_else(|| {
+        // Fallback: try the old resolve_closure method.
+        Instance::resolve_closure(closure_def, &substs, rustc_public::ty::ClosureKind::FnOnce).ok()
+    })?;
+    let receiver_ty = instance.body()?.arg_locals().first()?.ty;
 
-    // Fallback: try the old resolve_closure method
-    Instance::resolve_closure(closure_def, &substs, rustc_public::ty::ClosureKind::FnOnce)
-        .ok()
-        .map(|instance| instance.mangled_name())
+    Some(ClosureBodyTarget {
+        name: instance.mangled_name(),
+        receiver_ty,
+    })
 }
 
 /// Read the const-generic `FACTOR` from a `__unroll_config::<FACTOR>()` callee
@@ -2089,7 +2264,8 @@ fn is_cuda_device_const_marker(func: &mir::Operand, expected_name: &str) -> bool
 /// Returns a tuple of:
 /// - `pattern_name`: The function's simple name (e.g., `"cuda_device::index_1d"`)
 /// - `call_name`: The name used for the call target in generated code
-/// - `substs_str`: Debug string of generic substitutions (for pattern matching)
+/// - `substs`: the callee's generic substitutions, in declaration order
+///   (`Self` first for trait methods)
 ///
 /// Deliberately NOT returned: the callee's declared return type. The
 /// declared `fn_sig` of a trait method is written against the trait, so its
@@ -2102,7 +2278,8 @@ fn is_cuda_device_const_marker(func: &mir::Operand, expected_name: &str) -> bool
 ///
 /// This information is used to:
 /// 1. Match intrinsic patterns by `pattern_name` (full FQDN, e.g. `cuda_device::thread::threadIdx_x`)
-/// 2. Check for closure types via `substs_str.contains("Closure")`
+/// 2. Read the trait-method `Self` type from the substs (Index/IndexMut on
+///    `SharedArray`) and const generics (`DynamicSharedArray`'s `ALIGN`)
 /// 3. Generate the correct call target name (FQDN for non-generic, mangled for generic)
 ///
 /// # Naming strategy
@@ -2132,7 +2309,7 @@ fn extract_func_info(
 ) -> TranslationResult<(
     Option<String>,
     Option<String>,
-    Option<String>,
+    Option<rustc_public::ty::GenericArgs>,
     Vec<rustc_public::ty::Ty>,
 )> {
     Ok(match func {
@@ -2168,7 +2345,6 @@ fn extract_func_info(
                             pattern_name.clone()
                         };
 
-                        let substs_debug = format!("{:?}", substs);
                         let type_substs = substs
                             .0
                             .iter()
@@ -2180,7 +2356,7 @@ fn extract_func_info(
                         (
                             Some(pattern_name),
                             Some(call_name),
-                            Some(substs_debug),
+                            Some(substs.clone()),
                             type_substs,
                         )
                     }
@@ -2242,15 +2418,9 @@ fn emit_ptr_memmove(
     let (count, last) =
         rvalue::translate_operand(ctx, body, &args[2], value_map, block_ptr, last, loc.clone())?;
 
-    // `mir.memmove` operand order is (dst, src, count).
-    let xfer = Operation::new(
-        ctx,
-        MirMemmoveOp::get_concrete_op_info(),
-        vec![],
-        vec![dst, src, count],
-        vec![],
-        0,
-    );
+    // `mir.memmove` operand order is (dst, src, count). The typed builder
+    // stamps the elem_type fact from dst for lowering's byte count.
+    let xfer = MirMemmoveOp::build(ctx, dst, src, count)?;
     xfer.deref_mut(ctx).set_loc(loc.clone());
     match last {
         Some(p) => xfer.insert_after(ctx, p),
@@ -2457,7 +2627,7 @@ fn emit_typed_swap(
 /// | Tcgen05 (Blackwell)| `tcgen05_alloc`, `tcgen05_mma_*`, `tcgen05_ld_*` |
 /// | Memory            | `SharedArray::index`, `stmatrix_*`, `cvt_*`       |
 /// | Layout            | `size_of_val`, `align_of_val`                     |
-/// | DisjointSlice     | `get_thread_local`, `len`                         |
+/// | DisjointSlice     | `len`                                             |
 #[allow(clippy::too_many_arguments)]
 fn try_dispatch_intrinsic(
     ctx: &mut Context,
@@ -2472,7 +2642,7 @@ fn try_dispatch_intrinsic(
     value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
-    substs_contains: &impl Fn(&str) -> bool,
+    on_shared_array: bool,
     type_substs: &[rustc_public::ty::Ty],
 ) -> TranslationResult<Option<Ptr<Operation>>> {
     intrinsics::wgmma::reject_unsupported(name, loc.clone())?;
@@ -2705,6 +2875,7 @@ fn try_dispatch_intrinsic(
                 args,
                 destination,
                 return_type,
+                None,
                 target,
                 block_ptr,
                 prev_op,
@@ -3014,20 +3185,6 @@ fn try_dispatch_intrinsic(
         // =================================================================
         // DisjointSlice and SharedArray operations
         // =================================================================
-        "cuda_device::DisjointSlice::get_thread_local" => {
-            Ok(Some(intrinsics::indexing::emit_get_thread_local(
-                ctx,
-                body,
-                args,
-                destination,
-                target,
-                block_ptr,
-                prev_op,
-                value_map,
-                block_map,
-                loc,
-            )?))
-        }
         "cuda_device::DisjointSlice::len" => Ok(Some(intrinsics::indexing::emit_len(
             ctx,
             body,
@@ -3041,11 +3198,9 @@ fn try_dispatch_intrinsic(
             loc,
         )?)),
 
-        // Trait method - check substs for SharedArray
+        // Trait method - check the substs' Self type for SharedArray
         // Note: Index/IndexMut can appear as either std::ops or core::ops
-        "std::ops::IndexMut::index_mut" | "core::ops::IndexMut::index_mut"
-            if substs_contains("SharedArray") =>
-        {
+        "std::ops::IndexMut::index_mut" | "core::ops::IndexMut::index_mut" if on_shared_array => {
             Ok(Some(intrinsics::memory::emit_shared_array_index(
                 ctx,
                 body,
@@ -3060,7 +3215,7 @@ fn try_dispatch_intrinsic(
                 true,
             )?))
         }
-        "std::ops::Index::index" | "core::ops::Index::index" if substs_contains("SharedArray") => {
+        "std::ops::Index::index" | "core::ops::Index::index" if on_shared_array => {
             Ok(Some(intrinsics::memory::emit_shared_array_index(
                 ctx,
                 body,
@@ -3080,24 +3235,11 @@ fn try_dispatch_intrinsic(
         // instantiations whose full path includes type parameters).
         // Note: `get_mut` and `get_unchecked_mut` are `#[inline]` in
         // cuda-device and are always inlined by rustc before MIR reaches the
-        // translator. Routing them here would produce a type mismatch
-        // (`emit_get_thread_local` returns `*mut T` but `get_mut` returns
-        // `Option<&mut T>`). They are intentionally absent from this match.
+        // translator, so element access never surfaces here as a call. Only
+        // `len` needs a dispatch arm.
         path if path.starts_with("cuda_device::DisjointSlice::") => {
             if let Some(method) = path.rsplit("::").next() {
                 match method {
-                    "get_thread_local" => Ok(Some(intrinsics::indexing::emit_get_thread_local(
-                        ctx,
-                        body,
-                        args,
-                        destination,
-                        target,
-                        block_ptr,
-                        prev_op,
-                        value_map,
-                        block_map,
-                        loc,
-                    )?)),
                     "len" => Ok(Some(intrinsics::indexing::emit_len(
                         ctx,
                         body,
@@ -3181,6 +3323,43 @@ fn try_dispatch_intrinsic(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreign_signature_rejects_c_variadic_before_claiming_an_exact_abi() {
+        assert!(ensure_foreign_callee_is_not_variadic("fixed", false).is_ok());
+        assert!(ensure_foreign_callee_is_not_variadic("variadic", true).is_err());
+    }
+
+    #[test]
+    fn generated_kernel_setup_calls_have_no_user_debug_location() {
+        let user_location = Location::Named {
+            name: "kernel attribute".into(),
+            child_loc: Box::new(Location::Unknown),
+        };
+
+        for constructor in KERNEL_SCOPE_CONSTRUCTORS {
+            assert_eq!(
+                call_debug_location(Some(constructor), user_location.clone()),
+                llvm_export::artificial_debug_location()
+            );
+        }
+        assert_eq!(
+            call_debug_location(
+                Some("cuda_device::__launch_bounds_config"),
+                user_location.clone()
+            ),
+            llvm_export::artificial_debug_location(),
+            "zero-cost launch metadata must not leave an attribute line behind"
+        );
+        assert_eq!(
+            call_debug_location(
+                Some("cuda_device::thread::__internal::index_1d"),
+                user_location.clone()
+            ),
+            user_location,
+            "user-written indexing calls keep their source locations"
+        );
+    }
 
     /// A `SwitchInt` arm keeps its whole value at 128 bits, and narrower
     /// discriminants truncate exactly as the previous `u64` construction did.

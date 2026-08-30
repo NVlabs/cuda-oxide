@@ -31,7 +31,7 @@ use cuda_device::clc::{
     clc_query_get_first_ctaid_x, clc_query_is_canceled, clc_try_cancel_multicast,
 };
 use cuda_device::cluster;
-use cuda_device::convert::cvt_bf16x2_f32;
+use cuda_device::convert::{bf16_to_f32, cvt_bf16x2_f32};
 use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
@@ -1139,10 +1139,6 @@ fn create_tma_descriptor_f16_swizzled_box(
     }
 
     Ok(unsafe { tensor_map.assume_init() })
-}
-
-fn bf16_to_f32(h: u16) -> f32 {
-    f32::from_bits((h as u32) << 16)
 }
 
 #[cfg(test)]

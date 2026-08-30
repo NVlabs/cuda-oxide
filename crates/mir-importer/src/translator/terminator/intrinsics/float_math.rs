@@ -137,6 +137,18 @@ pub enum RustFloatMathIntrinsic {
     TanhF32,
     /// `f64::tanh` / `std::sys::cmath::tanh`.
     TanhF64,
+    /// `f32::asinh` / `std::sys::cmath::asinhf`.
+    AsinhF32,
+    /// `f64::asinh` / `std::sys::cmath::asinh`.
+    AsinhF64,
+    /// `f32::acosh` / `std::sys::cmath::acoshf`.
+    AcoshF32,
+    /// `f64::acosh` / `std::sys::cmath::acosh`.
+    AcoshF64,
+    /// `f32::atanh` / `std::sys::cmath::atanhf`.
+    AtanhF32,
+    /// `f64::atanh` / `std::sys::cmath::atanh`.
+    AtanhF64,
     /// `f32::exp_m1` / `std::sys::cmath::expm1f`.
     Expm1F32,
     /// `f64::exp_m1` / `std::sys::cmath::expm1`.
@@ -260,6 +272,17 @@ impl RustFloatMathIntrinsic {
             "std::sys::cmath::cosh" => Some(Self::CoshF64),
             "std::sys::cmath::tanhf" => Some(Self::TanhF32),
             "std::sys::cmath::tanh" => Some(Self::TanhF64),
+            // Inverse hyperbolics: pure-Rust formulas in `std` before
+            // nightly-2026-08-28. On this nightly (rustc e457a7b0d) only
+            // asinh/acosh became `std::sys::cmath` shims; atanh keeps its
+            // pure-Rust `ln_1p` formula and cmath declares no atanh, so the
+            // atanh arms are defensive, for when std makes the same move.
+            "std::sys::cmath::asinhf" => Some(Self::AsinhF32),
+            "std::sys::cmath::asinh" => Some(Self::AsinhF64),
+            "std::sys::cmath::acoshf" => Some(Self::AcoshF32),
+            "std::sys::cmath::acosh" => Some(Self::AcoshF64),
+            "std::sys::cmath::atanhf" => Some(Self::AtanhF32),
+            "std::sys::cmath::atanh" => Some(Self::AtanhF64),
             "std::sys::cmath::expm1f" => Some(Self::Expm1F32),
             "std::sys::cmath::expm1" => Some(Self::Expm1F64),
             "std::sys::cmath::log1pf" => Some(Self::Log1pF32),
@@ -341,6 +364,12 @@ impl RustFloatMathIntrinsic {
             "cosh" => Some(Self::CoshF64),
             "tanhf" => Some(Self::TanhF32),
             "tanh" => Some(Self::TanhF64),
+            "asinhf" => Some(Self::AsinhF32),
+            "asinh" => Some(Self::AsinhF64),
+            "acoshf" => Some(Self::AcoshF32),
+            "acosh" => Some(Self::AcoshF64),
+            "atanhf" => Some(Self::AtanhF32),
+            "atanh" => Some(Self::AtanhF64),
             "expm1f" => Some(Self::Expm1F32),
             "expm1" => Some(Self::Expm1F64),
             "log1pf" => Some(Self::Log1pF32),
@@ -430,6 +459,12 @@ impl RustFloatMathIntrinsic {
             Self::CoshF64 => rust_intrinsics::CALLEE_COSH_F64,
             Self::TanhF32 => rust_intrinsics::CALLEE_TANH_F32,
             Self::TanhF64 => rust_intrinsics::CALLEE_TANH_F64,
+            Self::AsinhF32 => rust_intrinsics::CALLEE_ASINH_F32,
+            Self::AsinhF64 => rust_intrinsics::CALLEE_ASINH_F64,
+            Self::AcoshF32 => rust_intrinsics::CALLEE_ACOSH_F32,
+            Self::AcoshF64 => rust_intrinsics::CALLEE_ACOSH_F64,
+            Self::AtanhF32 => rust_intrinsics::CALLEE_ATANH_F32,
+            Self::AtanhF64 => rust_intrinsics::CALLEE_ATANH_F64,
             Self::Expm1F32 => rust_intrinsics::CALLEE_EXPM1_F32,
             Self::Expm1F64 => rust_intrinsics::CALLEE_EXPM1_F64,
             Self::Log1pF32 => rust_intrinsics::CALLEE_LOG1P_F32,
@@ -644,6 +679,7 @@ pub fn emit_rust_float_math_intrinsic(
         args,
         destination,
         return_type,
+        None,
         target,
         block_ptr,
         prev_op,

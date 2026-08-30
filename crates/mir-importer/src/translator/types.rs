@@ -17,8 +17,8 @@
 //! | `char`              | `ui32`                              |
 //! | `(A, B, C)`         | `MirTupleType`                      |
 //! | `[T; N]`            | `ArrayType`                         |
-//! | `*const T`, `*mut T`| `MirPtrType` (generic addrspace)    |
-//! | `[T]`, `&[T]`       | `MirSliceType`                      |
+//! | `*const T`, `*mut T`| `MirPtrType` + raw pointer kind     |
+//! | `[T]`, `&[T]`       | `MirSliceType` + pointer kind       |
 //! | `struct S { .. }`   | `MirStructType`                     |
 //! | `union U { .. }`    | `MirUnionType`                      |
 //! | `enum E { .. }`     | `MirEnumType`                       |
@@ -40,14 +40,20 @@ use pliron::context::Context;
 use pliron::r#type::TypeHandle;
 use pliron::{input_err_noloc, input_error_noloc};
 use rustc_public::CrateDef;
+use rustc_public::CrateDefType;
 use rustc_public_bridge::IndexedVal;
 
 // Re-export types from dialect_mir for convenience
 pub use dialect_mir::types::{
-    EnumEncoding, EnumVariant, MirDisjointSliceType, MirEnumType, MirPtrType, MirSliceType,
-    MirTupleType, MirUnionType, StructAbiKind,
+    EnumEncoding, EnumVariant, MirDisjointSliceType, MirEnumType, MirSliceType, MirTupleType,
+    MirUnionType, StructAbiKind,
 };
-use rustc_public::mir::Mutability;
+
+// The rustc-fact oracle. `is_cuda_device_adt` is re-exported because the
+// `types::is_cuda_device_adt` path is used throughout the translator.
+use super::facts;
+pub(crate) use super::facts::is_cuda_device_adt;
+use super::facts::known_defs;
 
 /// Returns the signed 32-bit integer type.
 pub fn get_i32_type(
@@ -237,9 +243,7 @@ pub fn is_rust_type_zst(rust_ty: &rustc_public::ty::Ty) -> bool {
         }
         // ADT - check if it has no fields (for structs)
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, _substs)) => {
-            if adt_def.trimmed_name() == "RangeToken"
-                && adt_def.krate().name.as_str() == "cuda_device"
-            {
+            if is_cuda_device_adt(&adt_def, "RangeToken") {
                 return false;
             }
             if matches!(adt_def.kind(), rustc_public::ty::AdtKind::Union) {
@@ -314,15 +318,16 @@ pub(super) fn slice_tail_element_ty(ty: &rustc_public::ty::Ty) -> Option<rustc_p
 
 /// Translates a raw-pointer or reference type to its `dialect-mir` equivalent.
 ///
-/// Most pointers become generic-addrspace `MirPtrType`, but a few Rust-level
-/// types are stand-ins for shared-memory objects in a CUDA kernel. We detect
-/// those here and produce the correct `addrspace(3)` pointer so that the
-/// alloca slot for such a local matches the pointer value produced by
-/// shared-memory intrinsics (e.g. `MirSharedAllocOp`). See module docs.
+/// `origin` carries the source-level distinction that must survive this
+/// boundary: `&T`, `&mut T`, `*const T`, and `*mut T` remain different MIR
+/// types even when their physical pointee, mutability bit, and address space
+/// match. Most pointers use the generic address space; CUDA stand-ins such as
+/// `SharedArray` and `Barrier` retain the same source pointer kind while using
+/// their concrete shared-memory address space.
 fn translate_pointer_like(
     ctx: &mut Context,
     pointee: &rustc_public::ty::Ty,
-    is_mutable: bool,
+    origin: facts::PointerOrigin,
 ) -> TranslationResult<TypeHandle> {
     match pointee.kind() {
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Slice(elem_ty)) => {
@@ -333,7 +338,7 @@ fn translate_pointer_like(
             // the alloca slot even though Rust considers these freely
             // interconvertible.
             let elem = translate_type(ctx, &elem_ty)?;
-            Ok(MirSliceType::get(ctx, elem).into())
+            Ok(facts::mint_slice_type(ctx, elem, origin).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Str) => {
             // `&str` / `*const str` is a fat pointer (data ptr + length),
@@ -347,20 +352,20 @@ fn translate_pointer_like(
                 pliron::builtin::types::Signedness::Unsigned,
             )
             .into();
-            Ok(MirSliceType::get(ctx, u8_ty).into())
+            Ok(facts::mint_slice_type(ctx, u8_ty, origin).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, substs))
-            if adt_def.trimmed_name() == "SharedArray" =>
+            if is_cuda_device_adt(&adt_def, "SharedArray") =>
         {
             // `*mut SharedArray<T, N>` / `&mut SharedArray<T, N>` is, at
             // runtime, the base pointer of a shared-memory region holding
             // `[T; N]`. Match the intrinsic-emitted shared-alloc pointer so
             // the alloca slot and the rvalue agree on type.
             let elem = shared_array_element_type(ctx, &substs, "SharedArray")?;
-            Ok(dialect_mir::types::MirPtrType::get_shared(ctx, elem, is_mutable).into())
+            Ok(facts::mint_shared_ptr_type(ctx, elem, origin).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, _substs))
-            if adt_def.trimmed_name() == "Barrier" =>
+            if is_cuda_device_adt(&adt_def, "Barrier") =>
         {
             // `*mut Barrier` / `&mut Barrier` is a pointer into shared memory
             // carrying mbarrier state (a 64-bit opaque value).
@@ -370,7 +375,7 @@ fn translate_pointer_like(
                 pliron::builtin::types::Signedness::Unsigned,
             )
             .into();
-            Ok(dialect_mir::types::MirPtrType::get_shared(ctx, u64_ty, is_mutable).into())
+            Ok(facts::mint_shared_ptr_type(ctx, u64_ty, origin).into())
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(..))
             if slice_tail_element_ty(pointee).is_some() =>
@@ -388,13 +393,13 @@ fn translate_pointer_like(
             // (ptr, len), `PtrMetadata` extraction, fat-value copies) all
             // applies unchanged. Field access through the fat pointer
             // extracts the data pointer (the struct's address) first; see
-            // the place-address walker in `rvalue.rs`.
+            // the place-address walker in `rvalue/place_addr.rs`.
             let struct_model = translate_type(ctx, pointee)?;
-            Ok(MirSliceType::get(ctx, struct_model).into())
+            Ok(facts::mint_slice_type(ctx, struct_model, origin).into())
         }
         _ => {
             let pointee_ty = translate_type(ctx, pointee)?;
-            Ok(MirPtrType::get_generic(ctx, pointee_ty, is_mutable).into())
+            Ok(facts::mint_generic_ptr_type(ctx, pointee_ty, origin).into())
         }
     }
 }
@@ -650,24 +655,18 @@ pub fn translate_type(
             let elem = translate_type(ctx, &elem_ty)?;
             Ok(MirSliceType::get(ctx, elem).into())
         }
-        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::RawPtr(ty, mutability)) => {
-            let is_mutable = mutability == Mutability::Mut;
-            translate_pointer_like(ctx, &ty, is_mutable)
-        }
-        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(
-            _region,
-            ty,
-            mutability,
-        )) => {
-            let is_mutable = mutability == Mutability::Mut;
-            translate_pointer_like(ctx, &ty, is_mutable)
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::RawPtr(..))
+        | rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Ref(..)) => {
+            let (pointee, origin) = facts::pointer_origin_of_ty(rust_ty)
+                .expect("RawPtr/Ref arms always yield a pointer origin");
+            translate_pointer_like(ctx, &pointee, origin)
         }
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Adt(adt_def, substs)) => {
             // Get the trimmed name (just the type name without path)
             let trimmed_name = adt_def.trimmed_name();
 
             // Check if this is DisjointSlice from cuda_device
-            if trimmed_name == "DisjointSlice" {
+            if is_cuda_device_adt(&adt_def, "DisjointSlice") {
                 // Extract the element type from the generic parameter
                 // DisjointSlice<'a, T> has T as the second parameter (first is lifetime)
                 let generic_args = &substs.0;
@@ -715,14 +714,13 @@ pub fn translate_type(
                 }
 
                 Ok(MirDisjointSliceType::get_with_space(ctx, elem, space_tys).into())
-            } else if trimmed_name == "ThreadIndex" {
+            } else if is_cuda_device_adt(&adt_def, "ThreadIndex") {
                 // ThreadIndex is a newtype around usize - translate to usize
                 // The type safety is enforced at the Rust level, not the IR level
                 Ok(get_usize_type(ctx).into())
-            } else if trimmed_name == "RangeToken" && adt_def.krate().name.as_str() == "cuda_device"
-            {
+            } else if is_cuda_device_adt(&adt_def, "RangeToken") {
                 Ok(dialect_iket::types::IketRangeTokenType::get(ctx).into())
-            } else if trimmed_name == "SharedArray" {
+            } else if is_cuda_device_adt(&adt_def, "SharedArray") {
                 // SharedArray<T, N> is a zero-sized marker type.
                 // The actual shared memory is allocated when we see the static declaration.
                 // For the type itself, we use a unit/empty tuple type.
@@ -730,7 +728,7 @@ pub fn translate_type(
                 // When SharedArray appears as a static, the MIR importer handles it specially
                 // to allocate shared memory and generate correct load/store operations.
                 Ok(dialect_mir::types::MirTupleType::get(ctx, vec![]).into())
-            } else if trimmed_name == "Barrier" {
+            } else if is_cuda_device_adt(&adt_def, "Barrier") {
                 // Barrier is a 64-bit hardware barrier state stored in shared memory.
                 // It's an opaque type that represents mbarrier state.
                 // We represent it as i64 since that's its underlying storage.
@@ -740,7 +738,7 @@ pub fn translate_type(
                     pliron::builtin::types::Signedness::Unsigned,
                 )
                 .into())
-            } else if trimmed_name == "TmaDescriptor" {
+            } else if is_cuda_device_adt(&adt_def, "TmaDescriptor") {
                 // TmaDescriptor is a 128-byte opaque TMA descriptor created on host.
                 // It's passed to kernels as a pointer. When we need the pointee type,
                 // we represent it as an array of 16 i64s (128 bytes total).
@@ -1207,7 +1205,10 @@ pub fn translate_type(
             closure_def,
             substs,
         )) => {
-            let closure_name = format!("{:?}", closure_def.def_id());
+            // Def-path name ("crate::func::{closure#0}"): unique per closure
+            // and stable across runs, unlike the Debug form whose numeric id
+            // depends on first-touch order.
+            let closure_name = closure_def.name();
 
             // Extract upvar types from the tupled-upvars generic arg.
             let mut field_names = Vec::new();
@@ -1255,31 +1256,51 @@ pub fn translate_type(
         // Handle associated types like <SharedArray<f32, 256> as Index<usize>>::Output
         // or <Closure as FnOnce<(Args,)>>::Output
         rustc_public::ty::TyKind::Alias(rustc_public::ty::AliasKind::Projection, alias_ty) => {
-            let def_name = format!("{:?}", alias_ty.def_id);
+            // Driver-resolved lang-item ids; `None` fields never match, so
+            // without them we fall through to the hard error below.
+            let known = known_defs();
+            let assoc_def = alias_ty.def_id.def_id();
 
-            // For FnOnce::Output, FnMut::Output, Fn::Output on closures
-            // The self type is the closure, and we need its return type
-            if (def_name.contains("FnOnce")
-                || def_name.contains("FnMut")
-                || def_name.contains("Fn"))
-                && def_name.contains("Output")
-            {
-                // The self type (closure) is the first generic argument
-                let args = &alias_ty.args.0;
-                if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first() {
-                    // Get the function signature from the type (works for closures, fn ptrs, etc.)
-                    // fn_sig() is a method on TyKind that handles Closure, FnDef, and FnPtr
-                    if let Some(poly_fn_sig) = self_ty.kind().fn_sig() {
-                        let sig = poly_fn_sig.skip_binder();
-                        let output = sig.output();
-                        return translate_type(ctx, &output);
-                    }
-                }
-                // For non-closure Fn types (like function pointers), fall through to error
+            // <F as Fn/FnMut/FnOnce<Args>>::Output resolves to the callable's
+            // return type. One id check covers all three traits because only
+            // FnOnce declares an Output; Fn and FnMut inherit it.
+            //
+            //   <F as FnOnce<(A,)>>::Output
+            //    |                     |
+            //    args[0] (self)        = F's fn_sig().output()
+            if Some(assoc_def) == known.fn_once_output {
+                let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = alias_ty.args.0.first()
+                else {
+                    return input_err_noloc!(TranslationErr::unsupported(
+                        "FnOnce::Output projection without a self type"
+                    ));
+                };
+                // fn_sig() handles Closure, FnDef, and FnPtr. Anything else
+                // (e.g. dyn Fn) has no signature to project from, and there
+                // is no sensible default, so fail loudly.
+                let poly_fn_sig = self_ty.kind().fn_sig().ok_or_else(|| {
+                    input_error_noloc!(TranslationErr::unsupported(format!(
+                        "FnOnce::Output projected on non-callable type: {:?}",
+                        self_ty
+                    )))
+                })?;
+                let output = poly_fn_sig.skip_binder().output();
+                return translate_type(ctx, &output);
             }
 
-            // For Index::Output or IndexMut::Output on SharedArray<T, N>, the output is T
-            if def_name.contains("Index") && def_name.contains("Output") {
+            // <SharedArray<T, N> as Index<usize>>::Output resolves to T. The
+            // trait is identified through the assoc type's parent def. The
+            // IndexMut compare is belt and braces: IndexMut declares no
+            // Output of its own (it inherits Index's), so the Index compare
+            // is the one that fires.
+            //
+            //   <SharedArray<T, N> as Index<usize>>::Output
+            //                |                         |
+            //                substs[0]                 = T
+            let assoc_parent = assoc_def.parent();
+            if assoc_parent.is_some()
+                && (assoc_parent == known.index_trait || assoc_parent == known.index_mut_trait)
+            {
                 // Extract the self type from args
                 let args = &alias_ty.args.0;
                 if let Some(rustc_public::ty::GenericArgKind::Type(self_ty)) = args.first() {
@@ -1288,24 +1309,22 @@ pub fn translate_type(
                         adt_def,
                         substs,
                     )) = self_ty.kind()
+                        && is_cuda_device_adt(&adt_def, "SharedArray")
                     {
-                        use rustc_public::CrateDef;
-                        if adt_def.trimmed_name() == "SharedArray" {
-                            // Extract T from SharedArray<T, N>
-                            let elem_ty = substs
-                                .0
-                                .iter()
-                                .find_map(|arg| match arg {
-                                    rustc_public::ty::GenericArgKind::Type(t) => Some(t),
-                                    _ => None,
-                                })
-                                .ok_or_else(|| {
-                                    input_error_noloc!(TranslationErr::unsupported(
-                                        "SharedArray missing element type"
-                                    ))
-                                })?;
-                            return translate_type(ctx, elem_ty);
-                        }
+                        // Extract T from SharedArray<T, N>
+                        let elem_ty = substs
+                            .0
+                            .iter()
+                            .find_map(|arg| match arg {
+                                rustc_public::ty::GenericArgKind::Type(t) => Some(t),
+                                _ => None,
+                            })
+                            .ok_or_else(|| {
+                                input_error_noloc!(TranslationErr::unsupported(
+                                    "SharedArray missing element type"
+                                ))
+                            })?;
+                        return translate_type(ctx, elem_ty);
                     }
                 }
             }
@@ -1375,7 +1394,31 @@ pub fn translate_type(
         // panic/formatting branches pulled in by `assert!` inside core fns like
         // `f32::clamp`); never materialised as a value.
         rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::FnDef(fn_def, _)) => {
-            let name = format!("FnDef_{:?}", fn_def.def_id());
+            // Def-path name, stable across runs (the Debug form's numeric id
+            // is first-touch-order dependent).
+            let name = format!("FnDef_{}", fn_def.name());
+            Ok(dialect_mir::types::MirStructType::get_with_full_layout(
+                ctx,
+                name,
+                vec![],
+                vec![],
+                vec![],
+                vec![],
+                0,
+                0,
+            )
+            .into())
+        }
+        // Foreign (`extern { type ... }`) opaque types, e.g. `core::ops::Code`
+        // behind the `NonNull<Code>` that `<fn(..) as FnPtr>::as_ptr` returns
+        // since nightly-2026-08-28 (`feature(fn_static)`). Extern types are
+        // unsized and opaque: values never materialise, only thin pointers to
+        // them, so an empty named struct (like `FnPtrTarget` above) preserves
+        // the thin-pointer layout wherever the pointee type is consulted.
+        rustc_public::ty::TyKind::RigidTy(rustc_public::ty::RigidTy::Foreign(def)) => {
+            // Def-path name, stable across runs (the Debug form's numeric id
+            // is first-touch-order dependent).
+            let name = format!("Foreign_{}", def.name());
             Ok(dialect_mir::types::MirStructType::get_with_full_layout(
                 ctx,
                 name,

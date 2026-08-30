@@ -51,6 +51,7 @@ jobs:
           # nanosleep injection plus run classification. Pure Rust, no CUDA.
           - package: ptx-schedule
           - package: cuda-intrinsics-gen
+          - package: cuda-target-spec
           - package: cuda-intrinsics
           - package: llvm-export
           - package: dialect-mir
@@ -205,11 +206,11 @@ jobs:
       - name: Check generated intrinsic outputs
         run: cargo run -p cuda-intrinsics-gen -- check
 
-      - name: Probe every generated LLVM-NVPTX route
+      - name: Probe every declared LLVM-NVPTX target
         run: |
           # Stock runners do not carry the recorded CUDA 13.3 ptxas binary.
           # This still checks the pinned llc identity and exact emitted PTX.
-          cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal
+          cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal --per-target
 
       - name: Check append-only intrinsic ABI ledger
         run: |

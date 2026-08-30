@@ -44,6 +44,16 @@ pub fn f32_to_bf16_rne(value: f32) -> u16 {
     (bits.wrapping_add(0x7FFF + retained_lsb) >> 16) as u16
 }
 
+/// Widens raw `bf16` bits to `f32` by placing them in the high 16 bits.
+///
+/// This is the inverse of [`f32_to_bf16`] for values that are already exact
+/// in bf16: the low 16 bits of the `f32` become zero.
+#[must_use]
+#[inline(always)]
+pub fn bf16_to_f32(bits: u16) -> f32 {
+    f32::from_bits(u32::from(bits) << 16)
+}
+
 /// Packs two raw `bf16` bit patterns into a `u32`, low half first.
 #[must_use]
 #[inline(always)]
@@ -219,6 +229,9 @@ mod tests {
         assert_eq!(f32_to_bf16(-0.0), 0x8000);
         assert_eq!(f32_to_bf16(f32::INFINITY), 0x7F80);
         assert_eq!(f32_to_bf16(f32::NEG_INFINITY), 0xFF80);
+        assert_eq!(bf16_to_f32(0x3F80), 1.0);
+        assert_eq!(bf16_to_f32(0x8000).to_bits(), (-0.0_f32).to_bits());
+        assert_eq!(bf16_to_f32(f32_to_bf16(1.0)), 1.0);
 
         // Exact tie with an even retained LSB rounds down; an odd one rounds up.
         assert_eq!(f32_to_bf16_rne(f32::from_bits(0x3F80_8000)), 0x3F80);
@@ -262,6 +275,20 @@ mod tests {
             assert_eq!(
                 hi, expected as f32,
                 "high-half mismatch for f16 bits {bits:#06x}"
+            );
+        }
+    }
+
+    /// Every bf16 bit pattern must survive the trip through the f32 widen,
+    /// NaNs included: `bf16_to_f32` places the bits in the high half and
+    /// `f32_to_bf16` truncates them back out bit-identically.
+    #[test]
+    fn every_bf16_pattern_round_trips() {
+        for bits in 0u16..=u16::MAX {
+            assert_eq!(
+                f32_to_bf16(bf16_to_f32(bits)),
+                bits,
+                "round-trip mismatch for bf16 bits {bits:#06x}"
             );
         }
     }

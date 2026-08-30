@@ -98,12 +98,18 @@ use llvm_export::ops::{
     DebugInlinedScope, DebugSourcePosition, DebugSourceScope, DebugSourceScopeLocation,
     DebugSourceScopeMap,
 };
+use rustc_hir::def::DefKind;
+use rustc_middle::mir::interpret::{AllocId, GlobalAlloc, Scalar};
+use rustc_middle::mir::visit::Visitor;
+use rustc_middle::mir::{ConstOperand, ConstValue, Location};
+use rustc_middle::mono::MonoItem;
 use rustc_middle::ty::layout::{LayoutCx, LayoutOf};
-use rustc_middle::ty::{EarlyBinder, InstanceKind, TypingEnv};
+use rustc_middle::ty::{EarlyBinder, Instance, InstanceKind, ShimKind, TypingEnv};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_session::config::DebugInfo;
-use rustc_span::{Span, hygiene};
-use std::collections::BTreeMap;
+use rustc_span::def_id::DefId;
+use rustc_span::{DUMMY_SP, Span, hygiene};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -228,11 +234,7 @@ fn rustc_ty_to_device_extern_type<'tcx>(
                 // Rust's `*mut ()` is its common spelling for a void pointer.
                 E::Integer(8)
             } else {
-                rustc_ty_to_device_extern_type(
-                    tcx,
-                    *pointee,
-                    DeviceExternTypePosition::Pointee,
-                )?
+                rustc_ty_to_device_extern_type(tcx, *pointee, DeviceExternTypePosition::Pointee)?
             };
             Ok(E::pointer_to(pointee, 0))
         }
@@ -240,11 +242,8 @@ fn rustc_ty_to_device_extern_type<'tcx>(
             let len = len.try_to_target_usize(tcx).ok_or_else(|| {
                 format!("device-extern array length for `{ty}` is not a concrete constant")
             })?;
-            let element = rustc_ty_to_device_extern_type(
-                tcx,
-                *element,
-                DeviceExternTypePosition::Pointee,
-            )?;
+            let element =
+                rustc_ty_to_device_extern_type(tcx, *element, DeviceExternTypePosition::Pointee)?;
             Ok(E::Array {
                 element: Box::new(element),
                 len,
@@ -265,9 +264,9 @@ fn rustc_ty_to_device_extern_type<'tcx>(
                 Ok(E::ZeroExtInteger(1))
             }
         }
-        TyKind::Char => Err(
-            "Rust `char` is not supported in device extern signatures; use `u32` in a C-compatible wrapper".to_string(),
-        ),
+        // `char` is already a 32-bit Unicode scalar, so it uses a plain i32
+        // slot without a signext/zeroext attribute in every position.
+        TyKind::Char => unsigned_integer(32),
         TyKind::Never => Err("never-returning device externs are not yet supported".to_string()),
         _ => Err(format!(
             "unsupported device-extern ABI type `{ty}`; use scalar C types or raw pointers to supported scalar/array pointees"
@@ -386,7 +385,7 @@ fn build_debug_source_scope_map<'tcx>(
                 let callee = tcx.instantiate_and_normalize_erasing_regions(
                     func.instance.args,
                     TypingEnv::fully_monomorphized(),
-                    EarlyBinder::bind(callee),
+                    EarlyBinder::bind(tcx, callee),
                 );
                 let callsite = hygiene::walk_chain_collapsed(callsite, mir.span);
                 DebugInlinedScope {
@@ -452,13 +451,288 @@ fn debug_position_from_span(tcx: TyCtxt<'_>, span: Span) -> Option<DebugSourcePo
     })
 }
 
+#[derive(Clone, Debug)]
+struct OwnedStaticDebugIdentity {
+    def_id: DefId,
+    identity: mir_importer::DebugGlobalVariableIdentity,
+    storage: StaticDebugStorage,
+    is_function_local: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StaticDebugStorage {
+    OrdinaryAs1,
+    SharedArrayAs3,
+    BarrierAs3,
+}
+
+/// Identify the two cuda-device marker types whose static storage is
+/// materialized in NVPTX shared memory rather than at the marker's Rust layout.
+fn shared_static_debug_storage(tcx: TyCtxt<'_>, def_id: DefId) -> Option<StaticDebugStorage> {
+    // `type_of(..).instantiate_identity()` returns `Unnormalized<Ty>` since
+    // the eager-normalization refactor (rust-lang/rust#155345). We are in a
+    // fully monomorphized codegen context inspecting a static's declared
+    // type, so follow `TyCtxt::static_ptr_ty`'s discipline and normalize the
+    // wrapper away (a `static X: SomeAlias = ..` must still be recognized as
+    // the underlying cuda-device marker ADT) rather than `skip_normalization`.
+    let ty = tcx.normalize_erasing_regions(
+        TypingEnv::fully_monomorphized(),
+        tcx.type_of(def_id).instantiate_identity(),
+    );
+    let TyKind::Adt(adt, _) = ty.kind() else {
+        return None;
+    };
+    if tcx.crate_name(adt.did().krate).as_str() != "cuda_device" {
+        return None;
+    }
+    // `def_path_str` follows rustc's visible-parent map and can spell a
+    // re-exported type as `cuda_device::SharedArray`. The canonical DefPath is
+    // independent of re-export visibility and distinguishes the two marker
+    // definitions exactly inside the already-validated crate.
+    match tcx
+        .def_path(adt.did())
+        .to_string_no_crate_verbose()
+        .as_str()
+    {
+        "::shared::SharedArray" => Some(StaticDebugStorage::SharedArrayAs3),
+        "::barrier::Barrier" => Some(StaticDebugStorage::BarrierAs3),
+        _ => None,
+    }
+}
+
+/// Whether this static's definition is owned by a function-like item.
+///
+/// `DefKind::Static::nested` is unrelated: it identifies anonymous allocations
+/// synthesized inside another static, while ordinary named block-local statics
+/// (including `TILE`) have `nested: false`.
+fn static_is_function_local(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let mut current = tcx.parent(def_id);
+    loop {
+        if matches!(
+            tcx.def_kind(current),
+            DefKind::Fn | DefKind::AssocFn | DefKind::Closure
+        ) {
+            return true;
+        }
+        let Some(parent) = tcx.def_key(current).parent else {
+            return false;
+        };
+        current = DefId {
+            krate: current.krate,
+            index: parent,
+        };
+    }
+}
+
+/// Full-debug-only provenance walk for statics reachable by device code.
+///
+/// Every direct static reference begins as a constant in one of the already
+/// collected, monomorphized device instances. Following that constant's CTFE
+/// allocation graph finds both its static definition and targets reached only
+/// through initializer relocations. Unlike seeding from every host CGU static,
+/// this does not attempt to build debug types for unrelated host-only statics;
+/// it also covers upstream statics, which are intentionally absent from local
+/// CGUs when rustc decides they need not be codegenerated locally.
+struct StaticDebugProvenance<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    current_instance: Option<Instance<'tcx>>,
+    statics: HashSet<DefId>,
+    pending_allocations: Vec<AllocId>,
+    seen_allocations: HashSet<AllocId>,
+}
+
+impl<'tcx> StaticDebugProvenance<'tcx> {
+    fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self {
+            tcx,
+            current_instance: None,
+            statics: HashSet::new(),
+            pending_allocations: Vec::new(),
+            seen_allocations: HashSet::new(),
+        }
+    }
+
+    fn record_static(&mut self, def_id: DefId) {
+        if !self.statics.insert(def_id) {
+            return;
+        }
+        if let Ok(initializer) = self.tcx.eval_static_initializer(def_id) {
+            self.pending_allocations.extend(
+                initializer
+                    .inner()
+                    .provenance()
+                    .ptrs()
+                    .values()
+                    .map(|provenance| provenance.alloc_id()),
+            );
+        }
+    }
+
+    fn record_const_value(&mut self, value: ConstValue) {
+        match value {
+            ConstValue::Scalar(Scalar::Ptr(pointer, _)) => {
+                self.pending_allocations.push(pointer.provenance.alloc_id());
+            }
+            ConstValue::Indirect { alloc_id, .. } => self.pending_allocations.push(alloc_id),
+            ConstValue::Slice { alloc_id, .. } => self.pending_allocations.push(alloc_id),
+            ConstValue::Scalar(_) | ConstValue::ZeroSized => {}
+        }
+    }
+
+    fn drain_allocations(&mut self) {
+        while let Some(alloc_id) = self.pending_allocations.pop() {
+            if !self.seen_allocations.insert(alloc_id) {
+                continue;
+            }
+
+            match self.tcx.global_alloc(alloc_id) {
+                GlobalAlloc::Static(def_id) => self.record_static(def_id),
+                GlobalAlloc::Memory(allocation) => self.pending_allocations.extend(
+                    allocation
+                        .inner()
+                        .provenance()
+                        .ptrs()
+                        .values()
+                        .map(|provenance| provenance.alloc_id()),
+                ),
+                GlobalAlloc::Function { .. }
+                | GlobalAlloc::VTable(..)
+                | GlobalAlloc::TypeId { .. } => {}
+            }
+        }
+    }
+}
+
+impl<'tcx> Visitor<'tcx> for StaticDebugProvenance<'tcx> {
+    fn visit_const_operand(&mut self, constant: &ConstOperand<'tcx>, location: Location) {
+        let instance = self
+            .current_instance
+            .expect("static provenance visitor must be bound to an instance");
+        let constant_value = instance.instantiate_mir_and_normalize_erasing_regions(
+            self.tcx,
+            TypingEnv::fully_monomorphized(),
+            EarlyBinder::bind(self.tcx, constant.const_),
+        );
+        if let Ok(value) =
+            constant_value.eval(self.tcx, TypingEnv::fully_monomorphized(), constant.span)
+        {
+            self.record_const_value(value);
+        }
+        self.super_const_operand(constant, location);
+    }
+}
+
+fn static_debug_namespace(
+    tcx: TyCtxt<'_>,
+    def_id: DefId,
+    source_function_names: &HashMap<DefId, String>,
+) -> Option<Vec<String>> {
+    let mut reversed = Vec::new();
+    let mut current = tcx.parent(def_id);
+
+    loop {
+        let key = tcx.def_key(current);
+        let mut segment = source_function_names
+            .get(&current)
+            .cloned()
+            .unwrap_or_default();
+        if segment.is_empty() {
+            rustc_codegen_ssa::debuginfo::type_names::push_item_name(
+                tcx,
+                current,
+                false,
+                &mut segment,
+            );
+        }
+        if segment.is_empty() {
+            return None;
+        }
+        reversed.push(segment);
+
+        let Some(parent) = key.parent else {
+            break;
+        };
+        current = DefId {
+            krate: current.krate,
+            index: parent,
+        };
+    }
+
+    reversed.reverse();
+    Some(reversed)
+}
+
+fn collect_static_debug_identities<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    functions: &[CollectedFunction<'tcx>],
+) -> Result<Vec<OwnedStaticDebugIdentity>, DeviceCodegenError> {
+    let mut provenance = StaticDebugProvenance::new(tcx);
+    let source_function_names: HashMap<_, _> = functions
+        .iter()
+        .filter(|function| function.is_kernel)
+        .map(|function| (function.instance.def_id(), function.export_name.clone()))
+        .collect();
+
+    for function in functions {
+        provenance.current_instance = Some(function.instance);
+        provenance.visit_body(tcx.instance_mir(function.instance.def));
+    }
+    provenance.current_instance = None;
+    provenance.drain_allocations();
+
+    let mut statics: Vec<_> = provenance.statics.into_iter().collect();
+    statics.sort_by_key(|def_id| tcx.def_path_str(*def_id));
+    statics
+        .into_iter()
+        .filter_map(|def_id| {
+            // Anonymous `nested: true` allocations do not necessarily have an
+            // item type. Exclude them before `shared_static_debug_storage`
+            // queries `type_of`; named function-local statics are `nested:
+            // false` and remain eligible.
+            if !matches!(tcx.def_kind(def_id), DefKind::Static { nested: false, .. }) {
+                return None;
+            }
+            let storage =
+                shared_static_debug_storage(tcx, def_id).unwrap_or(StaticDebugStorage::OrdinaryAs1);
+            Some((def_id, storage))
+        })
+        .map(|(def_id, storage)| {
+            let name = tcx.item_name(def_id).to_string();
+            let namespace = static_debug_namespace(tcx, def_id, &source_function_names)
+                .ok_or_else(|| {
+                    DeviceCodegenError::Translation(format!(
+                        "cannot represent the source namespace for device static `{}`",
+                        tcx.def_path_str(def_id)
+                    ))
+                })?;
+            let declaration_span = hygiene::walk_chain_collapsed(tcx.def_span(def_id), DUMMY_SP);
+            let declaration = debug_position_from_span(tcx, declaration_span).ok_or_else(|| {
+                DeviceCodegenError::Translation(format!(
+                    "cannot represent the definition span for device static `{}`",
+                    tcx.def_path_str(def_id)
+                ))
+            })?;
+            Ok(OwnedStaticDebugIdentity {
+                def_id,
+                storage,
+                is_function_local: storage != StaticDebugStorage::OrdinaryAs1
+                    && static_is_function_local(tcx, def_id),
+                identity: mir_importer::DebugGlobalVariableIdentity {
+                    name,
+                    namespace,
+                    declaration,
+                    is_local_to_unit: !tcx.is_reachable_non_generic(def_id),
+                },
+            })
+        })
+        .collect()
+}
+
 /// Errors that can occur during device code generation.
 ///
-/// `Translation` is part of the taxonomy and has a `Display` arm, but nothing
-/// constructs it today: translation failures arrive as
-/// `cuda_oxide_codegen::PipelineError` and are reported through that. Kept so
-/// the variant set still mirrors the pipeline's, rather than deleted and
-/// re-added the next time it is needed.
+/// Most translation failures arrive as `cuda_oxide_codegen::PipelineError`;
+/// `Translation` reports failures while preparing rustc-owned side tables at
+/// the frontend boundary.
 #[derive(Debug)]
 pub enum DeviceCodegenError {
     /// No kernels were found to compile.
@@ -466,10 +740,6 @@ pub enum DeviceCodegenError {
     /// Failed to enter or exit stable_mir context.
     StableMirError(String),
     /// MIR to Pliron IR translation failed.
-    #[expect(
-        dead_code,
-        reason = "mirrors PipelineError's taxonomy, not constructed here"
-    )]
     Translation(String),
     /// PTX generation (llc invocation) failed.
     PtxGeneration(String),
@@ -595,14 +865,15 @@ pub fn generate_device_code<'tcx>(
             let fn_sig = tcx.fn_sig(decl.def_id).instantiate_identity();
             let fn_sig = fn_sig.skip_binder();
 
-            if !matches!(fn_sig.abi, rustc_abi::ExternAbi::C { unwind: false }) {
+            if !matches!(fn_sig.abi(), rustc_abi::ExternAbi::C { unwind: false }) {
                 return Err(DeviceCodegenError::InvalidDeviceExternSignature(format!(
                     "`{}` uses ABI {:?}; device externs must use `extern \"C\"` without unwinding",
-                    decl.export_name, fn_sig.abi
+                    decl.export_name,
+                    fn_sig.abi()
                 )));
             }
 
-            if fn_sig.c_variadic {
+            if fn_sig.c_variadic() {
                 return Err(DeviceCodegenError::InvalidDeviceExternSignature(format!(
                     "`{}` is variadic; variadic device externs are not supported",
                     decl.export_name
@@ -654,6 +925,11 @@ pub fn generate_device_code<'tcx>(
     let show_mir = config.dump_mir_dialect;
     let show_llvm = config.dump_llvm_dialect;
     let debug_kind = device_debug_kind(tcx.sess.opts.debuginfo);
+    let static_debug_identities = if debug_kind.variables_enabled() {
+        collect_static_debug_identities(tcx, functions)?
+    } else {
+        Vec::new()
+    };
 
     // Print raw rustc MIR if requested (before conversion to stable_mir)
     if show_rustc_mir {
@@ -729,6 +1005,47 @@ pub fn generate_device_code<'tcx>(
         .collect();
 
     let result = rustc_internal::run(tcx, || {
+        let mut debug_global_variables = BTreeMap::new();
+        for owned in &static_debug_identities {
+            let stable_item = rustc_internal::stable(MonoItem::Static(owned.def_id));
+            let rustc_public::mir::mono::MonoItem::Static(static_def) = stable_item else {
+                unreachable!("internal static MonoItem must remain a stable static MonoItem")
+            };
+            let static_ty = static_def.ty();
+            let info = match owned.storage {
+                StaticDebugStorage::SharedArrayAs3 => {
+                    mir_importer::build_debug_shared_array_variable_info(
+                        owned.identity.clone(),
+                        &static_ty,
+                    )
+                }
+                StaticDebugStorage::OrdinaryAs1 | StaticDebugStorage::BarrierAs3 => {
+                    mir_importer::build_debug_global_variable_info(
+                        owned.identity.clone(),
+                        &static_ty,
+                    )
+                }
+            };
+            let Some(mut info) = info else {
+                // The local-variable debug path is deliberately best-effort
+                // for semantic types it cannot yet describe (notably unions).
+                // Globals must fail closed in the same way: omitting this one
+                // DIE is preferable to attaching the physical byte-array type,
+                // and an unsupported static must not disable correct metadata
+                // for every other AS1 global in the module.
+                continue;
+            };
+            info.is_function_local = owned.is_function_local;
+            let key = mir_importer::device_static_global_key(&static_def);
+            if let Some(previous) = debug_global_variables.insert(key.clone(), info.clone())
+                && previous != info
+            {
+                return Err(mir_importer::PipelineError::Translation(format!(
+                    "conflicting debug identities for device static `{key}`"
+                )));
+            }
+        }
+
         // Convert internal Instance<'tcx> to stable_mir Instance.
         // Drop glue instances whose bodies are provably no-ops are filtered
         // out: the mir-importer's translate_drop fast-path emits a plain
@@ -759,8 +1076,10 @@ pub fn generate_device_code<'tcx>(
                     // call, so the function body is dead. Translating it would
                     // fail on IntoIter and similar stdlib shims whose MIR
                     // contains constructs the device pipeline does not support.
-                    if matches!(func.instance.def, InstanceKind::DropGlue(..))
-                        && mir_importer::drop_instance_is_noop(&stable_instance)
+                    if matches!(
+                        func.instance.def,
+                        InstanceKind::Shim(ShimKind::DropGlue(..))
+                    ) && mir_importer::drop_instance_is_noop(&stable_instance)
                     {
                         return None;
                     }
@@ -811,13 +1130,32 @@ pub fn generate_device_code<'tcx>(
             target_arch_source: "CUDA_OXIDE_TARGET",
             device_arch_hint,
             debug_kind,
+            debug_global_variables,
             allow_fma_contraction,
+        };
+
+        // Resolve the lang-item DefIds the type translator compares
+        // projections against (e.g. FnOnce::Output). This must happen here,
+        // inside rustc_internal::run, because stable() needs the thread-local
+        // conversion tables and the resulting ids are only valid within this
+        // context. `None` (no_core builds) just means the comparisons in the
+        // importer never match and it errors instead of guessing.
+        let lang_items = tcx.lang_items();
+        let known_defs = mir_importer::KnownDefs {
+            fn_once_output: lang_items.fn_once_output().map(rustc_internal::stable),
+            index_trait: lang_items.index_trait().map(rustc_internal::stable),
+            index_mut_trait: lang_items.index_mut_trait().map(rustc_internal::stable),
         };
 
         // Run the cuda-oxide pipeline!
         // Rust MIR → `dialect-mir` → mem2reg → unroll → LLVM dialect → LLVM IR → PTX.
         // Device externs are emitted as `declare` statements in LLVM IR
-        mir_importer::run_pipeline(&stable_functions, &stable_device_externs, &pipeline_config)
+        mir_importer::run_pipeline(
+            &stable_functions,
+            &stable_device_externs,
+            &pipeline_config,
+            known_defs,
+        )
     });
 
     // Handle the result from rustc_internal::run.

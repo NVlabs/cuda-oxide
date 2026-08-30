@@ -11,5 +11,5 @@ note: function defined here
    |        ^^^^^^^^^^^^
 help: provide the argument
    |
-10 |     let _ = cuda_device::thread::index_1d_u32(/* &cuda_device::LaunchContext<'_, cuda_device::__internal::Domain1, cuda_device::__internal::U32Coordinates> */);
-   |                                               ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+10 |     let _ = cuda_device::thread::index_1d_u32(/* &LaunchContext<'_, Domain1, U32Coordinates> */);
+   |                                               +++++++++++++++++++++++++++++++++++++++++++++++++

@@ -130,6 +130,24 @@ fn verify_payload_operands<O: Op>(
     Ok(())
 }
 
+fn verify_range_token_result<O: Op>(op: &O, ctx: &Context) -> Result<(), Error> {
+    let operation = op.get_operation().deref(ctx);
+    if operation.get_num_results() != 1
+        || operation
+            .get_result(0)
+            .get_type(ctx)
+            .deref(ctx)
+            .downcast_ref::<IketRangeTokenType>()
+            .is_none()
+    {
+        return verify_err!(
+            operation.loc(),
+            "IKET token producer must return one iket.range_token"
+        );
+    }
+    Ok(())
+}
+
 /// Record a named point event, optionally with one scalar payload.
 #[pliron_op(
     name = "iket.mark",
@@ -216,7 +234,8 @@ impl IketRangeStartOp {
 
 impl Verify for IketRangeStartOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
-        verify_name_and_payload(self, ctx, 0)
+        verify_name_and_payload(self, ctx, 0)?;
+        verify_range_token_result(self, ctx)
     }
 }
 
@@ -253,7 +272,7 @@ impl Verify for IketSentinelTokenOp {
         if operation.get_num_operands() != 0 {
             return verify_err!(operation.loc(), "iket.sentinel_token takes no operands");
         }
-        Ok(())
+        verify_range_token_result(self, ctx)
     }
 }
 
@@ -494,5 +513,31 @@ mod tests {
             .get_result(0)
             .get_type(&ctx);
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn token_producers_reject_non_token_results() {
+        let mut ctx = Context::new();
+        crate::register(&mut ctx);
+        let wrong_type: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+
+        let start = build_named_event::<IketRangeStartOp>(
+            &mut ctx,
+            vec![wrong_type],
+            "mainloop",
+            IketPayloadKindAttr::None,
+            vec![],
+        );
+        assert!(IketRangeStartOp { op: start }.verify(&ctx).is_err());
+
+        let sentinel = Operation::new(
+            &mut ctx,
+            IketSentinelTokenOp::get_concrete_op_info(),
+            vec![wrong_type],
+            vec![],
+            vec![],
+            0,
+        );
+        assert!(IketSentinelTokenOp { op: sentinel }.verify(&ctx).is_err());
     }
 }

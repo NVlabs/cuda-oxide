@@ -16,9 +16,11 @@
 #                   never accepted.
 #   tcgen05      -- 5th-gen tensor cores; sm_100 datacenter only. On sm_100
 #                   require full execution; elsewhere PTX compilation is
-#                   sufficient.
+#                   sufficient, and when a capable ptxas is available the
+#                   PTX must also assemble (the ptxas gate below).
 #   wgmma        -- Hopper only (sm_90a). On Hopper require execution;
-#                   elsewhere PTX compilation is sufficient.
+#                   elsewhere PTX compilation is sufficient (plus the
+#                   ptxas gate).
 #   blackwell-mma -- Blackwell-consumer-only MMA (kind::mxf8f6f4 exists on
 #                   sm_120/sm_121 alone), always compiled with
 #                   `--arch=sm_120a` because the generated target gating
@@ -73,11 +75,16 @@ AUTO_NVVM_EXAMPLES=(libdevice_math)
 IKET_EXAMPLES=(iket_trace)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
 SM100_COMPILE_EXAMPLES=(redux_f32)
-NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd legacy_atomic_rmw_cas libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
+NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance ex2_approx_f16 generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd legacy_atomic_rmw_cas libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
 ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_kernel_shared_param error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
-# Examples that pin RUSTFLAGS=-Zinline-mir=no (verdict rules are unaffected)
-NOINLINE_MIR_EXAMPLES=(disjoint_slice_len)
+# Per-example rustc flags policy: an example that needs a special rustc flag
+# (e.g. disjoint_slice_len needs -Zinline-mir=no to keep its regression
+# pattern un-inlined) must carry it in its own Cargo.toml via the nightly
+# `profile-rustflags` feature, scoped to its own package. Never route such a
+# flag through RUSTFLAGS/CARGO_ENCODED_RUSTFLAGS here: cargo keys build
+# caches on rustflags, so a global flag forks a full second dependency-tree
+# build (~160s on the CI runner) for that one example.
 
 # Examples whose `main` deliberately never launches a kernel: they exist to
 # prove the device code compiles, and say so in their module docs
@@ -139,6 +146,7 @@ nvvm_verify_arch() {
             return
             ;;
         cp_async_small) floor=80 ;;
+        ex2_approx_f16) floor=75 ;;
         generated_intrinsics) floor=80 ;;
         generated_ldmatrix) floor=75 ;;
         packed_atomic_add) floor=90 ;;
@@ -170,7 +178,10 @@ OPTIONS
                        `cargo oxide build`; designated NVVM regressions use
                        `emit-ltoir` to include real libNVVM verification.
                        Non-error categories must leave a fresh artifact;
-                       error examples must still fail. Works on GPU-less CI.
+                       every emitted .ptx must also assemble with ptxas
+                       when one is available (skipped with a note when it
+                       is missing or too old). Error examples must still
+                       fail. Works on GPU-less CI.
   -x, --fail-fast      Stop at the first failure.
   -v, --verbose        Stream cargo output live (instead of capturing to
                        a per-example log file). Verdict is printed at the
@@ -316,6 +327,64 @@ if [[ "${host_cc}" =~ ^([0-9]+)\.[0-9]+$ ]] && [[ $((10#${BASH_REMATCH[1]})) -ge
     IKET_ARCH="${LTOIR_ARCH}"
     IKET_EXEC=1
 fi
+
+# ---- ptxas gate ------------------------------------------------------------
+# Compile-only verdicts accepted "a .ptx exists". That bar misses PTX that
+# llc emits but ptxas rejects: e.g. `.global` initializers referencing
+# `.shared` symbols, which fail driver JIT with CUDA_ERROR_INVALID_PTX only
+# on real hardware. When a ptxas is available, actually assemble the PTX for
+# the arch recorded in its `.target` line. In --compile-only mode this
+# applies to EVERY example that emitted a .ptx (nothing executes there, so
+# assembly is the strongest available check); in normal mode only the
+# GPU-gated categories (tcgen05, wgmma, blackwell-mma) use it, since real
+# execution supersedes assembly for everything else. Resolution order
+# matches how the examples themselves shell out to ptxas: explicit override,
+# PATH, then the CUDA toolkit install locations.
+PTXAS_BIN=""
+for ptxas_candidate in "${CUDA_OXIDE_PTXAS:-}" \
+                       "$(command -v ptxas 2>/dev/null)" \
+                       "${CUDA_HOME:+${CUDA_HOME}/bin/ptxas}" \
+                       /usr/local/cuda/bin/ptxas \
+                       /usr/local/cuda-*/bin/ptxas; do
+    if [[ -n "${ptxas_candidate}" && -x "${ptxas_candidate}" ]]; then
+        PTXAS_BIN="${ptxas_candidate}"
+        break
+    fi
+done
+
+# Assemble ${1} (a .ptx file) with the resolved ptxas for the arch its
+# `.target` line records. Sets PTXAS_NOTE for the verdict text. Returns 1
+# only for a real assembly failure; a missing/too-old ptxas or an arch it
+# does not know is a documented skip, not a failure.
+PTXAS_NOTE=""
+ptxas_verify() {
+    local ptx="$1" arch stderr_out
+    if [[ -z "${PTXAS_BIN}" ]]; then
+        PTXAS_NOTE="ptxas gate skipped: no ptxas found"
+        return 0
+    fi
+    if [[ ! -s "${ptx}" ]]; then
+        PTXAS_NOTE="ptxas gate skipped: no PTX at ${ptx}"
+        return 0
+    fi
+    arch="$(sed -nE 's/^\.target[[:space:]]+(sm_[0-9]+[af]?).*/\1/p' "${ptx}" | head -1)"
+    if [[ -z "${arch}" ]]; then
+        PTXAS_NOTE="ptxas gate skipped: no .target line in ${ptx}"
+        return 0
+    fi
+    if stderr_out="$("${PTXAS_BIN}" -arch="${arch}" "${ptx}" -o /dev/null 2>&1)"; then
+        PTXAS_NOTE="ptxas ${arch} ok"
+        return 0
+    fi
+    # An arch this ptxas predates (or a PTX ISA newer than it parses) is a
+    # tooling gap, not a compiler bug: note the skip and keep the verdict.
+    if grep -qE "is not defined for option 'gpu-name'|Unsupported \.version" <<<"${stderr_out}"; then
+        PTXAS_NOTE="ptxas gate skipped: ${PTXAS_BIN} is too old for ${arch}"
+        return 0
+    fi
+    PTXAS_NOTE="ptxas -arch=${arch} rejected the PTX: $(head -2 <<<"${stderr_out}" | tr '\n' ' ')"
+    return 1
+}
 
 printf "%scuda-oxide smoketest%s @ %s%s%s (%s)\n" "${C_BOLD}" "${C_RESET}" "${C_BOLD}" "${git_head}" "${C_RESET}" "${git_branch}"
 printf "GPU: %s\n" "${gpu_info}"
@@ -533,11 +602,15 @@ verdict_error() {
 }
 
 verdict_tcgen05() {
-    local log="$1" ec="$2"
+    local ex="$1" log="$2" ec="$3"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if grep -qE 'WARNING: tcgen05 requires|Skipping GPU test: requires sm_100|Skipping benchmark: requires sm_100|tcgen05 \(5th gen tensor cores\) requires sm_100|PTX was generated successfully' "${log}"; then
         if grep -qE 'PTX written|PTX Verification|PTX file generated' "${log}"; then
-            echo "PASS (tcgen05, PTX compiled)"
+            if ! ptxas_verify "crates/rustc-codegen-cuda/examples/${ex}/${ex//-/_}.ptx"; then
+                echo "FAIL (tcgen05, ${PTXAS_NOTE})"
+                return 1
+            fi
+            echo "PASS (tcgen05, PTX compiled; ${PTXAS_NOTE})"
             return 0
         fi
         echo "FAIL (tcgen05, PTX not generated)"
@@ -554,11 +627,15 @@ verdict_tcgen05() {
 }
 
 verdict_wgmma() {
-    local log="$1" ec="$2"
+    local ex="$1" log="$2" ec="$3"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if grep -qE 'WARNING: WGMMA requires|WGMMA is Hopper-only|PTX load failed \(expected on non-Hopper\)|PTX module loaded' "${log}"; then
         if grep -qE 'PTX written|PTX Verification|PTX file generated|inspect generated PTX|\.ptx' "${log}"; then
-            echo "PASS (wgmma, PTX compiled)"
+            if ! ptxas_verify "crates/rustc-codegen-cuda/examples/${ex}/${ex//-/_}.ptx"; then
+                echo "FAIL (wgmma, ${PTXAS_NOTE})"
+                return 1
+            fi
+            echo "PASS (wgmma, PTX compiled; ${PTXAS_NOTE})"
             return 0
         fi
         echo "FAIL (wgmma, PTX not generated)"
@@ -575,13 +652,17 @@ verdict_wgmma() {
 }
 
 verdict_blackwell_mma() {
-    local log="$1" ec="$2"
+    local ex="$1" log="$2" ec="$3"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     # Non-sm_120/121 host: the example declares the skip and must still
     # prove the sm_120a PTX was generated with the block-scaled instruction.
     if grep -qE 'mxf8f6f4 block-scale MMA requires sm_120' "${log}"; then
         if [[ ${ec} -eq 0 ]] && grep -qE 'PTX was generated successfully' "${log}"; then
-            echo "PASS (blackwell-mma, PTX compiled)"
+            if ! ptxas_verify "crates/rustc-codegen-cuda/examples/${ex}/${ex//-/_}.ptx"; then
+                echo "FAIL (blackwell-mma, ${PTXAS_NOTE})"
+                return 1
+            fi
+            echo "PASS (blackwell-mma, PTX compiled; ${PTXAS_NOTE})"
             return 0
         fi
         echo "FAIL (blackwell-mma, PTX not generated)"
@@ -715,6 +796,14 @@ verdict_compile() {
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
     if verify_nvvm_in_compile_only "${ex}"; then
         if [[ -s "${ex_dir}/${artifact}.ll" && -s "${ex_dir}/${artifact}.ltoir" ]]; then
+            # An example may also have produced a .ptx via its direct-LLVM
+            # invocation (e.g. tcgen05's dual-route branch); that artifact
+            # must assemble like any other compile-only PTX.
+            if [[ -s "${ex_dir}/${artifact}.ptx" ]] \
+                && ! ptxas_verify "${ex_dir}/${artifact}.ptx"; then
+                echo "FAIL (${PTXAS_NOTE})"
+                return 1
+            fi
             echo "PASS (verified and compiled by libNVVM)"
             return 0
         fi
@@ -722,7 +811,14 @@ verdict_compile() {
         return 1
     fi
     if [[ -s "${ex_dir}/${artifact}.ptx" ]]; then
-        echo "PASS (compiled)"
+        # Nothing executes in compile-only mode, so every emitted PTX must
+        # at least assemble: driver-JIT-only errors (e.g. .shared symbols
+        # in .global initializers) otherwise pass CI silently.
+        if ! ptxas_verify "${ex_dir}/${artifact}.ptx"; then
+            echo "FAIL (${PTXAS_NOTE})"
+            return 1
+        fi
+        echo "PASS (compiled; ${PTXAS_NOTE})"
         return 0
     fi
     if [[ -s "${ex_dir}/${artifact}.ll" ]]; then
@@ -756,41 +852,41 @@ verdict_compile() {
 
 # ---- Runner --------------------------------------------------------------
 
-# Run `cargo oxide "$@"`, appending EXTRA_RUSTFLAGS (set per-example by
-# run_cargo) to the inherited Cargo flag source. rustc resolves repeated -Z
-# options last-one-wins, and Cargo prefers CARGO_ENCODED_RUSTFLAGS over
-# RUSTFLAGS when both are present.
-EXTRA_RUSTFLAGS=""
-invoke_cargo_oxide() {
-    if [[ -n "${EXTRA_RUSTFLAGS}" ]]; then
-        # `${var+x}` rather than `[[ -v var ]]`, which needs bash 4.2 and is a
-        # *parse* error on the bash 3.2 that macOS ships. Both mean "set, even
-        # if empty" -- not "non-empty", which matters because the branch below
-        # decides on that basis whether to prepend the 0x1f separator.
-        if [[ -n "${CARGO_ENCODED_RUSTFLAGS+x}" ]]; then
-            local encoded_flags="${CARGO_ENCODED_RUSTFLAGS}"
-            if [[ -n "${encoded_flags}" ]]; then
-                encoded_flags+=$'\x1f'
-            fi
-            CARGO_ENCODED_RUSTFLAGS="${encoded_flags}${EXTRA_RUSTFLAGS}" \
-                cargo oxide "$@"
-        else
-            RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${EXTRA_RUSTFLAGS}" cargo oxide "$@"
-        fi
-    else
-        cargo oxide "$@"
-    fi
-}
-
 # Run cargo oxide for ${ex} in category ${cat}. Writes to ${log}. Returns
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
-    local noinline
-    EXTRA_RUSTFLAGS=""
-    for noinline in "${NOINLINE_MIR_EXAMPLES[@]}"; do
-        [[ "${ex}" == "${noinline}" ]] && EXTRA_RUSTFLAGS="-Zinline-mir=no"
-    done
+    # Rust `char` must remain plain i32 in both NVVM dialects. A runtime
+    # round-trip cannot distinguish it from an incorrect zeroext i32 ABI.
+    if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "device_ffi_test" ]]; then
+        local shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
+        local arch
+        for arch in sm_90 sm_100; do
+            local -a char_abi_args=("build" "${ex}" "--emit-nvvm-ir" "--arch=${arch}")
+            if [[ ${VERBOSE} -eq 1 ]]; then
+                cargo oxide "${char_abi_args[@]}" 2>&1 | tee -a "${log}"
+                CARGO_EC=${PIPESTATUS[0]}
+            else
+                cargo oxide "${char_abi_args[@]}" >>"${log}" 2>&1
+                CARGO_EC=$?
+            fi
+            if [[ ${CARGO_EC} -ne 0 ]]; then
+                return
+            fi
+            local target_file="crates/rustc-codegen-cuda/examples/${ex}/${ex}.target"
+            if ! grep -qx "${arch}" "${target_file}"; then
+                printf '%s expected target %s in %s\n' "${ex}" "${arch}" "${target_file}" >>"${log}"
+                CARGO_EC=1
+                return
+            fi
+            if ! bash "${shape_check}" >>"${log}" 2>&1; then
+                printf '%s failed its char ABI shape assertions for %s\n' "${ex}" "${arch}" >>"${log}"
+                CARGO_EC=1
+                return
+            fi
+        done
+        return
+    fi
     # This exact-target batch must pass both compiler routes. The second build
     # may replace the first artifact, so preserve both exit codes in one gate.
     if [[ "${cat}" == "blackwell-compile" ]]; then
@@ -1049,15 +1145,23 @@ run_cargo() {
             return
         fi
 
+        # The base MMA coverage is split into cg1/cg2 kernels (ptxas enforces
+        # one tcgen05 granularity per function); the aggregate counts below
+        # run over both bodies concatenated, plus per-kernel purity checks.
+        local llvm_mma_base_cg1 llvm_mma_base_cg2
         local llvm_mma_base llvm_mma_ws llvm_mma_base_count llvm_mma_base_unique
         local llvm_mma_ws_count llvm_mma_ws_unique
-        llvm_mma_base="$(awk '/^\.visible \.entry compile_tcgen05_mma_base\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_mma_base_cg1="$(awk '/^\.visible \.entry compile_tcgen05_mma_base_cg1\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_mma_base_cg2="$(awk '/^\.visible \.entry compile_tcgen05_mma_base_cg2\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
+        llvm_mma_base="${llvm_mma_base_cg1}"$'\n'"${llvm_mma_base_cg2}"
         llvm_mma_ws="$(awk '/^\.visible \.entry compile_tcgen05_mma_ws\(/,/^}/' "${llvm_ptx}" 2>/dev/null)"
         llvm_mma_base_count="$(grep -oE "${mma_base_re}" <<<"${llvm_mma_base}" | wc -l)"
         llvm_mma_base_unique="$(grep -oE "${mma_base_re}" <<<"${llvm_mma_base}" | sort -u | wc -l)"
         llvm_mma_ws_count="$(grep -oE "${mma_ws_re}" <<<"${llvm_mma_ws}" | wc -l)"
         llvm_mma_ws_unique="$(grep -oE "${mma_ws_re}" <<<"${llvm_mma_ws}" | sort -u | wc -l)"
-        if [[ -z "${llvm_mma_base}" || -z "${llvm_mma_ws}" ]] \
+        if [[ -z "${llvm_mma_base_cg1}" || -z "${llvm_mma_base_cg2}" || -z "${llvm_mma_ws}" ]] \
+            || grep -qE '\.cta_group::2\.' <<<"${llvm_mma_base_cg1}" \
+            || grep -qE '\.cta_group::1\.' <<<"${llvm_mma_base_cg2}" \
             || [[ ${llvm_mma_base_count} -ne 9 || ${llvm_mma_base_unique} -ne 8 ]] \
             || [[ ${llvm_mma_ws_count} -ne 16 || ${llvm_mma_ws_unique} -ne 10 ]] \
             || [[ $(grep -oE "${mma_base_plain_re}" <<<"${llvm_mma_base}" | wc -l) -ne 6 ]] \
@@ -1239,9 +1343,13 @@ run_cargo() {
             CARGO_EC=1
         fi
 
+        # Same cg1/cg2 split as the PTX route: aggregate over both bodies.
+        local nvvm_mma_base_cg1 nvvm_mma_base_cg2
         local nvvm_mma_base nvvm_mma_ws nvvm_mma_base_count nvvm_mma_base_unique
         local nvvm_mma_ws_count nvvm_mma_ws_unique nvvm_mma_inline_count nvvm_mma_memory_count
-        nvvm_mma_base="$(awk '/^define .*@compile_tcgen05_mma_base\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_mma_base_cg1="$(awk '/^define .*@compile_tcgen05_mma_base_cg1\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_mma_base_cg2="$(awk '/^define .*@compile_tcgen05_mma_base_cg2\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
+        nvvm_mma_base="${nvvm_mma_base_cg1}"$'\n'"${nvvm_mma_base_cg2}"
         nvvm_mma_ws="$(awk '/^define .*@compile_tcgen05_mma_ws\(/,/^}/' "${nvvm_ll}" 2>/dev/null)"
         nvvm_mma_base_count="$(grep -oE "${mma_base_re}" <<<"${nvvm_mma_base}" | wc -l)"
         nvvm_mma_base_unique="$(grep -oE "${mma_base_re}" <<<"${nvvm_mma_base}" | sort -u | wc -l)"
@@ -1270,7 +1378,9 @@ run_cargo() {
                 fi
             done
         fi
-        if [[ -z "${nvvm_mma_base}" || -z "${nvvm_mma_ws}" ]] \
+        if [[ -z "${nvvm_mma_base_cg1}" || -z "${nvvm_mma_base_cg2}" || -z "${nvvm_mma_ws}" ]] \
+            || grep -qE '\.cta_group::2\.' <<<"${nvvm_mma_base_cg1}" \
+            || grep -qE '\.cta_group::1\.' <<<"${nvvm_mma_base_cg2}" \
             || [[ ${nvvm_mma_base_count} -ne 9 || ${nvvm_mma_base_unique} -ne 8 ]] \
             || [[ ${nvvm_mma_ws_count} -ne 16 || ${nvvm_mma_ws_unique} -ne 10 ]] \
             || [[ ${nvvm_mma_inline_count} -ne 25 || ${nvvm_mma_memory_count} -ne 25 ]] \
@@ -1502,18 +1612,58 @@ run_cargo() {
         nvvm_arch="$(nvvm_verify_arch "${ex}")"
         local -a args=("emit-ltoir" "${ex}" "--arch=${nvvm_arch}")
         if [[ ${VERBOSE} -eq 1 ]]; then
-            invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
+            cargo oxide "${args[@]}" 2>&1 | tee "${log}"
             CARGO_EC=${PIPESTATUS[0]}
         else
-            invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
+            cargo oxide "${args[@]}" >"${log}" 2>&1
             CARGO_EC=$?
         fi
         return
     fi
 
+    # Rvalue::Reborrow coverage needs both device MIR pipelines. GVN folds
+    # the Mutability::Mut variant into plain copies at mir-opt-level>0, so
+    # only the --device-debug (-Zmir-opt-level=0) run below reaches that
+    # half; the Mutability::Not (CoerceShared) variant is left unoptimised
+    # by GVN and reaches the importer in release builds too, so run the
+    # release invocation first.
+    if [[ ${COMPILE_ONLY} -eq 0 && "${ex}" == "reborrow" ]]; then
+        if [[ ${VERBOSE} -eq 1 ]]; then
+            cargo oxide run "${ex}" 2>&1 | tee "${log}"
+            CARGO_EC=${PIPESTATUS[0]}
+        else
+            cargo oxide run "${ex}" >"${log}" 2>&1
+            CARGO_EC=$?
+        fi
+        if [[ ${CARGO_EC} -ne 0 ]]; then
+            printf '%s failed its release (mir-opt-level>0) invocation\n' "${ex}" >>"${log}"
+            return
+        fi
+    fi
+
     local verb="run"
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then verb="build"; fi
     local -a args=("${verb}" "${ex}")
+    if [[ ${COMPILE_ONLY} -eq 0 && "${ex}" == "ex2_approx_f16" \
+        && "${host_cc}" =~ ^[0-9]+\.[0-9]+$ \
+        && $((10#${host_cc//./})) -lt 75 ]]; then
+        # Build at the instruction floor; the host check skips before module loading.
+        args+=("--arch=sm_75")
+    fi
+    if [[ "${ex}" == "debug" ]]; then
+        # Its code-shape gate checks LLVM/PTX source locations, which only
+        # exist when the example is compiled with full device debug metadata.
+        args+=("--device-debug")
+    fi
+    if [[ "${ex}" == "reborrow" ]]; then
+        # Regression coverage for the importer's Rvalue::Reborrow arm. GVN
+        # folds the Mutability::Mut variant into plain copies at
+        # mir-opt-level>0, so this --device-debug run is what keeps that
+        # half reachable; the Mutability::Not (CoerceShared) variant is left
+        # unoptimised by GVN and reaches the importer in release builds too
+        # (covered by the release invocation above).
+        args+=("--device-debug")
+    fi
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then
         case "${ex}" in
             cluster) args+=("--arch=sm_90") ;;
@@ -1550,10 +1700,10 @@ run_cargo() {
         args+=("--emit-nvvm-ir" "--arch=${LTOIR_MODERN_ARCH}")
     fi
     if [[ ${VERBOSE} -eq 1 ]]; then
-        invoke_cargo_oxide "${args[@]}" 2>&1 | tee "${log}"
+        cargo oxide "${args[@]}" 2>&1 | tee "${log}"
         CARGO_EC=${PIPESTATUS[0]}
     else
-        invoke_cargo_oxide "${args[@]}" >"${log}" 2>&1
+        cargo oxide "${args[@]}" >"${log}" 2>&1
         CARGO_EC=$?
     fi
     # Any example may ship a verify-code-shape.sh; running whichever exist keeps
@@ -1572,7 +1722,7 @@ run_cargo() {
                 # and already set CARGO_EC.
                 local -a no_opt_args=("${args[@]}")
                 no_opt_args[0]="build"
-                CUDA_OXIDE_NO_OPT=1 invoke_cargo_oxide "${no_opt_args[@]}" >>"${log}" 2>&1 \
+                CUDA_OXIDE_NO_OPT=1 cargo oxide "${no_opt_args[@]}" >>"${log}" 2>&1 \
                     || CARGO_EC=$?
                 break
             fi
@@ -1686,6 +1836,28 @@ if ! env -u CARGO_TARGET_DIR cargo oxide setup >/dev/null 2>&1; then
     echo "error: failed to build the codegen backend; run 'cargo oxide setup' to see why" >&2
     exit 2
 fi
+
+# Pin the backend .so for the whole run. cargo-oxide's discovery step 1
+# (CUDA_OXIDE_BACKEND) short-circuits before any cargo invocation; without
+# it, every example build re-runs a cargo freshness check on the backend
+# workspace (~1s each on CI runners, ~4 minutes across 219 examples). The
+# `setup` above just built this exact .so, and pinning it also means the
+# whole run tests one backend even if its sources change mid-run. An
+# externally-set CUDA_OXIDE_BACKEND is honored as-is; if the expected path
+# is missing (unexpected host layout), fall back to per-invocation
+# discovery rather than failing.
+if [[ -z "${CUDA_OXIDE_BACKEND:-}" ]]; then
+    host_triple="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')"
+    for backend_name in librustc_codegen_cuda.so librustc_codegen_cuda.dylib; do
+        backend_so="${repo_root}/crates/rustc-codegen-cuda/target/${host_triple}/debug/${backend_name}"
+        if [[ -n "${host_triple}" && -f "${backend_so}" ]]; then
+            export CUDA_OXIDE_BACKEND="${backend_so}"
+            printf "Backend for this run: %s\n" "${CUDA_OXIDE_BACKEND}"
+            break
+        fi
+    done
+fi
+
 # Honor an externally-set CARGO_TARGET_DIR (e.g. CI); otherwise share one under
 # the repo's target/ so it is gitignored and cleaned by `cargo clean`.
 : "${CARGO_TARGET_DIR:=${repo_root}/target/oxide-examples}"
@@ -1730,9 +1902,9 @@ for ex in "${selected[@]}"; do
     else
         case "${cat}" in
             error)       verdict="$(verdict_error       "${log}" "${ec}" "${ex}")" && status=0 || status=$? ;;
-            tcgen05)     verdict="$(verdict_tcgen05     "${log}" "${ec}")"        && status=0 || status=$? ;;
-            wgmma)       verdict="$(verdict_wgmma       "${log}" "${ec}")"        && status=0 || status=$? ;;
-            blackwell-mma) verdict="$(verdict_blackwell_mma "${log}" "${ec}")"    && status=0 || status=$? ;;
+            tcgen05)     verdict="$(verdict_tcgen05     "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
+            wgmma)       verdict="$(verdict_wgmma       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
+            blackwell-mma) verdict="$(verdict_blackwell_mma "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             ltoir)       verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             ltoir-modern) verdict="$(verdict_ltoir_modern "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;
             auto-nvvm)   verdict="$(verdict_ltoir       "${ex}" "${log}" "${ec}")" && status=0 || status=$? ;;

@@ -34,6 +34,7 @@
 //! walked to a destination address with the same place-address walker
 //! that `Rvalue::Ref` uses, then a single `mir.store` writes through it.
 
+use super::facts;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::location::span_to_location;
@@ -73,7 +74,7 @@ pub fn translate_statement(
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
 ) -> TranslationResult<Option<Ptr<Operation>>> {
-    let loc = span_to_location(ctx, stmt.span);
+    let loc = span_to_location(ctx, stmt.source_info.span);
 
     match &stmt.kind {
         mir::StatementKind::Assign(place, rvalue) => {
@@ -91,7 +92,7 @@ pub fn translate_statement(
                     // device global rather than storing it element by element in
                     // every thread. Falls through when the constant is not a
                     // shape that can be reduced to a byte image.
-                    mir::Rvalue::Use(mir::Operand::Constant(constant)) => {
+                    mir::Rvalue::Use(mir::Operand::Constant(constant), _) => {
                         if let Some(last) = rvalue::translate_array_constant_into_alloca(
                             ctx,
                             body,
@@ -269,19 +270,9 @@ pub fn translate_statement(
                         .into();
 
                         use dialect_mir::ops::MirFieldAddrOp;
-                        let field_addr_op = Operation::new(
-                            ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![field_ptr_ty],
-                            vec![slot],
-                            vec![],
-                            0,
-                        );
+                        let field_addr_op =
+                            MirFieldAddrOp::build(ctx, slot, field_ptr_ty, *field_idx as u32)?;
                         field_addr_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(field_addr_op).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         if let Some(prev) = current_prev {
                             field_addr_op.insert_after(ctx, prev);
                         } else {
@@ -527,19 +518,9 @@ pub fn translate_statement(
                         .into();
 
                         use dialect_mir::ops::MirFieldAddrOp;
-                        let addr_op = Operation::new(
-                            ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![field_ptr_ty],
-                            vec![ptr_val],
-                            vec![],
-                            0,
-                        );
+                        let addr_op =
+                            MirFieldAddrOp::build(ctx, ptr_val, field_ptr_ty, *field_idx as u32)?;
                         addr_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(addr_op).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*field_idx as u32),
-                        );
                         if let Some(prev) = current_prev {
                             addr_op.insert_after(ctx, prev);
                         } else {
@@ -610,19 +591,13 @@ pub fn translate_statement(
                         .into();
 
                         use dialect_mir::ops::MirFieldAddrOp;
-                        let outer_addr_op = Operation::new(
+                        let outer_addr_op = MirFieldAddrOp::build(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![outer_ptr_ty],
-                            vec![slot],
-                            vec![],
-                            0,
-                        );
+                            slot,
+                            outer_ptr_ty,
+                            *outer_field_idx as u32,
+                        )?;
                         outer_addr_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(outer_addr_op).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*outer_field_idx as u32),
-                        );
                         if let Some(prev) = current_prev {
                             outer_addr_op.insert_after(ctx, prev);
                         } else {
@@ -645,19 +620,13 @@ pub fn translate_statement(
                             slot_addr_space,
                         )
                         .into();
-                        let inner_addr_op = Operation::new(
+                        let inner_addr_op = MirFieldAddrOp::build(
                             ctx,
-                            MirFieldAddrOp::get_concrete_op_info(),
-                            vec![inner_ptr_ty],
-                            vec![outer_ptr],
-                            vec![],
-                            0,
-                        );
+                            outer_ptr,
+                            inner_ptr_ty,
+                            *inner_field_idx as u32,
+                        )?;
                         inner_addr_op.deref_mut(ctx).set_loc(loc.clone());
-                        MirFieldAddrOp::new(inner_addr_op).set_attr_field_index(
-                            ctx,
-                            dialect_mir::attributes::FieldIndexAttr(*inner_field_idx as u32),
-                        );
                         if let Some(prev) = current_prev {
                             inner_addr_op.insert_after(ctx, prev);
                         } else {
@@ -872,10 +841,17 @@ pub fn translate_statement(
             Ok(prev_op)
         }
 
-        // Codegen-irrelevant statements: borrow-check / type-system / coverage
-        // hints that have no runtime effect. Skipping is correct.
+        // Retag note: `StatementKind::Retag` no longer exists on the pinned
+        // nightly; retagging is now carried as the `WithRetag` flag on
+        // `Rvalue::Use`. Retags refine rustc's dynamic alias/provenance model
+        // (Stacked/Tree Borrows) but have no runtime effect, so the importer
+        // ignores the flag, exactly as it used to skip the statement. Any
+        // future LLVM alias metadata must be based on an explicit audited
+        // policy, never inferred from skipped retags or `MirPtrType::is_mutable`.
+
+        // Other codegen-irrelevant borrow-check / type-system / coverage hints
+        // have no runtime effect and are intentionally skipped.
         mir::StatementKind::FakeRead(..)
-        | mir::StatementKind::Retag(..)
         | mir::StatementKind::PlaceMention(..)
         | mir::StatementKind::AscribeUserType { .. }
         | mir::StatementKind::Coverage(..)
@@ -913,14 +889,9 @@ pub fn translate_statement(
                 loc.clone(),
             )?;
 
-            let memcpy_op = Operation::new(
-                ctx,
-                MirMemcpyOp::get_concrete_op_info(),
-                vec![],
-                vec![dst, src, count],
-                vec![],
-                0,
-            );
+            // The typed builder stamps the elem_type fact from dst; lowering
+            // scales the byte count from that attribute, not operand history.
+            let memcpy_op = MirMemcpyOp::build(ctx, dst, src, count)?;
             memcpy_op.deref_mut(ctx).set_loc(loc);
             if let Some(prev) = last_op {
                 memcpy_op.insert_after(ctx, prev);
@@ -1036,6 +1007,12 @@ pub fn translate_statement(
             MirSetDiscriminantOp::new(set_op).set_attr_set_discriminant_variant_index(
                 ctx,
                 dialect_mir::attributes::VariantIndexAttr(variant_idx as u32),
+            );
+            // Stamp the enum type fact: lowering derives the tag/niche layout
+            // from this attribute, never from operand type history.
+            MirSetDiscriminantOp::new(set_op).set_attr_set_discriminant_enum_ty(
+                ctx,
+                pliron::builtin::attributes::TypeAttr::new(enum_mir_ty),
             );
 
             let insert_after = addr_prev.or(prev_op);
@@ -1200,13 +1177,26 @@ pub(crate) fn emit_array_element_store(
     index: Value,
     value: Value,
     element_ty: pliron::r#type::TypeHandle,
-    address_space: u32,
+    _address_space: u32,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Option<Ptr<Operation>>,
     loc: Location,
 ) -> Ptr<Operation> {
-    let elem_ptr_ty =
-        dialect_mir::types::MirPtrType::get(ctx, element_ty, true, address_space).into();
+    // Address projections retain the base pointer's provenance, mutability,
+    // and address space. The result is not a new Rust borrow and therefore has
+    // no authority to erase and later recover a different pointer category.
+    let (base_origin, base_address_space) = {
+        let base_ty = array_ptr.get_type(ctx);
+        let base_ty = base_ty.deref(ctx);
+        let base_ty = base_ty
+            .downcast_ref::<dialect_mir::types::MirPtrType>()
+            .expect("array element store base must be a MirPtrType");
+        (
+            facts::pointer_origin_of_ptr_carrier(base_ty),
+            base_ty.address_space,
+        )
+    };
+    let elem_ptr_ty = facts::mint_ptr_type(ctx, element_ty, base_address_space, base_origin).into();
 
     use dialect_mir::ops::MirArrayElementAddrOp;
     let addr_op = Operation::new(
@@ -1243,7 +1233,8 @@ pub(crate) fn emit_array_element_store(
 /// callers of the statement module sometimes thread pointers coming from
 /// other sources (loads, field-addr ops, ...), which may be immutable.
 /// Derived addresses inherit the base pointer's mutability to keep pliron
-/// type checking consistent.
+/// type checking consistent. This bit is not an aliasing or uniqueness proof;
+/// source-level reference kind is tracked separately by `MirPointerKind`.
 pub(crate) fn pointer_is_mutable(ctx: &pliron::context::Context, ptr: Value) -> bool {
     let ty = ptr.get_type(ctx);
     let ty_ref = ty.deref(ctx);

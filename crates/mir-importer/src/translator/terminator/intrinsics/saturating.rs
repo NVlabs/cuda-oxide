@@ -71,6 +71,7 @@ pub fn emit_rust_saturating_intrinsic(
         args,
         destination,
         return_type,
+        None,
         target,
         block_ptr,
         prev_op,

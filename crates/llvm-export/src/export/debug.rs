@@ -22,7 +22,8 @@ use pliron::{
 };
 
 use crate::ops::{
-    DebugLocalTypeKind, DebugLocalVariableInfo, DebugProjectedVariableInfo, DebugSourcePosition,
+    DebugGlobalVariableInfo, DebugLocalTypeKind, DebugLocalVariableInfo,
+    DebugProjectedVariableInfo, DebugSourcePosition,
 };
 
 use super::state::{ModuleExportState, ResolvedDebugScope};
@@ -35,28 +36,50 @@ impl<'a> ModuleExportState<'a> {
     pub(super) fn debug_subprogram_for_function(
         &mut self,
         name: &str,
+        linkage_name: &str,
         loc: &Location,
     ) -> Option<usize> {
         if !self.debug_kind.line_tables_enabled() {
             return None;
+        }
+        if let Some(existing) = self.debug_function_subprograms.get(linkage_name) {
+            return Some(*existing);
         }
 
         let (path, pos) = self.source_position_from_location(loc)?;
         let cu_id = self.ensure_debug_compile_unit(&path);
         let file_id = self.ensure_debug_file(&path);
         let subroutine_type_id = self.ensure_debug_subroutine_type();
-        let name = escape_debug_string(name);
+        // Shared-static owners are scoped to their source namespace so the
+        // owning DISubprogram and the AS3 DIGlobalVariable agree on identity.
+        // The scope map and the subprogram cache are both keyed by the final
+        // exported (linkage) name, which module indexing guarantees is unique.
+        let owner_scope = self.debug_shared_function_scopes.get(linkage_name).cloned();
+        let (debug_name, scope_id) = if let Some(owner_scope) = owner_scope {
+            let scope_id = self
+                .ensure_debug_namespace(&owner_scope.namespace)
+                .expect("validated shared owner namespace must yield a scope");
+            (owner_scope.name, scope_id)
+        } else {
+            (name.to_string(), file_id)
+        };
+        let debug_name = escape_debug_string(&debug_name);
+        let escaped_linkage_name = escape_debug_string(linkage_name);
         let line = pos.line;
         let id = self.alloc_metadata_id();
 
         self.debug_nodes.push((
             id,
             format!(
-                "distinct !DISubprogram(name: \"{name}\", scope: !{file_id}, file: !{file_id}, \
+                "distinct !DISubprogram(name: \"{debug_name}\", \
+                 linkageName: \"{escaped_linkage_name}\", \
+                 scope: !{scope_id}, file: !{file_id}, \
                  line: {line}, type: !{subroutine_type_id}, scopeLine: {line}, \
                  spFlags: DISPFlagDefinition, unit: !{cu_id}, retainedNodes: !{{}})"
             ),
         ));
+        self.debug_function_subprograms
+            .insert(linkage_name.to_string(), id);
         self.debug_subprogram_files.insert(id, path);
         self.debug_subprogram_fallbacks
             .insert(id, (pos.line, pos.column));
@@ -90,17 +113,21 @@ impl<'a> ModuleExportState<'a> {
         let Some(scope) = scope else {
             return;
         };
-        let location_id = self.debug_location_for_scope(scope, loc).or_else(|| {
-            if allow_scope_fallback {
-                // LLVM rejects inlinable calls inside a debug-scoped function
-                // unless the call itself has a location. When rustc/pliron did
-                // not give the call one, point it at the function line instead
-                // of letting opt discard the whole debug graph.
-                self.debug_fallback_location_for_scope(scope)
-            } else {
-                None
-            }
-        });
+        let location_id = if crate::is_artificial_debug_location(loc) {
+            Some(self.ensure_artificial_debug_location(scope))
+        } else {
+            self.debug_location_for_scope(scope, loc).or_else(|| {
+                if allow_scope_fallback {
+                    // LLVM rejects inlinable calls inside a debug-scoped function
+                    // unless the call itself has a location. When rustc/pliron did
+                    // not give the call one, point it at the function line instead
+                    // of letting opt discard the whole debug graph.
+                    self.debug_fallback_location_for_scope(scope)
+                } else {
+                    None
+                }
+            })
+        };
         let Some(location_id) = location_id else {
             return;
         };
@@ -133,6 +160,8 @@ impl<'a> ModuleExportState<'a> {
             return;
         };
 
+        self.finalize_debug_globals(cu_id);
+
         let dwarf_version_id = self.alloc_metadata_id();
         let debug_info_version_id = self.alloc_metadata_id();
 
@@ -156,6 +185,173 @@ impl<'a> ModuleExportState<'a> {
         for (id, node) in &self.debug_nodes {
             writeln!(output, "!{id} = {node}").unwrap();
         }
+    }
+
+    /// Create a global-variable expression for one source Rust static.
+    ///
+    /// `linkage_name` is the actual generated LLVM symbol, while `info.ty` is
+    /// the semantic Rust type. Keeping those independent is required for
+    /// initialized globals whose physical storage is `[N x i8]`.
+    pub(super) fn debug_global_variable(
+        &mut self,
+        linkage_name: &str,
+        alignment_bytes: Option<u64>,
+        address_space: u32,
+        owner_function: Option<&str>,
+        info: &DebugGlobalVariableInfo,
+    ) -> Result<Option<usize>, String> {
+        if !self.debug_kind.variables_enabled() {
+            return Ok(None);
+        }
+        if info.name.is_empty()
+            || info.namespace.is_empty()
+            || info.namespace.iter().any(String::is_empty)
+            || info.declaration.file.as_os_str().is_empty()
+            || info.declaration.line <= 0
+            || info.declaration.column <= 0
+        {
+            return Ok(None);
+        }
+        if self.debug_globals_finalized {
+            return Err(format!(
+                "cannot add debug global `{linkage_name}` after compile-unit finalization"
+            ));
+        }
+        let owner_function = owner_function.map(ToOwned::to_owned);
+        if let Some((previous, previous_address_space, previous_owner, expression_id)) =
+            self.debug_global_variables.get(linkage_name)
+        {
+            if previous == info
+                && *previous_address_space == address_space
+                && *previous_owner == owner_function
+            {
+                return Ok(Some(*expression_id));
+            }
+            return Err(format!(
+                "conflicting debug identities for LLVM global `@{linkage_name}`: {:?} in address space {} owned by {:?} versus {:?} in address space {} owned by {:?}",
+                previous,
+                previous_address_space,
+                previous_owner,
+                info,
+                address_space,
+                owner_function
+            ));
+        }
+
+        self.ensure_debug_compile_unit(&info.declaration.file);
+        let file_id = self.ensure_debug_file(&info.declaration.file);
+        let type_id = self.ensure_debug_type(&info.ty);
+        let scope_id = if info.is_function_local {
+            let Some(owner) = owner_function.as_deref() else {
+                return Ok(None);
+            };
+            let Some(scope) = self.debug_function_subprograms.get(owner) else {
+                return Ok(None);
+            };
+            *scope
+        } else {
+            self.ensure_debug_namespace(&info.namespace)
+                .expect("validated non-empty namespace must yield a scope")
+        };
+        let name = escape_debug_string(&info.name);
+        let escaped_linkage_name = escape_debug_string(linkage_name);
+        let alignment = alignment_bytes
+            .filter(|alignment| *alignment != 0)
+            .and_then(|alignment| alignment.checked_mul(8))
+            .map(|alignment_bits| format!(", align: {alignment_bits}"))
+            .unwrap_or_default();
+
+        let variable_id = self.alloc_metadata_id();
+        self.debug_nodes.push((
+            variable_id,
+            format!(
+                "distinct !DIGlobalVariable(name: \"{name}\", linkageName: \"{escaped_linkage_name}\", \
+                 scope: !{scope_id}, file: !{file_id}, line: {}, type: !{type_id}, \
+                 isLocal: {}, isDefinition: true{alignment})",
+                info.declaration.line, info.is_local_to_unit
+            ),
+        ));
+
+        let expression_id = self.alloc_metadata_id();
+        // Clang's NVPTX frontend represents a shared variable's CUDA DWARF
+        // address class with this target expression. NVPTXDwarfDebug consumes
+        // the sequence and emits DW_AT_address_class = 8 (shared space) for
+        // cuda-gdb. The empty expression remains the established AS1 shape.
+        let expression = if address_space == crate::types::address_space::SHARED {
+            "!DIExpression(DW_OP_constu, 8, DW_OP_swap, DW_OP_xderef)"
+        } else {
+            "!DIExpression()"
+        };
+        self.debug_nodes.push((
+            expression_id,
+            format!("!DIGlobalVariableExpression(var: !{variable_id}, expr: {expression})"),
+        ));
+        self.debug_global_expressions.push(expression_id);
+        self.debug_global_variables.insert(
+            linkage_name.to_string(),
+            (info.clone(), address_space, owner_function, expression_id),
+        );
+        Ok(Some(expression_id))
+    }
+
+    fn ensure_debug_namespace(&mut self, segments: &[String]) -> Option<usize> {
+        let mut parent = None;
+        for segment in segments {
+            let key = (parent, segment.clone());
+            if let Some(existing) = self.debug_namespaces.get(&key) {
+                parent = Some(*existing);
+                continue;
+            }
+
+            let id = self.alloc_metadata_id();
+            let scope = parent
+                .map(|parent| format!("!{parent}"))
+                .unwrap_or_else(|| "null".to_string());
+            let name = escape_debug_string(segment);
+            self.debug_nodes.push((
+                id,
+                format!("!DINamespace(name: \"{name}\", scope: {scope})"),
+            ));
+            self.debug_namespaces.insert(key, id);
+            parent = Some(id);
+        }
+        parent
+    }
+
+    /// Add the global-expression tuple to the already-reserved compile unit.
+    ///
+    /// Compile units are allocated as soon as the first source object is seen,
+    /// but the complete global list is only known after top-level export. LLVM
+    /// metadata permits the resulting forward reference.
+    fn finalize_debug_globals(&mut self, cu_id: usize) {
+        if self.debug_globals_finalized {
+            return;
+        }
+        self.debug_globals_finalized = true;
+        if self.debug_global_expressions.is_empty() {
+            return;
+        }
+
+        let expressions = self
+            .debug_global_expressions
+            .iter()
+            .map(|id| format!("!{id}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let globals_id = self.alloc_metadata_id();
+        self.debug_nodes
+            .push((globals_id, format!("!{{{expressions}}}")));
+
+        let Some((_, compile_unit)) = self.debug_nodes.iter_mut().find(|(id, _)| *id == cu_id)
+        else {
+            debug_assert!(false, "reserved debug compile unit must exist");
+            return;
+        };
+        let Some(prefix) = compile_unit.strip_suffix(')') else {
+            debug_assert!(false, "debug compile unit must end in ')'");
+            return;
+        };
+        *compile_unit = format!("{prefix}, globals: !{globals_id})");
     }
 
     pub(super) fn debug_local_variable_for_scope(
@@ -460,6 +656,22 @@ impl<'a> ModuleExportState<'a> {
                 format!(
                     "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"{name}\", \
                      baseType: null, size: {size_bits})"
+                )
+            }
+            DebugLocalTypeKind::TypedPointer {
+                name,
+                size_bits,
+                pointee,
+            } => {
+                assert!(
+                    pointee.is_valid_typed_pointer_pointee(),
+                    "typed pointer cannot export an opaque or composite pointee descendant"
+                );
+                let base = self.ensure_debug_type(pointee);
+                let name = escape_debug_string(name);
+                format!(
+                    "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"{name}\", \
+                     baseType: !{base}, size: {size_bits})"
                 )
             }
             DebugLocalTypeKind::Struct {
@@ -845,6 +1057,21 @@ impl<'a> ModuleExportState<'a> {
         self.ensure_debug_location(scope, SourcePosition { line, column }, None)
     }
 
+    fn ensure_artificial_debug_location(&mut self, scope: usize) -> usize {
+        let key = (scope, 0, 0, None);
+        if let Some(id) = self.debug_locations.get(&key).copied() {
+            return id;
+        }
+
+        let id = self.alloc_metadata_id();
+        self.debug_nodes.push((
+            id,
+            format!("!DILocation(line: 0, column: 0, scope: !{scope})"),
+        ));
+        self.debug_locations.insert(key, id);
+        id
+    }
+
     fn local_variable_position_from_location(
         &self,
         loc: &Location,
@@ -949,6 +1176,25 @@ mod tests {
     use combine::stream::position::SourcePosition;
     use pliron::{context::Context, location::Source};
 
+    fn global_info() -> DebugGlobalVariableInfo {
+        DebugGlobalVariableInfo {
+            name: "COUNTER".to_string(),
+            namespace: vec!["collision_crate".to_string(), "left".to_string()],
+            ty: DebugLocalTypeKind::Basic {
+                name: "u64".to_string(),
+                size_bits: 64,
+                encoding: "DW_ATE_unsigned",
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/collision.rs"),
+                line: 7,
+                column: 5,
+            },
+            is_local_to_unit: true,
+            is_function_local: false,
+        }
+    }
+
     #[test]
     fn debug_strings_use_llvm_metadata_escapes() {
         assert_eq!(escape_debug_string("a\\b\"c\n\t"), "a\\5Cb\\22c\\0A\\09");
@@ -993,5 +1239,38 @@ mod tests {
         assert_eq!(path, PathBuf::from("/tmp/kernel.rs"));
         assert_eq!(pos.line, 12);
         assert_eq!(pos.column, 4);
+    }
+
+    #[test]
+    fn global_expressions_and_namespaces_are_uniqued_and_conflicts_rejected() {
+        let ctx = Context::new();
+        let mut state =
+            ModuleExportState::new(&ctx, true, super::super::config::DebugKind::Full, None);
+        let info = global_info();
+
+        let first = state
+            .debug_global_variable("__device_global_0", Some(8), 1, None, &info)
+            .expect("first identity is valid")
+            .expect("full debug emits an expression");
+        let repeated = state
+            .debug_global_variable("__device_global_0", Some(8), 1, None, &info)
+            .expect("identical repeated identity is valid")
+            .expect("full debug emits an expression");
+        assert_eq!(first, repeated);
+        assert_eq!(state.debug_global_expressions, vec![first]);
+        assert_eq!(state.debug_namespaces.len(), 2);
+
+        let mut conflict = info;
+        conflict.is_local_to_unit = false;
+        let error = state
+            .debug_global_variable("__device_global_0", Some(8), 1, None, &conflict)
+            .expect_err("one linkage name cannot describe two source identities");
+        assert!(error.contains("conflicting debug identities"), "{error}");
+
+        let cu_id = state.debug_compile_unit.expect("compile unit reserved");
+        state.finalize_debug_globals(cu_id);
+        let node_count = state.debug_nodes.len();
+        state.finalize_debug_globals(cu_id);
+        assert_eq!(state.debug_nodes.len(), node_count);
     }
 }

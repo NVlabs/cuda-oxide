@@ -7,7 +7,7 @@ MIR import, WGMMA region selection, LLVM lowering, and PTX generation.
 
 ## What this tests
 
-The crate contains three compile-only kernels.
+The crate contains five compile-only kernels.
 
 ### m64n64 full drain
 
@@ -21,6 +21,31 @@ wait_group<0>
 For the canonical `[[f32; 8]; 4]` accumulator, the compiler selects the
 value-threaded path and exposes the 32 accumulator values to LLVM only outside
 the complete asynchronous WGMMA lifetime.
+
+### Repeated reborrows
+
+```text
+wgmma_fence
+mma &mut acc
+mma &mut acc
+commit_group
+wait_group<0>
+```
+
+Each call creates a distinct Rust `&mut` SSA value. The compiler follows both
+reborrows back to the same accumulator storage when checking the WGMMA region.
+
+### Counted-loop reborrow
+
+```text
+wgmma_fence
+repeat 4 times: mma &mut acc; advance descriptors
+commit_group
+wait_group<0>
+```
+
+The reborrow is created inside the loop. The compiler follows it back to the
+pre-loop accumulator storage before hoisting the value-threaded adapter.
 
 ### m64n64 partial wait
 
@@ -66,7 +91,8 @@ cargo oxide build wgmma_mma_bf16 --arch sm_90a
 ```
 
 The command must complete successfully and generate PTX containing both BF16
-`m64n64k16` and `m64n128k16` WGMMA instructions plus the m64n64 partial wait.
+`m64n64k16` and `m64n128k16` WGMMA instructions, a counted-loop carrier, and
+the m64n64 partial wait.
 
 To run the repository smoketest:
 
@@ -77,7 +103,7 @@ scripts/smoketest.sh -x -v '^wgmma_mma_bf16$'
 ## Expected smoketest marker
 
 ```text
-SUCCESS: BF16 WGMMA value-threaded and partial-wait lowering compiled.
+SUCCESS: BF16 WGMMA value-threaded, reborrow, counted-loop, and partial-wait lowering compiled.
 ```
 
 ## Important

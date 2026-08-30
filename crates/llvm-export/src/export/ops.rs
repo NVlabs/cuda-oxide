@@ -27,9 +27,9 @@ use pliron::{
 use crate::{
     attributes::{
         AtomicOrderingAttr, AtomicRmwKindAttr, FCmpPredicateAttr, FPHalfAttr, FastmathFlags,
-        FastmathFlagsAttr, GepIndexAttr, ICmpPredicateAttr,
+        FastmathFlagsAttr, GepIndexAttr, ICmpPredicateAttr, SyncScopeAttr,
     },
-    op_interfaces::{ATTR_KEY_FAST_MATH_FLAGS, PointerTypeResult},
+    op_interfaces::{ATTR_KEY_FAST_MATH_FLAGS, PointerTypeResult, SyncScopeInterface},
     ops,
     types::{ArrayType, FuncType, HalfType, PointerType, VoidType},
 };
@@ -731,9 +731,13 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
             self.export_value(ptr, value_names, output)?;
         }
-        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
-            .unwrap_or_else(|| self.natural_alignment(ty));
-        writeln!(output, ", align {align}").unwrap();
+        if let Some(align) = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .or_else(|| self.natural_alignment(ty))
+        {
+            writeln!(output, ", align {align}").unwrap();
+        } else {
+            writeln!(output).unwrap();
+        }
         Ok(())
     }
 
@@ -770,9 +774,13 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
             self.export_value(ptr, value_names, output)?;
         }
-        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
-            .unwrap_or_else(|| self.natural_alignment(val_ty));
-        writeln!(output, ", align {align}").unwrap();
+        if let Some(align) = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .or_else(|| self.natural_alignment(val_ty))
+        {
+            writeln!(output, ", align {align}").unwrap();
+        } else {
+            writeln!(output).unwrap();
+        }
         Ok(())
     }
 
@@ -822,9 +830,13 @@ impl<'a> ModuleExportState<'a> {
             self.export_type(array_size.get_type(self.ctx), output)?;
             write!(output, " {array_size_name}").unwrap();
         }
-        let align = crate::ops::op_alignment(self.ctx, op.get_operation())
-            .unwrap_or_else(|| self.natural_alignment(elem_llvm_ty));
-        writeln!(output, ", align {align}").unwrap();
+        if let Some(align) = crate::ops::op_alignment(self.ctx, op.get_operation())
+            .or_else(|| self.natural_alignment(elem_llvm_ty))
+        {
+            writeln!(output, ", align {align}").unwrap();
+        } else {
+            writeln!(output).unwrap();
+        }
 
         if needs_normalization {
             write!(output, "  {res_name} = bitcast ").unwrap();
@@ -1201,7 +1213,7 @@ impl<'a> ModuleExportState<'a> {
         let ptr = op_ref.get_operand(0);
         let res_name = value_names.get(&res).unwrap();
         let ty = res.get_type(self.ctx);
-        let syncscope = fmt_syncscope(op.get_attr_llvm_ld_syncscope(self.ctx));
+        let syncscope = fmt_syncscope(op.syncscope(self.ctx));
         let ordering = fmt_ordering(op.get_attr_llvm_ld_ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
         let pointer_name =
@@ -1217,7 +1229,15 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
             self.export_value(ptr, value_names, output)?;
         }
-        let align = self.natural_alignment(ty);
+        // Atomic loads must state an alignment; the operand types are
+        // power-of-two scalars, so this is always answerable. Error rather
+        // than fabricate if it ever is not.
+        let align = self.natural_alignment(ty).ok_or_else(|| {
+            format!(
+                "atomic load requires an explicit alignment, but `{}` has no known ABI alignment",
+                ty.deref(self.ctx).disp(self.ctx)
+            )
+        })?;
         writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
         Ok(())
     }
@@ -1232,7 +1252,7 @@ impl<'a> ModuleExportState<'a> {
         let op_ref = op.get_operation().deref(self.ctx);
         let val = op_ref.get_operand(0);
         let ptr = op_ref.get_operand(1);
-        let syncscope = fmt_syncscope(op.get_attr_llvm_st_syncscope(self.ctx));
+        let syncscope = fmt_syncscope(op.syncscope(self.ctx));
         let ordering = fmt_ordering(op.get_attr_llvm_st_ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
         let val_ty = val.get_type(self.ctx);
@@ -1251,7 +1271,13 @@ impl<'a> ModuleExportState<'a> {
             write!(output, "{}", ptr_qualifier(addrspace)).unwrap();
             self.export_value(ptr, value_names, output)?;
         }
-        let align = self.natural_alignment(val_ty);
+        // Same contract as atomic load: exact alignment or a loud error.
+        let align = self.natural_alignment(val_ty).ok_or_else(|| {
+            format!(
+                "atomic store requires an explicit alignment, but `{}` has no known ABI alignment",
+                val_ty.deref(self.ctx).disp(self.ctx)
+            )
+        })?;
         writeln!(output, "{syncscope} {ordering}, align {align}").unwrap();
         Ok(())
     }
@@ -1269,7 +1295,7 @@ impl<'a> ModuleExportState<'a> {
         let val = op_ref.get_operand(1);
         let res_name = value_names.get(&res).unwrap();
         let rmw_kind = fmt_rmw_kind(op.get_attr_llvm_rmw_kind(self.ctx));
-        let syncscope = fmt_syncscope(op.get_attr_llvm_rmw_syncscope(self.ctx));
+        let syncscope = fmt_syncscope(op.syncscope(self.ctx));
         let ordering = fmt_ordering(op.get_attr_llvm_rmw_ordering(self.ctx));
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
         let val_ty = val.get_type(self.ctx);
@@ -1307,7 +1333,7 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
         let success_ord = fmt_ordering(op.get_attr_llvm_cas_success_ordering(self.ctx));
         let failure_ord = fmt_ordering(op.get_attr_llvm_cas_failure_ordering(self.ctx));
-        let syncscope = fmt_syncscope(op.get_attr_llvm_cas_syncscope(self.ctx));
+        let syncscope = fmt_syncscope(op.syncscope(self.ctx));
         let val_ty = cmp.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
         let pointer_name =
@@ -1337,7 +1363,7 @@ impl<'a> ModuleExportState<'a> {
     }
 
     fn emit_fence(&self, op: &ops::FenceOp, output: &mut String) -> Result<(), String> {
-        let syncscope = fmt_syncscope(op.get_attr_llvm_fence_syncscope(self.ctx));
+        let syncscope = fmt_syncscope(op.syncscope(self.ctx));
         let ordering = fmt_ordering(op.get_attr_llvm_fence_ordering(self.ctx));
         writeln!(output, "  fence{syncscope} {ordering}").unwrap();
         Ok(())
@@ -2213,12 +2239,15 @@ fn fmt_rmw_kind(kind: Option<Ref<AtomicRmwKindAttr>>) -> &'static str {
     }
 }
 
-/// Format a syncscope suffix. pliron stores syncscope as a free-form string
-/// (absent = system scope); any value passes through verbatim.
-fn fmt_syncscope(scope: Option<Ref<StringAttr>>) -> String {
-    match scope.map(|s| String::from((*s).clone())) {
-        Some(s) if !s.is_empty() => format!(" syncscope(\"{s}\")"),
-        _ => String::new(),
+/// Format a syncscope suffix from pliron-llvm's dedicated [`SyncScopeAttr`].
+fn fmt_syncscope(scope: SyncScopeAttr) -> String {
+    // `SyncScopeAttr::to_name` returns the LLVM-IR scope name; the system
+    // scope is unnamed (empty string) and is omitted entirely in textual IR.
+    let name = scope.to_name();
+    if name.is_empty() {
+        String::new()
+    } else {
+        format!(" syncscope(\"{name}\")")
     }
 }
 

@@ -54,7 +54,7 @@
 //! `drop_in_place::<T>` instance, obtains its mangled symbol name (which
 //! the collector uses as the export name for the translated device
 //! function), and emits a `mir.call` passing the dropped place's address
-//! as the sole `&mut T` argument.
+//! as the sole `*mut T` argument.
 //!
 //! # Device-side destructor safety notes
 //!
@@ -65,8 +65,9 @@
 //!   device-compatible (no host-only syscalls, allocations, etc.).
 
 use crate::error::{TranslationErr, TranslationResult};
-use crate::translator::rvalue;
-use crate::translator::values::ValueMap;
+use crate::translator::values::{ValueMap, establish_declared_pointer_type};
+use crate::translator::{rvalue, types};
+use dialect_mir::attributes::MirPointerKindAuthorityAttr;
 use dialect_mir::ops::MirCallOp;
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
@@ -75,6 +76,7 @@ use pliron::input_error;
 use pliron::location::{Located, Location};
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::r#type::Typed;
 use rustc_public::mir;
 use rustc_public::mir::mono::Instance;
 use rustc_public::ty::{RigidTy, Ty, TyKind};
@@ -135,9 +137,12 @@ pub fn drop_instance_is_noop(instance: &Instance) -> bool {
 /// 1. Resolves the monomorphized `drop_in_place::<T>` instance
 /// 2. Obtains its mangled name (matching what the collector exported)
 /// 3. Legalises the name through the same `Legaliser` used for all call sites
-/// 4. Computes the dropped place's in-memory address (a `&mut T` pointer)
-/// 5. Emits a `mir.call` to the drop function with that pointer as argument
-/// 6. Branches to the successor block
+/// 4. Computes the dropped place's internal in-memory address
+/// 5. Establishes the callee's declared pointer type (`*mut T`, or `&mut T`
+///    for the nightly-2026-08-28 `core::ptr::drop_glue` shims) at the Rust
+///    ABI boundary
+/// 6. Emits a `mir.call` to the drop function with that pointer as argument
+/// 7. Branches to the successor block
 ///
 /// The caller (`translate_drop`) has already checked that the no-op fast path
 /// does not apply.
@@ -157,6 +162,43 @@ pub(super) fn emit_drop_glue(
 ) -> TranslationResult<Ptr<Operation>> {
     // Resolve the monomorphized drop_in_place::<T> instance.
     let drop_instance = Instance::resolve_drop_in_place(dropped_ty);
+    let Some(drop_body) = drop_instance.body() else {
+        return Err(input_error!(
+            loc,
+            TranslationErr::unsupported(
+                "drop glue: resolved drop_in_place instance has no MIR body".to_string()
+            )
+        ));
+    };
+    let Some(declared_parameter) = drop_body.arg_locals().first() else {
+        return Err(input_error!(
+            loc,
+            TranslationErr::unsupported(
+                "drop glue: resolved drop_in_place instance has no pointer parameter".to_string()
+            )
+        ));
+    };
+    // Historically the drop shim was `drop_in_place::<T>(*mut T)`. Since
+    // nightly-2026-08-28 rustc builds it from `core::ptr::drop_glue`
+    // (`#[lang = "drop_glue"]`, rustc_mir_transform::shim::build_drop_shim),
+    // whose declared parameter is `&mut T`. Both spellings are the same
+    // single-pointer ABI; accept either and let the translated parameter
+    // type drive the ABI-boundary pointer establishment below.
+    if !matches!(
+        declared_parameter.ty.kind(),
+        TyKind::RigidTy(
+            RigidTy::RawPtr(_, mir::Mutability::Mut) | RigidTy::Ref(_, _, mir::Mutability::Mut)
+        )
+    ) {
+        return Err(input_error!(
+            loc,
+            TranslationErr::unsupported(
+                "drop glue: drop shim's parameter is not the expected *mut/&mut pointer"
+                    .to_string()
+            )
+        ));
+    }
+    let declared_parameter_type = types::translate_type(ctx, &declared_parameter.ty)?;
 
     // The mangled name is what the collector uses as the export/symbol name
     // for the translated device function.
@@ -171,6 +213,23 @@ pub(super) fn emit_drop_glue(
     // For a projected place like `_N.field`, we compute the field address.
     let (place_ptr, last_op) =
         compute_drop_place_address(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
+    let (place_ptr, last_op) = establish_declared_pointer_type(
+        ctx,
+        place_ptr,
+        declared_parameter_type,
+        block_ptr,
+        last_op,
+        MirPointerKindAuthorityAttr::AbiBoundary,
+    );
+    if place_ptr.get_type(ctx) != declared_parameter_type {
+        return Err(input_error!(
+            loc,
+            TranslationErr::unsupported(
+                "drop glue: dropped-place address does not match the drop shim's pointer parameter"
+                    .to_string()
+            )
+        ));
+    }
 
     // The return type of drop_in_place is `()` (unit / void).
     let unit_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]);
@@ -416,8 +475,7 @@ fn statement_is_noop(kind: &mir::StatementKind) -> bool {
         | StatementKind::Coverage(_)
         | StatementKind::PlaceMention(_)
         | StatementKind::FakeRead(..)
-        | StatementKind::AscribeUserType { .. }
-        | StatementKind::Retag(..) => true,
+        | StatementKind::AscribeUserType { .. } => true,
 
         // MIR rvalues are pure (they compute a value; only the
         // assignment's destination writes anything), so an assignment

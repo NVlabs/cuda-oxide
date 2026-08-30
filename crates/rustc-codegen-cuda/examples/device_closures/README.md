@@ -6,7 +6,8 @@ Demonstrates closure patterns in CUDA kernels using unified compilation.
 
 1. **Inline closures** - Closures defined and called within the kernel
 2. **Closures with captures** - Closures that capture kernel parameters
-3. **Closures passed to device functions** - Using `FnOnce`/`Fn` trait bounds
+3. **Closures passed to device functions** - Shared `Fn`, mutable `FnMut`, and
+   genuine by-value `FnOnce` receiver paths
 
 ## Build & Run
 
@@ -92,9 +93,11 @@ The collector and translator handle related responsibilities:
    `core::{Fn, FnMut, FnOnce}` method and `rust-call` ABI, records whether the
    resolved instance is a shim, extracts the closure body's symbol from the
    receiver type, and unpacks the tuple arguments.
-3. The translator creates a receiver reference only when the resolved instance
-   is a shim and the MIR receiver is not already a reference. Direct
-   by-value `FnOnce` calls remain by value.
+3. The translator resolves the closure body and treats its actual first
+   parameter as authoritative. When a shim must be bypassed, `&Closure`
+   produces an immutable `SharedRef` and `&mut Closure` produces a mutable
+   `UniqueRef`; a direct by-value `FnOnce` parameter remains a value. The
+   emitted call is rejected unless its receiver type exactly matches the body.
 
 ```text
 MIR callable-trait call
@@ -122,13 +125,18 @@ ordinary direct-call ABI. Closures add a generated environment receiver, an
 
 ## Test Cases
 
-| Test                          | Description                         | Pattern              |
-|-------------------------------|-------------------------------------|----------------------|
-| `test_inline_closure`         | `\|x\| x * 2` inside kernel         | Inline, no captures  |
-| `scale_kernel`                | `input[i] * factor`                 | Scalarized capture   |
-| `transform_kernel`            | `(x + offset) * scale`              | Multiple captures    |
-| `inline_with_param`           | Inline closure using kernel param   | Capture + inline     |
-| `test_closure_constant`       | `\|\| 42`                           | No args, no captures |
-| `test_closure_multi_arg`      | `\|a, b\| a + b`                    | Multiple args        |
-| `test_closure_fnonce`         | Passed to `FnOnce` function         | Trait-based call     |
-| `test_closure_capture_fnonce` | Captured + passed to fn             | Combined pattern     |
+| Test                           | Description                                | Receiver path                    |
+|--------------------------------|--------------------------------------------|----------------------------------|
+| `test_inline_closure`          | `\|x\| x * 2` inside kernel                | Optimized inline                 |
+| `scale_kernel`                 | `input[i] * factor`                        | Scalarized capture               |
+| `transform_kernel`             | `(x + offset) * scale`                     | Multiple scalarized captures     |
+| `inline_with_param`            | Inline closure using kernel parameter      | Captured `Fn`                    |
+| `test_closure_constant`        | `\|\| 42`                                  | No captures                      |
+| `test_closure_multi_arg`       | `\|a, b\| a + b`                           | Tuple unpacking                  |
+| `test_closure_fnonce`          | Capture-free closure through `FnOnce`      | `Fn` adapter -> `&Closure`       |
+| `test_closure_capture_fnonce`  | Immutable capture through `FnOnce`         | `Fn` adapter -> `&Closure`       |
+| `test_closure_fnmut_adapter`   | Mutating capture through `FnOnce`          | `FnMut` adapter -> `&mut Closure` |
+| `test_genuine_fnonce_receiver` | Consumes a non-Copy capture                | Direct closure value             |
+| `test_wrapper_method_named_call` | Ordinary method named `call`             | Not callable-trait dispatch      |
+| `test_closure_field_projection` | Closure reached through a struct field    | Shared receiver projection       |
+| `test_closure_double_ref`      | Closure called through two references      | Shared receiver dereference      |

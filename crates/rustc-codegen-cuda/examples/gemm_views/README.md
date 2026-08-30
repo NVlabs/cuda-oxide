@@ -85,10 +85,16 @@ identical global-memory load/store instruction sets.
 
 | kernel             | time     | GFLOPS |
 | ------------------ | -------- | ------ |
-| naive views (safe) | 0.300 ms | 7159   |
-| naive raw (unsafe) | 0.300 ms | 7161   |
-| tiled views (safe) | 0.232 ms | 9272   |
-| tiled raw (unsafe) | 0.231 ms | 9286   |
+| naive views (safe) | 0.298 ms | 7201   |
+| naive raw (unsafe) | 0.298 ms | 7201   |
+| tiled views (safe) | 0.229 ms | 9370   |
+| tiled raw (unsafe) | 0.230 ms | 9337   |
+
+These numbers depend on the pipeline disabling llc's late branch folding:
+LLVM 23 started rewriting loop branches into a single negated conditional,
+which ptxas's SASS unroller does not recognize, and the naive kernels lose
+about a quarter of their throughput. The rationale and measurements live
+on `DISABLE_BRANCH_FOLD` in `crates/cuda-oxide-codegen/src/ptx.rs`.
 
 For scale: the `gemm` example (plain `a[i]`, checked on every read) runs
 the same problem at roughly 2940 GFLOPS. Removing the per-read checks

@@ -50,7 +50,7 @@ use cuda_device::clc::{
     clc_query_get_first_ctaid_x, clc_query_is_canceled, clc_try_cancel, clc_try_cancel_multicast,
 };
 use cuda_device::cluster;
-use cuda_device::convert::cvt_bf16x2_f32;
+use cuda_device::convert::{bf16_to_f32, cvt_bf16x2_f32};
 use cuda_device::shared::{SharedArray, cvta_generic_to_shared_offset};
 use cuda_device::tcgen05::{
     Tcgen05AccumulatorType, Tcgen05ElementType, Tcgen05InstructionDescriptor, Tcgen05MmaShape,
@@ -4157,36 +4157,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cublas_baseline::warmup();
     }
 
-    if major < 10 {
-        println!("\nWARNING: tcgen05 requires sm_100+ (Blackwell)");
+    // Gate on the GPUs that can actually execute this module BEFORE trying
+    // to load it (same set as gemm_sol_final; keep in sync with
+    // mir-importer's tcgen05 target support). Deciding "wrong GPU" from a
+    // module-load failure is not sound: the driver reports arch-incompatible
+    // PTX and genuinely malformed PTX with the same CUDA_ERROR_INVALID_PTX,
+    // so a load-error fallback silently converts compiler bugs (e.g.
+    // `.global` initializers referencing `.shared` symbols) into a
+    // PTX-only "pass".
+    if !can_execute_tcgen05_ptx(major, minor) {
+        println!("\nWARNING: tcgen05 requires sm_100 (datacenter Blackwell)");
+        if major >= 10 {
+            println!(
+                "   Your GPU is sm_{}{} (consumer Blackwell has no tcgen05).",
+                major, minor
+            );
+        } else {
+            println!("   Your GPU is sm_{}{} (pre-Blackwell).", major, minor);
+        }
+        println!("   PTX was generated successfully; run on sm_100 to execute kernels.");
         return verify_ptx_only();
     }
 
     let module = match kernels::load(&ctx) {
         Ok(m) => m,
         Err(e) => {
-            // `load` wraps the driver's own status, so reach through its
-            // `Driver` variant for the code the arm below keys on. Anything
-            // else (a missing or unsupported payload) is not "right PTX, wrong
-            // GPU" and falls through to the error return.
+            // This GPU passed the capability gate above, so the module must
+            // load. CUDA_ERROR_INVALID_PTX here means the driver rejected
+            // the generated PTX itself: a compiler bug, never a "wrong GPU"
+            // situation. Fail loudly instead of degrading to the PTX-only
+            // verification path.
             let driver_status = match &e {
                 cuda_host::EmbeddedModuleError::Driver(driver) => Some(driver.0),
                 _ => None,
             };
             if driver_status == Some(cuda_core::sys::cudaError_enum_CUDA_ERROR_INVALID_PTX) {
-                println!(
-                    "\n⚠️  tcgen05 (5th gen tensor cores) requires sm_100 (datacenter Blackwell only)."
-                );
-                if major >= 10 {
-                    println!(
-                        "   Your GPU is sm_{}{} (consumer Blackwell has no tcgen05).",
-                        major, minor
-                    );
-                } else {
-                    println!("   Your GPU is sm_{}{} (pre-Blackwell).", major, minor);
-                }
-                println!("   PTX was generated successfully; run on sm_100 to execute kernels.");
-                return verify_ptx_only();
+                return Err(format!(
+                    "driver rejected the generated PTX as invalid on sm_{major}{minor}, \
+                     which should execute it (CUDA_ERROR_INVALID_PTX): {e:?}"
+                )
+                .into());
             }
             return Err(e.into());
         }
@@ -6753,6 +6763,14 @@ fn run_benchmark_clc_multicast_4_stage_pipeline(
     Ok(())
 }
 
+// Keep this execution set in sync with mir-importer's tcgen05 target
+// support (and with gemm_sol_final's copy). Other GPU generations may
+// inspect and assemble the generated artifact, but must not turn a
+// module-load failure into an execution pass.
+fn can_execute_tcgen05_ptx(major: i32, minor: i32) -> bool {
+    matches!((major, minor), (10, 0) | (10, 1) | (10, 3) | (11, 0))
+}
+
 fn verify_ptx_only() -> Result<(), Box<dyn std::error::Error>> {
     let ptx_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("gemm_sol.ptx");
 
@@ -6924,8 +6942,4 @@ fn unpack_bf16_pair(packed: u32) -> (f32, f32) {
     let lo = (packed & 0xFFFF) as u16;
     let hi = ((packed >> 16) & 0xFFFF) as u16;
     (bf16_to_f32(lo), bf16_to_f32(hi))
-}
-
-fn bf16_to_f32(h: u16) -> f32 {
-    f32::from_bits((h as u32) << 16)
 }

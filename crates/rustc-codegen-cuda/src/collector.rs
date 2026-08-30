@@ -127,12 +127,14 @@
 use mir_importer::is_panic_entry_path;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
 use rustc_index::{Idx, bit_set::DenseBitSet};
-use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
     BasicBlock, ConstOperand, ConstValue, Location, START_BLOCK, TerminatorKind,
 };
-use rustc_middle::ty::{Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv};
+use rustc_middle::mono::{CodegenUnit, MonoItem};
+use rustc_middle::ty::{
+    Instance, InstanceKind, ShimKind, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv,
+};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -539,6 +541,32 @@ pub fn is_fully_monomorphized<'tcx>(tcx: TyCtxt<'tcx>, instance: Instance<'tcx>)
     true
 }
 
+/// Fit a function path into the forbidden-crate diagnostic box.
+///
+/// The box pads this field with `{:<48}`, which counts characters, so the
+/// budget is a character budget. Two things follow, and the previous
+/// `if fn_path.len() > 48 { &fn_path[..45] }` got both wrong for a path that
+/// is not pure ASCII:
+///
+/// * `len()` is bytes. A 30-character path spelled with multi-byte characters
+///   can exceed 48 bytes and be truncated even though it would have fit.
+/// * `&fn_path[..45]` is a byte index. When byte 45 lands inside a multi-byte
+///   character it panics with "byte index 45 is not a char boundary" -- so
+///   emitting the diagnostic for a forbidden call would abort the compiler
+///   instead of printing the error the box exists to print. Rust identifiers
+///   may be non-ASCII, so a path can reach here in that shape.
+///
+/// Truncation keeps `width - 3` characters and appends an ellipsis, so the
+/// result never exceeds `width` characters.
+fn truncate_path_for_box(fn_path: &str, width: usize) -> String {
+    debug_assert!(width > 3, "the ellipsis needs room");
+    if fn_path.chars().count() <= width {
+        return fn_path.to_owned();
+    }
+    let kept: String = fn_path.chars().take(width - 3).collect();
+    format!("{kept}...")
+}
+
 /// `std::sys::cmath::*` names we allow in device code and rewrite to GPU math.
 ///
 /// When you call `x.tan()` (also `atan`, `acos`, `cbrt`, the hyperbolics,
@@ -584,6 +612,16 @@ fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
             | "std::sys::cmath::cosh"
             | "std::sys::cmath::tanhf"
             | "std::sys::cmath::tanh"
+            // Inverse hyperbolics: on this nightly (rustc e457a7b0d) only
+            // asinh/acosh are `std::sys::cmath` shims; atanh is still the
+            // pure-Rust `ln_1p` formula and cmath declares no atanh, so its
+            // entries are defensive, for when std makes the same move.
+            | "std::sys::cmath::asinhf"
+            | "std::sys::cmath::asinh"
+            | "std::sys::cmath::acoshf"
+            | "std::sys::cmath::acosh"
+            | "std::sys::cmath::atanhf"
+            | "std::sys::cmath::atanh"
             | "std::sys::cmath::expm1f"
             | "std::sys::cmath::expm1"
             | "std::sys::cmath::log1pf"
@@ -1051,7 +1089,14 @@ impl<'tcx> DeviceCollector<'tcx> {
             // because the shim is compiler-generated, but `instance_mir`
             // still provides the body.
             let has_mir = self.tcx.is_mir_available(def_id)
-                || matches!(func.instance.def, InstanceKind::DropGlue(..));
+                || matches!(
+                    func.instance.def,
+                    // Compiler-built shims with no HIR body but an
+                    // `instance_mir` body: drop glue, and (since
+                    // nightly-2026-08-28) the `<fn(..) as FnPtr>::as_ptr`
+                    // shim that backs `FnPtr::addr`.
+                    InstanceKind::Shim(ShimKind::DropGlue(..) | ShimKind::FnPtrAsPtr(..))
+                );
             if has_mir {
                 // Use instance_mir for monomorphized MIR.
                 // This returns OPTIMIZED MIR (post -C opt-level passes).
@@ -1084,7 +1129,10 @@ impl<'tcx> DeviceCollector<'tcx> {
                 // paths (e.g. for assertion failures) that are unreachable
                 // in practice; the mir-importer handles these via its
                 // existing unreachable-block patching.
-                if !matches!(func.instance.def, InstanceKind::DropGlue(..)) {
+                if !matches!(
+                    func.instance.def,
+                    InstanceKind::Shim(ShimKind::DropGlue(..))
+                ) {
                     self.check_panic_machinery(mir, &func, &ctx, &reachable);
                 }
 
@@ -1225,17 +1273,17 @@ impl<'tcx> DeviceCollector<'tcx> {
         let place_ty = self.tcx.instantiate_and_normalize_erasing_regions(
             caller.instance.args,
             TypingEnv::fully_monomorphized(),
-            EarlyBinder::bind(place_ty),
+            EarlyBinder::bind(self.tcx, place_ty),
         );
 
         // Resolve drop_in_place::<T>. This returns the drop glue shim
         // (InstanceKind::DropGlue) which wraps the actual Drop::drop call.
-        let drop_instance = Instance::resolve_drop_in_place(self.tcx, place_ty);
+        let drop_instance = Instance::resolve_drop_glue(self.tcx, place_ty);
 
         // DropGlue(_, None) is an empty shim for types that need no
         // destructor. The mir-importer's no-op analysis will lower these
         // as plain branches, so there's nothing to collect.
-        if let InstanceKind::DropGlue(_, None) = drop_instance.def {
+        if let InstanceKind::Shim(ShimKind::DropGlue(_, None)) = drop_instance.def {
             return;
         }
 
@@ -1376,10 +1424,25 @@ impl<'tcx> DeviceCollector<'tcx> {
         //   Caller: cuda_oxide_kernel_<hash>_scale::<f32> (args = [f32])
         //   Call in MIR: scale<T>(...)  (args = [T])
         //   After substitution: scale::<f32> (args = [f32])
+        //
+        // `TyKind::FnDef` args sit behind a `Binder` since rust-lang/rust
+        // PR "place FnDef behind a binder" (8fb83aba335): the binder scopes
+        // the function's LATE-bound (lifetime) vars. By the time a FnDef
+        // type appears in built MIR those binders have been instantiated
+        // (with dummy regions), so no bound vars can remain here; the
+        // caller's still-generic EARLY-bound params (`T`) are not binder
+        // vars and are substituted by `instantiate_and_normalize` below.
+        // rustc_monomorphize::collector uses `args.no_bound_vars().unwrap()`
+        // at its equivalent Call-terminator sites; we follow it rather than
+        // `skip_binder()`, which would silently discard a bound var if one
+        // ever appeared.
+        let args = args
+            .no_bound_vars()
+            .expect("FnDef args in built MIR carry no late-bound vars");
         let args = self.tcx.instantiate_and_normalize_erasing_regions(
             caller.instance.args,
             TypingEnv::fully_monomorphized(),
-            EarlyBinder::bind(*args),
+            EarlyBinder::bind(self.tcx, args),
         );
 
         // Check if function is from a crate we should compile
@@ -1400,12 +1463,7 @@ impl<'tcx> DeviceCollector<'tcx> {
                 let border = "═".repeat(68);
                 let empty_line = format!("║{:68}║", "");
 
-                // Truncate fn_path if too long (max 48 chars to fit in box)
-                let fn_display = if fn_path.len() > 48 {
-                    format!("{}...", &fn_path[..45])
-                } else {
-                    fn_path.clone()
-                };
+                let fn_display = truncate_path_for_box(&fn_path, 48);
 
                 // Build the "From crate" line with proper padding
                 let crate_line = format!("║ From crate: '{}'", crate_name);
@@ -1512,7 +1570,8 @@ impl<'tcx> DeviceCollector<'tcx> {
         // bodies (e.g. for array/slice element drops) are collected.
         if !matches!(
             resolved.def,
-            InstanceKind::Item(_) | InstanceKind::DropGlue(..)
+            InstanceKind::Item(_)
+                | InstanceKind::Shim(ShimKind::DropGlue(..) | ShimKind::FnPtrAsPtr(..))
         ) {
             return;
         }
@@ -1520,7 +1579,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         // For DropGlue instances discovered via Call terminators (rather
         // than Drop terminators), route them through the same collection
         // logic as process_drop_place to avoid duplicating the enqueue path.
-        if let InstanceKind::DropGlue(_, Some(_)) = resolved.def {
+        if let InstanceKind::Shim(ShimKind::DropGlue(_, Some(_))) = resolved.def {
             let mangled = self.tcx.symbol_name(resolved).name.to_string();
             if self.seen.contains(&mangled) {
                 return;
@@ -1561,7 +1620,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         }
 
         // Empty drop glue (DropGlue with None type) has no body to collect.
-        if let InstanceKind::DropGlue(_, None) = resolved.def {
+        if let InstanceKind::Shim(ShimKind::DropGlue(_, None)) = resolved.def {
             return;
         }
 
@@ -1628,7 +1687,13 @@ impl<'tcx> DeviceCollector<'tcx> {
         // Skip functions without MIR bodies (extern intrinsics like cuda_device::threadIdx_x).
         // These are handled specially by the terminator translator in mir-importer
         // which dispatches them to NVVM intrinsic operations.
-        if !self.tcx.is_mir_available(resolved.def_id()) {
+        //
+        // Compiler-built shims (`FnPtrAsPtr`) have no HIR body either, so
+        // `is_mir_available` is false for their def_id, but `instance_mir`
+        // synthesises their body; do not skip those.
+        if !self.tcx.is_mir_available(resolved.def_id())
+            && !matches!(resolved.def, InstanceKind::Shim(ShimKind::FnPtrAsPtr(..)))
+        {
             if self.verbose {
                 eprintln!(
                     "[collector] Skipping extern/intrinsic (no MIR): {}",
@@ -1696,6 +1761,14 @@ impl<'tcx> DeviceCollector<'tcx> {
                 ("closure", instance)
             }
             TyKind::FnDef(fn_def_id, fn_args) => {
+                // This ty comes from fully-monomorphized MIR, so the FnDef
+                // binder (late-bound lifetimes only) has been instantiated;
+                // assert that instead of `skip_binder()`, matching
+                // rustc_monomorphize::collector's
+                // `args.no_bound_vars().unwrap()` discipline.
+                let fn_args = fn_args
+                    .no_bound_vars()
+                    .expect("FnDef args in monomorphized MIR carry no late-bound vars");
                 let Some(instance) =
                     Instance::try_resolve(self.tcx, typing_env, *fn_def_id, fn_args)
                         .ok()
@@ -2433,7 +2506,8 @@ pub fn dump_device_mir_info<'tcx>(tcx: TyCtxt<'tcx>, functions: &[CollectedFunct
 #[cfg(test)]
 mod tests {
     use super::{
-        device_runtime_checks_target, is_kernel_entry_def_path, unsupported_codegen_protocol_root,
+        device_runtime_checks_target, is_kernel_entry_def_path, truncate_path_for_box,
+        unsupported_codegen_protocol_root,
     };
     use reserved_oxide_symbols::{
         DEVICE_PREFIX, KERNEL_PREFIX, LEGACY_DEVICE_PREFIX, LEGACY_KERNEL_PREFIX,
@@ -2553,5 +2627,52 @@ mod tests {
             "my_crate::helpers::prefix{KERNEL_PREFIX}vecadd"
         )));
         assert!(!is_kernel_entry_def_path(""));
+    }
+
+    /// The box pads this field with `{:<48}`, so the budget is characters.
+    ///
+    /// The previous code tested `fn_path.len() > 48` (bytes) and then sliced
+    /// `&fn_path[..45]` (a byte index). A path whose byte 45 falls inside a
+    /// multi-byte character panicked with "byte index 45 is not a char
+    /// boundary", which aborted the compiler while it was trying to print the
+    /// forbidden-crate error.
+    #[test]
+    fn truncating_a_path_for_the_box_respects_char_boundaries() {
+        // 'é' is two bytes, so every char boundary sits at an even index and
+        // byte 45 lands mid-character.
+        let path = "é".repeat(60);
+        assert!(path.chars().count() > 48, "fixture must exceed the budget");
+        assert!(!path.is_char_boundary(45), "fixture must straddle byte 45");
+
+        let shown = truncate_path_for_box(&path, 48);
+
+        assert!(shown.ends_with("..."));
+        assert_eq!(shown.chars().count(), 48);
+        assert!(path.starts_with(shown.trim_end_matches('.')));
+    }
+
+    #[test]
+    fn a_path_that_fits_is_left_alone() {
+        let path = "core::fmt::Debug::fmt";
+        assert_eq!(truncate_path_for_box(path, 48), path);
+    }
+
+    /// Bytes are not characters: a path of 30 characters spelled with
+    /// multi-byte characters exceeds 48 bytes, and the old byte test truncated
+    /// it even though it fits the box.
+    #[test]
+    fn a_multibyte_path_within_the_char_budget_is_not_truncated() {
+        let path = "é".repeat(30);
+        assert!(path.len() > 48, "fixture must exceed the byte budget");
+        assert_eq!(path.chars().count(), 30);
+        assert_eq!(truncate_path_for_box(&path, 48), path);
+    }
+
+    #[test]
+    fn truncation_never_exceeds_the_width() {
+        for count in [49, 60, 200] {
+            let ascii = "a".repeat(count);
+            assert_eq!(truncate_path_for_box(&ascii, 48).chars().count(), 48);
+        }
     }
 }

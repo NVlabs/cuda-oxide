@@ -14,7 +14,8 @@
 #      disagreeing is a build break rather than a style nit -- but the header
 #      is a comment, and a comment enforces nothing.
 #
-#   2. The RUST_TOOLCHAIN_TOML scaffold in crates/cargo-oxide/src/commands.rs.
+#   2. The RUST_TOOLCHAIN_TOML scaffold in
+#      crates/cargo-oxide/src/commands/scaffold.rs.
 #      `cargo oxide new` writes it into every new project as that project's
 #      rust-toolchain.toml, so this is the highest-impact copy: a stale
 #      scaffold never breaks this repo's CI, it hands each new user a pin
@@ -57,7 +58,7 @@ cd "$(dirname "$0")/.."
 
 ROOT_PIN=rust-toolchain.toml
 NESTED_PIN=crates/rustc-codegen-cuda/rust-toolchain.toml
-SCAFFOLD=crates/cargo-oxide/src/commands.rs
+SCAFFOLD=crates/cargo-oxide/src/commands/scaffold.rs
 DEVCONTAINER=.devcontainer/devcontainer.json
 
 if ! command -v python3 >/dev/null 2>&1; then

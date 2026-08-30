@@ -4,7 +4,7 @@ error[E0271]: type mismatch resolving `<RuntimeRowMajorTiles<1, 1> as SpaceLayou
 40 |     let _ = unsafe { module.alias_hides_row_width(stream, cfg, out) };
    |                             ^^^^^^^^^^^^^^^^^^^^^ expected `()`, found `u32`
    |
-   = note: required for `cuda_device::DisjointSlice<'__cuda_oxide_disjoint, f32, RuntimeRowMajorTiles<1, 1>>` to implement `for<'__cuda_oxide_disjoint> cuda_device::__LaunchContractDisjointSliceAbi<f32, false>`
+   = note: required for `cuda_device::DisjointSlice<'__cuda_oxide_disjoint, f32, RuntimeRowMajorTiles<1, 1>>` to implement `for<'__cuda_oxide_disjoint> cuda_device::disjoint::__LaunchContractDisjointSliceAbi<f32, false>`
 note: required by a bound in `LoadedModule::alias_hides_row_width`
   --> tests/compile_fail/launch_contract_alias_hides_row_width.rs:17:1
    |

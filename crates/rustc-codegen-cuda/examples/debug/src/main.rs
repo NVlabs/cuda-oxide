@@ -29,10 +29,10 @@ mod kernels {
     use super::*;
 
     /// Test kernel: measures clock and global timer ticks for a simple operation.
-    #[kernel]
-    #[launch_bounds(256, 2)] // Max 256 threads/block, min 2 blocks/SM
+    #[kernel] // CUDA_OXIDE_DEBUG_KERNEL_ATTRIBUTE_LINE
+    #[launch_bounds(256, 2)] // CUDA_OXIDE_DEBUG_LAUNCH_BOUNDS_ATTRIBUTE_LINE
     pub fn clock_test(mut output: DisjointSlice<u64>) {
-        let idx = thread::index_1d();
+        let idx = thread::index_1d(); // CUDA_OXIDE_DEBUG_KERNEL_ENTRY_LINE
         if let Some(output_elem) = output.get_mut(idx) {
             let start_cycles = debug::clock64();
             let start_timer = debug::globaltimer();

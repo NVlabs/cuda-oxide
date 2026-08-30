@@ -2545,7 +2545,7 @@
       "source_record": "int_nvvm_fabs",
       "llvm_symbol": "llvm.nvvm.fabs",
       "llvm_arguments": [
-        "anonymous_14"
+        "anonymous_8"
       ],
       "llvm_results": [
         "anyfloat"
@@ -3154,7 +3154,7 @@
       "source_record": "int_nvvm_fabs",
       "llvm_symbol": "llvm.nvvm.fabs",
       "llvm_arguments": [
-        "anonymous_14"
+        "anonymous_8"
       ],
       "llvm_results": [
         "anyfloat"

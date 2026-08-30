@@ -51,7 +51,7 @@
 //! # Module Organization
 //!
 //! Everything `intrinsics/catalog.json` describes is lowered by
-//! `convert/generated_intrinsics.rs` -- beside this module, not inside it (it is
+//! `convert/generated_intrinsics/` -- beside this module, not inside it (it is
 //! a private module, so this is a path rather than a link). What follows is the
 //! hand-written converters, one row per file. Every module name in the table is
 //! an intra-doc link on purpose: the docs gate runs under `-D warnings`, so a row

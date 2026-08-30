@@ -55,12 +55,13 @@ use dialect_nvvm::ops::atomic::{
     NvvmAtomicCmpxchgOp, NvvmAtomicFenceOp, NvvmAtomicLoadOp, NvvmAtomicOpInterface,
     NvvmAtomicRmwOp, NvvmAtomicStoreOp,
 };
-use llvm_export::attributes::{LlvmAtomicOrdering, LlvmAtomicRmwKind, LlvmSyncScope};
+use llvm_export::attributes::{LlvmAtomicOrdering, LlvmAtomicRmwKind, SyncScopeAttr};
 use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::ops as llvm;
 use llvm_export::ops::{AsmKind, InlineAsmOpExt};
 use llvm_export::types as llvm_types;
 
+use pliron::builtin::attributes::StringAttr;
 use pliron::builtin::types::{FP32Type, FP64Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
@@ -75,11 +76,14 @@ use pliron::r#type::Typed;
 // Scope / Ordering Mapping
 // =============================================================================
 
-fn map_scope(scope: &NvvmScope) -> LlvmSyncScope {
+/// Map an NVVM scope to the upstream [`SyncScopeAttr`]. Device and block are
+/// named scopes in LLVM-IR (`syncscope("device")` / `syncscope("block")`);
+/// system is LLVM's unnamed default.
+fn map_scope(scope: &NvvmScope) -> SyncScopeAttr {
     match scope {
-        NvvmScope::Device => LlvmSyncScope::Device,
-        NvvmScope::Block => LlvmSyncScope::Block,
-        NvvmScope::System => LlvmSyncScope::System,
+        NvvmScope::Device => SyncScopeAttr::NamedScope(StringAttr::new("device".to_string())),
+        NvvmScope::Block => SyncScopeAttr::NamedScope(StringAttr::new("block".to_string())),
+        NvvmScope::System => SyncScopeAttr::System,
     }
 }
 
@@ -233,12 +237,12 @@ fn emit_fence(
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
     ordering: LlvmAtomicOrdering,
-    syncscope: LlvmSyncScope,
+    syncscope: &NvvmScope,
 ) -> Result<()> {
     let scope = match syncscope {
-        LlvmSyncScope::Device => "gl",
-        LlvmSyncScope::Block => "cta",
-        LlvmSyncScope::System => "sys",
+        NvvmScope::Device => "gl",
+        NvvmScope::Block => "cta",
+        NvvmScope::System => "sys",
     };
 
     if matches!(ordering, LlvmAtomicOrdering::SeqCst) {
@@ -256,11 +260,7 @@ fn emit_fence(
     }
 
     // Acquire, Release and AcqRel all lower to the same PTX fence.
-    let ptx_scope = match syncscope {
-        LlvmSyncScope::Device => "gpu",
-        LlvmSyncScope::Block => "cta",
-        LlvmSyncScope::System => "sys",
-    };
+    let ptx_scope = ptx_scope(syncscope);
     let void_ty = llvm_types::VoidType::get(ctx);
     let asm = llvm::InlineAsmOp::build(
         ctx,
@@ -295,7 +295,7 @@ pub(crate) fn convert_atomic_fence(
         rewriter,
         op,
         map_ordering(&ordering),
-        map_scope(&fence.scope(ctx)),
+        &fence.scope(ctx),
     )?;
     rewriter.erase_operation(ctx, op);
     Ok(())
@@ -427,7 +427,7 @@ pub(crate) fn convert_atomic_rmw(
 ) -> Result<()> {
     let nvvm_op = NvvmAtomicRmwOp::new(op);
     let nvvm_ordering = nvvm_op.ordering(ctx);
-    let syncscope = map_scope(&nvvm_op.scope(ctx));
+    let nvvm_scope = nvvm_op.scope(ctx);
     let rmw_kind = map_rmw_kind(&nvvm_op.rmw_kind(ctx));
 
     let operands: Vec<_> = op.deref(ctx).operands().collect();
@@ -442,10 +442,10 @@ pub(crate) fn convert_atomic_rmw(
     // Pre-fence (if needed)
     match nvvm_ordering {
         NvvmOrdering::Release | NvvmOrdering::AcqRel => {
-            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::Release, syncscope)?;
+            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::Release, &nvvm_scope)?;
         }
         NvvmOrdering::SeqCst => {
-            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::SeqCst, syncscope)?;
+            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::SeqCst, &nvvm_scope)?;
         }
         NvvmOrdering::Relaxed | NvvmOrdering::Acquire => {}
     }
@@ -457,17 +457,17 @@ pub(crate) fn convert_atomic_rmw(
         val,
         rmw_kind,
         LlvmAtomicOrdering::Monotonic,
-        syncscope.to_pliron(),
+        map_scope(&nvvm_scope),
     );
     rewriter.insert_operation(ctx, llvm_rmw.get_operation());
 
     // Post-fence (if needed)
     match nvvm_ordering {
         NvvmOrdering::Acquire | NvvmOrdering::AcqRel => {
-            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::Acquire, syncscope)?;
+            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::Acquire, &nvvm_scope)?;
         }
         NvvmOrdering::SeqCst => {
-            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::SeqCst, syncscope)?;
+            emit_fence(ctx, rewriter, op, LlvmAtomicOrdering::SeqCst, &nvvm_scope)?;
         }
         NvvmOrdering::Relaxed | NvvmOrdering::Release => {}
     }
@@ -496,15 +496,8 @@ pub(crate) fn convert_atomic_cmpxchg(
     let ptr = operands[0];
     let cmp = operands[1];
     let new_val = operands[2];
-    let llvm_cmpxchg = llvm::AtomicCmpxchgOp::new(
-        ctx,
-        ptr,
-        cmp,
-        new_val,
-        success_ord,
-        failure_ord,
-        syncscope.to_pliron(),
-    );
+    let llvm_cmpxchg =
+        llvm::AtomicCmpxchgOp::new(ctx, ptr, cmp, new_val, success_ord, failure_ord, syncscope);
     rewriter.insert_operation(ctx, llvm_cmpxchg.get_operation());
 
     // Upstream `cmpxchg` returns `{ T, i1 }`, but the NVVM op models only the

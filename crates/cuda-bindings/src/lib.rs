@@ -32,6 +32,14 @@
 #![allow(rustdoc::bare_urls)]
 #![allow(rustdoc::invalid_html_tags)]
 #![allow(rustdoc::invalid_rust_codeblocks)]
+// cuda.h transitively declares libc's `malloc`/`realloc` with C's `unsigned
+// long`, which bindgen renders as `c_ulong` (`u64`) while rustc 1.100+ expects
+// the runtime symbols spelled with `usize` and warns
+// (`suspicious_runtime_symbol_definitions`). These are plain EXTERN
+// declarations of the very allocator the platform already provides (same ABI
+// on every 64-bit target we build for), not redefinitions, so the lint does
+// not indicate a real hazard here.
+#![allow(suspicious_runtime_symbol_definitions)]
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 

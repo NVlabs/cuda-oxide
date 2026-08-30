@@ -29,13 +29,14 @@ cuda-intrinsics-gen generate
 cuda-intrinsics-gen check
 cuda-intrinsics-gen coverage [--family NAME]
 cuda-intrinsics-gen check-abi-history --base-ref REF
-cuda-intrinsics-gen probe [--all | --intrinsic ID] [--llc FILE] [--skip-terminal]
+cuda-intrinsics-gen probe [--all | --intrinsic ID] [--llc FILE] [--skip-terminal] [--per-target]
 cuda-intrinsics-gen probe --candidate --intrinsic ID --llc FILE --gpu-target TARGET --ptx-feature FEATURE (--ptxas FILE | --skip-terminal)
 ```
 
 Three of these gate CI (`unit-tests.yml`): `check` proves the committed
-generated sources match what the generator produces, `probe --all` checks the
-pinned `llc` identity and the exact emitted PTX per route, and
+generated sources match what the generator produces, `probe --all --per-target`
+checks the pinned `llc` identity and exact emitted PTX for every target declared
+by each route, and
 `check-abi-history` keeps the intrinsic ABI ledger append-only.
 
 Generation shells out to `rustfmt`, which the pinned toolchain provides.

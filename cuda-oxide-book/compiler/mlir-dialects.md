@@ -164,8 +164,8 @@ pliron operation, and the types map directly to LLVM's type system. The
 dialect itself (ops, types, attributes, op-interfaces) is defined upstream in
 the `pliron-llvm` crate; cuda-oxide consumes it and re-exports it through the
 thin `llvm-export` crate, which also carries the textual `.ll` exporter and a
-few GPU-specific extensions (named address spaces, a syncscope enum, fp16 bit
-helpers) that pliron-llvm does not ship.
+few GPU-specific extensions (named address spaces, fp16 bit helpers) that
+pliron-llvm does not ship.
 
 ### Types
 
@@ -296,16 +296,16 @@ they become `call` instructions to `@llvm.nvvm.*` intrinsics.
 
 ### Architecture Coverage
 
-At catalog SHA-256 `26a9cc13` (the stamp in every `ops/generated/` file
-header), the dialect holds 570 operations across 42 modules, and they come
+At catalog SHA-256 `20bc41c2` (the stamp in every `ops/generated/` file
+header), the dialect holds 576 operations across 42 modules, and they come
 from two different places. The split is the first thing to know about it,
 because it decides where -- and whether -- you would add one. If the header
-stamp no longer starts with `26a9cc13`, the counts on this page predate the
+stamp no longer starts with `20bc41c2`, the counts on this page predate the
 catalog you are reading.
 
 **Hand-written**, directly under `crates/dialect-nvvm/src/ops/`. These are the
 ops with bespoke verification or lowering that the intrinsic catalog does not
-describe. There are seven modules and 21 operations:
+describe. There are seven modules and 26 operations:
 
 | Module    | Description                                                 | Ops |
 | :-------- | :---------------------------------------------------------- | --: |
@@ -315,12 +315,12 @@ describe. There are seven modules and 21 operations:
 | `debug`   | `assertfail`, `vprintf`                                     |   2 |
 | `grid`    | Cooperative `grid_sync`                                     |   1 |
 | `memory`  | Generic-to-shared address conversion with a byte offset     |   1 |
-| `wgmma`   | Warpgroup MMA descriptors and the m64n64k16 bf16/f16 shapes |   9 |
+| `wgmma`   | Warpgroup MMA descriptors; bf16/f16 at m64n64k16, bf16 at m64n128k16, tf32 at m64n64k8 |  14 |
 
 **Generated**, under `ops/generated/`, from `intrinsics/catalog.json` by
 `cuda-intrinsics-gen`. Every file there opens with `// @generated ... DO NOT
 EDIT.`, and editing one by hand is undone by the next generator run. This is
-the large majority -- 35 modules and 549 operations, resolved from 1010 catalog
+the large majority -- 35 modules and 550 operations, resolved from 1025 catalog
 entries, since several intrinsics can share one structural op:
 
 | Area                        | Modules                                                                       | Ops |
@@ -329,7 +329,7 @@ entries, since several intrinsics can share one structural op:
 | Tensor Memory Accelerator   | `tma`                                                                         | 111 |
 | Special registers           | `sreg`                                                                        |  44 |
 | Packed (SIMD-in-register)   | `packed_alu`, `packed_conversion`, `packed_atomic`                            |  51 |
-| Async copy and barriers     | `cp_async`, `mbarrier_extended`, `mbarrier_basic`, `sync`                     |  34 |
+| Async copy and barriers     | `cp_async`, `mbarrier_extended`, `mbarrier_basic`, `sync`                     |  35 |
 | Warp-level                  | `warp_shuffle`, `redux`, `vote`, `warp_match`, `warp_barrier`, `active_mask`, `elect` |  39 |
 | Matrix fragment movement    | `ldmatrix`, `register_mma`, `stmatrix`, `wgmma_control`, `movmatrix`, `sparse_mma` |  22 |
 | Execution and debug control | `execution_control`, `debug_control`                                          |  11 |

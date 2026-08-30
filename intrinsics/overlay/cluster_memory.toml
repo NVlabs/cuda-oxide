@@ -4,7 +4,7 @@ schema = 39
 family = "cluster_memory"
 
 [cluster_memory]
-llvm_evidence_profile = "rust-llvm-22.1.2-1cb4e383-cluster-memory"
+llvm_evidence_profile = "rust-llvm-23.1.0-16696adc-cluster-memory"
 libnvvm_evidence_profile = "cuda-13.3-libnvvm-13.3.33-cluster-memory"
 runtime_validation = "unexecuted"
 

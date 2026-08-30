@@ -9,7 +9,7 @@
 //! upstream in [`pliron_llvm`]; this crate is a thin shim that re-exports it so
 //! existing `llvm_export::{ops,types,attributes,op_interfaces}` paths keep
 //! resolving, plus the small set of GPU-specific extensions pliron-llvm does
-//! not carry (named address spaces, syncscope enum, fp16 bit helpers). The
+//! not carry (named address spaces, fp16 bit helpers). The
 //! pure-Rust textual `.ll` exporter ([`export`]) stays here: pliron-llvm only
 //! emits real `.ll` via an `llvm-sys` bridge, which is exactly what cuda-oxide
 //! is avoiding.
@@ -20,6 +20,33 @@
 //! explicit `register()` entry point is needed.
 
 pub mod export;
+
+/// Stable marker used when an operation must remain in a debug-scoped LLVM
+/// function but does not correspond to user-written source.
+pub const ARTIFICIAL_DEBUG_LOCATION_NAME: &str = "cuda_oxide.artificial";
+
+/// Build a location which the textual LLVM exporter emits as line zero.
+///
+/// LLVM requires calls in a debug-scoped, inlinable function to carry a
+/// `DILocation`. An ordinary [`pliron::location::Location::Unknown`] therefore
+/// falls back to the function's source line. This explicit marker distinguishes
+/// compiler-generated setup which must have a location for LLVM validity but
+/// must not create a user-visible line-table entry.
+pub fn artificial_debug_location() -> pliron::location::Location {
+    pliron::location::Location::Named {
+        name: ARTIFICIAL_DEBUG_LOCATION_NAME.into(),
+        child_loc: Box::new(pliron::location::Location::Unknown),
+    }
+}
+
+/// Whether `loc` carries the explicit artificial-debug marker.
+pub fn is_artificial_debug_location(loc: &pliron::location::Location) -> bool {
+    matches!(
+        loc,
+        pliron::location::Location::Named { name, .. }
+            if name == ARTIFICIAL_DEBUG_LOCATION_NAME
+    )
+}
 
 /// LLVM types: re-exported from pliron-llvm, plus GPU address-space helpers.
 pub mod types {
@@ -89,8 +116,8 @@ pub mod types {
     }
 }
 
-/// LLVM attributes: re-exported from pliron-llvm, plus the syncscope enum and
-/// the cuda-oxide names for atomic ordering / rmw-kind.
+/// LLVM attributes: re-exported from pliron-llvm, plus the cuda-oxide names
+/// for atomic ordering / rmw-kind.
 pub mod attributes {
     pub use pliron_llvm::attributes::*;
 
@@ -102,31 +129,6 @@ pub mod attributes {
     pub use pliron_llvm::attributes::{
         AtomicOrderingAttr as LlvmAtomicOrdering, AtomicRmwKindAttr as LlvmAtomicRmwKind,
     };
-
-    /// Synchronization scope for atomics. pliron-llvm models syncscope as a
-    /// free-form `Option<String>` (None = system); cuda-oxide only emits these
-    /// three scopes, so we keep the enum at the lowering boundary and translate
-    /// to pliron's representation via [`LlvmSyncScope::to_pliron`].
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    pub enum LlvmSyncScope {
-        /// System-wide scope (`syncscope("")` / default).
-        System,
-        /// Device (GPU) scope.
-        Device,
-        /// Block / CTA scope.
-        Block,
-    }
-
-    impl LlvmSyncScope {
-        /// Map to pliron's free-form syncscope string (`None` = system).
-        pub fn to_pliron(self) -> Option<String> {
-            match self {
-                LlvmSyncScope::System => None,
-                LlvmSyncScope::Device => Some("device".to_string()),
-                LlvmSyncScope::Block => Some("block".to_string()),
-            }
-        }
-    }
 }
 
 /// LLVM ops: re-exported from pliron-llvm, plus the builtin `ConstantOp` and
@@ -493,8 +495,25 @@ pub mod ops {
             size_bits: u64,
             encoding: &'static str,
         },
-        /// A pointer/reference `DIDerivedType`.
+        /// An opaque compatibility pointer/reference `DIDerivedType`.
+        ///
+        /// This is the pre-existing representation for pointer shapes whose
+        /// pointee cannot yet be described safely. Its null `baseType` keeps
+        /// the source variable visible, although debuggers may render it as
+        /// `*mut ()`.
         Pointer { name: String, size_bits: u64 },
+        /// A thin pointer/reference with a safely bounded pointee type.
+        ///
+        /// The finite pointee tree is required so the exporter never emits a
+        /// pointer with a null `baseType`, which debuggers present
+        /// misleadingly as `*mut ()`. Recursive composite graphs are not
+        /// represented by this tree-shaped model and must be rejected by the
+        /// importer.
+        TypedPointer {
+            name: String,
+            size_bits: u64,
+            pointee: Box<DebugLocalTypeKind>,
+        },
         /// A struct or tuple `DICompositeType` (`DW_TAG_structure_type`).
         ///
         /// Member offsets come from rustc's real layout, not declaration order,
@@ -565,9 +584,31 @@ pub mod ops {
             match self {
                 DebugLocalTypeKind::Basic { size_bits, .. }
                 | DebugLocalTypeKind::Pointer { size_bits, .. }
+                | DebugLocalTypeKind::TypedPointer { size_bits, .. }
                 | DebugLocalTypeKind::Struct { size_bits, .. }
                 | DebugLocalTypeKind::Enum { size_bits, .. }
                 | DebugLocalTypeKind::Array { size_bits, .. } => *size_bits,
+            }
+        }
+
+        /// Whether this type belongs to the acyclic subset accepted beneath a
+        /// [`DebugLocalTypeKind::TypedPointer`].
+        ///
+        /// Opaque pointers and source composites are excluded recursively so a
+        /// typed pointer can never hide a null-base descendant or smuggle a
+        /// recursive type graph into this tree-shaped representation.
+        pub(crate) fn is_valid_typed_pointer_pointee(&self) -> bool {
+            match self {
+                DebugLocalTypeKind::Basic { .. } => true,
+                DebugLocalTypeKind::TypedPointer { pointee, .. } => {
+                    pointee.is_valid_typed_pointer_pointee()
+                }
+                DebugLocalTypeKind::Array { element, .. } => {
+                    element.is_valid_typed_pointer_pointee()
+                }
+                DebugLocalTypeKind::Pointer { .. }
+                | DebugLocalTypeKind::Struct { .. }
+                | DebugLocalTypeKind::Enum { .. } => false,
             }
         }
     }
@@ -613,6 +654,20 @@ pub mod ops {
                 out.push('p');
                 put_u64(out, *size_bits);
                 put_str(out, name);
+            }
+            DebugLocalTypeKind::TypedPointer {
+                name,
+                size_bits,
+                pointee,
+            } => {
+                assert!(
+                    pointee.is_valid_typed_pointer_pointee(),
+                    "typed pointer pointee must contain only basic, typed-pointer, or array nodes"
+                );
+                out.push('t');
+                put_u64(out, *size_bits);
+                put_str(out, name);
+                serialize_debug_type(pointee, out);
             }
             DebugLocalTypeKind::Struct {
                 name,
@@ -679,12 +734,43 @@ pub mod ops {
         }
     }
 
+    const MAX_DEBUG_ATTRIBUTE_BYTES: usize = 1024 * 1024;
+    const MAX_DEBUG_STRING_BYTES: usize = 64 * 1024;
+    const MAX_DEBUG_TYPE_CHILDREN: usize = 16 * 1024;
+    const MAX_DEBUG_TYPE_DEPTH: usize = 64;
+
     /// Reverse of [`serialize_debug_type`]. Returns `None` on malformed input.
     fn deserialize_debug_type(bytes: &[u8], pos: &mut usize) -> Option<DebugLocalTypeKind> {
+        if bytes.len() > MAX_DEBUG_ATTRIBUTE_BYTES {
+            return None;
+        }
+        let mut entries = 0;
+        deserialize_debug_type_at(bytes, pos, 0, &mut entries)
+    }
+
+    fn deserialize_debug_type_at(
+        bytes: &[u8],
+        pos: &mut usize,
+        depth: usize,
+        entries: &mut usize,
+    ) -> Option<DebugLocalTypeKind> {
+        *entries = entries.checked_add(1)?;
+        if depth > MAX_DEBUG_TYPE_DEPTH || *entries > MAX_DEBUG_TYPE_CHILDREN {
+            return None;
+        }
+
+        fn charge(entries: &mut usize, count: usize) -> Option<()> {
+            *entries = entries.checked_add(count)?;
+            (*entries <= MAX_DEBUG_TYPE_CHILDREN).then_some(())
+        }
+
         fn take_u64(bytes: &[u8], pos: &mut usize) -> Option<u64> {
             let start = *pos;
             while *pos < bytes.len() && bytes[*pos] != b' ' {
                 *pos += 1;
+            }
+            if start == *pos || *pos >= bytes.len() {
+                return None;
             }
             let n: u64 = std::str::from_utf8(&bytes[start..*pos])
                 .ok()?
@@ -694,7 +780,10 @@ pub mod ops {
             Some(n)
         }
         fn take_str(bytes: &[u8], pos: &mut usize) -> Option<String> {
-            let len = take_u64(bytes, pos)? as usize;
+            let len = usize::try_from(take_u64(bytes, pos)?).ok()?;
+            if len > MAX_DEBUG_STRING_BYTES {
+                return None;
+            }
             let end = pos.checked_add(len)?;
             if end > bytes.len() {
                 return None;
@@ -722,15 +811,29 @@ pub mod ops {
                 let name = take_str(bytes, pos)?;
                 Some(DebugLocalTypeKind::Pointer { name, size_bits })
             }
+            b't' => {
+                let size_bits = take_u64(bytes, pos)?;
+                let name = take_str(bytes, pos)?;
+                let pointee = Box::new(deserialize_debug_type(bytes, pos)?);
+                if !pointee.is_valid_typed_pointer_pointee() {
+                    return None;
+                }
+                Some(DebugLocalTypeKind::TypedPointer {
+                    name,
+                    size_bits,
+                    pointee,
+                })
+            }
             b's' => {
                 let size_bits = take_u64(bytes, pos)?;
                 let name = take_str(bytes, pos)?;
-                let member_count = take_u64(bytes, pos)? as usize;
+                let member_count = usize::try_from(take_u64(bytes, pos)?).ok()?;
+                charge(entries, member_count)?;
                 let mut members = Vec::with_capacity(member_count);
                 for _ in 0..member_count {
                     let member_name = take_str(bytes, pos)?;
                     let offset_bits = take_u64(bytes, pos)?;
-                    let ty = deserialize_debug_type(bytes, pos)?;
+                    let ty = deserialize_debug_type_at(bytes, pos, depth + 1, entries)?;
                     members.push(DebugTypeMember {
                         name: member_name,
                         offset_bits,
@@ -750,12 +853,14 @@ pub mod ops {
                     0 => None,
                     1 => {
                         let offset_bits = take_u64(bytes, pos)?;
-                        let ty = Box::new(deserialize_debug_type(bytes, pos)?);
+                        let ty =
+                            Box::new(deserialize_debug_type_at(bytes, pos, depth + 1, entries)?);
                         Some(DebugEnumDiscriminant { offset_bits, ty })
                     }
                     _ => return None,
                 };
-                let variant_count = take_u64(bytes, pos)? as usize;
+                let variant_count = usize::try_from(take_u64(bytes, pos)?).ok()?;
+                charge(entries, variant_count)?;
                 let mut variants = Vec::with_capacity(variant_count);
                 for _ in 0..variant_count {
                     let variant_name = take_str(bytes, pos)?;
@@ -764,12 +869,13 @@ pub mod ops {
                         1 => Some(take_u64(bytes, pos)?),
                         _ => return None,
                     };
-                    let member_count = take_u64(bytes, pos)? as usize;
+                    let member_count = usize::try_from(take_u64(bytes, pos)?).ok()?;
+                    charge(entries, member_count)?;
                     let mut members = Vec::with_capacity(member_count);
                     for _ in 0..member_count {
                         let member_name = take_str(bytes, pos)?;
                         let offset_bits = take_u64(bytes, pos)?;
-                        let ty = deserialize_debug_type(bytes, pos)?;
+                        let ty = deserialize_debug_type_at(bytes, pos, depth + 1, entries)?;
                         members.push(DebugTypeMember {
                             name: member_name,
                             offset_bits,
@@ -793,7 +899,7 @@ pub mod ops {
                 let size_bits = take_u64(bytes, pos)?;
                 let name = take_str(bytes, pos)?;
                 let count = take_u64(bytes, pos)?;
-                let element = Box::new(deserialize_debug_type(bytes, pos)?);
+                let element = Box::new(deserialize_debug_type_at(bytes, pos, depth + 1, entries)?);
                 Some(DebugLocalTypeKind::Array {
                     name,
                     size_bits,
@@ -811,6 +917,239 @@ pub mod ops {
         pub name: String,
         pub argument_index: Option<u16>,
         pub ty: DebugLocalTypeKind,
+    }
+
+    /// Source identity and semantic type for a module-scope Rust static.
+    ///
+    /// The physical LLVM global may use a generated symbol and byte-array
+    /// storage, so neither its symbol name nor its LLVM value type can recover
+    /// this information at export time.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    pub struct DebugGlobalVariableInfo {
+        /// Source-level leaf name (`COUNTER`, not its qualified path or LLVM symbol).
+        pub name: String,
+        /// Crate/module/function namespace components, from outermost to innermost.
+        pub namespace: Vec<String>,
+        pub ty: DebugLocalTypeKind,
+        pub declaration: DebugSourcePosition,
+        /// Mirrors rustc's `!tcx.is_reachable_non_generic(def_id)` decision.
+        pub is_local_to_unit: bool,
+        /// A named static declared inside a function. AS3 uses the owning
+        /// subprogram as the DIE scope so cuda-gdb resolves the bare leaf while
+        /// the subprogram itself remains under the structured namespace chain.
+        pub is_function_local: bool,
+    }
+
+    const MAX_DEBUG_NAMESPACE_SEGMENTS: usize = 128;
+
+    /// Serialize the complete global identity as one versioned attribute.
+    ///
+    /// Every string (including the semantic type blob) is byte-length-prefixed;
+    /// this keeps source names and paths opaque and makes truncation detectable.
+    fn encode_debug_global_info(info: &DebugGlobalVariableInfo) -> Option<String> {
+        fn put_u64(out: &mut String, value: u64) {
+            out.push_str(&value.to_string());
+            out.push(' ');
+        }
+
+        fn put_str(out: &mut String, value: &str) {
+            put_u64(out, value.len() as u64);
+            out.push_str(value);
+        }
+
+        fn charge(entries: &mut usize, count: usize) -> bool {
+            let Some(next) = entries.checked_add(count) else {
+                return false;
+            };
+            if next > MAX_DEBUG_TYPE_CHILDREN {
+                return false;
+            }
+            *entries = next;
+            true
+        }
+
+        fn type_is_bounded(ty: &DebugLocalTypeKind, depth: usize, entries: &mut usize) -> bool {
+            if depth > MAX_DEBUG_TYPE_DEPTH || !charge(entries, 1) {
+                return false;
+            }
+            let bounded = |value: &str| value.len() <= MAX_DEBUG_STRING_BYTES;
+            match ty {
+                DebugLocalTypeKind::Basic { name, encoding, .. } => {
+                    bounded(name) && bounded(encoding)
+                }
+                DebugLocalTypeKind::Pointer { name, .. } => bounded(name),
+                DebugLocalTypeKind::TypedPointer { name, pointee, .. } => {
+                    bounded(name) && type_is_bounded(pointee, depth + 1, entries)
+                }
+                DebugLocalTypeKind::Struct { name, members, .. } => {
+                    bounded(name)
+                        && charge(entries, members.len())
+                        && members.iter().all(|member| {
+                            bounded(&member.name) && type_is_bounded(&member.ty, depth + 1, entries)
+                        })
+                }
+                DebugLocalTypeKind::Enum {
+                    name,
+                    discriminant,
+                    variants,
+                    ..
+                } => {
+                    bounded(name)
+                        && charge(entries, variants.len())
+                        && discriminant.as_ref().is_none_or(|discriminant| {
+                            type_is_bounded(&discriminant.ty, depth + 1, entries)
+                        })
+                        && variants.iter().all(|variant| {
+                            bounded(&variant.name)
+                                && charge(entries, variant.members.len())
+                                && variant.members.iter().all(|member| {
+                                    bounded(&member.name)
+                                        && type_is_bounded(&member.ty, depth + 1, entries)
+                                })
+                        })
+                }
+                DebugLocalTypeKind::Array { name, element, .. } => {
+                    bounded(name) && type_is_bounded(element, depth + 1, entries)
+                }
+            }
+        }
+
+        let file = info.declaration.file.to_str()?;
+        let mut type_entries = 0;
+        if info.name.is_empty()
+            || info.name.len() > MAX_DEBUG_STRING_BYTES
+            || info.namespace.is_empty()
+            || info.namespace.len() > MAX_DEBUG_NAMESPACE_SEGMENTS
+            || info
+                .namespace
+                .iter()
+                .any(|segment| segment.is_empty() || segment.len() > MAX_DEBUG_STRING_BYTES)
+            || file.is_empty()
+            || file.len() > MAX_DEBUG_STRING_BYTES
+            || info.declaration.line <= 0
+            || info.declaration.column <= 0
+            || (info.is_function_local && info.namespace.len() < 2)
+            || !type_is_bounded(&info.ty, 0, &mut type_entries)
+        {
+            return None;
+        }
+
+        let mut encoded_ty = String::new();
+        serialize_debug_type(&info.ty, &mut encoded_ty);
+        if encoded_ty.len() > MAX_DEBUG_ATTRIBUTE_BYTES {
+            return None;
+        }
+
+        let mut out = String::from("v2 ");
+        put_str(&mut out, &info.name);
+        put_u64(&mut out, info.namespace.len() as u64);
+        for segment in &info.namespace {
+            put_str(&mut out, segment);
+        }
+        put_u64(&mut out, u64::from(info.is_local_to_unit));
+        put_u64(&mut out, u64::from(info.is_function_local));
+        put_str(&mut out, file);
+        put_u64(&mut out, info.declaration.line as u64);
+        put_u64(&mut out, info.declaration.column as u64);
+        put_str(&mut out, &encoded_ty);
+        (out.len() <= MAX_DEBUG_ATTRIBUTE_BYTES).then_some(out)
+    }
+
+    fn decode_debug_global_info(encoded: &str) -> Option<DebugGlobalVariableInfo> {
+        fn take_u64(bytes: &[u8], pos: &mut usize) -> Option<u64> {
+            let start = *pos;
+            while *pos < bytes.len() && bytes[*pos] != b' ' {
+                *pos += 1;
+            }
+            if start == *pos || *pos >= bytes.len() {
+                return None;
+            }
+            let value = std::str::from_utf8(&bytes[start..*pos])
+                .ok()?
+                .parse()
+                .ok()?;
+            *pos += 1;
+            Some(value)
+        }
+
+        fn take_bytes<'a>(bytes: &'a [u8], pos: &mut usize, max_len: usize) -> Option<&'a [u8]> {
+            let len = usize::try_from(take_u64(bytes, pos)?).ok()?;
+            if len > max_len {
+                return None;
+            }
+            let end = (*pos).checked_add(len)?;
+            let value = bytes.get(*pos..end)?;
+            *pos = end;
+            Some(value)
+        }
+
+        fn take_str(bytes: &[u8], pos: &mut usize) -> Option<String> {
+            std::str::from_utf8(take_bytes(bytes, pos, MAX_DEBUG_STRING_BYTES)?)
+                .ok()
+                .map(ToOwned::to_owned)
+        }
+
+        if encoded.len() > MAX_DEBUG_ATTRIBUTE_BYTES {
+            return None;
+        }
+        let bytes = encoded.as_bytes();
+        if !bytes.starts_with(b"v2 ") {
+            return None;
+        }
+        let mut pos = 3;
+        let name = take_str(bytes, &mut pos)?;
+        if name.is_empty() {
+            return None;
+        }
+
+        let namespace_count = usize::try_from(take_u64(bytes, &mut pos)?).ok()?;
+        if namespace_count == 0 || namespace_count > MAX_DEBUG_NAMESPACE_SEGMENTS {
+            return None;
+        }
+        let mut namespace = Vec::with_capacity(namespace_count);
+        for _ in 0..namespace_count {
+            let segment = take_str(bytes, &mut pos)?;
+            if segment.is_empty() {
+                return None;
+            }
+            namespace.push(segment);
+        }
+
+        let is_local_to_unit = match take_u64(bytes, &mut pos)? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        let is_function_local = match take_u64(bytes, &mut pos)? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
+        if is_function_local && namespace.len() < 2 {
+            return None;
+        }
+        let file = PathBuf::from(take_str(bytes, &mut pos)?);
+        let line = i32::try_from(take_u64(bytes, &mut pos)?).ok()?;
+        let column = i32::try_from(take_u64(bytes, &mut pos)?).ok()?;
+        if file.as_os_str().is_empty() || line <= 0 || column <= 0 {
+            return None;
+        }
+
+        let ty_bytes = take_bytes(bytes, &mut pos, MAX_DEBUG_ATTRIBUTE_BYTES)?;
+        let mut ty_pos = 0;
+        let ty = deserialize_debug_type(ty_bytes, &mut ty_pos)?;
+        if ty_pos != ty_bytes.len() || pos != bytes.len() {
+            return None;
+        }
+
+        Some(DebugGlobalVariableInfo {
+            name,
+            namespace,
+            ty,
+            declaration: DebugSourcePosition { file, line, column },
+            is_local_to_unit,
+            is_function_local,
+        })
     }
 
     /// One scalarized fragment of a source variable.
@@ -928,11 +1267,23 @@ pub mod ops {
     const DEBUG_LOCAL_DECL_LINE_KEY: &str = "cuda_oxide_debug_local_decl_line";
     const DEBUG_LOCAL_DECL_COLUMN_KEY: &str = "cuda_oxide_debug_local_decl_column";
     const DEBUG_LOCAL_SCOPE_KEY: &str = "cuda_oxide_debug_local_scope";
+    const DEBUG_GLOBAL_INFO_KEY: &str = "cuda_oxide_debug_global_info";
     const DEBUG_PROJECTED_COUNT_KEY: &str = "cuda_oxide_debug_projected_count";
     const DEBUG_FRAGMENT_COUNT_KEY: &str = "cuda_oxide_debug_fragment_count";
     const DEBUG_VALUE_EXPRESSION_KEY: &str = "cuda_oxide_debug_value_expression";
+    /// Source-facing name of a function, kept separate from its emitted symbol.
+    ///
+    /// Non-generic device functions use legalized Rust paths as their physical
+    /// symbols and generic functions use Rust's mangled symbol.  Neither is the
+    /// name users write in source or pass to a debugger, so the importer carries
+    /// that spelling explicitly for `DISubprogram::name`.
+    const DEBUG_FUNCTION_NAME_KEY: &str = "cuda_oxide_debug_function_name";
     const DEBUG_SOURCE_SCOPE_COUNT_KEY: &str = "cuda_oxide_debug_scope_count";
     const DEBUG_SOURCE_SCOPE_LOCATION_COUNT_KEY: &str = "cuda_oxide_debug_scope_location_count";
+    /// Raw LLVM-dialect symbol of the function that owns a function-local AS3
+    /// static. The exporter resolves this to the one real `DISubprogram` used
+    /// by that definition; it never creates a scope-only duplicate.
+    const DEBUG_GLOBAL_OWNER_FUNCTION_KEY: &str = "cuda_oxide_debug_global_owner_function";
     /// Op-attribute key for ordinary volatile `load` / `store` operations.
     const OP_VOLATILE_KEY: &str = "cuda_oxide_op_volatile";
     /// Op-attribute key for the alignment an address computation guarantees.
@@ -974,6 +1325,24 @@ pub mod ops {
             .attributes
             .get::<AlignmentAttr>(&key)
             .map(|a| a.0)
+    }
+
+    /// Attach the source-facing name of a function to a MIR/LLVM function op.
+    pub fn set_debug_function_name(ctx: &mut Context, op: Ptr<Operation>, name: &str) {
+        set_string_attr(ctx, op, DEBUG_FUNCTION_NAME_KEY, name.to_string());
+    }
+
+    /// Read the source-facing name attached to a MIR/LLVM function op.
+    pub fn debug_function_name(ctx: &Context, op: Ptr<Operation>) -> Option<String> {
+        get_string_attr(ctx, op, DEBUG_FUNCTION_NAME_KEY)
+    }
+
+    /// Copy a function's source-facing debug name during MIR-to-LLVM lowering.
+    pub fn copy_debug_function_name(ctx: &mut Context, from: Ptr<Operation>, to: Ptr<Operation>) {
+        let Some(name) = debug_function_name(ctx, from) else {
+            return;
+        };
+        set_debug_function_name(ctx, to, &name);
     }
 
     /// Stamp whether an inline asm op has side effects beyond its operands.
@@ -1028,6 +1397,56 @@ pub mod ops {
             argument_index,
             ty,
         })
+    }
+
+    /// Attach the source identity and semantic type of a Rust static to an op.
+    ///
+    /// This is usable on both `mir.global_alloc` and the lowered LLVM global,
+    /// which lets the information cross dialect conversion without coupling
+    /// either dialect's generated attribute schema to the debug representation.
+    pub fn set_debug_global_variable(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        info: &DebugGlobalVariableInfo,
+    ) {
+        if let Some(encoded) = encode_debug_global_info(info) {
+            set_string_attr(ctx, op, DEBUG_GLOBAL_INFO_KEY, encoded);
+        }
+    }
+
+    /// Read source-level debug metadata for a Rust static, if complete.
+    ///
+    /// Malformed or partial attributes fail closed.
+    pub fn debug_global_variable(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Option<DebugGlobalVariableInfo> {
+        let encoded = get_string_attr(ctx, op, DEBUG_GLOBAL_INFO_KEY)?;
+        decode_debug_global_info(&encoded)
+    }
+
+    /// Associate a function-local debug global with its owning function.
+    pub fn set_debug_global_owner_function(ctx: &mut Context, op: Ptr<Operation>, owner: &str) {
+        if !owner.is_empty() && owner.len() <= MAX_DEBUG_STRING_BYTES {
+            set_string_attr(ctx, op, DEBUG_GLOBAL_OWNER_FUNCTION_KEY, owner.to_string());
+        }
+    }
+
+    /// Read a bounded, non-empty owner function symbol. Malformed attributes
+    /// fail closed so they cannot create a CU-scoped or namespace-scoped alias.
+    pub fn debug_global_owner_function(ctx: &Context, op: Ptr<Operation>) -> Option<String> {
+        get_string_attr(ctx, op, DEBUG_GLOBAL_OWNER_FUNCTION_KEY)
+            .filter(|owner| !owner.is_empty() && owner.len() <= MAX_DEBUG_STRING_BYTES)
+    }
+
+    /// Detach a global's debug identity (variable info and owner function).
+    ///
+    /// Fail-open path for one physical allocation reached under divergent
+    /// debug identities: the storage stays, only the optional DWARF
+    /// attachment is dropped so it cannot misattribute the allocation.
+    pub fn clear_debug_global_identity(ctx: &mut Context, op: Ptr<Operation>) {
+        remove_string_attr(ctx, op, DEBUG_GLOBAL_INFO_KEY);
+        remove_string_attr(ctx, op, DEBUG_GLOBAL_OWNER_FUNCTION_KEY);
     }
 
     /// Attach every source variable described by a static projection of this slot.
@@ -1785,6 +2204,11 @@ pub mod ops {
             .map(|a| String::from((*a).clone()))
     }
 
+    fn remove_string_attr(ctx: &mut Context, op: Ptr<Operation>, key: &str) {
+        let key = Identifier::try_new(key.to_string()).expect("valid identifier");
+        op.deref_mut(ctx).attributes.0.remove(&key);
+    }
+
     /// LLVM debug-value marker used by the textual exporter.
     ///
     /// This is not a runtime instruction. It lowers to an `llvm.dbg.value`
@@ -2058,10 +2482,14 @@ pub mod ops {
     #[cfg(test)]
     mod tests {
         use super::{
-            DebugEnumDiscriminant, DebugEnumVariant, DebugLocalTypeKind, DebugTypeMember,
-            GlobalInitializerRelocation, decode_global_initializer_relocations,
-            deserialize_debug_type, encode_global_initializer_relocations, serialize_debug_type,
+            DebugEnumDiscriminant, DebugEnumVariant, DebugGlobalVariableInfo, DebugLocalTypeKind,
+            DebugSourcePosition, DebugTypeMember, GlobalInitializerRelocation,
+            MAX_DEBUG_NAMESPACE_SEGMENTS, MAX_DEBUG_STRING_BYTES, MAX_DEBUG_TYPE_DEPTH,
+            decode_debug_global_info, decode_global_initializer_relocations,
+            deserialize_debug_type, encode_debug_global_info,
+            encode_global_initializer_relocations, serialize_debug_type,
         };
+        use std::path::PathBuf;
 
         fn round_trip(ty: &DebugLocalTypeKind) -> DebugLocalTypeKind {
             let mut encoded = String::new();
@@ -2093,9 +2521,14 @@ pub mod ops {
                     DebugTypeMember {
                         name: "data".to_string(),
                         offset_bits: 64,
-                        ty: DebugLocalTypeKind::Pointer {
+                        ty: DebugLocalTypeKind::TypedPointer {
                             name: "*mut u64".to_string(),
                             size_bits: 64,
+                            pointee: Box::new(DebugLocalTypeKind::Basic {
+                                name: "u64".to_string(),
+                                size_bits: 64,
+                                encoding: "DW_ATE_unsigned",
+                            }),
                         },
                     },
                     DebugTypeMember {
@@ -2142,9 +2575,14 @@ pub mod ops {
                         members: vec![DebugTypeMember {
                             name: "0".to_string(),
                             offset_bits: 0,
-                            ty: DebugLocalTypeKind::Pointer {
+                            ty: DebugLocalTypeKind::TypedPointer {
                                 name: "&u32".to_string(),
                                 size_bits: 64,
+                                pointee: Box::new(DebugLocalTypeKind::Basic {
+                                    name: "u32".to_string(),
+                                    size_bits: 32,
+                                    encoding: "DW_ATE_unsigned",
+                                }),
                             },
                         }],
                     },
@@ -2157,11 +2595,102 @@ pub mod ops {
         #[test]
         fn round_trips_names_with_delimiters() {
             // Length-prefixing must survive names containing spaces/digits/braces.
-            let ty = DebugLocalTypeKind::Pointer {
+            let ty = DebugLocalTypeKind::TypedPointer {
                 name: "&[(u32, u32); 4] {x: 1}".to_string(),
                 size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::Basic {
+                    name: "u8".to_string(),
+                    size_bits: 8,
+                    encoding: "DW_ATE_unsigned",
+                }),
             };
             assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn round_trips_nested_pointer_pointees() {
+            let ty = DebugLocalTypeKind::TypedPointer {
+                name: "*const *mut i32".to_string(),
+                size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::TypedPointer {
+                    name: "*mut i32".to_string(),
+                    size_bits: 64,
+                    pointee: Box::new(DebugLocalTypeKind::Basic {
+                        name: "i32".to_string(),
+                        size_bits: 32,
+                        encoding: "DW_ATE_signed",
+                    }),
+                }),
+            };
+            assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn opaque_pointer_preserves_the_legacy_encoding() {
+            let ty = DebugLocalTypeKind::Pointer {
+                name: "*mut i32".to_string(),
+                size_bits: 64,
+            };
+            let mut encoded = String::new();
+            serialize_debug_type(&ty, &mut encoded);
+            assert_eq!(encoded, "p64 8 *mut i32");
+            assert_eq!(round_trip(&ty), ty);
+        }
+
+        #[test]
+        fn rejects_typed_pointer_without_a_serialized_pointee() {
+            // Unlike the legacy `p` record, the new `t` record requires a
+            // recursive pointee type and must reject a truncated payload.
+            let encoded = b"t64 8 *mut i32";
+            let mut pos = 0;
+            assert!(deserialize_debug_type(encoded, &mut pos).is_none());
+        }
+
+        #[test]
+        fn decoder_rejects_typed_pointer_with_forbidden_descendants() {
+            let invalid = [
+                // Direct legacy opaque pointer descendant.
+                "t64 8 *const _p64 8 *mut i32",
+                // The opaque pointer is hidden beneath a fixed array.
+                "t64 8 *const _a64 8 [ptr; 1]1 p64 8 *mut i32",
+                // Source composites are outside the acyclic typed subset.
+                "t64 8 *const _s64 3 Foo0 ",
+                "t64 8 *const _e64 3 Foo0 0 ",
+                // Composite descendants cannot be hidden below an otherwise
+                // accepted array or typed-pointer node either.
+                "t64 8 *const _a64 8 [Foo; 1]1 s64 3 Foo0 ",
+                "t64 15 *const *const _t64 8 *const _e64 3 Foo0 0 ",
+            ];
+
+            for encoded in invalid {
+                let mut pos = 0;
+                assert!(
+                    deserialize_debug_type(encoded.as_bytes(), &mut pos).is_none(),
+                    "accepted invalid typed pointer payload {encoded:?}"
+                );
+            }
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "typed pointer pointee must contain only basic, typed-pointer, or array nodes"
+        )]
+        fn serializer_rejects_hand_built_typed_pointer_with_opaque_descendant() {
+            let invalid = DebugLocalTypeKind::TypedPointer {
+                name: "*const [*mut _; 1]".to_string(),
+                size_bits: 64,
+                pointee: Box::new(DebugLocalTypeKind::Array {
+                    name: "[*mut _; 1]".to_string(),
+                    size_bits: 64,
+                    element: Box::new(DebugLocalTypeKind::Pointer {
+                        name: "*mut _".to_string(),
+                        size_bits: 64,
+                    }),
+                    count: 1,
+                }),
+            };
+            let mut encoded = String::new();
+            serialize_debug_type(&invalid, &mut encoded);
         }
 
         #[test]
@@ -2215,6 +2744,109 @@ pub mod ops {
             encoded.truncate(encoded.len() - 1);
             let mut pos = 0;
             assert!(deserialize_debug_type(encoded.as_bytes(), &mut pos).is_none());
+        }
+
+        #[test]
+        fn global_debug_identity_round_trips_structured_namespace_and_visibility() {
+            let info = DebugGlobalVariableInfo {
+                name: "COUNTER with spaces".to_string(),
+                namespace: vec![
+                    "collision_crate".to_string(),
+                    "module with spaces".to_string(),
+                    "function".to_string(),
+                ],
+                ty: DebugLocalTypeKind::Basic {
+                    name: "u32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_unsigned",
+                },
+                declaration: DebugSourcePosition {
+                    file: PathBuf::from("/tmp/path with spaces/kernel.rs"),
+                    line: 41,
+                    column: 9,
+                },
+                is_local_to_unit: false,
+                is_function_local: true,
+            };
+            let encoded = encode_debug_global_info(&info).expect("valid identity encodes");
+            assert_eq!(decode_debug_global_info(&encoded), Some(info));
+        }
+
+        #[test]
+        fn global_debug_identity_rejects_malformed_namespace_and_visibility() {
+            assert!(
+                decode_debug_global_info("v2 1 X0 ").is_none(),
+                "an empty namespace must not degrade to scope:null"
+            );
+            assert!(
+                decode_debug_global_info("v2 1 X129 ").is_none(),
+                "namespace allocation must be bounded"
+            );
+            assert!(
+                decode_debug_global_info("v2 1 X1 1 n2 ").is_none(),
+                "visibility accepts only the exact 0/1 encoding"
+            );
+            assert!(
+                decode_debug_global_info("v2 1 X2 1 c1 f0 2 ").is_none(),
+                "function-local accepts only the exact 0/1 encoding"
+            );
+
+            let info = DebugGlobalVariableInfo {
+                name: "X".to_string(),
+                namespace: vec!["crate".to_string()],
+                ty: DebugLocalTypeKind::Basic {
+                    name: "u8".to_string(),
+                    size_bits: 8,
+                    encoding: "DW_ATE_unsigned",
+                },
+                declaration: DebugSourcePosition {
+                    file: PathBuf::from("/tmp/x.rs"),
+                    line: 1,
+                    column: 1,
+                },
+                is_local_to_unit: true,
+                is_function_local: false,
+            };
+            let mut trailing = encode_debug_global_info(&info).expect("valid identity encodes");
+            trailing.push('x');
+            assert!(decode_debug_global_info(&trailing).is_none());
+
+            let mut truncated = encode_debug_global_info(&info).expect("valid identity encodes");
+            truncated.pop();
+            assert!(decode_debug_global_info(&truncated).is_none());
+
+            let mut too_many_namespaces = info.clone();
+            too_many_namespaces.namespace =
+                vec!["scope".to_string(); MAX_DEBUG_NAMESPACE_SEGMENTS + 1];
+            assert!(encode_debug_global_info(&too_many_namespaces).is_none());
+
+            let mut oversized_name = info.clone();
+            oversized_name.name = "x".repeat(MAX_DEBUG_STRING_BYTES + 1);
+            assert!(encode_debug_global_info(&oversized_name).is_none());
+
+            let mut missing_function_scope = info.clone();
+            missing_function_scope.is_function_local = true;
+            assert!(
+                encode_debug_global_info(&missing_function_scope).is_none(),
+                "a function-local global needs crate plus function scope"
+            );
+
+            let mut too_deep = DebugLocalTypeKind::Basic {
+                name: "u8".to_string(),
+                size_bits: 8,
+                encoding: "DW_ATE_unsigned",
+            };
+            for depth in 0..=MAX_DEBUG_TYPE_DEPTH {
+                too_deep = DebugLocalTypeKind::Array {
+                    name: format!("depth_{depth}"),
+                    size_bits: 8,
+                    element: Box::new(too_deep),
+                    count: 1,
+                };
+            }
+            let mut excessive_nesting = info;
+            excessive_nesting.ty = too_deep;
+            assert!(encode_debug_global_info(&excessive_nesting).is_none());
         }
     }
 }

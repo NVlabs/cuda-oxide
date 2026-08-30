@@ -16,6 +16,7 @@ use pliron::{
     },
     context::Context,
     linked_list::ContainsLinkedList,
+    location::Located,
     op::Op,
     operation::Operation,
     r#type::{TypeHandle, Typed},
@@ -32,7 +33,7 @@ use super::{
     config::{DebugKind, ExportBackendConfig, NvvmIrDialect},
     externs::{DeviceExternDecl, DeviceExternType},
     metadata::{emit_nvvm_annotations, emit_nvvmir_version, needs_nvvm_annotations},
-    state::{GlobalSourceInfo, GlobalSymbolInfo, ModuleExportState},
+    state::{DebugSharedFunctionScope, GlobalSourceInfo, GlobalSymbolInfo, ModuleExportState},
 };
 
 fn validate_export_config(config: &dyn ExportBackendConfig) -> Result<(), String> {
@@ -119,6 +120,95 @@ fn index_module_symbols(
             }
         }
     }
+    Ok(())
+}
+
+/// Reserve the real owning `DISubprogram` before AS3 globals are emitted.
+///
+/// MIR lowering inserts generated globals at the front of the module, before
+/// their function definitions. LLVM metadata may refer forward, but our text
+/// exporter needs the numeric subprogram id while printing the global. This
+/// prepass derives the source scope from the global identity, validates its raw
+/// owner symbol against the indexed definition, and allocates that definition's
+/// one cached subprogram early. The later function export reuses it.
+fn prepare_debug_shared_function_scopes(
+    state: &mut ModuleExportState<'_>,
+    module: &ModuleOp,
+) -> Result<(), String> {
+    if !state.debug_kind.variables_enabled() {
+        return Ok(());
+    }
+
+    let region = module.get_region(state.ctx).deref(state.ctx);
+    let Some(block) = region.iter(state.ctx).next() else {
+        return Ok(());
+    };
+
+    for operation in block.deref(state.ctx).iter(state.ctx) {
+        let Some(global) = Operation::get_op::<ops::GlobalOp>(operation, state.ctx) else {
+            continue;
+        };
+        if global.address_space(state.ctx) != crate::types::address_space::SHARED {
+            continue;
+        }
+        let Some(info) = ops::debug_global_variable(state.ctx, global.get_operation()) else {
+            continue;
+        };
+        if !info.is_function_local {
+            continue;
+        }
+        let Some(raw_owner) = ops::debug_global_owner_function(state.ctx, global.get_operation())
+        else {
+            // A partial/malformed carrier must not fall back to namespace or CU
+            // scope: that would make one per-block variable look module-global.
+            continue;
+        };
+        let owner = super::function::exported_function_name(&raw_owner);
+        if state
+            .function_source_names
+            .get(&owner)
+            .is_none_or(|indexed| indexed != &raw_owner)
+        {
+            continue;
+        }
+        let Some((function_name, namespace)) = info.namespace.split_last() else {
+            continue;
+        };
+        if namespace.is_empty() {
+            continue;
+        }
+        let scope = DebugSharedFunctionScope {
+            namespace: namespace.to_vec(),
+            name: function_name.clone(),
+        };
+        if let Some(previous) = state
+            .debug_shared_function_scopes
+            .insert(owner.clone(), scope.clone())
+            && previous != scope
+        {
+            return Err(format!(
+                "conflicting source scopes for shared-static owner `@{owner}`: {previous:?} versus {scope:?}"
+            ));
+        }
+    }
+
+    for operation in block.deref(state.ctx).iter(state.ctx) {
+        let Some(function) = Operation::get_op::<ops::FuncOp>(operation, state.ctx) else {
+            continue;
+        };
+        if function.get_operation().deref(state.ctx).regions().count() == 0 {
+            continue;
+        }
+        let raw_name = function.get_symbol_name(state.ctx);
+        let owner = super::function::exported_function_name(raw_name.as_ref());
+        if state.debug_shared_function_scopes.contains_key(&owner) {
+            let loc = function.get_operation().deref(state.ctx).loc();
+            let debug_name = ops::debug_function_name(state.ctx, function.get_operation())
+                .unwrap_or_else(|| owner.clone());
+            state.debug_subprogram_for_function(&debug_name, &owner, &loc);
+        }
+    }
+
     Ok(())
 }
 
@@ -473,6 +563,7 @@ pub(super) fn export_module_with_externs_impl(
         config.nvvm_ir_dialect(),
     );
     index_module_symbols(&mut state, module)?;
+    prepare_debug_shared_function_scopes(&mut state, module)?;
     index_device_externs(&mut state, device_externs)?;
 
     // 1. Header
@@ -662,6 +753,7 @@ pub(super) fn export_module_to_string_with_config(
         config.nvvm_ir_dialect(),
     );
     index_module_symbols(&mut state, module)?;
+    prepare_debug_shared_function_scopes(&mut state, module)?;
 
     // 1. Header
     writeln!(

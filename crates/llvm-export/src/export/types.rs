@@ -177,16 +177,25 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
-    /// Compute conservative ABI alignment (bytes) for a type.
+    /// ABI alignment (bytes) of a type, when it can be stated exactly.
     ///
     /// Used as the fallback when no explicit alignment is stamped on a
-    /// load/store/alloca op. Required for atomic loads/stores (LLVM IR
-    /// mandates explicit alignment) and for vectorization hints.
-    pub(super) fn natural_alignment(&self, ty: TypeHandle) -> u32 {
+    /// load/store/alloca op. Policy: exact or absent, never guessed. `None`
+    /// (unknown type, or a computed value that is not a power of two and so
+    /// not a legal `align`) makes the emitter omit the attribute, and LLVM
+    /// falls back to the type's datalayout ABI alignment, which is always
+    /// sound; a fabricated claim is not.
+    pub(super) fn natural_alignment(&self, ty: TypeHandle) -> Option<u32> {
         let ty_ref = ty.deref(self.ctx);
-        if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
-            // ceil(width / 8), minimum 1.
-            std::cmp::max(1, int_ty.width() / 8)
+        let align = if let Some(int_ty) = ty_ref.downcast_ref::<IntegerType>() {
+            // ceil(width / 8); non-power-of-two widths are filtered below,
+            // and widths past i128 decline because the datalayout caps
+            // integer ABI alignment below the type's own size there.
+            let bytes = int_ty.width().div_ceil(8).max(1);
+            if bytes > 16 {
+                return None;
+            }
+            bytes
         } else if ty_ref.is::<FP32Type>() {
             4
         } else if ty_ref.is::<FP64Type>() {
@@ -197,31 +206,30 @@ impl<'a> ModuleExportState<'a> {
             8
         } else if let Some(array_ty) = ty_ref.downcast_ref::<crate::types::ArrayType>() {
             // ABI alignment of `[N x T]` matches elem alignment.
-            self.natural_alignment(array_ty.elem_type())
+            self.natural_alignment(array_ty.elem_type())?
         } else if let Some(vec_ty) = ty_ref.downcast_ref::<crate::types::VectorType>() {
             // ABI alignment of an LLVM vector: power-of-2-rounded total width.
-            let elem = self.natural_alignment(vec_ty.elem_type());
+            let elem = self.natural_alignment(vec_ty.elem_type())?;
             let total = elem.saturating_mul(vec_ty.num_elements());
             let mut a = 1u32;
             while a.saturating_mul(2) <= total && a < 128 {
                 a *= 2;
             }
             a
-        } else if let Some(struct_ty) = ty_ref.downcast_ref::<StructType>() {
+        } else {
+            let struct_ty = ty_ref.downcast_ref::<StructType>()?;
             if struct_ty.layout() == StructLayout::Packed {
                 1
             } else {
                 // Max field alignment (1 if empty). May under-state a repr(align)
                 // raise; the true alignment is carried on the op, not the type.
-                struct_ty
-                    .fields()
-                    .map(|f| self.natural_alignment(f))
-                    .max()
-                    .unwrap_or(1)
+                let mut max = 1u32;
+                for field in struct_ty.fields() {
+                    max = max.max(self.natural_alignment(field)?);
+                }
+                max
             }
-        } else {
-            // Conservative fallback for pointers and unknown types.
-            8
-        }
+        };
+        align.is_power_of_two().then_some(align)
     }
 }

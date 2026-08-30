@@ -112,6 +112,26 @@ jobs:
       - name: Verify every device call the book shows resolves
         run: bash scripts/check-book-api-names.sh
 
+  # The dialect-nvvm book page prints the catalog SHA-256 and states its own
+  # freshness rule: if the stamp no longer matches, every count on the page
+  # predates the catalog being read. Nothing enforced that rule, so the page
+  # failed its own test for weeks -- 560 operations printed against 570 in the
+  # tree -- and only a hand audit caught it, twice. Machine-checking the stamp
+  # turns "the counts are stale" into a red check on the pull request that
+  # rotated the catalog. The counts stay hand-written; only the stamp is gated,
+  # because the page derives staleness from it.
+  book-catalog-stamp:
+    name: book catalog stamp
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Hashes one file and greps one page: no cargo, no build, no network.
+      - name: Verify the dialect page's catalog stamp is current
+        run: bash scripts/check-book-catalog-stamp.sh
+
   # `unit-tests.yml`'s matrix is the only thing deciding which crates get
   # `cargo test`, and a member missing from it fails nothing: the workflow is
   # green, `just check` is green, and the tests never ran. #971 found four

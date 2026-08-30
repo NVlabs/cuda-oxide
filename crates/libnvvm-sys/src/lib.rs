@@ -41,126 +41,15 @@
 
 use libloading::{Library, Symbol};
 use std::ffi::{CString, c_char, c_int, c_void};
-use std::fmt;
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::str::FromStr;
 use std::time::SystemTime;
 use thiserror::Error;
 
-// ============================================================================
-// CUDA architecture
-// ============================================================================
-
-/// A validated CUDA compute capability, independent of its textual prefix.
-///
-/// libNVVM takes `compute_XX`, while cubin-producing nvJitLink calls take
-/// `sm_XX`. Keeping one parsed value prevents those two consumers from
-/// accidentally targeting different devices.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CudaArch {
-    capability: u32,
-    suffix: Option<char>,
-}
-
-impl CudaArch {
-    /// Numeric CUDA capability (`86`, `90`, `100`, `120`, ...).
-    pub fn capability(&self) -> u32 {
-        self.capability
-    }
-
-    /// Optional architecture-family suffix (`a` or `f`).
-    ///
-    /// Targets such as `sm_90a` enable architecture-specific instructions and
-    /// cannot be forwarded to a different compute capability.
-    pub fn suffix(&self) -> Option<char> {
-        self.suffix
-    }
-
-    /// Whether libNVVM selects its legacy LLVM 7 input dialect.
-    pub fn uses_legacy_llvm(&self) -> bool {
-        self.capability < 100
-    }
-
-    /// Render the target for cubin-producing tools such as nvJitLink.
-    pub fn sm(&self) -> String {
-        self.render("sm_")
-    }
-
-    /// Render the target for libNVVM.
-    pub fn compute(&self) -> String {
-        self.render("compute_")
-    }
-
-    fn render(&self, prefix: &str) -> String {
-        match self.suffix {
-            Some(suffix) => format!("{prefix}{}{suffix}", self.capability),
-            None => format!("{prefix}{}", self.capability),
-        }
-    }
-}
-
-impl FromStr for CudaArch {
-    type Err = CudaArchParseError;
-
-    fn from_str(target: &str) -> Result<Self, Self::Err> {
-        let rest = target
-            .strip_prefix("sm_")
-            .or_else(|| target.strip_prefix("compute_"))
-            .ok_or_else(|| CudaArchParseError::new(target, "expected `sm_XX` or `compute_XX`"))?;
-
-        let digit_count = rest.chars().take_while(|c| c.is_ascii_digit()).count();
-        if digit_count < 2 {
-            return Err(CudaArchParseError::new(
-                target,
-                "compute capability must contain at least two digits",
-            ));
-        }
-        let (digits, suffix_text) = rest.split_at(digit_count);
-        let suffix = match suffix_text {
-            "" => None,
-            "a" => Some('a'),
-            "f" => Some('f'),
-            _ => {
-                return Err(CudaArchParseError::new(
-                    target,
-                    "the only supported architecture suffixes are `a` and `f`",
-                ));
-            }
-        };
-        let capability = digits.parse::<u32>().map_err(|_| {
-            CudaArchParseError::new(target, "compute capability is not a valid integer")
-        })?;
-
-        Ok(Self { capability, suffix })
-    }
-}
-
-impl fmt::Display for CudaArch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.sm())
-    }
-}
-
-/// A malformed CUDA architecture string.
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
-#[error("invalid CUDA target `{target}`: {reason}")]
-pub struct CudaArchParseError {
-    target: String,
-    reason: &'static str,
-}
-
-impl CudaArchParseError {
-    fn new(target: &str, reason: &'static str) -> Self {
-        Self {
-            target: target.to_string(),
-            reason,
-        }
-    }
-}
+pub use cuda_target_spec::{CudaArch, CudaArchParseError};
 
 /// Versions accepted by the loaded libNVVM frontend.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -927,32 +816,6 @@ mod tests {
         let future_code = NvvmResult(c_int::MAX);
         assert_ne!(future_code, NvvmResult::SUCCESS);
         assert_eq!(future_code.0, c_int::MAX);
-    }
-
-    #[test]
-    fn cuda_arch_parses_and_renders_api_specific_spellings() {
-        for (input, capability, suffix, sm, compute, legacy) in [
-            ("sm_75", 75, None, "sm_75", "compute_75", true),
-            ("compute_90a", 90, Some('a'), "sm_90a", "compute_90a", true),
-            ("sm_100f", 100, Some('f'), "sm_100f", "compute_100f", false),
-            ("compute_120", 120, None, "sm_120", "compute_120", false),
-        ] {
-            let arch: CudaArch = input.parse().unwrap();
-            assert_eq!(arch.capability(), capability);
-            assert_eq!(arch.suffix(), suffix);
-            assert_eq!(arch.sm(), sm);
-            assert_eq!(arch.compute(), compute);
-            assert_eq!(arch.uses_legacy_llvm(), legacy);
-        }
-    }
-
-    #[test]
-    fn cuda_arch_rejects_ambiguous_or_malformed_targets() {
-        for input in [
-            "", "86", "sm_", "sm_9", "sm_90x", "sm_90aa", "SM_90", "gfx90a",
-        ] {
-            assert!(input.parse::<CudaArch>().is_err(), "{input}");
-        }
     }
 
     #[test]

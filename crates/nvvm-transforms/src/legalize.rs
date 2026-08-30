@@ -14,11 +14,11 @@ use std::num::NonZeroUsize;
 use llvm_export::{
     attributes::{
         AtomicOrderingAttr, AtomicRmwKindAttr, FCmpPredicateAttr, FastmathFlagsAttr,
-        ICmpPredicateAttr, IntegerOverflowFlagsAttr,
+        ICmpPredicateAttr, IntegerOverflowFlagsAttr, SyncScopeAttr,
     },
     op_interfaces::{
         BinArithOp, CastOpInterface, CastOpWithNNegInterface, FastMathFlags,
-        IntBinArithOpWithOverflowFlag,
+        IntBinArithOpWithOverflowFlag, SyncScopeInterface,
     },
     ops as llvm,
     ops::{AsmKind, InlineAsmOpExt},
@@ -342,11 +342,11 @@ enum LegacyAtomicScope {
 }
 
 impl LegacyAtomicScope {
-    fn from_syncscope(scope: Option<&str>) -> Option<Self> {
+    fn from_syncscope(scope: &SyncScopeAttr) -> Option<Self> {
         match scope {
-            Some("device") => Some(Self::Device),
-            Some("block") => Some(Self::Block),
-            None => Some(Self::System),
+            SyncScopeAttr::NamedScope(name) if name.as_str() == "device" => Some(Self::Device),
+            SyncScopeAttr::NamedScope(name) if name.as_str() == "block" => Some(Self::Block),
+            SyncScopeAttr::System => Some(Self::System),
             _ => None,
         }
     }
@@ -382,10 +382,10 @@ struct IntegerCmpxchgRewrite {
 fn legacy_atomic_scope(
     ctx: &Context,
     op: Ptr<Operation>,
-    syncscope: Option<String>,
+    syncscope: &SyncScopeAttr,
     operation: &str,
 ) -> Result<LegacyAtomicScope> {
-    LegacyAtomicScope::from_syncscope(syncscope.as_deref()).ok_or_else(|| {
+    LegacyAtomicScope::from_syncscope(syncscope).ok_or_else(|| {
         pliron::input_error!(
             op.deref(ctx).loc(),
             "legacy NVVM {operation} has an unsupported synchronization scope"
@@ -583,10 +583,8 @@ fn validate_integer_atomic_rmw(
         );
     }
 
-    let syncscope = rmw
-        .get_attr_llvm_rmw_syncscope(ctx)
-        .map(|scope| String::from((*scope).clone()));
-    let scope = legacy_atomic_scope(ctx, op, syncscope, "integer atomic RMW")?;
+    let syncscope = rmw.syncscope(ctx);
+    let scope = legacy_atomic_scope(ctx, op, &syncscope, "integer atomic RMW")?;
 
     if !scope.needs_scoped_rewrite() {
         return Ok(None);
@@ -721,10 +719,8 @@ fn validate_integer_cmpxchg(
         );
     }
 
-    let syncscope = cas
-        .get_attr_llvm_cas_syncscope(ctx)
-        .map(|scope| String::from((*scope).clone()));
-    let scope = legacy_atomic_scope(ctx, op, syncscope, "compare-exchange")?;
+    let syncscope = cas.syncscope(ctx);
+    let scope = legacy_atomic_scope(ctx, op, &syncscope, "compare-exchange")?;
     // A validated pair never has a failure ordering stronger than its success
     // ordering, so the success check also covers every ordered failure
     // ordering. Any ordered form routes to the scoped PTX rewrite: the inline
@@ -839,10 +835,8 @@ fn validate_float_atomic_add(
             "legacy NVVM floating-point atomic add requires monotonic ordering"
         );
     }
-    let syncscope = rmw
-        .get_attr_llvm_rmw_syncscope(ctx)
-        .map(|scope| String::from((*scope).clone()));
-    if syncscope.as_deref() != Some("device") {
+    let syncscope = rmw.syncscope(ctx);
+    if syncscope.to_name() != "device" {
         return pliron::input_err!(
             op.deref(ctx).loc(),
             "legacy NVVM floating-point atomic add requires device synchronization scope"
@@ -1118,10 +1112,9 @@ fn parse_integer_sat_name(name: &str) -> Option<(IntegerSatKind, u32)> {
         (IntegerSatKind::SignedSub, rest)
     } else if let Some(rest) = name.strip_prefix("llvm_uadd_sat_i") {
         (IntegerSatKind::UnsignedAdd, rest)
-    } else if let Some(rest) = name.strip_prefix("llvm_usub_sat_i") {
-        (IntegerSatKind::UnsignedSub, rest)
     } else {
-        return None;
+        let rest = name.strip_prefix("llvm_usub_sat_i")?;
+        (IntegerSatKind::UnsignedSub, rest)
     };
     let width = width.parse().ok()?;
     (width > 0 && width <= 128).then_some((kind, width))
@@ -1493,10 +1486,9 @@ enum FloatToIntSatKind {
 fn parse_float_to_int_sat_name(name: &str) -> Option<(FloatToIntSatKind, u32, u32)> {
     let (kind, rest) = if let Some(rest) = name.strip_prefix("llvm_fptosi_sat_i") {
         (FloatToIntSatKind::Signed, rest)
-    } else if let Some(rest) = name.strip_prefix("llvm_fptoui_sat_i") {
-        (FloatToIntSatKind::Unsigned, rest)
     } else {
-        return None;
+        let rest = name.strip_prefix("llvm_fptoui_sat_i")?;
+        (FloatToIntSatKind::Unsigned, rest)
     };
     let (int_width, float_width) = rest.split_once("_f")?;
     let int_width: u32 = int_width.parse().ok()?;
@@ -1956,6 +1948,12 @@ mod tests {
         common_traits::Verify,
         printable::Printable,
     };
+
+    fn named_scope(name: &str) -> SyncScopeAttr {
+        SyncScopeAttr::NamedScope(pliron::builtin::attributes::StringAttr::new(
+            name.to_string(),
+        ))
+    }
 
     fn module_block(ctx: &Context, module: &ModuleOp) -> Ptr<BasicBlock> {
         module
@@ -2427,7 +2425,7 @@ mod tests {
         address_space: u32,
         value_ty: TypeHandle,
         ordering: AtomicOrderingAttr,
-        scope: Option<String>,
+        scope: SyncScopeAttr,
     ) -> llvm::FuncOp {
         let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
         let (func, entry) = function(ctx, module, name, value_ty, vec![ptr_ty, value_ty]);
@@ -2451,7 +2449,7 @@ mod tests {
         width: u32,
         kind: AtomicRmwKindAttr,
         ordering: AtomicOrderingAttr,
-        scope: Option<String>,
+        scope: SyncScopeAttr,
     ) -> llvm::FuncOp {
         let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
         let value_ty: TypeHandle = IntegerType::get(ctx, width, Signedness::Signless).into();
@@ -2476,7 +2474,7 @@ mod tests {
         width: u32,
         success_ordering: AtomicOrderingAttr,
         failure_ordering: AtomicOrderingAttr,
-        scope: Option<String>,
+        scope: SyncScopeAttr,
     ) -> llvm::FuncOp {
         let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
         let value_ty: TypeHandle = IntegerType::get(ctx, width, Signedness::Signless).into();
@@ -2528,7 +2526,7 @@ mod tests {
                     address_space,
                     value_ty,
                     AtomicOrderingAttr::Monotonic,
-                    Some("device".to_string()),
+                    named_scope("device"),
                 );
                 functions.push(function);
             }
@@ -2613,9 +2611,9 @@ mod tests {
     #[test]
     fn legacy_float_atomic_add_rejects_semantics_the_intrinsic_cannot_preserve() {
         for (address_space, scope, expected) in [
-            (7, Some("device".to_string()), "address space 7"),
-            (1, Some("block".to_string()), "device synchronization scope"),
-            (1, None, "device synchronization scope"),
+            (7, named_scope("device"), "address space 7"),
+            (1, named_scope("block"), "device synchronization scope"),
+            (1, SyncScopeAttr::System, "device synchronization scope"),
         ] {
             let mut ctx = Context::new();
             let module = ModuleOp::new(&mut ctx, "atomic_add".try_into().unwrap());
@@ -2647,7 +2645,7 @@ mod tests {
             1,
             f32_ty,
             AtomicOrderingAttr::Acquire,
-            Some("device".to_string()),
+            named_scope("device"),
         );
 
         let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
@@ -2676,7 +2674,7 @@ mod tests {
             1,
             f64_ty,
             AtomicOrderingAttr::Monotonic,
-            Some("device".to_string()),
+            named_scope("device"),
         );
 
         let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 52).unwrap_err();
@@ -2708,7 +2706,7 @@ mod tests {
             1,
             f32_ty,
             AtomicOrderingAttr::Monotonic,
-            Some("device".to_string()),
+            named_scope("device"),
         );
 
         legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 52).unwrap();
@@ -2747,7 +2745,7 @@ mod tests {
             1,
             f32_ty,
             AtomicOrderingAttr::Monotonic,
-            Some("device".to_string()),
+            named_scope("device"),
         );
 
         let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
@@ -2791,7 +2789,7 @@ mod tests {
             1,
             f32_ty,
             AtomicOrderingAttr::Monotonic,
-            Some("device".to_string()),
+            named_scope("device"),
         );
         module.get_operation().deref(&ctx).verify(&ctx).unwrap();
 
@@ -2829,7 +2827,7 @@ mod tests {
             1,
             f32_ty,
             AtomicOrderingAttr::Monotonic,
-            Some("device".to_string()),
+            named_scope("device"),
         );
         module.get_operation().deref(&ctx).verify(&ctx).unwrap();
 
@@ -2863,7 +2861,7 @@ mod tests {
             1,
             f32_ty,
             AtomicOrderingAttr::Monotonic,
-            Some("device".to_string()),
+            named_scope("device"),
         );
         atomic_add_function(
             &mut ctx,
@@ -2872,7 +2870,7 @@ mod tests {
             1,
             f32_ty,
             AtomicOrderingAttr::Monotonic,
-            Some("block".to_string()),
+            named_scope("block"),
         );
 
         let error = legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
@@ -2915,7 +2913,7 @@ mod tests {
                     width,
                     AtomicRmwKindAttr::Add,
                     AtomicOrderingAttr::Monotonic,
-                    Some("device".to_string()),
+                    named_scope("device"),
                 );
             }
         }
@@ -2986,7 +2984,7 @@ mod tests {
                 32,
                 kind,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
             );
         }
 
@@ -3017,7 +3015,7 @@ mod tests {
                     width,
                     AtomicOrderingAttr::Monotonic,
                     AtomicOrderingAttr::Monotonic,
-                    Some("device".to_string()),
+                    named_scope("device"),
                 );
             }
         }
@@ -3076,8 +3074,8 @@ mod tests {
         let mut expected = Vec::new();
         for width in [32, 64] {
             for (scope_name, scope, ptx_scope) in [
-                ("block", Some("block".to_string()), "cta"),
-                ("system", None, "sys"),
+                ("block", named_scope("block"), "cta"),
+                ("system", SyncScopeAttr::System, "sys"),
             ] {
                 for address_space in [0, 1, 3] {
                     integer_atomic_rmw_function(
@@ -3151,7 +3149,7 @@ mod tests {
                 32,
                 (*kind).clone(),
                 AtomicOrderingAttr::Monotonic,
-                Some("block".to_string()),
+                named_scope("block"),
             );
         }
 
@@ -3185,7 +3183,7 @@ mod tests {
             32,
             AtomicRmwKindAttr::Add,
             AtomicOrderingAttr::Monotonic,
-            Some("block".to_string()),
+            named_scope("block"),
         );
 
         let before = module.get_operation().deref(&ctx).disp(&ctx).to_string();
@@ -3211,7 +3209,7 @@ mod tests {
             32,
             AtomicOrderingAttr::AcqRel,
             AtomicOrderingAttr::Acquire,
-            Some("device".to_string()),
+            named_scope("device"),
         );
         integer_cmpxchg_function(
             &mut ctx,
@@ -3221,7 +3219,7 @@ mod tests {
             32,
             AtomicOrderingAttr::AcqRel,
             AtomicOrderingAttr::Monotonic,
-            Some("block".to_string()),
+            named_scope("block"),
         );
         integer_cmpxchg_function(
             &mut ctx,
@@ -3231,7 +3229,7 @@ mod tests {
             64,
             AtomicOrderingAttr::Acquire,
             AtomicOrderingAttr::Acquire,
-            None,
+            SyncScopeAttr::System,
         );
         integer_cmpxchg_function(
             &mut ctx,
@@ -3241,7 +3239,7 @@ mod tests {
             32,
             AtomicOrderingAttr::SeqCst,
             AtomicOrderingAttr::SeqCst,
-            Some("device".to_string()),
+            named_scope("device"),
         );
 
         legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
@@ -3298,7 +3296,7 @@ mod tests {
                 width,
                 success,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
             );
         }
 
@@ -3334,9 +3332,9 @@ mod tests {
     #[test]
     fn legacy_integer_cmpxchg_ptx_rewrite_requires_sm70() {
         for (scope, failure) in [
-            (Some("block".to_string()), AtomicOrderingAttr::Monotonic),
-            (Some("device".to_string()), AtomicOrderingAttr::Acquire),
-            (Some("device".to_string()), AtomicOrderingAttr::Monotonic),
+            (named_scope("block"), AtomicOrderingAttr::Monotonic),
+            (named_scope("device"), AtomicOrderingAttr::Acquire),
+            (named_scope("device"), AtomicOrderingAttr::Monotonic),
         ] {
             let mut ctx = Context::new();
             let module = ModuleOp::new(&mut ctx, "integer_cas_floor".try_into().unwrap());
@@ -3369,7 +3367,7 @@ mod tests {
                 16,
                 1,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
                 AtomicRmwKindAttr::Add,
                 "only i32 and i64",
             ),
@@ -3377,7 +3375,7 @@ mod tests {
                 128,
                 1,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
                 AtomicRmwKindAttr::Add,
                 "only i32 and i64",
             ),
@@ -3385,7 +3383,7 @@ mod tests {
                 32,
                 7,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
                 AtomicRmwKindAttr::Add,
                 "address space 7",
             ),
@@ -3393,7 +3391,7 @@ mod tests {
                 32,
                 1,
                 AtomicOrderingAttr::Acquire,
-                Some("device".to_string()),
+                named_scope("device"),
                 AtomicRmwKindAttr::Add,
                 "monotonic ordering",
             ),
@@ -3401,7 +3399,7 @@ mod tests {
                 32,
                 1,
                 AtomicOrderingAttr::Monotonic,
-                Some("cluster".to_string()),
+                named_scope("cluster"),
                 AtomicRmwKindAttr::Add,
                 "unsupported synchronization scope",
             ),
@@ -3409,7 +3407,7 @@ mod tests {
                 32,
                 1,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
                 AtomicRmwKindAttr::Nand,
                 "does not support this operation kind",
             ),
@@ -3445,7 +3443,7 @@ mod tests {
                 1,
                 AtomicOrderingAttr::AcqRel,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
                 "only i32 and i64",
             ),
             (
@@ -3453,7 +3451,7 @@ mod tests {
                 1,
                 AtomicOrderingAttr::AcqRel,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
                 "only i32 and i64",
             ),
             (
@@ -3461,7 +3459,7 @@ mod tests {
                 7,
                 AtomicOrderingAttr::AcqRel,
                 AtomicOrderingAttr::Monotonic,
-                Some("device".to_string()),
+                named_scope("device"),
                 "address space 7",
             ),
             (
@@ -3469,7 +3467,7 @@ mod tests {
                 1,
                 AtomicOrderingAttr::AcqRel,
                 AtomicOrderingAttr::Monotonic,
-                Some("cluster".to_string()),
+                named_scope("cluster"),
                 "unsupported synchronization scope",
             ),
             (
@@ -3477,7 +3475,7 @@ mod tests {
                 1,
                 AtomicOrderingAttr::Release,
                 AtomicOrderingAttr::Acquire,
-                Some("device".to_string()),
+                named_scope("device"),
                 "invalid success/failure ordering pair",
             ),
         ] {
@@ -3516,7 +3514,7 @@ mod tests {
             32,
             AtomicRmwKindAttr::Add,
             AtomicOrderingAttr::Monotonic,
-            Some("device".to_string()),
+            named_scope("device"),
         );
         integer_cmpxchg_function(
             &mut ctx,
@@ -3526,7 +3524,7 @@ mod tests {
             32,
             AtomicOrderingAttr::AcqRel,
             AtomicOrderingAttr::Monotonic,
-            Some("cluster".to_string()),
+            named_scope("cluster"),
         );
 
         let before = module.get_operation().deref(&ctx).disp(&ctx).to_string();
@@ -3554,8 +3552,13 @@ mod tests {
         let void_ty: TypeHandle = VoidType::get(&ctx).into();
         let (_func, entry) = function(&mut ctx, &module, "atomic_load", void_ty, vec![ptr_ty]);
         let ptr = entry.deref(&ctx).get_argument(0);
-        let load =
-            llvm::AtomicLoadOp::new(&mut ctx, ptr, i32_ty, AtomicOrderingAttr::Monotonic, None);
+        let load = llvm::AtomicLoadOp::new(
+            &mut ctx,
+            ptr,
+            i32_ty,
+            AtomicOrderingAttr::Monotonic,
+            SyncScopeAttr::System,
+        );
         load.get_operation().insert_at_back(entry, &ctx);
         llvm::ReturnOp::new(&mut ctx, None)
             .get_operation()

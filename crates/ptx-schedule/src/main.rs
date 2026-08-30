@@ -3,55 +3,106 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use clap::{ArgGroup, Parser};
 use ptx_schedule::{InjectionOptions, analyze_ptx, perturb_ptx};
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-fn usage() -> ! {
-    eprintln!(
-        "usage: ptx-schedule INPUT.ptx [--list-sites] [--seed N] [--intensity F] [--max-sleep-ns N] [--focus TEXT] [-o OUTPUT] [--decisions-json FILE]"
-    );
-    std::process::exit(2);
+#[derive(Debug, Parser)]
+#[command(
+    name = "ptx-schedule",
+    about = "Inspect or perturb one PTX file",
+    override_usage = "ptx-schedule <INPUT.ptx> --list-sites\n       ptx-schedule <INPUT.ptx> -o <OUTPUT> [OPTIONS]",
+    group(ArgGroup::new("mode").required(true).multiple(false).args(["list_sites", "output"]))
+)]
+struct Cli {
+    /// PTX module to inspect or rewrite.
+    #[arg(value_name = "INPUT.ptx")]
+    input: PathBuf,
+
+    /// Print schedule-sensitive sites as JSON.
+    #[arg(long, group = "mode")]
+    list_sites: bool,
+
+    /// Write a perturbed PTX module.
+    #[arg(short = 'o', long, value_name = "OUTPUT", group = "mode")]
+    output: Option<PathBuf>,
+
+    /// Deterministic perturbation seed.
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "output",
+        conflicts_with = "list_sites"
+    )]
+    seed: Option<u64>,
+
+    /// Fraction of eligible sites to perturb.
+    #[arg(
+        long,
+        value_name = "F",
+        requires = "output",
+        conflicts_with = "list_sites"
+    )]
+    intensity: Option<f64>,
+
+    /// Maximum sleep inserted at one site.
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "output",
+        conflicts_with = "list_sites"
+    )]
+    max_sleep_ns: Option<u32>,
+
+    /// Prefer sites whose instruction contains this text.
+    #[arg(
+        long,
+        value_name = "TEXT",
+        requires = "output",
+        conflicts_with = "list_sites"
+    )]
+    focus: Option<String>,
+
+    /// Save the injection decisions as JSON.
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "output",
+        conflicts_with = "list_sites"
+    )]
+    decisions_json: Option<PathBuf>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = env::args().skip(1);
-    let input = PathBuf::from(args.next().unwrap_or_else(|| usage()));
-    let mut options = InjectionOptions::default();
-    let mut list_sites = false;
-    let mut output = None;
-    let mut decisions_json = None;
-
-    while let Some(argument) = args.next() {
-        match argument.as_str() {
-            "--list-sites" => list_sites = true,
-            "--seed" => options.seed = args.next().unwrap_or_else(|| usage()).parse()?,
-            "--intensity" => options.intensity = args.next().unwrap_or_else(|| usage()).parse()?,
-            "--max-sleep-ns" => {
-                options.max_sleep_ns = args.next().unwrap_or_else(|| usage()).parse()?
-            }
-            "--focus" => options.focus = Some(args.next().unwrap_or_else(|| usage())),
-            "-o" | "--output" => {
-                output = Some(PathBuf::from(args.next().unwrap_or_else(|| usage())))
-            }
-            "--decisions-json" => {
-                decisions_json = Some(PathBuf::from(args.next().unwrap_or_else(|| usage())))
-            }
-            _ => usage(),
-        }
-    }
-
-    let source = fs::read_to_string(&input)?;
-    if list_sites {
+    let cli = Cli::parse();
+    let source = fs::read_to_string(&cli.input)?;
+    if cli.list_sites {
         let analysis = analyze_ptx(&source)?;
         println!("{}", serde_json::to_string_pretty(analysis.sites())?);
         return Ok(());
     }
-    let output = output.unwrap_or_else(|| usage());
+
+    let mut options = InjectionOptions::default();
+    if let Some(seed) = cli.seed {
+        options.seed = seed;
+    }
+    if let Some(intensity) = cli.intensity {
+        options.intensity = intensity;
+    }
+    if let Some(max_sleep_ns) = cli.max_sleep_ns {
+        options.max_sleep_ns = max_sleep_ns;
+    }
+    if let Some(focus) = cli.focus {
+        options.focus = Some(focus);
+    }
+
+    let output = cli
+        .output
+        .expect("clap requires either --list-sites or --output");
     let rewrite = perturb_ptx(&source, &options)?;
     fs::write(output, &rewrite.ptx)?;
-    if let Some(path) = decisions_json {
+    if let Some(path) = cli.decisions_json {
         fs::write(path, serde_json::to_string_pretty(&rewrite.report)?)?;
     }
     println!(

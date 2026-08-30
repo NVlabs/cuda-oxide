@@ -8,7 +8,7 @@ use crate::generated::GeneratedModuleRequirements;
 use crate::llvm_tools::LlvmToolchain;
 use crate::options::BackendOptions;
 use crate::target::{
-    ModuleRequirements, detect_module_requirements_in_llvm_file,
+    ModuleRequirements, PtxIsaRequirement, detect_module_requirements_in_llvm_file,
     merge_generated_module_requirements, merge_generated_module_requirements_for_target,
     required_ptx_feature, resolve_ptx_target_with_generated, validate_ptx_isa_for_llvm_major,
     validate_target_features, validate_target_for_llvm_major,
@@ -195,6 +195,147 @@ fn optimize_ll(
     }
 }
 
+/// Disable SimplifyCFG's switch-to-lookup-table transform in `opt`.
+///
+/// The transform replaces a dense switch with a constant data table of its
+/// results. Fine on CPUs, fatal here when the results are shared-memory
+/// pointers (a kernel `match` picking a per-stage buffer): shared addresses
+/// are per-block runtime values, so a compile-time table of them is an
+/// impossible object, and every tool after `opt` handles it badly:
+///
+/// ```text
+/// match stage { 0 => &SMEM_A0, .. }        the failure chain:
+///        │ opt: builds the table            opt   builds it     (trigger)
+///        ▼                                  llc   prints it,
+/// .global .u64 table[4] =                         exit 0        (silence)
+///     { __shared_mem_0, .. }   ← invalid   ptxas / driver JIT
+///     { generic(__shared_mem_0), .. } too        reject: CUDA_ERROR_
+///                                                INVALID_PTX    (too late)
+/// ```
+///
+/// ptxas rejects BOTH encodings with "Variable used as initial value not
+/// in .global or .const state space"; on a real GPU the module dies at JIT
+/// load with error 218.
+///
+/// Why this appeared with LLVM 23, and why the flag is permanent:
+///
+/// - `opt` decides "is the table trick worth it?" from its target GPU. We
+///   pass no `-mcpu`, so the built-in default decides: LLVM 22 assumed
+///   sm_30 (trick off); LLVM 23 assumes sm_75 (trick on) after
+///   llvm/llvm-project PR #176021 (commit 9fc5fd0ad689).
+/// - The bug was always latent, not new: LLVM 22 with an explicit modern
+///   `-mcpu` builds the same bad tables, because upstream's
+///   `validLookupTableConstant` never checks address spaces. So passing a
+///   real `-mcpu` would make things worse, not better.
+/// - This cl::opt is the supported control, accepted identically by every
+///   `opt` we support (LLVM 21+), and it stays even after upstream learns
+///   to reject shared-space table constants: our LLVM floor spans the
+///   broken majors for years. Precedent: NVPTX already disables relative
+///   lookup tables wholesale (llvm/llvm-project#159748).
+///
+/// What we get instead is better anyway: switches keep their branch form
+/// and llc lowers dense ones to `brx.idx` code-label tables, which PTX
+/// encodes fine, and which swap a dependent `.global` data load on the hot
+/// path for a few uniform ALU ops.
+const DISABLE_SWITCH_LOOKUP_TABLES: &str = "-switch-to-lookup=false";
+
+/// Disable llc's late branch folding so loops keep the two-jump layout
+/// ptxas's SASS unroller recognizes.
+///
+/// LLVM 23's NVPTX backend gained `reverseBranchCondition`
+/// (llvm/llvm-project PR #191889, commit d55166c23bf1, follow-up PR
+/// #191890, commit 205f4bf6cc03), which lets BranchFolding and
+/// MachineBlockPlacement collapse the classic loop branch idiom into a
+/// single negated conditional with fallthrough:
+///
+/// ```text
+/// LLVM 22 layout (ptxas unrolls)       LLVM 23 layout (ptxas gives up)
+///
+/// guard:  @%p bra body;    ─┐          guard:  @!%p bra exit;
+///         bra.uni exit;     │ taken            (falls through to body)
+/// body:   ...             ◄─┘          body:   ...
+/// latch:  @%p bra exit;                latch:  @%p bra body;
+///         bra.uni body;   ← continue           (falls through to exit)
+/// exit:                                exit:
+/// ```
+///
+/// Why we turn it off:
+///
+/// - ptxas's SASS loop unroller keys on the taken-target orientation at
+///   both ends of the loop: the guard's conditional taken-target must
+///   enter the preheader/body, and the latch must be "conditional exit +
+///   `bra.uni` continue". The folded negated forms defeat it.
+/// - Upstream enabled the folding with no opt-out (PR #191889), so the
+///   only supported control is disabling the two late machine passes.
+/// - Both flags are generic disable-only cl::opts: they skip layout
+///   transforms and change no semantics, so there is no correctness
+///   surface. llc 21.1.8, 22.1.2, 22.1.7, and 23.1.0 all accept them.
+/// - Measured on gemm_views' sgemm_naive_raw (RTX 5090, live benches,
+///   bit-identical numerics): folded layout drops 38 -> 26 registers and
+///   FFMA 18 -> 4, costing 26% throughput (7218 -> 5708 GFLOPS). With
+///   these flags: 38 registers, 7226 GFLOPS. Full-suite sweep (890
+///   kernels, 197 modules): 45 kernels change registers, every one the
+///   SASS unroller re-enabling (register counts and SASS bodies grow,
+///   e.g. the table-lookup scan loops now fully unroll) or an exact
+///   return to the pre-LLVM-23 baseline; zero unexplained movers, all
+///   affected examples numerically verified on hardware. PTX grows
+///   +2.6% in lines suite-wide, all redundant jumps ptxas discards.
+///
+/// Permanent until ptxas learns to unroll both layouts or upstream adds
+/// an opt-out for the NVPTX folding; an internal NVBug and an LLVM issue
+/// are to be filed to track both ends.
+const DISABLE_BRANCH_FOLD: &str = "-disable-branch-fold";
+
+/// Companion to [`DISABLE_BRANCH_FOLD`]: MachineBlockPlacement performs
+/// the same rotation and tail layout on its own, so both passes must be
+/// off or the folded form comes back.
+const DISABLE_BLOCK_PLACEMENT: &str = "-disable-block-placement";
+
+/// The unconditional head of every `llc` invocation: target selection plus
+/// the branch-layout controls ptxas depends on (see
+/// [`DISABLE_BRANCH_FOLD`]). Kept as a function so the tests can assert
+/// the argument list verbatim.
+fn base_llc_args(target: &str) -> Vec<String> {
+    vec![
+        "-march=nvptx64".to_string(),
+        format!("-mcpu={target}"),
+        DISABLE_BRANCH_FOLD.to_string(),
+        DISABLE_BLOCK_PLACEMENT.to_string(),
+    ]
+}
+
+/// Full-debug modules need PTX ISA 7.5 or newer declared, whatever the
+/// target's own floor is.
+///
+/// llc's DWARF emission writes label-difference expressions into debug
+/// sections:
+///
+/// ```text
+/// .section .debug_pubnames
+/// {
+/// .b32 $L__pubNames_end0-$L__pubNames_start0   ← "labels1 - labels2
+///                                                 expression in .section"
+///                                                 = PTX ISA 7.5 feature
+/// ```
+///
+/// but still declares the target's default `.version` (7.0 at sm_80), so
+/// ptxas rejects the module. Observed with llc-22 (CI's floor pin); llc-23
+/// emits its debug sections differently and dodges it. There is no 7.5
+/// requirement spelling in the supported set, so raise to the nearest one,
+/// 7.8; [`required_ptx_feature`] already refuses to downgrade targets whose
+/// floor is at or above it. Caught by the all-examples compile-only ptxas
+/// gate; line-tables debug emits no such expressions and stays untouched.
+fn ptx_isa_with_debug_floor(
+    requirement: PtxIsaRequirement,
+    debug_kind: DebugKind,
+) -> PtxIsaRequirement {
+    if debug_kind.variables_enabled() {
+        requirement.max(PtxIsaRequirement::Ptx78)
+    } else {
+        requirement
+    }
+}
+
 /// Build the middle-end arguments for a self-contained PTX module.
 ///
 /// The LLVM exporter returns the module's externally consumed definitions as
@@ -206,7 +347,10 @@ fn optimize_ll(
 /// unreachable `.visible .func` body.
 fn optimization_args(public_symbols: &[String]) -> Result<Vec<String>, PipelineError> {
     if public_symbols.is_empty() {
-        return Ok(vec!["-O2".to_string()]);
+        return Ok(vec![
+            "-O2".to_string(),
+            DISABLE_SWITCH_LOOKUP_TABLES.to_string(),
+        ]);
     }
 
     if let Some(symbol) = public_symbols.iter().find(|symbol| symbol.contains(',')) {
@@ -218,6 +362,7 @@ fn optimization_args(public_symbols: &[String]) -> Result<Vec<String>, PipelineE
     Ok(vec![
         "-passes=internalize,default<O2>".to_string(),
         format!("-internalize-public-api-list={}", public_symbols.join(",")),
+        DISABLE_SWITCH_LOOKUP_TABLES.to_string(),
     ])
 }
 
@@ -279,7 +424,7 @@ pub fn generate_ptx(
         return Err(PipelineError::PtxGeneration(
             "No working llc found.\n\
              cuda-oxide tries (in order): opts.llc_override (CUDA_OXIDE_LLC), the \
-             Rust toolchain's llvm-tools llc, then llc-22 / llc-21 on PATH. \
+             Rust toolchain's llvm-tools llc, then llc-23 / llc-22 / llc-21 on PATH. \
              LLVM 21+ is required (earlier versions reject the TMA / tcgen05 / \
              WGMMA intrinsic signatures we emit).\n\
              Easiest fix: `rustup component add llvm-tools` (auto-picked up).\n\
@@ -528,10 +673,13 @@ fn generate_ptx_impl(
     }
 
     let mut llc_cmd = std::process::Command::new(&toolchain.llc_path);
-    llc_cmd
-        .arg("-march=nvptx64")
-        .arg(format!("-mcpu={}", target));
-    if let Some(feature) = required_ptx_feature(&target, requirements.ptx_isa) {
+    llc_cmd.args(base_llc_args(&target));
+    if let Some(feature) = required_ptx_feature(
+        &target,
+        ptx_isa_with_debug_floor(requirements.ptx_isa, debug_kind),
+    )
+    .map_err(PipelineError::PtxGeneration)?
+    {
         llc_cmd.arg(format!("-mattr={feature}"));
     }
     // Full-debug (`-G`-style): run llc at -O0 so its own mem2reg/SROA does not
@@ -573,6 +721,8 @@ fn generate_ptx_impl(
 
     match result {
         Ok(output) if output.status.success() => {
+            verify_no_shared_symbols_in_initializers(module.output)?;
+            verify_no_leaked_intrinsic_externs(module.output)?;
             if matches!(debug_kind, DebugKind::LineTables) {
                 strip_target_debug_from_ptx(module.output)?;
                 if opts.verbose {
@@ -621,6 +771,196 @@ fn record_diagnostic(diagnostics: &mut Vec<String>, sink: Option<fn(&str)>, diag
         sink(&diagnostic);
     }
     diagnostics.push(diagnostic);
+}
+
+/// Build-time diagnostic: reject PTX whose `.global`/`.const` initializers
+/// reference `.shared` symbols.
+///
+/// The safety net behind [`DISABLE_SWITCH_LOOKUP_TABLES`]. That flag turns
+/// off the one KNOWN producer of this impossible object; this scan catches
+/// any future producer, whichever pass invents it:
+///
+/// ```text
+/// llc: prints the bad initializer, exit 0, says nothing
+///        │
+///        ▼ this scan (microseconds, right after llc)
+/// .global .u64 t[4] = { __shared_mem_0, .. }   → BUILD FAILS, offending
+///                     { generic(...), .. }       line printed, instead of
+///                                                CUDA_ERROR_INVALID_PTX
+///                                                at JIT load on a real GPU
+/// ```
+///
+/// ptxas rejects both encodings ("Variable used as initial value not in
+/// .global or .const state space"); a shared address is a per-block runtime
+/// value and can never sit in a data-space initializer.
+fn verify_no_shared_symbols_in_initializers(ptx_path: &Path) -> Result<(), PipelineError> {
+    let ptx = std::fs::read_to_string(ptx_path).map_err(|e| {
+        PipelineError::PtxGeneration(format!(
+            "failed to read PTX for shared-initializer verification ({}): {e}",
+            ptx_path.display()
+        ))
+    })?;
+    if let Err(message) = scan_for_shared_symbols_in_initializers(&ptx) {
+        return Err(PipelineError::PtxGeneration(format!(
+            "{} contains a .global/.const initializer referencing a .shared symbol; \
+             ptxas rejects this (\"Variable used as initial value not in .global or \
+             .const state space\") and driver JIT fails with CUDA_ERROR_INVALID_PTX:\n\
+             {message}\n\
+             This is a compiler bug: an optimization materialized shared-memory \
+             addresses into a data-space initializer.",
+            ptx_path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Pure scan half of [`verify_no_shared_symbols_in_initializers`]: returns
+/// the offending line on failure.
+fn scan_for_shared_symbols_in_initializers(ptx: &str) -> Result<(), String> {
+    // Pass 1: collect the names of `.shared`-space variables. Declarations
+    // look like `.shared .align 16 .b8 __shared_mem_0[16384];`, optionally
+    // with a linking directive (`.visible`, `.extern`, `.weak`, ...) first.
+    let shared_symbols: Vec<&str> = ptx
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let decl = trimmed
+                .strip_prefix(".visible ")
+                .or_else(|| trimmed.strip_prefix(".extern "))
+                .or_else(|| trimmed.strip_prefix(".weak "))
+                .or_else(|| trimmed.strip_prefix(".common "))
+                .unwrap_or(trimmed);
+            if !decl.starts_with(".shared") {
+                return None;
+            }
+            // The symbol is the last identifier before `[`, `;`, or `=`.
+            let name_part = decl.split(['[', ';', '=']).next()?;
+            let name = name_part.split_whitespace().next_back()?;
+            (!name.starts_with('.')).then_some(name)
+        })
+        .collect();
+    if shared_symbols.is_empty() {
+        return Ok(());
+    }
+
+    // Pass 2: any initialized `.global`/`.const` declaration whose
+    // initializer mentions a shared symbol (as a whole identifier) is
+    // unassemblable, whether bare or wrapped in `generic(...)`.
+    for line in ptx.lines() {
+        let trimmed = line.trim_start();
+        let decl = trimmed
+            .strip_prefix(".visible ")
+            .or_else(|| trimmed.strip_prefix(".extern "))
+            .or_else(|| trimmed.strip_prefix(".weak "))
+            .unwrap_or(trimmed);
+        if !(decl.starts_with(".global") || decl.starts_with(".const")) {
+            continue;
+        }
+        let Some((_, initializer)) = decl.split_once('=') else {
+            continue;
+        };
+        for symbol in &shared_symbols {
+            if contains_ptx_identifier(initializer, symbol) {
+                return Err(format!("  {}", line.trim()));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build-time diagnostic: reject PTX where llc leaked an unsupported LLVM
+/// intrinsic as an extern function declaration.
+///
+/// An llc that predates an intrinsic does not error on it. It "lowers" the
+/// call by inventing an extern function with the LLVM-internal name:
+///
+/// ```text
+/// our IR:  call @llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3(...)
+///            │ llc too old to know stmatrix: exit 0, says nothing
+///            ▼
+/// PTX:  .extern .func llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3
+///                      ▲
+///        dots are not legal in PTX identifiers → ptxas: "Parsing error
+///        near '.nvvm'" (or driver JIT CUDA_ERROR_INVALID_PTX at runtime)
+/// ```
+///
+/// This scan names the intrinsic and the real remedy (a newer llc /
+/// `CUDA_OXIDE_LLC`) instead of letting a cryptic assembler parse error or
+/// a runtime JIT failure stand in for "your llc is too old". Found the
+/// hard way: CI's llc floor pin predated `llvm.nvvm.stmatrix.*` (needs
+/// llc-22+) and shipped unassemblable tcgen05 PTX for as long as nothing
+/// assembled it.
+fn verify_no_leaked_intrinsic_externs(ptx_path: &Path) -> Result<(), PipelineError> {
+    let ptx = std::fs::read_to_string(ptx_path).map_err(|e| {
+        PipelineError::PtxGeneration(format!(
+            "failed to read PTX for leaked-intrinsic verification ({}): {e}",
+            ptx_path.display()
+        ))
+    })?;
+    if let Err(symbol) = scan_for_leaked_intrinsic_externs(&ptx) {
+        return Err(PipelineError::PtxGeneration(format!(
+            "{} declares `.extern .func {symbol}`: llc did not recognize this \
+             LLVM intrinsic and leaked its dotted internal name into the PTX, \
+             which ptxas cannot parse (PTX identifiers cannot contain '.'). \
+             The llc in use is too old for this intrinsic; use a newer llc \
+             (set CUDA_OXIDE_LLC or install a newer LLVM).",
+            ptx_path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Pure scan half of [`verify_no_leaked_intrinsic_externs`]: returns the
+/// offending symbol on failure.
+///
+/// A leaked intrinsic shows up as `.extern .func <name>` (optionally with a
+/// parenthesized return-param group before the name) where `<name>` contains
+/// a `.`. Dots are impossible in identifiers the exporter emits, so any hit
+/// is an llc-side leak, not user code.
+fn scan_for_leaked_intrinsic_externs(ptx: &str) -> Result<(), String> {
+    for line in ptx.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix(".extern") else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix(".func") else {
+            continue;
+        };
+        // Skip an optional `(.param ...)` return group before the name.
+        let mut rest = rest.trim_start();
+        if rest.starts_with('(') {
+            let Some(close) = rest.find(')') else {
+                continue;
+            };
+            rest = rest[close + 1..].trim_start();
+        }
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '$' | '.'))
+            .collect();
+        if name.contains('.') {
+            return Err(name);
+        }
+    }
+    Ok(())
+}
+
+/// Whole-identifier containment for PTX symbols (`__shared_mem_1` must not
+/// match inside `__shared_mem_10`). PTX identifiers use `[A-Za-z0-9_$]`.
+fn contains_ptx_identifier(haystack: &str, symbol: &str) -> bool {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(symbol) {
+        let begin = start + pos;
+        let end = begin + symbol.len();
+        let before_ok = begin == 0 || !haystack[..begin].chars().next_back().is_some_and(is_ident);
+        let after_ok = !haystack[end..].chars().next().is_some_and(is_ident);
+        if before_ok && after_ok {
+            return true;
+        }
+        start = begin + 1;
+    }
+    false
 }
 
 fn strip_target_debug_from_ptx(ptx_path: &Path) -> Result<(), PipelineError> {
@@ -744,13 +1084,80 @@ mod tests {
             [
                 "-passes=internalize,default<O2>",
                 "-internalize-public-api-list=constant_data,first_kernel",
+                "-switch-to-lookup=false",
             ]
         );
     }
 
     #[test]
     fn modules_without_public_roots_keep_the_existing_optimization_pipeline() {
-        assert_eq!(optimization_args(&[]).unwrap(), ["-O2"]);
+        assert_eq!(
+            optimization_args(&[]).unwrap(),
+            ["-O2", "-switch-to-lookup=false"]
+        );
+    }
+
+    /// Full-debug DWARF uses label-difference expressions (a PTX ISA 7.5
+    /// feature), so the requirement floor rises to the nearest supported
+    /// spelling, 7.8; targets already at or above it are untouched, and
+    /// line-tables/off never raise (see [`ptx_isa_with_debug_floor`]).
+    #[test]
+    fn full_debug_raises_the_ptx_isa_floor_only_when_below() {
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full),
+            PtxIsaRequirement::Ptx78
+        );
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Ptx70, DebugKind::Full),
+            PtxIsaRequirement::Ptx78
+        );
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Ptx86, DebugKind::Full),
+            PtxIsaRequirement::Ptx86
+        );
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::LineTables),
+            PtxIsaRequirement::Default
+        );
+        assert_eq!(
+            ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Off),
+            PtxIsaRequirement::Default
+        );
+        // End to end: at sm_80 (floor 7.0) the raised requirement emits the
+        // feature; at sm_90a (floor 8.0) it is already satisfied.
+        assert_eq!(
+            required_ptx_feature(
+                "sm_80",
+                ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full)
+            )
+            .unwrap(),
+            Some("+ptx78")
+        );
+        assert_eq!(
+            required_ptx_feature(
+                "sm_90a",
+                ptx_isa_with_debug_floor(PtxIsaRequirement::Default, DebugKind::Full)
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    /// Every llc invocation must carry the branch-layout controls: without
+    /// them LLVM 23's BranchFolding/MachineBlockPlacement rewrite loop
+    /// branches into a form ptxas's SASS unroller does not recognize (see
+    /// [`DISABLE_BRANCH_FOLD`]).
+    #[test]
+    fn llc_base_args_keep_the_ptxas_friendly_branch_layout() {
+        assert_eq!(
+            base_llc_args("sm_90"),
+            [
+                "-march=nvptx64",
+                "-mcpu=sm_90",
+                "-disable-branch-fold",
+                "-disable-block-placement",
+            ]
+        );
     }
 
     #[test]
@@ -773,9 +1180,87 @@ mod tests {
         );
         assert_eq!(merged.ptx_isa, PtxIsaRequirement::Ptx73);
         assert_eq!(
-            required_ptx_feature("sm_80", merged.ptx_isa),
+            required_ptx_feature("sm_80", merged.ptx_isa).unwrap(),
             Some("+ptx73")
         );
+    }
+
+    /// The post-llc scan must catch every encoding of a `.shared` symbol in
+    /// a data-space initializer (ptxas rejects bare and `generic()` alike)
+    /// while staying quiet on legal PTX, including integer switch tables and
+    /// shared symbols whose names prefix one another.
+    #[test]
+    fn shared_symbols_in_data_initializers_are_detected() {
+        // Legal: plain shared declarations, integer lookup tables, and
+        // global-to-global initializers.
+        let clean = "\
+.visible .global .align 8 .u64 table[4] = {1, 2, 3, 4};
+.shared .align 16 .b8 __shared_mem_0[16384];
+.visible .entry k()
+{
+\t.shared .align 8 .b8 local_buf[64];
+\tst.shared.u32 [%rd1], %r2;
+}
+.global .align 8 .u64 ptr_table[1] = {generic(some_global)};
+.global .align 4 .b8 some_global[4];
+";
+        assert!(scan_for_shared_symbols_in_initializers(clean).is_ok());
+
+        // Bare reference: the exact shape LLVM 23's switch lookup tables
+        // produced (`.global .u64 switch_$_table[4] = {__shared_mem_0, ...}`).
+        let bare = "\
+.shared .align 16 .b8 __shared_mem_0[16384];
+.global .align 8 .u64 switch_$_table_$_kernel[4] = {__shared_mem_0, __shared_mem_0, __shared_mem_0, __shared_mem_0};
+";
+        let error = scan_for_shared_symbols_in_initializers(bare).unwrap_err();
+        assert!(error.contains("switch_$_table_$_kernel"));
+
+        // generic()-wrapped references are equally unassemblable.
+        let wrapped = "\
+.shared .align 16 .b8 stage_buf[64];
+.visible .global .align 8 .u64 t[1] = {generic(stage_buf)};
+";
+        assert!(scan_for_shared_symbols_in_initializers(wrapped).is_err());
+
+        // .const initializers follow the same ptxas rule as .global.
+        let const_space = "\
+.shared .align 8 .b8 s[8];
+.const .align 8 .u64 c[1] = {s};
+";
+        assert!(scan_for_shared_symbols_in_initializers(const_space).is_err());
+
+        // Identifier boundaries: shared `__shared_mem_1` must not flag an
+        // initializer that references the (global) `__shared_mem_10`.
+        let prefixed = "\
+.shared .align 8 .b8 __shared_mem_1[8];
+.global .align 8 .b8 __shared_mem_10[8];
+.global .align 8 .u64 t[1] = {__shared_mem_10};
+";
+        assert!(scan_for_shared_symbols_in_initializers(prefixed).is_ok());
+    }
+
+    #[test]
+    fn leaked_intrinsic_extern_is_rejected_with_its_name() {
+        // Exactly what llc-21 emits for an intrinsic it predates (observed
+        // for llvm.nvvm.stmatrix.* in gemm_sol under the CI floor pin).
+        let leaked = ".version 8.6\n.target sm_100a\n\
+             .extern .func llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3\n\
+             (\n\t.param .b64 p0\n)\n;\n";
+        let symbol = scan_for_leaked_intrinsic_externs(leaked).unwrap_err();
+        assert_eq!(symbol, "llvm.nvvm.stmatrix.sync.aligned.m8n8.x2.b16.p3");
+
+        // Return-param group before the name is skipped, name still found.
+        let with_ret = ".extern .func (.param .b32 ret) llvm.nvvm.foo.bar (\n";
+        assert_eq!(
+            scan_for_leaked_intrinsic_externs(with_ret).unwrap_err(),
+            "llvm.nvvm.foo.bar"
+        );
+
+        // Legitimate dotless externs (vprintf, malloc-style) stay accepted.
+        let legit = ".extern .func (.param .b32 ret) vprintf (\n\
+             .param .b64 fmt,\n.param .b64 args\n);\n\
+             .extern .func my_device_helper();\n";
+        assert!(scan_for_leaked_intrinsic_externs(legit).is_ok());
     }
 
     #[test]
@@ -1066,6 +1551,128 @@ mod tests {
             "linked PTX for a one-call kernel should be O(100) lines, got {}",
             ptx.lines().count()
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Regression test for switch-to-lookup-table suppression: a switch whose
+    /// phi results are per-stage `.shared` buffer pointers (the multi-stage
+    /// pipeline pattern in the tcgen05 GEMM examples) must not become a
+    /// `.global` data table. LLVM 23's `opt` builds `[N x ptr addrspace(3)]`
+    /// tables for it, and llc prints the entries as bare `.shared` symbols in
+    /// a `.global` initializer, which ptxas rejects ("Variable used as
+    /// initial value not in .global or .const state space") and driver JIT
+    /// fails with CUDA_ERROR_INVALID_PTX.
+    #[test]
+    fn switch_over_shared_pointers_does_not_become_a_global_lookup_table() {
+        let opts = BackendOptions {
+            target_arch: Some("sm_80".to_string()),
+            ..BackendOptions::default()
+        };
+        let Some(toolchain) = LlvmToolchain::resolve(&opts) else {
+            return;
+        };
+        if toolchain.opt.is_none() {
+            return;
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_shared_switch_{}_{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let ll_path = root.join("kernel.ll");
+        let ptx_path = root.join("kernel.ptx");
+        // A 4-way stage switch selecting both a `.shared`-space pointer and
+        // its generic (addrspacecast) counterpart, mirroring how mbarrier
+        // (shared-space) and TMA destination (generic) pointers reach the
+        // merge block in the real pipelines.
+        std::fs::write(
+            &ll_path,
+            "target datalayout = \"e-i64:64-i128:128-v16:16-v32:32-n16:32:64\"\n\
+             target triple = \"nvptx64-nvidia-cuda\"\n\
+             \n\
+             @stage0 = addrspace(3) global [64 x i8] zeroinitializer, align 8\n\
+             @stage1 = addrspace(3) global [64 x i8] zeroinitializer, align 8\n\
+             @stage2 = addrspace(3) global [64 x i8] zeroinitializer, align 8\n\
+             @stage3 = addrspace(3) global [64 x i8] zeroinitializer, align 8\n\
+             \n\
+             define ptx_kernel void @kernel(ptr %out, i32 %x) {\n\
+             entry:\n\
+               %s = and i32 %x, 3\n\
+               switch i32 %s, label %unreach [\n\
+                 i32 0, label %c0\n\
+                 i32 1, label %c1\n\
+                 i32 2, label %c2\n\
+                 i32 3, label %merge\n\
+               ]\n\
+             unreach:\n\
+               unreachable\n\
+             c0:\n\
+               br label %merge\n\
+             c1:\n\
+               br label %merge\n\
+             c2:\n\
+               br label %merge\n\
+             merge:\n\
+               %shared = phi ptr addrspace(3) [ @stage0, %c0 ], [ @stage1, %c1 ], \
+                 [ @stage2, %c2 ], [ @stage3, %entry ]\n\
+               %generic = phi ptr [ addrspacecast (ptr addrspace(3) @stage0 to ptr), %c0 ], \
+                 [ addrspacecast (ptr addrspace(3) @stage1 to ptr), %c1 ], \
+                 [ addrspacecast (ptr addrspace(3) @stage2 to ptr), %c2 ], \
+                 [ addrspacecast (ptr addrspace(3) @stage3 to ptr), %entry ]\n\
+               %v1 = load i32, ptr addrspace(3) %shared, align 4\n\
+               %v2 = load i32, ptr %generic, align 4\n\
+               %sum = add i32 %v1, %v2\n\
+               store i32 %sum, ptr %out, align 4\n\
+               ret void\n\
+             }\n",
+        )
+        .unwrap();
+
+        generate_ptx_with_toolchain(
+            PtxModule {
+                llvm_ir: &ll_path,
+                output: &ptx_path,
+                public_symbols: &[
+                    "kernel".to_string(),
+                    "stage0".to_string(),
+                    "stage1".to_string(),
+                    "stage2".to_string(),
+                    "stage3".to_string(),
+                ],
+            },
+            DebugKind::Off,
+            &opts,
+            &toolchain,
+            &GeneratedModuleRequirements::default(),
+            None,
+        )
+        .unwrap();
+
+        let ptx = std::fs::read_to_string(&ptx_path).unwrap();
+        // Mechanism: with `-switch-to-lookup=false` no data table forms.
+        assert!(
+            !ptx.contains("switch_$_table"),
+            "opt built a switch lookup table despite -switch-to-lookup=false:\n{ptx}"
+        );
+        // Property: no initializer may reference a `.shared` symbol at all.
+        // ptxas rejects both the bare `= {sym}` and the wrapped
+        // `= {generic(sym)}` forms ("Variable used as initial value not in
+        // .global or .const state space").
+        for line in ptx.lines() {
+            if let Some((_, init)) = line.split_once("= {") {
+                for stage in ["stage0", "stage1", "stage2", "stage3"] {
+                    assert!(
+                        !init.contains(stage),
+                        ".shared symbol in a .global initializer (invalid PTX): {line}"
+                    );
+                }
+            }
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 

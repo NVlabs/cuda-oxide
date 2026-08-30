@@ -408,9 +408,9 @@ fn generated_requirement_error(
 mod tests {
     use super::*;
     use crate::generated_intrinsic_targets::{
-        GENERATED_INTRINSIC_MARKER_ATTR, GENERATED_INTRINSIC_TARGETS, GeneratedHardwareAlternative,
-        GeneratedHardwareTarget, GeneratedPtxVersion, GeneratedTargetAlternative,
-        GeneratedTcgen05MmaForm,
+        GENERATED_INTRINSIC_MARKER_ATTR, GeneratedHardwareAlternative, GeneratedHardwareTarget,
+        GeneratedPtxVersion, GeneratedTargetAlternative, GeneratedTcgen05MmaForm,
+        generated_intrinsic_targets,
     };
     use dialect_nvvm::ops::{
         ScalarConversionOp, ScalarConversionRoundingAttr, ScalarConversionSaturationAttr,
@@ -2113,8 +2113,7 @@ mod tests {
 
     #[test]
     fn tcgen05_mma_kind_contracts_are_retained_per_marker_and_kind() {
-        let target = GENERATED_INTRINSIC_TARGETS
-            .iter()
+        let target = generated_intrinsic_targets()
             .find(|target| target.id == "tcgen05_mma_shared")
             .expect("generated tcgen05 shared MMA target");
         assert_eq!(target.marker, "v1:i0763");

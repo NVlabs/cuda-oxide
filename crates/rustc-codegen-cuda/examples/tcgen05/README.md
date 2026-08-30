@@ -1,6 +1,6 @@
 # tcgen05
 
-## tcgen05 - Blackwell (sm_100+) 5th Gen Tensor Cores
+## tcgen05 - Datacenter Blackwell (sm_100a) 5th Gen Tensor Cores
 
 Tests tcgen05 (Tensor Core Gen 5) infrastructure for Blackwell GPUs. This is the next generation of tensor core instructions, replacing Hopper's WGMMA.
 
@@ -117,8 +117,6 @@ cargo oxide run tcgen05
 === Unified tcgen05 Example ===
 
 GPU Compute Capability: sm_100
-
-Loading PTX from: tcgen05.ptx
 ✓ PTX loaded successfully
 
 --- Test: tcgen05 Fence Primitives ---
@@ -152,15 +150,15 @@ TMEM address: 0x00000000
 
 ## Hardware Requirements
 
-- **Required GPU**: Blackwell B100, B200 or newer (sm_100/sm_120)
-- **NOT supported**: Hopper (sm_90 — uses WGMMA), Ada (sm_89)
+- **Required GPU**: Blackwell datacenter B100, B200 or newer (sm_100a)
+- **NOT supported**: Hopper (sm_90, uses WGMMA), Ada (sm_89), Consumer Blackwell (sm_120)
 - **CUDA Driver**: 12.x with Blackwell support
 
 ## tcgen05 vs WGMMA (Hopper)
 
-| Feature              | WGMMA (Hopper)       | tcgen05 (Blackwell)       |
+| Feature              | WGMMA (Hopper)       | tcgen05 (Blackwell DC)    |
 |----------------------|----------------------|---------------------------|
-| Architecture         | sm_90                | sm_100/sm_120             |
+| Architecture         | sm_90                | sm_100a                   |
 | Accumulator storage  | Register file        | TMEM (separate memory)    |
 | Accumulator capacity | Limited by registers | Larger (TMEM)             |
 | Issue model          | 128-thread warpgroup | Single thread             |

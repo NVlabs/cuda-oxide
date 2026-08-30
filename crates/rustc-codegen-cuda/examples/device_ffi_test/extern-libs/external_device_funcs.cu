@@ -53,6 +53,22 @@ extern "C" __device__ float simple_add(float a, float b) {
 }
 
 /**
+ * Uppercase one Unicode scalar value in the ASCII range.
+ *
+ * Rust `char` lowers to the same plain 32-bit slot as `unsigned int`. Keep the
+ * result in Rust's Unicode scalar range: an out-of-range value would violate
+ * the Rust caller's validity contract.
+ */
+extern "C" __device__ unsigned int char_to_upper(unsigned int c) {
+    return (c >= 'a' && c <= 'z') ? c - 32u : c;
+}
+
+/** Store one valid Unicode scalar through the pointer form of the same ABI. */
+extern "C" __device__ void char_store(unsigned int *output, unsigned int c) {
+    *output = c;
+}
+
+/**
  * Clamp a value to a range.
  * Pure function - no memory access.
  */

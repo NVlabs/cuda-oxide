@@ -2,10 +2,10 @@ error[E0716]: temporary value dropped while borrowed
   --> tests/compile_fail/thread_index_shared_borrow_laundering.rs:11:1
    |
 11 | #[device]
-   | ^^^^^^^^^
-   | |
-   | creates a temporary value which is freed while still in use
-   | assignment requires that borrow lasts for `'static`
+   | ^^^^^^^^^ creates a temporary value which is freed while still in use
+...
+14 |         COURIER[0] = cuda_device::thread::index_1d();
+   |         -------------------------------------------- assignment requires that borrow lasts for `'static`
 ...
 17 | }
    | - temporary value is freed at the end of this statement
