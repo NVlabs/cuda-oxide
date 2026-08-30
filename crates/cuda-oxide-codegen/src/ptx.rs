@@ -273,9 +273,13 @@ const DISABLE_SWITCH_LOOKUP_TABLES: &str = "-switch-to-lookup=false";
 /// - Measured on gemm_views' sgemm_naive_raw (RTX 5090, live benches,
 ///   bit-identical numerics): folded layout drops 38 -> 26 registers and
 ///   FFMA 18 -> 4, costing 26% throughput (7218 -> 5708 GFLOPS). With
-///   these flags: 38 registers, 7226 GFLOPS. Zero register movement on
-///   the 16 other kernels across 6 examples; PTX grows 1-6% in lines,
-///   all redundant jumps ptxas discards.
+///   these flags: 38 registers, 7226 GFLOPS. Full-suite sweep (890
+///   kernels, 197 modules): 45 kernels change registers, every one the
+///   SASS unroller re-enabling (register counts and SASS bodies grow,
+///   e.g. the table-lookup scan loops now fully unroll) or an exact
+///   return to the pre-LLVM-23 baseline; zero unexplained movers, all
+///   affected examples numerically verified on hardware. PTX grows
+///   +2.6% in lines suite-wide, all redundant jumps ptxas discards.
 ///
 /// Permanent until ptxas learns to unroll both layouts or upstream adds
 /// an opt-out for the NVPTX folding; an internal NVBug and an LLVM issue
