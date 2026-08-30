@@ -128,7 +128,7 @@ test-cuda:
 # Run the generated-intrinsics CI job (catalog, PTX routes, ABI ledger)
 check-intrinsics base_ref="HEAD^":
     cargo run -p cuda-intrinsics-gen -- check
-    cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal
+    cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal --per-target
     cargo run -p cuda-intrinsics-gen -- check-abi-history --base-ref {{base_ref}}
 
 # Build docs warning-free + run doctests (mirrors the docs CI gate). The `test`
