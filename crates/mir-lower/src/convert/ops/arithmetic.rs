@@ -863,7 +863,8 @@ fn emit_discriminant_const(
     Ok(const_op.deref(ctx).get_result(0))
 }
 
-// Conversion coverage: `tests/lowering_test.rs::test_cmp_predicate_lowering`
+// Conversion coverage: `test_cmp_predicate_lowering` in
+// `tests/lowering_test/calls_and_values.rs`
 // locks the comparison predicate table end-to-end; the two unit tests in
 // this module lock the contract-only fast-math flag on float arithmetic.
 

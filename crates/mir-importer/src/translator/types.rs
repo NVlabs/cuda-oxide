@@ -393,7 +393,7 @@ fn translate_pointer_like(
             // (ptr, len), `PtrMetadata` extraction, fat-value copies) all
             // applies unchanged. Field access through the fat pointer
             // extracts the data pointer (the struct's address) first; see
-            // the place-address walker in `rvalue.rs`.
+            // the place-address walker in `rvalue/place_addr.rs`.
             let struct_model = translate_type(ctx, pointee)?;
             Ok(facts::mint_slice_type(ctx, struct_model, origin).into())
         }

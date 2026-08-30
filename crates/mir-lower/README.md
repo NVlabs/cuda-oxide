@@ -98,10 +98,10 @@ For each `MirFuncOp`, `convert_func` (in `lowering.rs`):
 
 ### GPU Intrinsic Converters (`convert/intrinsics/`)
 
-Anything `intrinsics/catalog.json` describes is lowered by
-`convert/generated_intrinsics.rs` -- one level up, beside `intrinsics/`, not
-inside it. The modules below are the hand-written converters that sit next to
-it, one row per file:
+Anything `intrinsics/catalog.json` describes is lowered by the generated
+`convert/generated_intrinsics/` module (one file per intrinsic family) --
+one level up, beside `intrinsics/`, not inside it. The modules below are
+the hand-written converters that sit next to it, one row per file:
 
 | Module                   | Purpose (from each module's own doc comment)                              |
 |--------------------------|--------------------------------------------------------------------------|

@@ -133,7 +133,7 @@ runtime `Index`.
 Before this fix, the `Rvalue::Ref` arm had five cases. Case 2
 (`[Deref, Field, …]`) emitted a `MirFieldAddrOp` for the first field, then
 walked the remaining projections in an inner loop that only handled further
-`Field`s — every other variant hit `_ => break`. After the loop, the function
+`Field`s; every other variant hit `_ => break`. After the loop, the function
 unconditionally returned the partial field address, **silently discarding**
 any tail projections, including a runtime `Index`.
 
