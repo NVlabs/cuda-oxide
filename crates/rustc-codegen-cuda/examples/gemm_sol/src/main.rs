@@ -64,7 +64,7 @@ use cuda_device::tma::{
 };
 use cuda_device::{DisjointSlice, cluster_launch, kernel, thread, warp};
 use cuda_host::cuda_module;
-use half::f16;
+use half::{bf16, f16};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
@@ -3393,9 +3393,11 @@ mod kernels {
     ///   MMA barriers still use normal multicast (tcgen05_commit_multicast_cg2 with
     ///   CTA_MASK_PAIR=0b11), so both CTAs receive MMA completion signals.
     ///
-    /// CLC work-stealing: rank 0 issues clc_try_cancel_multicast; both CTAs receive the
-    /// response via CLC_BAR. Tile indices are derived by dividing the CLC first_ctaid_x
-    /// by the cluster size (2), NOT using raw CTA IDs.
+    /// CLC work-stealing: both CTAs arm their local CLC_BAR and arrive at the leader's
+    /// CLC_READY; rank 0 waits for the pair, then issues clc_try_cancel_multicast so both
+    /// CTAs receive the response via CLC_BAR. Lane 0 in each CTA decodes the response and
+    /// warp-broadcasts the result. Tile indices are derived by dividing the CLC
+    /// first_ctaid_x by the cluster size (2), NOT using raw CTA IDs.
     ///
     /// # Shape contract
     ///
@@ -3443,10 +3445,27 @@ mod kernels {
             static mut TILE_READY: Barrier = Barrier::UNINIT;
             // The producer must not overwrite TILE_INFO until every reader warp
             // has copied the current tile coordinates/has_work flag.
+            //
+            // CTA-LOCALITY INVARIANT: TILE_INFO / TILE_READY / TILE_INFO_FREE
+            // are accessed only by warps of the owning CTA -- never via
+            // cluster::map_shared_rank/mapa and never by the TMA/async proxy.
+            // Both CTAs of the pair compute tile metadata independently from
+            // the multicast CLC response, each into its own mailbox, so the
+            // CTA-scope mbarrier_arrive/mbarrier_try_wait_parity handshake is
+            // sufficient. The init count of 5 is the CTA-local reader set:
+            // epilogue warps 0-3 plus the MMA warp's tile-top ack, none gated
+            // by elect_one_cta (gating the MMA ack would leave the follower
+            // CTA one arrival short and deadlock its producer). If any access
+            // ever becomes cross-CTA (e.g. a leader-only publish shared via
+            // map_shared_rank, or TILE_INFO delivered by multicast), the acks
+            // must become mbarrier_arrive_cluster, the producer wait
+            // mbarrier_try_wait_parity_cluster, and
+            // fence_mbarrier_init_release_cluster must follow mbarrier_init.
             static mut TILE_INFO_FREE: Barrier = Barrier::UNINIT;
 
             static mut CLC_RESPONSE: SharedArray<u64, 2, 16> = SharedArray::UNINIT;
             static mut CLC_BAR: Barrier = Barrier::UNINIT;
+            static mut CLC_READY: Barrier = Barrier::UNINIT;
 
             const A_TILE_BYTES: u32 = 128 * 64 * 2;
             const B_TILE_BYTES: u32 = 64 * 64 * 2; // 64 B rows per CTA (split by rank)
@@ -3458,6 +3477,7 @@ mod kernels {
             const MMA_WARP: u32 = 5;
             const NUM_ACCUM_STAGES: u32 = 2;
             const ACCUM_STAGE_COLS: u32 = 128;
+            const CLUSTER_SIZE: u32 = 2;
             const CTA_MASK_PAIR: u16 = 0b11;
             // Clears bit 24 (CTA rank within pair) + alignment bits 2:0 of a shared
             // memory barrier address, redirecting TMA completions to the leader CTA's
@@ -3495,6 +3515,11 @@ mod kernels {
                 // lanes have copied the mailbox before the producer reuses it.
                 mbarrier_init(&raw mut TILE_INFO_FREE, 5);
                 mbarrier_init(&raw mut CLC_BAR, 1);
+                mbarrier_init(&raw mut CLC_READY, CLUSTER_SIZE);
+                // The follower's lane 0 arrives at the leader's CLC_READY via a
+                // map_shared_rank address, so remote arrivals must be able to
+                // observe the initialized barrier state.
+                fence_mbarrier_init_release_cluster();
                 fence_proxy_async_shared_cta();
             }
             thread::sync_threads();
@@ -3669,21 +3694,52 @@ mod kernels {
                 }
                 tile_seq += 1;
 
+                // map_shared_rank translates a local SMEM pointer to the address in
+                // the leader's shared memory, for use with mbarrier_arrive_cluster
+                // (cross-CTA barrier arrive).
+                let leader_clc_ready_addr = cvta_generic_to_shared_offset(
+                    cluster::map_shared_rank(&raw const CLC_READY, 0) as *const u8,
+                );
+
                 let resp_ptr = &raw mut CLC_RESPONSE as *mut u64;
                 loop {
                     let clc_parity = clc_iter & 1;
 
+                    // Arm every CTA-local completion barrier before the leader can
+                    // multicast the next response. CLC_READY also proves that both
+                    // CTAs are still alive and have released their prior read.
+                    //
+                    // CLC writes the response through the async proxy. Keep all
+                    // response access in lane 0, then broadcast registers to the
+                    // warp so no lane can observe stale shared memory.
+                    let mut is_canceled = 0u32;
+                    let mut first_stolen = 0u32;
                     if is_lane0 {
-                        mbarrier_arrive_expect_tx(&raw const CLC_BAR, 1, 16);
+                        mbarrier_arrive_expect_tx_cluster(&raw const CLC_BAR, 1, 16);
+                        mbarrier_arrive_cluster(leader_clc_ready_addr);
+
                         if elect_one_cta {
+                            while !mbarrier_try_wait_parity_cluster(
+                                &raw const CLC_READY,
+                                clc_parity,
+                            ) {}
+                            fence_proxy_async_generic_acquire_shared_cluster_cluster();
                             clc_try_cancel_multicast(resp_ptr as *mut u8, &raw mut CLC_BAR);
                         }
-                    }
-                    while !mbarrier_try_wait_parity(&raw const CLC_BAR, clc_parity) {}
 
-                    let resp_lo = *resp_ptr;
-                    let resp_hi = *resp_ptr.add(1);
-                    let is_canceled = clc_query_is_canceled(resp_lo, resp_hi);
+                        while !mbarrier_try_wait_parity_cluster(&raw const CLC_BAR, clc_parity) {}
+
+                        let resp_lo = *resp_ptr;
+                        let resp_hi = *resp_ptr.add(1);
+                        is_canceled = clc_query_is_canceled(resp_lo, resp_hi);
+                        if is_canceled != 0 {
+                            first_stolen = clc_query_get_first_ctaid_x(resp_lo, resp_hi);
+                        }
+                        fence_proxy_async_generic_release_shared_cta_cluster();
+                    }
+
+                    is_canceled = warp::shuffle_sync(u32::MAX, is_canceled, 0);
+                    first_stolen = warp::shuffle_sync(u32::MAX, first_stolen, 0);
 
                     if is_canceled == 0 {
                         if is_lane0 {
@@ -3700,7 +3756,6 @@ mod kernels {
                     // BUG FIX: Same cluster_size division as the initial tile. CLC returns a
                     // raw first_ctaid_x which represents the first CTA in the stolen cluster
                     // pair. Divide by 2 to get the tile index.
-                    let first_stolen = clc_query_get_first_ctaid_x(resp_lo, resp_hi);
                     let tile_idx = first_stolen / 2;
                     // Same cache-blocking swizzle as the initial tile (see above).
                     let tiles_n = _tiles_n;
@@ -4126,6 +4181,7 @@ mod kernels {
                 mbarrier_inval(&raw mut TILE_READY);
                 mbarrier_inval(&raw mut TILE_INFO_FREE);
                 mbarrier_inval(&raw mut CLC_BAR);
+                mbarrier_inval(&raw mut CLC_READY);
             }
         }
     }
@@ -5853,6 +5909,188 @@ fn run_benchmark_persistent(
     Ok(())
 }
 
+// A 12-bit Walsh fingerprint gives every row and column in the fixed 4096²
+// validator a unique whole-vector signature while retaining an O(MK + NK + MN)
+// analytic reference. The odd affine multipliers are permutations mod 4096.
+const VALIDATION_CODE_COUNT: usize = 1 << 12;
+const VALIDATION_CODE_MASK: u32 = VALIDATION_CODE_COUNT as u32 - 1;
+
+#[inline]
+fn validation_affine12(x: usize, multiplier: u32, addend: u32) -> u32 {
+    ((x as u32).wrapping_mul(multiplier).wrapping_add(addend)) & VALIDATION_CODE_MASK
+}
+
+#[inline]
+fn validation_k_code(kk: usize) -> u32 {
+    validation_affine12(kk, 251, 17)
+}
+
+#[inline]
+fn validation_row_code(row: usize) -> u32 {
+    validation_affine12(row, 197, 101)
+}
+
+#[inline]
+fn validation_col_code(col: usize) -> u32 {
+    validation_affine12(col, 109, 1021)
+}
+
+#[inline]
+fn validation_fingerprint(position_code: u32, kk: usize) -> f32 {
+    let distance = (position_code ^ validation_k_code(kk)).count_ones() as i32;
+    (13 - 2 * distance) as f32
+}
+
+#[inline]
+fn validation_a_value(row: usize, kk: usize) -> f32 {
+    // The quadrant scale breaks the affine-code twin symmetry: since
+    // code(x + 2048) = code(x) ^ 0x800, the XOR-based expected values would
+    // otherwise be invariant under (row, col) -> (row + 2048, col + 2048),
+    // giving every 128x128 output tile a byte-identical twin 16 tiles away
+    // on both axes — exactly the tile-permutation blindness this validator
+    // exists to remove. Doubling the top half of A keeps every value an
+    // exact small f16 integer while making twin tiles differ everywhere
+    // (scores are odd, so never zero).
+    let quadrant_scale = (1 + (row >> 11)) as f32;
+    quadrant_scale * validation_fingerprint(validation_row_code(row), kk)
+}
+
+#[inline]
+fn validation_b_value(col: usize, kk: usize) -> f32 {
+    validation_fingerprint(validation_col_code(col), kk)
+}
+
+/// Builds the Walsh-fingerprint A/B inputs for the fixed 4096³ CLC correctness
+/// contract. Every row of A and column of B carries a unique whole-vector
+/// signature, so tile-permutation failures (stale TILE_INFO work-ids, tile
+/// swaps between readers, wrong accumulators) produce output bytes that cannot
+/// match the analytic reference — unlike periodic inputs, where all 128×128
+/// output tiles are byte-identical.
+fn validation_build_inputs(m: usize, n: usize, k: usize) -> (Vec<u16>, Vec<u16>) {
+    assert_eq!(
+        [m, n, k],
+        [VALIDATION_CODE_COUNT; 3],
+        "the bit-exact Walsh validator is defined for the fixed 4096³ contract"
+    );
+
+    let mut host_a: Vec<u16> = vec![0u16; m * k];
+    for i in 0..m {
+        for kk in 0..k {
+            host_a[i * k + kk] = f16::from_f32(validation_a_value(i, kk)).to_bits();
+        }
+    }
+    let mut host_b: Vec<u16> = vec![0u16; n * k];
+    for j in 0..n {
+        for kk in 0..k {
+            host_b[j * k + kk] = f16::from_f32(validation_b_value(j, kk)).to_bits();
+        }
+    }
+
+    println!(
+        "Validation data: 12-bit Walsh fingerprints varying along K and covering \
+         each K code once, with unique signatures for all {} rows and columns",
+        VALIDATION_CODE_COUNT
+    );
+    println!("Expected: analytic exact FP32 dot product rounded once to BF16\n");
+
+    (host_a, host_b)
+}
+
+/// Full-output correctness check: compares EVERY BF16 element against the
+/// exact rounded reference, not a sampled subset. The fingerprints are small
+/// signed integers, so every FP32 product and partial sum is exact in any
+/// accumulation order (magnitudes stay far below 2^24) and a correct kernel
+/// must match the reference BF16 bits.
+fn validation_check_full_output(
+    kernel_name: &str,
+    host_output: &[u32],
+    m: usize,
+    n: usize,
+    k: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Walsh orthogonality gives C[row,col] = scale(row) * K * (13 - 2 *
+    // HammingDistance) for each row/column code pair, where scale is the
+    // quadrant scale from validation_a_value (1 for rows 0..2047, 2 above).
+    // Cache 4096 XOR-indexed entries per row half; K * score * scale keeps
+    // at most 5 significant bits, so both are exact in BF16.
+    let expected_by_xor: Vec<[u16; 2]> = (0..VALIDATION_CODE_COUNT)
+        .map(|difference| {
+            let score = 13 - 2 * (difference as u32).count_ones() as i64;
+            let fp32 = (k as i64 * score) as f32;
+            [
+                bf16::from_f32(fp32).to_bits(),
+                bf16::from_f32(2.0 * fp32).to_bits(),
+            ]
+        })
+        .collect();
+
+    let expected_bits = |row: usize, col: usize| -> u16 {
+        expected_by_xor[(validation_row_code(row) ^ validation_col_code(col)) as usize][row >> 11]
+    };
+    let read_c_bits = |row: usize, col: usize| -> u16 {
+        let packed = host_output[row * (n / 2) + col / 2];
+        if col.is_multiple_of(2) {
+            packed as u16
+        } else {
+            (packed >> 16) as u16
+        }
+    };
+
+    let mut mismatches: u64 = 0;
+    let mut first_bad: Option<(usize, usize, f32, f32)> = None;
+    let mut max_rel_err: f32 = 0.0;
+    for row in 0..m {
+        for col in 0..n {
+            let val_bits = read_c_bits(row, col);
+            let exp_bits = expected_bits(row, col);
+            let val = bf16_to_f32(val_bits);
+            let exp = bf16_to_f32(exp_bits);
+            let diff = (val - exp).abs();
+            let rel = diff / (exp.abs() + 1.0);
+            if rel > max_rel_err {
+                max_rel_err = rel;
+            }
+            if val_bits != exp_bits {
+                mismatches += 1;
+                if first_bad.is_none() {
+                    first_bad = Some((row, col, val, exp));
+                }
+            }
+        }
+    }
+    let total = (m * n) as u64;
+    println!(
+        "\nFull check: {} / {} exact BF16 matches (max rel err {:.4})",
+        total - mismatches,
+        total,
+        max_rel_err
+    );
+    if let Some((r, c, val, exp)) = first_bad {
+        println!(
+            "  first mismatch: C[{},{}] = {} (expected {})",
+            r, c, val, exp
+        );
+    }
+
+    println!("\n═══════════════════════════════════════════════════════");
+    if mismatches == 0 {
+        println!(
+            "PASSED: {} {}x{}x{} (full {}-element check)",
+            kernel_name, m, n, k, total
+        );
+    } else {
+        println!("FAILED: {} {}x{}x{}", kernel_name, m, n, k);
+        return Err(format!(
+            "Correctness check failed: {} / {} elements wrong",
+            mismatches, total
+        )
+        .into());
+    }
+    println!("═══════════════════════════════════════════════════════");
+
+    Ok(())
+}
+
 fn run_correctness_test_clc(
     stream: &Arc<CudaStream>,
     module: &kernels::LoadedModule,
@@ -5866,23 +6104,7 @@ fn run_correctness_test_clc(
     println!("CLC tile scheduling + TMEM accum pipeline.");
     println!("Warps: 4=TMA, 5=MMA, 0-3=epilogue.");
 
-    let mut host_a: Vec<u16> = vec![0u16; m * k];
-    for i in 0..m {
-        let val = f16::from_f32((i % 8 + 1) as f32).to_bits();
-        for kk in 0..k {
-            host_a[i * k + kk] = val;
-        }
-    }
-    let mut host_b: Vec<u16> = vec![0u16; n * k];
-    for j in 0..n {
-        let val = f16::from_f32((j % 8 + 1) as f32).to_bits();
-        for kk in 0..k {
-            host_b[j * k + kk] = val;
-        }
-    }
-
-    println!("A[i,k] = (i%8+1), B[n,k] = (n%8+1)");
-    println!("Expected: C[i,j] = (i%8+1)*(j%8+1)*K\n");
+    let (host_a, host_b) = validation_build_inputs(m, n, k);
 
     let dev_a = DeviceBuffer::from_host(stream, &host_a)?;
     let dev_b = DeviceBuffer::from_host(stream, &host_b)?;
@@ -5948,92 +6170,7 @@ fn run_correctness_test_clc(
 
     let host_output: Vec<u32> = dev_output.to_host_vec(stream)?;
 
-    let expected = |row: usize, col: usize| -> f32 { ((row % 8 + 1) * (col % 8 + 1) * k) as f32 };
-    let read_c = |row: usize, col: usize| -> f32 {
-        let packed_idx = row * (n / 2) + col / 2;
-        let packed = host_output[packed_idx];
-        let (lo, hi) = unpack_bf16_pair(packed);
-        if col.is_multiple_of(2) { lo } else { hi }
-    };
-
-    let check_positions = [
-        (0, 0),
-        (0, n - 1),
-        (m - 1, 0),
-        (m - 1, n - 1),
-        (m / 2, n / 2),
-        (3, 5),
-        (7, 7),
-        (127, 127),
-    ];
-
-    let mut all_ok = true;
-    println!("\nSpot checks:");
-    for (row, col) in check_positions {
-        let val = read_c(row, col);
-        let exp = expected(row, col);
-        let ok = (val - exp).abs() < (exp * 0.02 + 1.0);
-        println!(
-            "  C[{:>4},{:>4}] = {:>10.0}  (expected {:>10.0})  {}",
-            row,
-            col,
-            val,
-            exp,
-            if ok { "OK" } else { "FAIL" }
-        );
-        if !ok {
-            all_ok = false;
-        }
-    }
-
-    let mut zero_tiles = 0u32;
-    let tiles_m_val = m / 128;
-    let tiles_n_val = n / 128;
-    for tm in 0..tiles_m_val {
-        for tn in 0..tiles_n_val {
-            let row = tm * 128 + 64;
-            let col = tn * 128 + 64;
-            let val = read_c(row, col);
-            if val.abs() < 1.0 {
-                zero_tiles += 1;
-                all_ok = false;
-            }
-        }
-    }
-    if zero_tiles > 0 {
-        println!(
-            "  Zero tiles: {} / {}",
-            zero_tiles,
-            tiles_m_val * tiles_n_val
-        );
-    }
-
-    let mut first_row_sum: f64 = 0.0;
-    for col_pair in 0..(n / 2) {
-        let packed = host_output[col_pair];
-        let (lo, hi) = unpack_bf16_pair(packed);
-        first_row_sum += lo as f64 + hi as f64;
-    }
-    let expected_row_sum = k as f64 * (n as f64 / 8.0) * 36.0;
-    let row_sum_ok =
-        (first_row_sum - expected_row_sum).abs() < (expected_row_sum * 0.02 + n as f64);
-    println!(
-        "\n  Row 0 sum: {:.0} (expected {:.0}) {}",
-        first_row_sum,
-        expected_row_sum,
-        if row_sum_ok { "OK" } else { "FAIL" }
-    );
-
-    println!("\n═══════════════════════════════════════════════════════");
-    if all_ok && row_sum_ok {
-        println!("PASSED: gemm_sol_clc {}x{}x{}", m, n, k);
-    } else {
-        println!("FAILED: gemm_sol_clc {}x{}x{}", m, n, k);
-        return Err("Correctness check failed".into());
-    }
-    println!("═══════════════════════════════════════════════════════");
-
-    Ok(())
+    validation_check_full_output("gemm_sol_clc", &host_output, m, n, k)
 }
 
 fn run_benchmark_clc(
@@ -6163,23 +6300,7 @@ fn run_correctness_test_clc_multicast(
     println!("CLC + TMA multicast for B tiles + TMEM accum pipeline.");
     println!("Warps: 4=TMA, 5=MMA, 0-3=epilogue.");
 
-    let mut host_a: Vec<u16> = vec![0u16; m * k];
-    for i in 0..m {
-        let val = f16::from_f32((i % 8 + 1) as f32).to_bits();
-        for kk in 0..k {
-            host_a[i * k + kk] = val;
-        }
-    }
-    let mut host_b: Vec<u16> = vec![0u16; n * k];
-    for j in 0..n {
-        let val = f16::from_f32((j % 8 + 1) as f32).to_bits();
-        for kk in 0..k {
-            host_b[j * k + kk] = val;
-        }
-    }
-
-    println!("A[i,k] = (i%8+1), B[n,k] = (n%8+1)");
-    println!("Expected: C[i,j] = (i%8+1)*(j%8+1)*K\n");
+    let (host_a, host_b) = validation_build_inputs(m, n, k);
 
     let dev_a = DeviceBuffer::from_host(stream, &host_a)?;
     let dev_b = DeviceBuffer::from_host(stream, &host_b)?;
@@ -6245,92 +6366,7 @@ fn run_correctness_test_clc_multicast(
 
     let host_output: Vec<u32> = dev_output.to_host_vec(stream)?;
 
-    let expected = |row: usize, col: usize| -> f32 { ((row % 8 + 1) * (col % 8 + 1) * k) as f32 };
-    let read_c = |row: usize, col: usize| -> f32 {
-        let packed_idx = row * (n / 2) + col / 2;
-        let packed = host_output[packed_idx];
-        let (lo, hi) = unpack_bf16_pair(packed);
-        if col.is_multiple_of(2) { lo } else { hi }
-    };
-
-    let check_positions = [
-        (0, 0),
-        (0, n - 1),
-        (m - 1, 0),
-        (m - 1, n - 1),
-        (m / 2, n / 2),
-        (3, 5),
-        (7, 7),
-        (127, 127),
-    ];
-
-    let mut all_ok = true;
-    println!("\nSpot checks:");
-    for (row, col) in check_positions {
-        let val = read_c(row, col);
-        let exp = expected(row, col);
-        let ok = (val - exp).abs() < (exp * 0.02 + 1.0);
-        println!(
-            "  C[{:>4},{:>4}] = {:>10.0}  (expected {:>10.0})  {}",
-            row,
-            col,
-            val,
-            exp,
-            if ok { "OK" } else { "FAIL" }
-        );
-        if !ok {
-            all_ok = false;
-        }
-    }
-
-    let mut zero_tiles = 0u32;
-    let tiles_m_val = m / 128;
-    let tiles_n_val = n / 128;
-    for tm in 0..tiles_m_val {
-        for tn in 0..tiles_n_val {
-            let row = tm * 128 + 64;
-            let col = tn * 128 + 64;
-            let val = read_c(row, col);
-            if val.abs() < 1.0 {
-                zero_tiles += 1;
-                all_ok = false;
-            }
-        }
-    }
-    if zero_tiles > 0 {
-        println!(
-            "  Zero tiles: {} / {}",
-            zero_tiles,
-            tiles_m_val * tiles_n_val
-        );
-    }
-
-    let mut first_row_sum: f64 = 0.0;
-    for col_pair in 0..(n / 2) {
-        let packed = host_output[col_pair];
-        let (lo, hi) = unpack_bf16_pair(packed);
-        first_row_sum += lo as f64 + hi as f64;
-    }
-    let expected_row_sum = k as f64 * (n as f64 / 8.0) * 36.0;
-    let row_sum_ok =
-        (first_row_sum - expected_row_sum).abs() < (expected_row_sum * 0.02 + n as f64);
-    println!(
-        "\n  Row 0 sum: {:.0} (expected {:.0}) {}",
-        first_row_sum,
-        expected_row_sum,
-        if row_sum_ok { "OK" } else { "FAIL" }
-    );
-
-    println!("\n═══════════════════════════════════════════════════════");
-    if all_ok && row_sum_ok {
-        println!("PASSED: gemm_sol_clc_multicast {}x{}x{}", m, n, k);
-    } else {
-        println!("FAILED: gemm_sol_clc_multicast {}x{}x{}", m, n, k);
-        return Err("Correctness check failed".into());
-    }
-    println!("═══════════════════════════════════════════════════════");
-
-    Ok(())
+    validation_check_full_output("gemm_sol_clc_multicast", &host_output, m, n, k)
 }
 
 fn run_benchmark_clc_multicast(
@@ -6461,23 +6497,7 @@ fn run_correctness_test_clc_multicast_4_stage_pipeline(
     println!("CLC + cta_group::2 + 4-stage SMEM pipeline.");
     println!("Warps: 4=TMA, 5=MMA (leader only), 0-3=epilogue (both CTAs).");
 
-    let mut host_a: Vec<u16> = vec![0u16; m * k];
-    for i in 0..m {
-        let val = f16::from_f32((i % 8 + 1) as f32).to_bits();
-        for kk in 0..k {
-            host_a[i * k + kk] = val;
-        }
-    }
-    let mut host_b: Vec<u16> = vec![0u16; n * k];
-    for j in 0..n {
-        let val = f16::from_f32((j % 8 + 1) as f32).to_bits();
-        for kk in 0..k {
-            host_b[j * k + kk] = val;
-        }
-    }
-
-    println!("A[i,k] = (i%8+1), B[n,k] = (n%8+1)");
-    println!("Expected: C[i,j] = (i%8+1)*(j%8+1)*K\n");
+    let (host_a, host_b) = validation_build_inputs(m, n, k);
 
     let dev_a = DeviceBuffer::from_host(stream, &host_a)?;
     let dev_b = DeviceBuffer::from_host(stream, &host_b)?;
@@ -6549,98 +6569,13 @@ fn run_correctness_test_clc_multicast_4_stage_pipeline(
 
     let host_output: Vec<u32> = dev_output.to_host_vec(stream)?;
 
-    let expected = |row: usize, col: usize| -> f32 { ((row % 8 + 1) * (col % 8 + 1) * k) as f32 };
-    let read_c = |row: usize, col: usize| -> f32 {
-        let packed_idx = row * (n / 2) + col / 2;
-        let packed = host_output[packed_idx];
-        let (lo, hi) = unpack_bf16_pair(packed);
-        if col.is_multiple_of(2) { lo } else { hi }
-    };
-
-    let check_positions = [
-        (0, 0),
-        (0, n - 1),
-        (m - 1, 0),
-        (m - 1, n - 1),
-        (m / 2, n / 2),
-        (3, 5),
-        (7, 7),
-        (127, 127),
-    ];
-
-    let mut all_ok = true;
-    println!("\nSpot checks:");
-    for (row, col) in check_positions {
-        let val = read_c(row, col);
-        let exp = expected(row, col);
-        let ok = (val - exp).abs() < (exp * 0.02 + 1.0);
-        println!(
-            "  C[{:>4},{:>4}] = {:>10.0}  (expected {:>10.0})  {}",
-            row,
-            col,
-            val,
-            exp,
-            if ok { "OK" } else { "FAIL" }
-        );
-        if !ok {
-            all_ok = false;
-        }
-    }
-
-    let mut zero_tiles = 0u32;
-    let tiles_m_val = m / 128;
-    let tiles_n_val = n / 128;
-    for tm in 0..tiles_m_val {
-        for tn in 0..tiles_n_val {
-            let row = tm * 128 + 64;
-            let col = tn * 128 + 64;
-            let val = read_c(row, col);
-            if val.abs() < 1.0 {
-                zero_tiles += 1;
-                all_ok = false;
-            }
-        }
-    }
-    if zero_tiles > 0 {
-        println!(
-            "  Zero tiles: {} / {}",
-            zero_tiles,
-            tiles_m_val * tiles_n_val
-        );
-    }
-
-    let mut first_row_sum: f64 = 0.0;
-    for col_pair in 0..(n / 2) {
-        let packed = host_output[col_pair];
-        let (lo, hi) = unpack_bf16_pair(packed);
-        first_row_sum += lo as f64 + hi as f64;
-    }
-    let expected_row_sum = k as f64 * (n as f64 / 8.0) * 36.0;
-    let row_sum_ok =
-        (first_row_sum - expected_row_sum).abs() < (expected_row_sum * 0.02 + n as f64);
-    println!(
-        "\n  Row 0 sum: {:.0} (expected {:.0}) {}",
-        first_row_sum,
-        expected_row_sum,
-        if row_sum_ok { "OK" } else { "FAIL" }
-    );
-
-    println!("\n═══════════════════════════════════════════════════════");
-    if all_ok && row_sum_ok {
-        println!(
-            "PASSED: gemm_sol_clc_multicast_4_stage_pipeline {}x{}x{}",
-            m, n, k
-        );
-    } else {
-        println!(
-            "FAILED: gemm_sol_clc_multicast_4_stage_pipeline {}x{}x{}",
-            m, n, k
-        );
-        return Err("Correctness check failed".into());
-    }
-    println!("═══════════════════════════════════════════════════════");
-
-    Ok(())
+    validation_check_full_output(
+        "gemm_sol_clc_multicast_4_stage_pipeline",
+        &host_output,
+        m,
+        n,
+        k,
+    )
 }
 
 fn run_benchmark_clc_multicast_4_stage_pipeline(
