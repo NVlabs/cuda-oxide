@@ -352,9 +352,20 @@ fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
     // receives no injection and never appears in a report. That left the
     // pipeline a Hopper or Blackwell kernel is built around as the part a
     // campaign could not reach.
-    if ["cp.async", "wgmma.", "tcgen05.", "clusterlaunchcontrol."]
-        .iter()
-        .any(|prefix| head.starts_with(prefix))
+    //
+    // * `cp.reduce.async` needs its own prefix: the TMA reduce path emits
+    //   `cp.reduce.async.bulk.tensor.2d.global.shared::cta.add.tile.bulk_group`,
+    //   and `cp.async` does not match it (reduce sits before async), yet its
+    //   commit/wait pair does match `cp.async` -- half-covered without this.
+    if [
+        "cp.async",
+        "cp.reduce.async",
+        "wgmma.",
+        "tcgen05.",
+        "clusterlaunchcontrol.",
+    ]
+    .iter()
+    .any(|prefix| head.starts_with(prefix))
     {
         return Some(SiteKind::AsyncProxy);
     }
@@ -685,6 +696,9 @@ L_loop:
 
     /// Every spelling here is one the backend actually emits: they were taken
     /// verbatim from the `.ptx` the example corpus builds, not hand-written.
+    /// The one exception is `cp.reduce.async.bulk.tensor...`, which no example
+    /// emits today; its spelling is the mir-lower TMA-reduce inline-asm
+    /// template, verbatim.
     /// `mbarrier.arrive` and `fence.proxy.async` sit alongside them on purpose,
     /// as the controls for the two arms this classification could have stolen
     /// from.
@@ -703,6 +717,7 @@ L_loop:
     cp.async.commit_group;
     cp.async.wait_all;
     cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%r0], [%rd1], [%r0];
+    cp.reduce.async.bulk.tensor.2d.global.shared::cta.add.tile.bulk_group [%rd1, {%r0, %r0}], [%r0];
     wgmma.fence.sync.aligned;
     wgmma.commit_group.sync.aligned;
     wgmma.wait_group.sync.aligned 0;
@@ -727,11 +742,17 @@ L_loop:
             .iter()
             .filter(|site| site.kind == SiteKind::AsyncProxy)
             .collect();
-        // The fourteen async-proxy instructions in the fixture: three
-        // cp.async, one bulk-tensor issue, three wgmma, five tcgen05 and two
-        // clusterlaunchcontrol.
-        assert_eq!(async_sites.len(), 14, "{:?}", async_sites);
-        for prefix in ["cp.async", "wgmma.", "tcgen05.", "clusterlaunchcontrol."] {
+        // The fifteen async-proxy instructions in the fixture: three
+        // cp.async, one bulk-tensor issue, one bulk-tensor reduce, three
+        // wgmma, five tcgen05 and two clusterlaunchcontrol.
+        assert_eq!(async_sites.len(), 15, "{:?}", async_sites);
+        for prefix in [
+            "cp.async",
+            "cp.reduce.async",
+            "wgmma.",
+            "tcgen05.",
+            "clusterlaunchcontrol.",
+        ] {
             assert!(
                 async_sites.iter().any(|site| site.head.starts_with(prefix)),
                 "no AsyncProxy site for {prefix}"
@@ -797,7 +818,7 @@ L_loop:
                 .iter()
                 .filter(|site| site.kind == SiteKind::AsyncProxy)
                 .count()
-                >= 14
+                >= 15
         );
     }
 }
