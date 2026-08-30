@@ -178,7 +178,10 @@ OPTIONS
                        `cargo oxide build`; designated NVVM regressions use
                        `emit-ltoir` to include real libNVVM verification.
                        Non-error categories must leave a fresh artifact;
-                       error examples must still fail. Works on GPU-less CI.
+                       every emitted .ptx must also assemble with ptxas
+                       when one is available (skipped with a note when it
+                       is missing or too old). Error examples must still
+                       fail. Works on GPU-less CI.
   -x, --fail-fast      Stop at the first failure.
   -v, --verbose        Stream cargo output live (instead of capturing to
                        a per-example log file). Verdict is printed at the
@@ -326,14 +329,17 @@ if [[ "${host_cc}" =~ ^([0-9]+)\.[0-9]+$ ]] && [[ $((10#${BASH_REMATCH[1]})) -ge
 fi
 
 # ---- ptxas gate ------------------------------------------------------------
-# Compile-only style verdicts for the GPU-gated categories (tcgen05, wgmma,
-# blackwell-mma) accepted "a .ptx exists". That bar misses PTX that llc emits
-# but ptxas rejects: e.g. `.global` initializers referencing `.shared`
-# symbols, which fail driver JIT with CUDA_ERROR_INVALID_PTX only on the
-# gated hardware. When a ptxas is available, actually assemble the PTX for
-# the arch recorded in its `.target` line. Resolution order matches how the
-# examples themselves shell out to ptxas: explicit override, PATH, then the
-# CUDA toolkit install locations.
+# Compile-only verdicts accepted "a .ptx exists". That bar misses PTX that
+# llc emits but ptxas rejects: e.g. `.global` initializers referencing
+# `.shared` symbols, which fail driver JIT with CUDA_ERROR_INVALID_PTX only
+# on real hardware. When a ptxas is available, actually assemble the PTX for
+# the arch recorded in its `.target` line. In --compile-only mode this
+# applies to EVERY example that emitted a .ptx (nothing executes there, so
+# assembly is the strongest available check); in normal mode only the
+# GPU-gated categories (tcgen05, wgmma, blackwell-mma) use it, since real
+# execution supersedes assembly for everything else. Resolution order
+# matches how the examples themselves shell out to ptxas: explicit override,
+# PATH, then the CUDA toolkit install locations.
 PTXAS_BIN=""
 for ptxas_candidate in "${CUDA_OXIDE_PTXAS:-}" \
                        "$(command -v ptxas 2>/dev/null)" \
@@ -790,18 +796,14 @@ verdict_compile() {
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
     if verify_nvvm_in_compile_only "${ex}"; then
         if [[ -s "${ex_dir}/${artifact}.ll" && -s "${ex_dir}/${artifact}.ltoir" ]]; then
-            # A GPU-gated example may also have produced a .ptx via its
-            # direct-LLVM invocation (e.g. tcgen05's dual-route branch);
-            # that artifact must assemble like any other gated PTX.
-            case "$(classify "${ex}")" in
-                tcgen05|wgmma|blackwell-mma)
-                    if [[ -s "${ex_dir}/${artifact}.ptx" ]] \
-                        && ! ptxas_verify "${ex_dir}/${artifact}.ptx"; then
-                        echo "FAIL (${PTXAS_NOTE})"
-                        return 1
-                    fi
-                    ;;
-            esac
+            # An example may also have produced a .ptx via its direct-LLVM
+            # invocation (e.g. tcgen05's dual-route branch); that artifact
+            # must assemble like any other compile-only PTX.
+            if [[ -s "${ex_dir}/${artifact}.ptx" ]] \
+                && ! ptxas_verify "${ex_dir}/${artifact}.ptx"; then
+                echo "FAIL (${PTXAS_NOTE})"
+                return 1
+            fi
             echo "PASS (verified and compiled by libNVVM)"
             return 0
         fi
@@ -809,20 +811,14 @@ verdict_compile() {
         return 1
     fi
     if [[ -s "${ex_dir}/${artifact}.ptx" ]]; then
-        # GPU-gated categories never execute in compile-only mode, so the
-        # PTX must at least assemble: driver-JIT-only errors (e.g. .shared
-        # symbols in .global initializers) otherwise pass CI silently.
-        case "$(classify "${ex}")" in
-            tcgen05|wgmma|blackwell-mma)
-                if ! ptxas_verify "${ex_dir}/${artifact}.ptx"; then
-                    echo "FAIL (${PTXAS_NOTE})"
-                    return 1
-                fi
-                echo "PASS (compiled; ${PTXAS_NOTE})"
-                return 0
-                ;;
-        esac
-        echo "PASS (compiled)"
+        # Nothing executes in compile-only mode, so every emitted PTX must
+        # at least assemble: driver-JIT-only errors (e.g. .shared symbols
+        # in .global initializers) otherwise pass CI silently.
+        if ! ptxas_verify "${ex_dir}/${artifact}.ptx"; then
+            echo "FAIL (${PTXAS_NOTE})"
+            return 1
+        fi
+        echo "PASS (compiled; ${PTXAS_NOTE})"
         return 0
     fi
     if [[ -s "${ex_dir}/${artifact}.ll" ]]; then
