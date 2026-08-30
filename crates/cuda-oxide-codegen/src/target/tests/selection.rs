@@ -486,3 +486,37 @@ fn resolve_ptx_target_failure_does_not_assume_an_env_var_source() {
         "{parse_error}"
     );
 }
+
+#[test]
+fn malformed_low_width_targets_keep_override_errors_and_ignore_device_hints() {
+    for (spelling, expected_reason) in [
+        (
+            "sm_05",
+            "invalid CUDA target `sm_5`: compute capability must contain at least two digits (target from test override)",
+        ),
+        (
+            "sm_",
+            "invalid CUDA target `sm_`: compute capability is not a valid integer (target from test override)",
+        ),
+    ] {
+        let explicit = resolve_ptx_target(
+            Some(spelling),
+            "test override",
+            None,
+            DetectedFeatures::Basic,
+        )
+        .unwrap_err();
+        assert!(matches!(explicit, PipelineError::TargetSelection { .. }));
+        assert_eq!(explicit.to_string(), expected_reason);
+
+        let (target, source) = resolve_ptx_target(
+            None,
+            "test override",
+            Some(spelling),
+            DetectedFeatures::Basic,
+        )
+        .unwrap();
+        assert_eq!(target.sm(), "sm_80");
+        assert_eq!(source, "feature requirement");
+    }
+}
