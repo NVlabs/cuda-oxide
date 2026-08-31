@@ -135,7 +135,7 @@ dependencies = [
 [[package]]
 name = "cuda-async"
 version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5cf5a55baaa59b4d3c352bf4652bb0a01e842c19"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#aaf1364140847f19b0dc0b1d87e674551076b043"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -151,7 +151,7 @@ dependencies = [
 [[package]]
 name = "cuda-bindings"
 version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5cf5a55baaa59b4d3c352bf4652bb0a01e842c19"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#aaf1364140847f19b0dc0b1d87e674551076b043"
 dependencies = [
  "bindgen",
  "libloading",
@@ -164,7 +164,7 @@ dependencies = [
 [[package]]
 name = "cuda-core"
 version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5cf5a55baaa59b4d3c352bf4652bb0a01e842c19"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#aaf1364140847f19b0dc0b1d87e674551076b043"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "cuda-core-derive"
 version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#5cf5a55baaa59b4d3c352bf4652bb0a01e842c19"
+source = "git+https://github.com/NVlabs/cutile-rs?branch=feat%2Fcuda-oxide-host-support#aaf1364140847f19b0dc0b1d87e674551076b043"
 dependencies = [
  "proc-macro2",
  "quote",
