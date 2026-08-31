@@ -42,6 +42,7 @@ pub enum SiteKind {
     OrderedMemory,
     WarpCollective,
     AsyncProxy,
+    TensorMapMutation,
     Backedge,
 }
 
@@ -368,6 +369,14 @@ fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
     .any(|prefix| head.starts_with(prefix))
     {
         return Some(SiteKind::AsyncProxy);
+    }
+
+    // Tensor-map replacement mutates a descriptor through the generic proxy.
+    // Its ordering edge is `fence.proxy.tensormap::generic.*`, so keep it
+    // separate from `AsyncProxy`: a campaign must be able to delay the
+    // mutation independently from the fence that publishes it.
+    if head.starts_with("tensormap.replace.") {
+        return Some(SiteKind::TensorMapMutation);
     }
 
     let mut parts = head.split('.');
@@ -819,6 +828,106 @@ L_loop:
                 .filter(|site| site.kind == SiteKind::AsyncProxy)
                 .count()
                 >= 15
+        );
+    }
+
+    /// Both spellings are emitted by the TMA lowering. The release
+    /// fence is the publication edge that orders the generic-proxy descriptor
+    /// mutation before a tensor-map consumer.
+    const TENSORMAP_MUTATIONS: &str = r#".version 8.7
+.target sm_90a
+.address_size 64
+
+.visible .entry tensormap_mutations()
+{
+    .reg .b32 %r0;
+    .reg .b64 %rd0;
+    tensormap.replace.tile.global_address.global.b1024.b64 [%rd0], %rd0;
+    tensormap.replace.tile.global_dim.global.b1024.b32 [%rd0], 0, %r0;
+    fence.proxy.tensormap::generic.release.gpu;
+    ret;
+}
+"#;
+
+    #[test]
+    fn tensormap_replace_instructions_are_sites() {
+        let analysis = analyze_ptx(TENSORMAP_MUTATIONS).unwrap();
+        let mutations: Vec<_> = analysis
+            .sites()
+            .iter()
+            .filter(|site| site.kind == SiteKind::TensorMapMutation)
+            .collect();
+
+        assert_eq!(mutations.len(), 2, "{mutations:?}");
+        assert!(
+            mutations
+                .iter()
+                .any(|site| site.head.contains(".global_address."))
+        );
+        assert!(
+            mutations
+                .iter()
+                .any(|site| site.head.contains(".global_dim."))
+        );
+    }
+
+    #[test]
+    fn tensormap_mutation_classification_leaves_proxy_fence_alone() {
+        let analysis = analyze_ptx(TENSORMAP_MUTATIONS).unwrap();
+        let kind_of = |prefix: &str| {
+            analysis
+                .sites()
+                .iter()
+                .find(|site| site.head.starts_with(prefix))
+                .map(|site| site.kind)
+        };
+
+        assert_eq!(
+            kind_of("tensormap.replace.tile.global_address"),
+            Some(SiteKind::TensorMapMutation)
+        );
+        assert_eq!(
+            kind_of("tensormap.replace.tile.global_dim"),
+            Some(SiteKind::TensorMapMutation)
+        );
+        assert_eq!(kind_of("fence.proxy.tensormap"), Some(SiteKind::Fence));
+    }
+
+    /// A focused campaign must be able to insert a delay after the descriptor
+    /// mutation and before the release fence that publishes it.
+    #[test]
+    fn a_tensormap_mutation_can_be_delayed_before_its_publish_fence() {
+        let rewrite = perturb_ptx(
+            TENSORMAP_MUTATIONS,
+            &InjectionOptions {
+                seed: 7,
+                intensity: 1.0,
+                focus: Some("global_dim".to_string()),
+                ..InjectionOptions::default()
+            },
+        )
+        .unwrap();
+
+        let decision = rewrite
+            .report
+            .decisions
+            .iter()
+            .find(|decision| decision.site.head.contains(".global_dim."))
+            .expect("global_dim tensor-map mutation must be a schedule site");
+        assert_eq!(decision.site.kind, SiteKind::TensorMapMutation);
+        assert!(decision.after_ns > 0, "{:?}", rewrite.report.decisions);
+
+        let mutation = rewrite
+            .ptx
+            .find("tensormap.replace.tile.global_dim")
+            .expect("rewritten PTX must retain the mutation");
+        let fence = rewrite
+            .ptx
+            .find("fence.proxy.tensormap")
+            .expect("rewritten PTX must retain the publish fence");
+        assert!(
+            rewrite.ptx[mutation..fence].contains("nanosleep.u32"),
+            "focused perturbation must delay the mutation before the fence"
         );
     }
 }
