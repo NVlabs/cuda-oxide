@@ -42,6 +42,7 @@ pub enum SiteKind {
     OrderedMemory,
     WarpCollective,
     AsyncProxy,
+    GridDependency,
     Backedge,
 }
 
@@ -368,6 +369,13 @@ fn classify_instruction(instruction: &Instruction<'_>) -> Option<SiteKind> {
     .any(|prefix| head.starts_with(prefix))
     {
         return Some(SiteKind::AsyncProxy);
+    }
+
+    // Programmatic dependent launch orders one grid against another. It is a
+    // schedule boundary like a barrier or fence, but belongs to neither the
+    // synchronous thread/CTA primitives nor the asynchronous proxy pipeline.
+    if head.starts_with("griddepcontrol.") {
+        return Some(SiteKind::GridDependency);
     }
 
     let mut parts = head.split('.');
@@ -820,5 +828,58 @@ L_loop:
                 .count()
                 >= 15
         );
+    }
+
+    /// Both spellings are emitted by mir-lower for programmatic dependent
+    /// launch. They order one grid against another and must remain distinct
+    /// from the asynchronous proxy pipeline.
+    const GRID_DEPENDENCY: &str = r#".version 8.7
+.target sm_90
+.address_size 64
+
+.visible .entry grid_dependency()
+{
+    griddepcontrol.launch_dependents;
+    griddepcontrol.wait;
+    ret;
+}
+"#;
+
+    #[test]
+    fn grid_dependency_instructions_are_sites() {
+        let analysis = analyze_ptx(GRID_DEPENDENCY).unwrap();
+        let sites: Vec<_> = analysis
+            .sites()
+            .iter()
+            .filter(|site| site.kind == SiteKind::GridDependency)
+            .collect();
+
+        assert_eq!(analysis.sites().len(), 2, "{:?}", analysis.sites());
+        assert_eq!(sites.len(), 2, "{:?}", sites);
+        assert_eq!(sites[0].head, "griddepcontrol.launch_dependents");
+        assert_eq!(sites[1].head, "griddepcontrol.wait");
+    }
+
+    #[test]
+    fn a_grid_dependency_site_can_be_perturbed() {
+        let rewrite = perturb_ptx(
+            GRID_DEPENDENCY,
+            &InjectionOptions {
+                seed: 7,
+                intensity: 1.0,
+                focus: Some("griddepcontrol".to_string()),
+                ..InjectionOptions::default()
+            },
+        )
+        .unwrap();
+        let injected = rewrite
+            .report
+            .decisions
+            .iter()
+            .filter(|decision| decision.site.kind == SiteKind::GridDependency)
+            .filter(|decision| decision.before_ns > 0 || decision.after_ns > 0)
+            .count();
+        assert!(injected > 0, "{:?}", rewrite.report.decisions);
+        assert!(rewrite.ptx.contains("nanosleep.u32"));
     }
 }
