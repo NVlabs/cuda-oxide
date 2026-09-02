@@ -18,7 +18,8 @@ target/
 .cursor/
 .idea/
 *.iml
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .claude/
 .codex/
 .codex-work/
