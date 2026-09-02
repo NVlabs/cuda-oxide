@@ -23,7 +23,7 @@ impl DebugPolicy {
     /// This is the single alias table for the environment variable. The
     /// rustc codegen backend uses it to select the DWARF emission level,
     /// and cargo-oxide uses it to decide build policy (a full-debug build
-    /// disables MIR optimization so aggregate locals survive to DWARF).
+    /// disables the MIR passes that would erase aggregate and constant locals before DWARF).
     /// Keeping both behind one parser means every accepted spelling, such
     /// as `2` for `full`, drives the whole pipeline consistently.
     ///

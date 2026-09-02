@@ -80,7 +80,8 @@ ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload
 
 # Per-example rustc flags policy: an example that needs a special rustc flag
 # (e.g. disjoint_slice_len needs -Zinline-mir=no to keep its regression
-# pattern un-inlined) must carry it in its own Cargo.toml via the nightly
+# pattern un-inlined; reborrow needs -Zmir-opt-level=0 to keep its
+# Mutability::Mut half reachable) must carry it in its own Cargo.toml via the nightly
 # `profile-rustflags` feature, scoped to its own package. Never route such a
 # flag through RUSTFLAGS/CARGO_ENCODED_RUSTFLAGS here: cargo keys build
 # caches on rustflags, so a global flag forks a full second dependency-tree
@@ -1621,26 +1622,6 @@ run_cargo() {
         return
     fi
 
-    # Rvalue::Reborrow coverage needs both device MIR pipelines. GVN folds
-    # the Mutability::Mut variant into plain copies at mir-opt-level>0, so
-    # only the --device-debug (-Zmir-opt-level=0) run below reaches that
-    # half; the Mutability::Not (CoerceShared) variant is left unoptimised
-    # by GVN and reaches the importer in release builds too, so run the
-    # release invocation first.
-    if [[ ${COMPILE_ONLY} -eq 0 && "${ex}" == "reborrow" ]]; then
-        if [[ ${VERBOSE} -eq 1 ]]; then
-            cargo oxide run "${ex}" 2>&1 | tee "${log}"
-            CARGO_EC=${PIPESTATUS[0]}
-        else
-            cargo oxide run "${ex}" >"${log}" 2>&1
-            CARGO_EC=$?
-        fi
-        if [[ ${CARGO_EC} -ne 0 ]]; then
-            printf '%s failed its release (mir-opt-level>0) invocation\n' "${ex}" >>"${log}"
-            return
-        fi
-    fi
-
     local verb="run"
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then verb="build"; fi
     local -a args=("${verb}" "${ex}")
@@ -1661,15 +1642,6 @@ run_cargo() {
         # Only a full-debug build makes llc verify that graph, and the
         # backend now fails the build when llc rejects it instead of
         # silently emitting PTX without debug info.
-        args+=("--device-debug")
-    fi
-    if [[ "${ex}" == "reborrow" ]]; then
-        # Regression coverage for the importer's Rvalue::Reborrow arm. GVN
-        # folds the Mutability::Mut variant into plain copies at
-        # mir-opt-level>0, so this --device-debug run is what keeps that
-        # half reachable; the Mutability::Not (CoerceShared) variant is left
-        # unoptimised by GVN and reaches the importer in release builds too
-        # (covered by the release invocation above).
         args+=("--device-debug")
     fi
     if [[ ${COMPILE_ONLY} -eq 1 ]]; then

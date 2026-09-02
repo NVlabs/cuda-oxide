@@ -14,16 +14,19 @@
 //!
 //! - `Mutability::Mut` (the `Reborrow` trait): the target type equals the
 //!   source type, a plain place read. GVN folds this variant into plain
-//!   copies at mir-opt-level>0, so the smoketest also runs this example
-//!   with `--device-debug` (the -Zmir-opt-level=0 device path), where the
-//!   rvalue reaches the importer intact.
+//!   copies at mir-opt-level>0, so this crate's Cargo.toml scopes
+//!   `-Zmir-opt-level=0` to itself (profile-rustflags); the rvalue then
+//!   reaches the importer intact in every build of this example.
 //! - `Mutability::Not` (the `CoerceShared` trait): a same-layout coercion
 //!   into a distinct shared-view ADT, taking the importer's transmute-cast
 //!   path. GVN leaves this variant unoptimised, so it reaches the importer
 //!   in release builds too.
 //!
 //! Both halves are verified by stubbing the arm: the stub fails this
-//! example in both the release and the --device-debug device builds.
+//! example's device build. The `Rvalue::Reborrow` the importer receives is
+//! the same at either MIR level; only the neighbourhood differs (helpers
+//! stay un-inlined at level 0), and the inlined neighbourhood is exercised
+//! by every other example.
 //!
 //! The kernel below passes a `Reborrow` wrapper around `&mut f32` to a
 //! helper twice, then passes it twice where its `CoerceShared` view type

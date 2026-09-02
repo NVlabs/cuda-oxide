@@ -1047,8 +1047,9 @@ pub fn translate_rvalue(
             //
             // The optimizer (GVN/copy-prop) usually folds these into plain
             // copies at `-C opt-level>0`, but they reach the importer intact
-            // through the `-Zmir-opt-level=0` debug device path (verified on
-            // the pinned nightly).
+            // at `-Zmir-opt-level=0`, which the reborrow example scopes to its
+            // own package via profile-rustflags (verified on the pinned
+            // nightly).
             let (value, last_inserted) =
                 translate_place(ctx, body, place, value_map, block_ptr, prev_op, loc.clone())?;
 

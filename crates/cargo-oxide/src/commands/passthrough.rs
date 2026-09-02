@@ -26,7 +26,8 @@ pub enum DeviceDebug {
     Off,
     /// Preserve source line mappings without disabling optimization.
     LineTables,
-    /// Emit full debug information; MIR optimization is disabled and libNVVM finalization runs unoptimized.
+    /// Emit full debug information; the LLVM side runs unoptimized (nvcc `-G`) and
+    /// only the two debugger-hostile MIR passes are disabled.
     Full,
 }
 
