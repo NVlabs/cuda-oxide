@@ -1655,6 +1655,14 @@ run_cargo() {
         # exist when the example is compiled with full device debug metadata.
         args+=("--device-debug")
     fi
+    if [[ "${ex}" == "shared_debug" ]]; then
+        # Its kernel-local shared statics become function-scoped DWARF
+        # variables, whose accepted placement differs across LLVM majors.
+        # Only a full-debug build makes llc verify that graph, and the
+        # backend now fails the build when llc rejects it instead of
+        # silently emitting PTX without debug info.
+        args+=("--device-debug")
+    fi
     if [[ "${ex}" == "reborrow" ]]; then
         # Regression coverage for the importer's Rvalue::Reborrow arm. GVN
         # folds the Mutability::Mut variant into plain copies at

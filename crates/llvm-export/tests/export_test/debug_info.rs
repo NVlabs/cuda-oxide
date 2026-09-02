@@ -5,7 +5,7 @@
 
 use llvm_export::{
     export::{
-        DebugKind, NvvmExportConfig, NvvmIrDialect, PtxExportConfig,
+        DebugKind, FunctionLocalStaticPlacement, NvvmExportConfig, NvvmIrDialect, PtxExportConfig,
         export_module_to_string_with_config,
     },
     ops::{
@@ -34,7 +34,7 @@ use pliron::{
 };
 use std::{num::NonZero, path::PathBuf};
 
-use crate::common::{DebugConfig, metadata_id, module_top_block, src_location};
+use crate::common::{DebugConfig, PlacementConfig, metadata_id, module_top_block, src_location};
 
 #[test]
 fn legacy_export_rejects_debug_metadata() {
@@ -651,7 +651,7 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let _ = std::fs::remove_file(&ll_path);
     assert!(
-        output.status.success(),
+        output.status.success() && !stderr.contains("invalid debug info"),
         "{llvm_as} rejected pointer debug metadata:\n{stderr}\n--- module ---\n{ir}"
     );
 }
@@ -1327,7 +1327,7 @@ fn full_debug_globals_preserve_qualified_identity_visibility_and_relocations() {
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let _ = std::fs::remove_file(&ll_path);
     assert!(
-        output.status.success(),
+        output.status.success() && !stderr.contains("invalid debug info"),
         "{llvm_as} rejected global debug metadata:\n{stderr}\n--- module ---\n{full}"
     );
 }
@@ -1832,7 +1832,7 @@ fn full_debug_metadata_emits_diarglist_for_multi_value_locations() {
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let _ = std::fs::remove_file(&ll_path);
     assert!(
-        output.status.success(),
+        output.status.success() && !stderr.contains("invalid debug info"),
         "{llvm_as} rejected the emitted multi-value debug module:\n{stderr}\n--- module ---\n{ir}"
     );
 }
@@ -2280,7 +2280,7 @@ fn full_debug_metadata_emits_scalarized_fragment_dbg_declares() {
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let _ = std::fs::remove_file(&ll_path);
     assert!(
-        output.status.success(),
+        output.status.success() && !stderr.contains("invalid debug info"),
         "{llvm_as} rejected scalarized fragment debug metadata:\n{stderr}\n--- module ---\n{ir}"
     );
 }
@@ -2455,4 +2455,343 @@ fn full_debug_metadata_emits_projected_dbg_declares() {
         ir.contains("!DIExpression(DW_OP_deref, DW_OP_plus_uconst, 32)"),
         "missing dereference-plus-field debug expression:\n{ir}"
     );
+}
+
+/// A kernel `shared_kernel` owning the function-local AS3 static `TILE`,
+/// optionally next to the module-level AS1 static `GLOBAL_COUNTER`.
+fn function_local_shared_static_module(ctx: &mut Context, with_module_global: bool) -> ModuleOp {
+    let module = ModuleOp::new(ctx, "shared_placement".try_into().unwrap());
+    let module_block = module_top_block(ctx, &module);
+    let raw_owner = reserved_oxide_symbols::device_symbol("shared_kernel");
+
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let storage_ty = ArrayType::get(ctx, i32_ty.into(), 32);
+    let shared = GlobalOp::new_with_alignment(
+        ctx,
+        "__shared_mem_0".try_into().unwrap(),
+        storage_ty.into(),
+        4,
+    );
+    shared.set_address_space(ctx, llvm_export::types::address_space::SHARED);
+    llvm_export::ops::set_debug_global_variable(
+        ctx,
+        shared.get_operation(),
+        &DebugGlobalVariableInfo {
+            name: "TILE".to_string(),
+            namespace: vec![
+                "debuginfo".to_string(),
+                "kernels".to_string(),
+                "shared_kernel".to_string(),
+            ],
+            ty: DebugLocalTypeKind::Array {
+                name: "[i32; 32]".to_string(),
+                size_bits: 1024,
+                element: Box::new(DebugLocalTypeKind::Basic {
+                    name: "i32".to_string(),
+                    size_bits: 32,
+                    encoding: "DW_ATE_signed",
+                }),
+                count: 32,
+            },
+            declaration: DebugSourcePosition {
+                file: PathBuf::from("/tmp/cuda-oxide/tests/shared.rs"),
+                line: 40,
+                column: 9,
+            },
+            is_local_to_unit: true,
+            is_function_local: true,
+        },
+    );
+    llvm_export::ops::set_debug_global_owner_function(ctx, shared.get_operation(), &raw_owner);
+    shared.get_operation().insert_at_back(module_block, ctx);
+
+    if with_module_global {
+        let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+        let bytes_ty = ArrayType::get(ctx, i8_ty.into(), 8);
+        let global = GlobalOp::new_with_alignment(
+            ctx,
+            "__device_global_0".try_into().unwrap(),
+            bytes_ty.into(),
+            8,
+        );
+        global.set_address_space(ctx, llvm_export::types::address_space::GLOBAL);
+        global.set_initializer_hex(ctx, "0000000000000000");
+        llvm_export::ops::set_debug_global_variable(
+            ctx,
+            global.get_operation(),
+            &DebugGlobalVariableInfo {
+                name: "GLOBAL_COUNTER".to_string(),
+                namespace: vec!["debuginfo".to_string(), "state".to_string()],
+                ty: DebugLocalTypeKind::Basic {
+                    name: "u64".to_string(),
+                    size_bits: 64,
+                    encoding: "DW_ATE_unsigned",
+                },
+                declaration: DebugSourcePosition {
+                    file: PathBuf::from("/tmp/cuda-oxide/tests/shared.rs"),
+                    line: 9,
+                    column: 1,
+                },
+                is_local_to_unit: true,
+                is_function_local: false,
+            },
+        );
+        global.get_operation().insert_at_back(module_block, ctx);
+    }
+
+    let void_ty = VoidType::get(ctx);
+    let func_ty = FuncType::get(ctx, void_ty.to_handle(), vec![], false);
+    let function = FuncOp::new(ctx, raw_owner.as_str().try_into().unwrap(), func_ty);
+    let function_loc = src_location(ctx, "/tmp/cuda-oxide/tests/shared.rs", 35, 1);
+    function
+        .get_operation()
+        .deref_mut(ctx)
+        .set_loc(function_loc);
+    let entry = function.get_or_create_entry_block(ctx);
+    ReturnOp::new(ctx, None)
+        .get_operation()
+        .insert_at_back(entry, ctx);
+    function.get_operation().insert_at_back(module_block, ctx);
+    module
+}
+
+fn export_full_debug_with_placement(
+    ctx: &Context,
+    module: &ModuleOp,
+    placement: FunctionLocalStaticPlacement,
+) -> String {
+    export_module_to_string_with_config(
+        ctx,
+        module,
+        &PlacementConfig {
+            inner: DebugConfig {
+                inner: PtxExportConfig,
+                debug_kind: DebugKind::Full,
+            },
+            placement,
+        },
+    )
+    .expect("full debug export succeeds")
+}
+
+fn line_containing<'a>(ir: &'a str, needle: &str) -> &'a str {
+    ir.lines()
+        .find(|line| line.contains(needle))
+        .unwrap_or_else(|| panic!("missing line containing {needle:?}:\n{ir}"))
+}
+
+/// LLVM 23's verifier rejects a function-scoped variable in the compile
+/// unit's `globals:` list and then drops the whole debug graph, so the
+/// retained-nodes placement must move the expression onto its owner and
+/// leave the compile unit without a `globals:` tuple when nothing else
+/// needs one.
+#[test]
+fn retained_node_placement_moves_function_local_static_onto_its_owner() {
+    let mut ctx = Context::new();
+    let module = function_local_shared_static_module(&mut ctx, false);
+
+    let retained = export_full_debug_with_placement(
+        &ctx,
+        &module,
+        FunctionLocalStaticPlacement::SubprogramRetainedNodes,
+    );
+    let expression = metadata_id(&retained, "!DIGlobalVariableExpression(var: !");
+    let owner = metadata_id(&retained, "distinct !DISubprogram(name: \"shared_kernel\"");
+    let subprogram = line_containing(&retained, "distinct !DISubprogram(name: \"shared_kernel\"");
+    assert!(
+        subprogram.ends_with(&format!("retainedNodes: !{{{expression}}})")),
+        "the owning subprogram must retain the static's expression:\n{retained}"
+    );
+    assert!(
+        line_containing(&retained, "!DIGlobalVariable(name: \"TILE\"")
+            .contains(&format!("scope: {owner},")),
+        "the variable stays scoped to its owning subprogram:\n{retained}"
+    );
+    assert!(
+        !line_containing(&retained, "!DICompileUnit(").contains("globals:"),
+        "a function-local static must not appear in the compile unit's globals:\n{retained}"
+    );
+    assert!(
+        retained.contains("!DIExpression(DW_OP_constu, 8, DW_OP_swap, DW_OP_xderef)"),
+        "the shared address class is unchanged by the placement:\n{retained}"
+    );
+
+    // The LLVM 21/22 form is the pre-existing output: the compile unit
+    // retains the expression and the owner's tuple stays empty.
+    let compile_unit = export_full_debug_with_placement(
+        &ctx,
+        &module,
+        FunctionLocalStaticPlacement::CompileUnitGlobals,
+    );
+    assert!(
+        line_containing(
+            &compile_unit,
+            "distinct !DISubprogram(name: \"shared_kernel\""
+        )
+        .ends_with("retainedNodes: !{})"),
+        "{compile_unit}"
+    );
+    assert!(
+        line_containing(&compile_unit, "!DICompileUnit(").contains("globals: !"),
+        "{compile_unit}"
+    );
+}
+
+/// Module-level statics always belong to the compile unit; only the
+/// function-local one moves under the retained-nodes placement.
+#[test]
+fn retained_node_placement_leaves_module_globals_in_the_compile_unit() {
+    let mut ctx = Context::new();
+    let module = function_local_shared_static_module(&mut ctx, true);
+    let ir = export_full_debug_with_placement(
+        &ctx,
+        &module,
+        FunctionLocalStaticPlacement::SubprogramRetainedNodes,
+    );
+
+    let shared_expression = metadata_id(
+        &ir,
+        "expr: !DIExpression(DW_OP_constu, 8, DW_OP_swap, DW_OP_xderef))",
+    );
+    let global_expression = metadata_id(&ir, "expr: !DIExpression())");
+    assert_ne!(shared_expression, global_expression);
+
+    let subprogram = line_containing(&ir, "distinct !DISubprogram(name: \"shared_kernel\"");
+    assert!(
+        subprogram.ends_with(&format!("retainedNodes: !{{{shared_expression}}})")),
+        "{ir}"
+    );
+
+    let compile_unit = line_containing(&ir, "!DICompileUnit(");
+    let globals_id = compile_unit
+        .split("globals: !")
+        .nth(1)
+        .and_then(|rest| rest.strip_suffix(')'))
+        .expect("compile-unit globals tuple");
+    let globals_tuple = line_containing(&ir, &format!("!{globals_id} = !{{"));
+    assert_eq!(
+        globals_tuple,
+        format!("!{globals_id} = !{{{global_expression}}}"),
+        "only the module-level static stays in the compile unit:\n{ir}"
+    );
+}
+
+/// Every `llvm-as` reachable from the test, with its LLVM major: the
+/// `llvm-as-NN` / `llvm-as` names on `PATH` plus the Rust sysroot's
+/// llvm-tools copy, deduplicated by major.
+fn discover_llvm_as_tools() -> Vec<(String, u32)> {
+    let mut candidates: Vec<String> = ["llvm-as-23", "llvm-as-22", "llvm-as-21", "llvm-as"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if let Some(sysroot) = std::process::Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        && let Some(host) = std::process::Command::new("rustc")
+            .arg("-vV")
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| {
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
+            })
+    {
+        candidates.push(format!("{sysroot}/lib/rustlib/{host}/bin/llvm-as"));
+    }
+    let mut tools: Vec<(String, u32)> = Vec::new();
+    for tool in candidates {
+        let Some(output) = std::process::Command::new(&tool)
+            .arg("--version")
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+        else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let Some(major) = text
+            .split("LLVM version ")
+            .nth(1)
+            .and_then(|rest| rest.split('.').next())
+            .and_then(|major| major.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if tools.iter().all(|(_, seen)| *seen != major) {
+            tools.push((tool, major));
+        }
+    }
+    tools
+}
+
+fn run_llvm_as(tool: &str, ir: &str, tag: &str) -> std::process::Output {
+    let ll_path = std::env::temp_dir().join(format!(
+        "cuda_oxide_placement_gate_{}_{tag}.ll",
+        std::process::id()
+    ));
+    std::fs::write(&ll_path, ir).expect("write temp .ll");
+    let output = std::process::Command::new(tool)
+        .arg("-o")
+        .arg("/dev/null")
+        .arg(&ll_path)
+        .output()
+        .expect("run llvm-as");
+    let _ = std::fs::remove_file(&ll_path);
+    output
+}
+
+/// Checks the LLVM 23 boundary in `FunctionLocalStaticPlacement::for_llvm_major`
+/// against every reachable `llvm-as`: the form selected for its major must
+/// verify, and the other form must be rejected with the verifier's known
+/// message. Like `opt` and `llc`, `llvm-as` strips a broken debug graph and
+/// still exits 0, so the verdict is read from its stderr: an accepted module
+/// produces no "invalid debug info" warning at all.
+#[test]
+fn llvm_as_verifies_the_placement_selected_for_its_major() {
+    let mut ctx = Context::new();
+    let module = function_local_shared_static_module(&mut ctx, true);
+    let tools = discover_llvm_as_tools();
+    if tools.is_empty() {
+        eprintln!("skipping placement verifier gate: no llvm-as on PATH or in the sysroot");
+        return;
+    }
+    for (tool, major) in tools {
+        let selected = FunctionLocalStaticPlacement::for_llvm_major(major);
+        let (rejected, rejection) = match selected {
+            FunctionLocalStaticPlacement::CompileUnitGlobals => (
+                FunctionLocalStaticPlacement::SubprogramRetainedNodes,
+                "invalid retained nodes",
+            ),
+            FunctionLocalStaticPlacement::SubprogramRetainedNodes => (
+                FunctionLocalStaticPlacement::CompileUnitGlobals,
+                "function-local variables are not allowed in a DICompileUnit's global variables list",
+            ),
+        };
+
+        let accepted_ir = export_full_debug_with_placement(&ctx, &module, selected);
+        let output = run_llvm_as(&tool, &accepted_ir, &format!("{major}_selected"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && !stderr.contains("invalid debug info"),
+            "{tool} (LLVM {major}) rejected the {selected:?} form:\n{stderr}\n--- module ---\n{accepted_ir}"
+        );
+
+        let rejected_ir = export_full_debug_with_placement(&ctx, &module, rejected);
+        let output = run_llvm_as(&tool, &rejected_ir, &format!("{major}_rejected"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("ignoring invalid debug info"),
+            "{tool} (LLVM {major}) accepted the {rejected:?} form, so the boundary in \
+             FunctionLocalStaticPlacement::for_llvm_major is stale:\n{stderr}\n{rejected_ir}"
+        );
+        assert!(
+            stderr.contains(rejection),
+            "{tool} (LLVM {major}) rejected the {rejected:?} form for an unexpected reason:\n{stderr}"
+        );
+    }
 }

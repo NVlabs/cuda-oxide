@@ -10,7 +10,9 @@ use crate::target::{
     select_target_with_generated, validate_generated_target, validate_target_features,
 };
 use libnvvm_sys::CudaArch;
-use llvm_export::export::{DebugKind, DeviceExternType, ExportBackendConfig, NvvmIrDialect};
+use llvm_export::export::{
+    DebugKind, DeviceExternType, ExportBackendConfig, FunctionLocalStaticPlacement, NvvmIrDialect,
+};
 use pliron::builtin::op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface};
 use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
@@ -195,6 +197,33 @@ pub fn validate_nvvm_debug_support(
     Ok(())
 }
 
+/// The function-local static placement the resolved `llc` accepts.
+///
+/// An unparseable `llc --version` falls back to the LLVM 22 form. If that
+/// guess is wrong, PTX generation fails closed when `llc` reports the
+/// rejected debug graph, instead of shipping PTX without debug info.
+// mir-importer pipeline plumbing; not part of the frontend contract.
+#[doc(hidden)]
+pub fn function_local_static_placement_for_llc(
+    llc_major: Option<u32>,
+) -> FunctionLocalStaticPlacement {
+    llc_major.map_or(
+        FunctionLocalStaticPlacement::CompileUnitGlobals,
+        FunctionLocalStaticPlacement::for_llvm_major,
+    )
+}
+
+/// Debug metadata settings for one export.
+// mir-importer pipeline plumbing; not part of the frontend contract.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DebugExport {
+    /// Which debug metadata tier to emit.
+    pub kind: DebugKind,
+    /// Where function-local statics are retained, per the consuming LLVM.
+    pub function_local_static_placement: FunctionLocalStaticPlacement,
+}
+
 /// Exports an LLVM dialect module to textual LLVM IR (`.ll` file).
 ///
 /// Backend configuration is selected based on flags:
@@ -211,7 +240,7 @@ pub fn export_llvm_ir(
     path: &Path,
     emit_nvvm_ir: bool,
     nvvm_dialect: Option<NvvmIrDialect>,
-    debug_kind: DebugKind,
+    debug: DebugExport,
 ) -> Result<llvm_export::export::ExportedModule, PipelineError> {
     let exported = render_exported_llvm_ir(
         ctx,
@@ -219,7 +248,7 @@ pub fn export_llvm_ir(
         device_externs,
         emit_nvvm_ir,
         nvvm_dialect,
-        debug_kind,
+        debug,
     )?;
 
     std::fs::write(path, &exported.llvm_ir).map_err(|e| PipelineError::Export(e.to_string()))?;
@@ -240,7 +269,7 @@ pub fn render_llvm_ir(
     device_externs: &[DeviceExternDecl],
     emit_nvvm_ir: bool,
     nvvm_dialect: Option<NvvmIrDialect>,
-    debug_kind: DebugKind,
+    debug: DebugExport,
 ) -> Result<String, PipelineError> {
     render_exported_llvm_ir(
         ctx,
@@ -248,7 +277,7 @@ pub fn render_llvm_ir(
         device_externs,
         emit_nvvm_ir,
         nvvm_dialect,
-        debug_kind,
+        debug,
     )
     .map(|exported| exported.llvm_ir)
 }
@@ -259,7 +288,7 @@ fn render_exported_llvm_ir(
     device_externs: &[DeviceExternDecl],
     emit_nvvm_ir: bool,
     nvvm_dialect: Option<NvvmIrDialect>,
-    debug_kind: DebugKind,
+    debug: DebugExport,
 ) -> Result<llvm_export::export::ExportedModule, PipelineError> {
     let module_op = Operation::get_op::<pliron::builtin::ops::ModuleOp>(module_op_ptr, ctx)
         .ok_or_else(|| PipelineError::Export("Not a module op".to_string()))?;
@@ -270,7 +299,7 @@ fn render_exported_llvm_ir(
         })?;
         let config = PipelineExportConfig {
             inner: llvm_export::export::NvvmExportConfig::new(dialect),
-            debug_kind,
+            debug,
         };
         llvm_export::export::export_module_with_externs_and_roots(
             ctx,
@@ -282,7 +311,7 @@ fn render_exported_llvm_ir(
     } else {
         let config = PipelineExportConfig {
             inner: llvm_export::export::PtxExportConfig,
-            debug_kind,
+            debug,
         };
         llvm_export::export::export_module_with_externs_and_roots(
             ctx,
@@ -298,7 +327,7 @@ fn render_exported_llvm_ir(
 
 struct PipelineExportConfig<C> {
     inner: C,
-    debug_kind: DebugKind,
+    debug: DebugExport,
 }
 
 impl<C: ExportBackendConfig> ExportBackendConfig for PipelineExportConfig<C> {
@@ -331,7 +360,11 @@ impl<C: ExportBackendConfig> ExportBackendConfig for PipelineExportConfig<C> {
     }
 
     fn debug_kind(&self) -> DebugKind {
-        self.debug_kind
+        self.debug.kind
+    }
+
+    fn function_local_static_placement(&self) -> FunctionLocalStaticPlacement {
+        self.debug.function_local_static_placement
     }
 }
 
@@ -741,7 +774,18 @@ mod tests {
         let mut ctx = Context::new();
         let module_ptr = build_module_with_func_decl(&mut ctx, "llvm_nvvm_tcgen05_alloc");
 
-        let preview = render_llvm_ir(&ctx, module_ptr, &[], false, None, DebugKind::Off).unwrap();
+        let preview = render_llvm_ir(
+            &ctx,
+            module_ptr,
+            &[],
+            false,
+            None,
+            DebugExport {
+                kind: DebugKind::Off,
+                function_local_static_placement: FunctionLocalStaticPlacement::CompileUnitGlobals,
+            },
+        )
+        .unwrap();
 
         assert!(preview.contains("@llvm.nvvm.tcgen05.alloc"), "{preview}");
         assert_eq!(
@@ -836,6 +880,39 @@ mod tests {
             unresolved_libdevice_ptx_declarations(ptx)
                 .unwrap()
                 .is_empty()
+        );
+    }
+}
+
+#[cfg(test)]
+mod function_local_static_placement_tests {
+    use super::function_local_static_placement_for_llc;
+    use llvm_export::export::FunctionLocalStaticPlacement;
+
+    /// LLVM 23 moved function-local statics from the compile unit's globals
+    /// to the owning subprogram's retained nodes; an unknown major takes the
+    /// older form and relies on the fail-closed llc check.
+    #[test]
+    fn placement_follows_the_resolved_llc_major() {
+        assert_eq!(
+            function_local_static_placement_for_llc(Some(21)),
+            FunctionLocalStaticPlacement::CompileUnitGlobals
+        );
+        assert_eq!(
+            function_local_static_placement_for_llc(Some(22)),
+            FunctionLocalStaticPlacement::CompileUnitGlobals
+        );
+        assert_eq!(
+            function_local_static_placement_for_llc(Some(23)),
+            FunctionLocalStaticPlacement::SubprogramRetainedNodes
+        );
+        assert_eq!(
+            function_local_static_placement_for_llc(Some(24)),
+            FunctionLocalStaticPlacement::SubprogramRetainedNodes
+        );
+        assert_eq!(
+            function_local_static_placement_for_llc(None),
+            FunctionLocalStaticPlacement::CompileUnitGlobals
         );
     }
 }

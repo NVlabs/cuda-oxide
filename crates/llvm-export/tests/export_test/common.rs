@@ -4,7 +4,7 @@
  */
 
 use combine::stream::position::SourcePosition;
-use llvm_export::export::{DebugKind, ExportBackendConfig};
+use llvm_export::export::{DebugKind, ExportBackendConfig, FunctionLocalStaticPlacement};
 use pliron::{
     basic_block::BasicBlock,
     builtin::ops::ModuleOp,
@@ -51,6 +51,51 @@ impl<C: ExportBackendConfig> ExportBackendConfig for DebugConfig<C> {
 
     fn debug_kind(&self) -> DebugKind {
         self.debug_kind
+    }
+}
+
+/// Selects where function-local statics are retained, delegating everything
+/// else (including the debug tier) to the wrapped config.
+pub(super) struct PlacementConfig<C> {
+    pub(super) inner: C,
+    pub(super) placement: FunctionLocalStaticPlacement,
+}
+
+impl<C: ExportBackendConfig> ExportBackendConfig for PlacementConfig<C> {
+    fn datalayout(&self) -> &str {
+        self.inner.datalayout()
+    }
+
+    fn emit_llvm_used(&self) -> bool {
+        self.inner.emit_llvm_used()
+    }
+
+    fn emit_nvvmir_version(&self) -> bool {
+        self.inner.emit_nvvmir_version()
+    }
+
+    fn nvvmir_version(&self) -> [i32; 4] {
+        self.inner.nvvmir_version()
+    }
+
+    fn emit_all_kernel_annotations(&self) -> bool {
+        self.inner.emit_all_kernel_annotations()
+    }
+
+    fn emit_ptx_kernel_keyword(&self) -> bool {
+        self.inner.emit_ptx_kernel_keyword()
+    }
+
+    fn nvvm_ir_dialect(&self) -> Option<llvm_export::export::NvvmIrDialect> {
+        self.inner.nvvm_ir_dialect()
+    }
+
+    fn debug_kind(&self) -> DebugKind {
+        self.inner.debug_kind()
+    }
+
+    fn function_local_static_placement(&self) -> FunctionLocalStaticPlacement {
+        self.placement
     }
 }
 

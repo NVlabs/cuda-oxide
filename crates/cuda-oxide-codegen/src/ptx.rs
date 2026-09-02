@@ -113,12 +113,44 @@ fn link_libdevice(
 ///
 /// Returns the optimized path plus caller-owned diagnostics. Experimental v1
 /// is strict; the legacy rustc path retains its warn-and-continue behavior.
+/// LLVM's verifier prints this when a module's debug metadata is malformed.
+/// It then strips every debug node instead of failing, so `opt` and `llc`
+/// exit 0 and emit an artifact with no `.loc`, no `.file`, and no DWARF.
+const LLVM_INVALID_DEBUG_INFO_WARNING: &str = "ignoring invalid debug info";
+
+/// Fail when a tool that exited successfully reported that it discarded the
+/// module's debug metadata.
+///
+/// A debug build whose debug graph is silently dropped is worse than a failed
+/// build: cuda-gdb then resolves every source breakpoint to its host shadow
+/// and never stops in the kernel. Debug-off builds carry no graph to reject,
+/// so their stderr is left alone.
+fn reject_dropped_debug_info(
+    tool: &str,
+    stderr: &[u8],
+    debug_kind: DebugKind,
+) -> Result<(), String> {
+    if !debug_kind.line_tables_enabled() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(stderr);
+    if !stderr.contains(LLVM_INVALID_DEBUG_INFO_WARNING) {
+        return Ok(());
+    }
+    Err(format!(
+        "{tool} rejected the module's debug metadata and would have emitted an artifact \
+         without it, but device debug information was requested:\n{}",
+        stderr.trim()
+    ))
+}
+
 fn optimize_ll(
     ll_path: &Path,
     public_symbols: &[String],
     toolchain: &LlvmToolchain,
     opts: &BackendOptions,
     strict: bool,
+    debug_kind: DebugKind,
 ) -> Result<(Option<PathBuf>, Vec<String>), PipelineError> {
     if opts.no_opt {
         return Ok((None, Vec::new()));
@@ -146,6 +178,8 @@ fn optimize_ll(
         .output()
     {
         Ok(output) if output.status.success() => {
+            reject_dropped_debug_info(&format!("opt ({})", opt.path), &output.stderr, debug_kind)
+                .map_err(PipelineError::Optimization)?;
             let diagnostics = opts
                 .verbose
                 .then(|| {
@@ -411,7 +445,8 @@ pub struct PtxModule<'a> {
 /// GPU can run the kernel, else the minimum arch the IR's features require.
 // mir-importer pipeline plumbing; not part of the frontend contract.
 #[doc(hidden)]
-pub fn generate_ptx(
+#[cfg(test)]
+pub(crate) fn generate_ptx(
     module: PtxModule<'_>,
     debug_kind: DebugKind,
     opts: &BackendOptions,
@@ -419,8 +454,28 @@ pub fn generate_ptx(
     generated: &GeneratedModuleRequirements,
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
-    let Some(toolchain) = LlvmToolchain::resolve(opts) else {
-        return Err(PipelineError::PtxGeneration(
+    let toolchain = discover_llvm_toolchain(opts)?;
+    generate_ptx_discovered(
+        module,
+        debug_kind,
+        opts,
+        &toolchain,
+        diagnostic_sink,
+        generated,
+        libdevice_path,
+    )
+}
+
+/// Resolve the `llc` / `opt` / `llvm-link` set the PTX path will use.
+///
+/// Split from [`generate_ptx`] so the pipeline can learn the `llc` major
+/// before it exports the debug graph, whose function-local static placement
+/// depends on that major.
+pub(crate) fn discover_llvm_toolchain(
+    opts: &BackendOptions,
+) -> Result<LlvmToolchain, PipelineError> {
+    LlvmToolchain::resolve(opts).ok_or_else(|| {
+        PipelineError::PtxGeneration(
             "No working llc found.\n\
              cuda-oxide tries (in order): opts.llc_override (CUDA_OXIDE_LLC), the \
              Rust toolchain's llvm-tools llc, then llc-23 / llc-22 / llc-21 on PATH. \
@@ -430,8 +485,21 @@ pub fn generate_ptx(
              Alternative: `sudo apt install llvm-21` (or `llvm-22`).\n\
              Or set opts.llc_override (CUDA_OXIDE_LLC) to a specific binary."
                 .to_string(),
-        ));
-    };
+        )
+    })
+}
+
+/// Generate PTX with a toolchain from [`discover_llvm_toolchain`], reporting
+/// its selection diagnostics through `diagnostic_sink`.
+pub(crate) fn generate_ptx_discovered(
+    module: PtxModule<'_>,
+    debug_kind: DebugKind,
+    opts: &BackendOptions,
+    toolchain: &LlvmToolchain,
+    diagnostic_sink: Option<fn(&str)>,
+    generated: &GeneratedModuleRequirements,
+    libdevice_path: Option<&Path>,
+) -> Result<GeneratedPtx, PipelineError> {
     let mut diagnostics = toolchain.diagnostics.clone();
     if !opts.no_opt && toolchain.opt.is_none() {
         diagnostics.push(
@@ -458,7 +526,7 @@ pub fn generate_ptx(
         debug_kind,
         PtxBackend {
             options: opts,
-            toolchain: &toolchain,
+            toolchain,
             generated,
         },
         false,
@@ -600,6 +668,7 @@ fn generate_ptx_impl(
             toolchain,
             opts,
             strict_optimization,
+            debug_kind,
         )?;
         for diagnostic in opt_diagnostics.drain(..) {
             record_diagnostic(&mut diagnostics, diagnostic_sink, diagnostic);
@@ -714,6 +783,8 @@ fn generate_ptx_impl(
 
     match result {
         Ok(output) if output.status.success() => {
+            reject_dropped_debug_info(&llc_desc, &output.stderr, debug_kind)
+                .map_err(PipelineError::PtxGeneration)?;
             verify_no_shared_symbols_in_initializers(module.output)?;
             verify_no_leaked_intrinsic_externs(module.output)?;
             if matches!(debug_kind, DebugKind::LineTables) {
@@ -1056,11 +1127,12 @@ mod tests {
         let opts = BackendOptions::default();
         let input = Path::new("unused.ll");
 
-        let (optimized, diagnostics) = optimize_ll(input, &[], &toolchain, &opts, false).unwrap();
+        let (optimized, diagnostics) =
+            optimize_ll(input, &[], &toolchain, &opts, false, DebugKind::Off).unwrap();
         assert!(optimized.is_none());
         assert!(diagnostics[0].contains("continuing with unoptimized IR"));
 
-        let error = optimize_ll(input, &[], &toolchain, &opts, true).unwrap_err();
+        let error = optimize_ll(input, &[], &toolchain, &opts, true, DebugKind::Off).unwrap_err();
         assert!(matches!(&error, PipelineError::Optimization(_)));
         assert!(
             error
@@ -1326,6 +1398,143 @@ mod tests {
             "{diagnostics:?}"
         );
         drop(diagnostics);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Writes an executable stand-in for `llc`/`opt` that answers `--version`
+    /// with LLVM 23, writes a minimal artifact to its `-o` path, and reports
+    /// on stderr that it discarded the module's debug metadata.
+    #[cfg(unix)]
+    fn write_debug_dropping_tool(path: &Path, artifact: &str) {
+        std::fs::write(
+            path,
+            format!(
+                "#!/bin/sh\n\
+                 if [ \"${{1:-}}\" = \"--version\" ]; then echo 'LLVM version 23.1.0'; exit 0; fi\n\
+                 out=''\n\
+                 while [ $# -gt 0 ]; do if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift; fi; shift; done\n\
+                 printf '%s' '{artifact}' > \"$out\"\n\
+                 echo 'warning: ignoring invalid debug info in module.ll' >&2\n\
+                 exit 0\n"
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
+    /// llc exits 0 after LLVM's verifier strips a malformed debug graph, so
+    /// a debug build must treat that warning as a failure rather than ship
+    /// PTX with no line table (the 2026-09 LLVM 23 function-local static
+    /// regression, where cuda-gdb could only stop at host shadow lines).
+    #[test]
+    #[cfg(unix)]
+    fn debug_builds_fail_when_llc_drops_the_debug_graph() {
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_llc_dropped_debug_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let ll_path = root.join("module.ll");
+        let ptx_path = root.join("module.ptx");
+        let llc_path = root.join("llc-fake");
+        std::fs::write(&ll_path, "define void @kernel() { ret void }\n").unwrap();
+        write_debug_dropping_tool(&llc_path, ".version 8.7\n.target sm_80\n.address_size 64\n");
+        let opts = BackendOptions {
+            target_arch: Some("sm_80".to_string()),
+            no_opt: true,
+            llc_override: Some(llc_path),
+            ..BackendOptions::default()
+        };
+        let module = || PtxModule {
+            llvm_ir: &ll_path,
+            output: &ptx_path,
+            public_symbols: &[],
+        };
+
+        for debug_kind in [DebugKind::Full, DebugKind::LineTables] {
+            let error = generate_ptx(
+                module(),
+                debug_kind,
+                &opts,
+                None,
+                &GeneratedModuleRequirements::default(),
+                None,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(&error, PipelineError::PtxGeneration(message)
+                    if message.contains("rejected the module's debug metadata")
+                        && message.contains(LLVM_INVALID_DEBUG_INFO_WARNING)),
+                "{debug_kind:?}: {error}"
+            );
+        }
+
+        // Without debug information there is no graph to lose; the same
+        // warning is not a failure.
+        generate_ptx(
+            module(),
+            DebugKind::Off,
+            &opts,
+            None,
+            &GeneratedModuleRequirements::default(),
+            None,
+        )
+        .expect("debug-off builds ignore the verifier's debug warning");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Line-table builds run `opt -O2`, which prints the same warning and
+    /// exits 0 when it strips the debug graph; that must fail even in the
+    /// lenient (non-strict) optimization mode.
+    #[test]
+    #[cfg(unix)]
+    fn debug_builds_fail_when_opt_drops_the_debug_graph() {
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_opt_dropped_debug_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let ll_path = root.join("module.ll");
+        let opt_path = root.join("opt-fake");
+        std::fs::write(&ll_path, "define void @kernel() { ret void }\n").unwrap();
+        write_debug_dropping_tool(&opt_path, "define void @kernel() { ret void }\n");
+        let toolchain = LlvmToolchain {
+            llc_path: posix_utility("true"),
+            llc_major: Some(23),
+            llc_from_env: false,
+            opt: Some(crate::llvm_tools::OptTool {
+                path: opt_path.to_string_lossy().into_owned(),
+                major: Some(23),
+            }),
+            llvm_link: None,
+            diagnostics: Vec::new(),
+        };
+        let opts = BackendOptions::default();
+
+        let error = optimize_ll(
+            &ll_path,
+            &[],
+            &toolchain,
+            &opts,
+            false,
+            DebugKind::LineTables,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&error, PipelineError::Optimization(message)
+                if message.contains("rejected the module's debug metadata")),
+            "{error}"
+        );
+
+        let (optimized, _) =
+            optimize_ll(&ll_path, &[], &toolchain, &opts, false, DebugKind::Off).unwrap();
+        assert!(
+            optimized.is_some(),
+            "debug-off optimization keeps opt's output"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 

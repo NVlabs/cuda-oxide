@@ -61,6 +61,55 @@ impl DebugKind {
     }
 }
 
+/// Where a function-local static's `DIGlobalVariableExpression` is retained.
+///
+/// A `static` declared inside a kernel (a shared-memory tile, say) is a
+/// global with a `DISubprogram` scope. LLVM's verifier accepts exactly one
+/// home for such a variable, and the accepted home changed in LLVM 23:
+///
+/// ```text
+/// LLVM 21 / 22                          LLVM 23+
+///
+/// !DICompileUnit(..., globals: !{!E})   !DISubprogram(..., retainedNodes: !{!E})
+///   !E = !DIGlobalVariableExpression      !E = !DIGlobalVariableExpression
+///        (var: !V ...)                         (var: !V ...)
+///   !V = !DIGlobalVariable(scope: !SP)    !V = !DIGlobalVariable(scope: !SP)
+///
+/// LLVM 23 rejects the left form ("function-local variables are not allowed
+/// in a DICompileUnit's global variables list"); LLVM 21/22 reject the right
+/// form ("invalid retained nodes, expected DILocalVariable, DILabel or
+/// DIImportedEntity"). Either rejection makes llc/opt drop the module's
+/// entire debug graph with only a warning.
+/// ```
+///
+/// Module-level globals are unaffected: they always live in the compile
+/// unit's `globals:` tuple.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FunctionLocalStaticPlacement {
+    /// List the expression in the compile unit's `globals:` tuple, scoped to
+    /// its owning `DISubprogram`. Required by LLVM 22 and older, and by
+    /// libNVVM's LLVM.
+    #[default]
+    CompileUnitGlobals,
+    /// List the expression in the owning `DISubprogram`'s `retainedNodes:`
+    /// tuple. Required by LLVM 23 and newer.
+    SubprogramRetainedNodes,
+}
+
+impl FunctionLocalStaticPlacement {
+    /// The first LLVM major whose verifier requires the retained-nodes form.
+    pub const FIRST_RETAINED_NODES_MAJOR: u32 = 23;
+
+    /// The placement the given LLVM major's verifier accepts.
+    pub fn for_llvm_major(major: u32) -> Self {
+        if major >= Self::FIRST_RETAINED_NODES_MAJOR {
+            Self::SubprogramRetainedNodes
+        } else {
+            Self::CompileUnitGlobals
+        }
+    }
+}
+
 /// Configuration trait for export backends (PTX, LTOIR, etc.).
 ///
 /// This trait allows different backends to customize IR generation without
@@ -95,6 +144,16 @@ pub trait ExportBackendConfig {
     /// Which device debug metadata tier to emit.
     fn debug_kind(&self) -> DebugKind {
         DebugKind::Off
+    }
+
+    /// Where function-local statics are retained in the debug graph.
+    ///
+    /// The default is the LLVM 22 form because it is also what libNVVM's
+    /// LLVM accepts; a backend feeding `llc` must select the form for the
+    /// `llc` major it resolved (see
+    /// [`FunctionLocalStaticPlacement::for_llvm_major`]).
+    fn function_local_static_placement(&self) -> FunctionLocalStaticPlacement {
+        FunctionLocalStaticPlacement::default()
     }
 }
 
@@ -192,5 +251,32 @@ impl ExportBackendConfig for NvvmExportConfig {
 
     fn nvvm_ir_dialect(&self) -> Option<NvvmIrDialect> {
         Some(self.dialect)
+    }
+}
+
+#[cfg(test)]
+mod function_local_static_placement_tests {
+    use super::FunctionLocalStaticPlacement;
+
+    #[test]
+    fn retained_nodes_start_at_llvm_23() {
+        for major in [21, 22] {
+            assert_eq!(
+                FunctionLocalStaticPlacement::for_llvm_major(major),
+                FunctionLocalStaticPlacement::CompileUnitGlobals,
+                "LLVM {major}"
+            );
+        }
+        for major in [23, 24] {
+            assert_eq!(
+                FunctionLocalStaticPlacement::for_llvm_major(major),
+                FunctionLocalStaticPlacement::SubprogramRetainedNodes,
+                "LLVM {major}"
+            );
+        }
+        assert_eq!(
+            FunctionLocalStaticPlacement::default(),
+            FunctionLocalStaticPlacement::CompileUnitGlobals
+        );
     }
 }

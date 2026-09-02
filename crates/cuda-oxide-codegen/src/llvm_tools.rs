@@ -56,7 +56,7 @@ pub struct OptTool {
 }
 
 /// The `opt` / `llc` / `llvm-link` set the pipeline will use, resolved once
-/// per compilation so `optimize_ll`, `generate_ptx`, and `link_libdevice`
+/// per compilation so `optimize_ll`, `generate_ptx_discovered`, and `link_libdevice`
 /// agree on it. Future version-conditional IR emission should key off
 /// `llc_major` here rather than re-probing binaries.
 // mir-importer pipeline plumbing; not part of the frontend contract.
