@@ -825,7 +825,22 @@ impl<'a> ModuleExportState<'a> {
         self.debug_types.insert(ty.clone(), enum_type_id);
 
         let discriminator_member_id = discriminant.as_ref().map(|discriminant| {
-            let base = self.ensure_debug_type(&discriminant.ty);
+            // Variant `extraData` carries the physical tag bit pattern as a
+            // `u64`. An unsigned artificial carrier keeps llc from extending
+            // high-bit integer tags beyond the width of PTX `.b8` records.
+            let discriminator_ty = match discriminant.ty.as_ref() {
+                DebugLocalTypeKind::Basic {
+                    size_bits,
+                    encoding,
+                    ..
+                } if *encoding == "DW_ATE_signed" => DebugLocalTypeKind::Basic {
+                    name: format!("u{size_bits}"),
+                    size_bits: *size_bits,
+                    encoding: "DW_ATE_unsigned",
+                },
+                ty => ty.clone(),
+            };
+            let base = self.ensure_debug_type(&discriminator_ty);
             let id = self.alloc_metadata_id();
             self.debug_nodes.push((
                 id,
