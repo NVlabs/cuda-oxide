@@ -16,7 +16,8 @@ pub(super) fn needs_nvvm_annotations(
 ) -> bool {
     let has_required_annotations = !state.cluster_kernels.is_empty()
         || !state.launch_bounds_kernels.is_empty()
-        || !state.function_abi_alignments.is_empty();
+        || !state.function_abi_alignments.is_empty()
+        || !state.grid_constant_kernels.is_empty();
     has_required_annotations || (emit_all_annotations && !state.all_kernels.is_empty())
 }
 
@@ -76,6 +77,30 @@ pub(super) fn emit_nvvm_annotations(
         emit_function_reference(output, state, &name)?;
         writeln!(output, ", !\"align\", i32 {encoded}}}").unwrap();
         metadata_refs.push(format!("!{}", md_id));
+    }
+
+    // NVVM represents grid-constant positions indirectly: the annotation's
+    // value is a metadata node containing the 1-based parameter indices.
+    let grid_constant_kernels: Vec<_> = state
+        .grid_constant_kernels
+        .iter()
+        .map(|kernel| (kernel.name.clone(), kernel.positions.clone()))
+        .collect();
+
+    for (name, positions) in grid_constant_kernels {
+        let positions_id = state.alloc_metadata_id();
+        let positions = positions
+            .iter()
+            .map(|position| format!("i32 {position}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(output, "!{positions_id} = !{{{positions}}}").unwrap();
+
+        let annotation_id = state.alloc_metadata_id();
+        write!(output, "!{annotation_id} = !{{").unwrap();
+        emit_function_reference(output, state, &name)?;
+        writeln!(output, ", !\"grid_constant\", !{positions_id}}}").unwrap();
+        metadata_refs.push(format!("!{annotation_id}"));
     }
 
     // Emit cluster config annotations
@@ -176,8 +201,8 @@ mod tests {
     use super::*;
     use crate::export::config::DebugKind;
     use crate::export::state::{
-        FunctionAbiAlignment, KernelBlockGeometry, KernelClusterConfig, KernelInfo,
-        KernelLaunchBounds, ModuleExportState,
+        FunctionAbiAlignment, KernelBlockGeometry, KernelClusterConfig, KernelGridConstants,
+        KernelInfo, KernelLaunchBounds, ModuleExportState,
     };
     use pliron::context::Context;
 
@@ -275,6 +300,31 @@ mod tests {
                 "!0 = !{ptr @packed_param, !\"align\", i32 65538}\n",
                 "!1 = !{ptr @packed_return, !\"align\", i32 2}\n",
                 "!nvvm.annotations = !{!0, !1}\n",
+            )
+        );
+        assert_eq!(state.next_metadata_id(), 2);
+    }
+
+    #[test]
+    fn grid_constant_emits_parameter_list_and_annotation() {
+        let ctx = Context::new();
+        let mut state = test_state(&ctx);
+        state.grid_constant_kernels.push(KernelGridConstants {
+            name: "copy_maps".into(),
+            positions: vec![1, 3],
+        });
+
+        assert!(needs_nvvm_annotations(&state, false));
+
+        let mut output = String::new();
+        emit_nvvm_annotations(&mut output, &mut state, false).unwrap();
+
+        assert_eq!(
+            output,
+            concat!(
+                "!0 = !{i32 1, i32 3}\n",
+                "!1 = !{ptr @copy_maps, !\"grid_constant\", !0}\n",
+                "!nvvm.annotations = !{!1}\n",
             )
         );
         assert_eq!(state.next_metadata_id(), 2);

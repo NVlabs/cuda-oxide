@@ -52,6 +52,10 @@ use pliron::{
     r#type::TypeHandle,
     value::Value,
 };
+use reserved_oxide_symbols::{
+    LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX, LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX,
+    MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX, MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 const DYNAMIC_SHARED_ALIGNMENT_ATTR: &str = "dynamic_shared_alignment";
@@ -60,10 +64,8 @@ const DYNAMIC_SHARED_ALIGNMENT_ATTR: &str = "dynamic_shared_alignment";
 const KERNEL_PARAM_ABI_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_param_abi_align_";
 const RETURN_ABI_ALIGN_ATTR: &str = "cuda_oxide_return_abi_align";
 
-// ============================================================================
-// Dynamic shared-memory contract propagation
-// ============================================================================
-
+// =====================================================================// Dynamic shared-memory contract propagation
+// =====================================================================
 /// Propagate dynamic shared-memory alignment markers through the local MIR
 /// call graph before any function is lowered.
 ///
@@ -196,10 +198,8 @@ fn set_dynamic_shared_alignment_attr(ctx: &mut Context, op: Ptr<Operation>, alig
         .set(key, IntegerAttr::new(u64_ty, value));
 }
 
-// ============================================================================
-// Function Conversion
-// ============================================================================
-
+// =====================================================================// Function Conversion
+// =====================================================================
 /// Convert a `MirFuncOp` to `llvm.func` using pliron's `inline_region`.
 ///
 /// Called from `crate::MirToLlvmConversionDriver::rewrite` when the
@@ -257,8 +257,17 @@ pub fn convert_func(
     }
     let llvm_func_type =
         convert_function_type(ctx, func_type, is_kernel).map_err(anyhow_to_pliron)?;
-    let kernel_param_alignments = if is_kernel {
-        kernel_param_abi_alignments(ctx, func_type, llvm_func_type).map_err(anyhow_to_pliron)?
+    let kernel_parameter_layout = if is_kernel {
+        kernel_parameter_layout(ctx, func_type, llvm_func_type).map_err(anyhow_to_pliron)?
+    } else {
+        Vec::new()
+    };
+    let kernel_param_alignments =
+        kernel_param_abi_alignments(ctx, &kernel_parameter_layout, llvm_func_type)
+            .map_err(anyhow_to_pliron)?;
+    let grid_constant_params = if is_kernel {
+        kernel_grid_constant_params(ctx, op, &kernel_parameter_layout, llvm_func_type)
+            .map_err(anyhow_to_pliron)?
     } else {
         Vec::new()
     };
@@ -283,6 +292,7 @@ pub fn convert_func(
             &llvm_func,
             &kernel_reference_param_validities,
         );
+        propagate_kernel_grid_constants(ctx, &llvm_func, &grid_constant_params);
     }
     propagate_return_abi_alignment(ctx, &llvm_func, return_abi_alignment);
 
@@ -339,10 +349,8 @@ pub fn convert_func(
     Ok(())
 }
 
-// ============================================================================
-// Kernel Attribute Propagation
-// ============================================================================
-
+// =====================================================================// Kernel Attribute Propagation
+// =====================================================================
 /// Propagate GPU kernel attributes from MIR func to LLVM func.
 fn propagate_kernel_attrs(
     ctx: &mut Context,
@@ -504,72 +512,184 @@ fn propagate_kernel_reference_param_validities(
 /// rustc's ABI alignment is stricter than LLVM's natural alignment; the LLVM
 /// exporter renders these markers as NVVM `!nvvm.annotations` `"align"`
 /// properties, which preserve the contract in both modern NVPTX and libNVVM.
-fn kernel_param_abi_alignments(
+#[derive(Clone)]
+struct KernelParameterLayout {
+    mir_ty: TypeHandle,
+    llvm_range: std::ops::Range<usize>,
+}
+
+fn kernel_parameter_layout(
     ctx: &mut Context,
     mir_func_type: pliron::r#type::TypedHandle<pliron::builtin::types::FunctionType>,
     llvm_func_type: pliron::r#type::TypedHandle<llvm_export::types::FuncType>,
-) -> std::result::Result<Vec<(usize, u64)>, anyhow::Error> {
+) -> std::result::Result<Vec<KernelParameterLayout>, anyhow::Error> {
     use pliron::builtin::type_interfaces::FunctionTypeInterface;
 
     let mir_args = {
         let func_ref = mir_func_type.deref(ctx);
         func_ref.arg_types().to_vec()
     };
+    let llvm_arg_count = {
+        let func_ref = llvm_func_type.deref(ctx);
+        func_ref.arg_types().len()
+    };
+
+    let mut result = Vec::with_capacity(mir_args.len());
+    let mut llvm_arg_index = 0usize;
+    for mir_ty in mir_args {
+        let width = match classify_argument_type(ctx, mir_ty, true)? {
+            ReconstructKind::Slice { space_fields } => 2 + space_fields,
+            ReconstructKind::TransparentScalar | ReconstructKind::None => 1,
+            ReconstructKind::Zst => 0,
+            ReconstructKind::Struct(_) => {
+                return Err(anyhow::anyhow!(
+                    "kernel parameter unexpectedly used the internal flattened struct ABI"
+                ));
+            }
+        };
+        let end = llvm_arg_index
+            .checked_add(width)
+            .ok_or_else(|| anyhow::anyhow!("kernel parameter index overflow"))?;
+        if end > llvm_arg_count {
+            return Err(anyhow::anyhow!(
+                "kernel parameter mapping ran past LLVM argument {llvm_arg_count}"
+            ));
+        }
+        result.push(KernelParameterLayout {
+            mir_ty,
+            llvm_range: llvm_arg_index..end,
+        });
+        llvm_arg_index = end;
+    }
+
+    if llvm_arg_index != llvm_arg_count {
+        return Err(anyhow::anyhow!(
+            "kernel parameter mapping consumed {} LLVM arguments, expected {}",
+            llvm_arg_index,
+            llvm_arg_count
+        ));
+    }
+    Ok(result)
+}
+
+fn kernel_param_abi_alignments(
+    ctx: &mut Context,
+    parameter_layout: &[KernelParameterLayout],
+    llvm_func_type: pliron::r#type::TypedHandle<llvm_export::types::FuncType>,
+) -> std::result::Result<Vec<(usize, u64)>, anyhow::Error> {
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+
     let llvm_args = {
         let func_ref = llvm_func_type.deref(ctx);
         func_ref.arg_types().to_vec()
     };
 
     let mut result = Vec::new();
-    let mut llvm_arg_index = 0usize;
+    for parameter in parameter_layout {
+        if parameter.llvm_range.len() != 1 {
+            continue;
+        }
+        let llvm_arg_index = parameter.llvm_range.start;
+        let llvm_ty = llvm_args[llvm_arg_index];
 
-    for mir_ty in mir_args {
-        match classify_argument_type(ctx, mir_ty, true)? {
-            ReconstructKind::Slice { space_fields } => {
-                llvm_arg_index = llvm_arg_index
-                    .checked_add(2 + space_fields)
-                    .ok_or_else(|| anyhow::anyhow!("kernel parameter index overflow"))?;
-            }
-            ReconstructKind::TransparentScalar | ReconstructKind::None => {
-                let llvm_ty = *llvm_args.get(llvm_arg_index).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "kernel parameter alignment mapping ran past LLVM argument {}",
-                        llvm_arg_index
-                    )
-                })?;
-
-                if let (Some(rust_align), Some((_, llvm_align))) = (
-                    mir_type_abi_align(ctx, mir_ty),
-                    llvm_type_size_align(ctx, llvm_ty),
-                ) && rust_align > llvm_align
-                {
-                    if !rust_align.is_power_of_two() {
-                        return Err(anyhow::anyhow!(
-                            "kernel parameter {} has non-power-of-two Rust ABI alignment {}",
-                            llvm_arg_index,
-                            rust_align
-                        ));
-                    }
-                    result.push((llvm_arg_index, rust_align));
-                }
-
-                llvm_arg_index += 1;
-            }
-            ReconstructKind::Zst => {}
-            ReconstructKind::Struct(_) => {
+        if let (Some(rust_align), Some((_, llvm_align))) = (
+            mir_type_abi_align(ctx, parameter.mir_ty),
+            llvm_type_size_align(ctx, llvm_ty),
+        ) && rust_align > llvm_align
+        {
+            if !rust_align.is_power_of_two() {
                 return Err(anyhow::anyhow!(
-                    "kernel parameter unexpectedly used the internal flattened struct ABI"
+                    "kernel parameter {} has non-power-of-two Rust ABI alignment {}",
+                    llvm_arg_index,
+                    rust_align
                 ));
             }
+            result.push((llvm_arg_index, rust_align));
         }
     }
 
-    if llvm_arg_index != llvm_args.len() {
-        return Err(anyhow::anyhow!(
-            "kernel parameter alignment mapping consumed {} LLVM arguments, expected {}",
-            llvm_arg_index,
-            llvm_args.len()
-        ));
+    Ok(result)
+}
+
+#[derive(Clone, Copy)]
+struct KernelGridConstantParam {
+    llvm_index: usize,
+    pointee: TypeHandle,
+    alignment: u64,
+}
+
+fn kernel_grid_constant_params(
+    ctx: &mut Context,
+    mir_op: Ptr<Operation>,
+    parameter_layout: &[KernelParameterLayout],
+    llvm_func_type: pliron::r#type::TypedHandle<llvm_export::types::FuncType>,
+) -> std::result::Result<Vec<KernelGridConstantParam>, anyhow::Error> {
+    use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+    use pliron::r#type::Typed;
+
+    let llvm_args = {
+        let func_ref = llvm_func_type.deref(ctx);
+        func_ref.arg_types().to_vec()
+    };
+    let mut result = Vec::new();
+
+    for (source_index, parameter) in parameter_layout.iter().enumerate() {
+        let pointee_key: pliron::identifier::Identifier =
+            format!("{MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{source_index}")
+                .as_str()
+                .try_into()
+                .expect("grid-constant pointee attribute name is valid");
+        let align_key: pliron::identifier::Identifier =
+            format!("{MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{source_index}")
+                .as_str()
+                .try_into()
+                .expect("grid-constant alignment attribute name is valid");
+        let (mir_pointee, alignment) = {
+            let attrs = &mir_op.deref(ctx).attributes;
+            let pointee = attrs.get::<TypeAttr>(&pointee_key);
+            let alignment = attrs.get::<IntegerAttr>(&align_key);
+            match (pointee, alignment) {
+                (None, None) => continue,
+                (Some(pointee), Some(alignment)) => {
+                    (pointee.get_type(ctx), alignment.value().to_u64())
+                }
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "kernel grid-constant parameter {source_index} has incomplete pointee/alignment metadata"
+                    ));
+                }
+            }
+        };
+
+        if parameter.llvm_range.len() != 1 {
+            return Err(anyhow::anyhow!(
+                "kernel grid-constant source parameter {source_index} lowers to {} LLVM parameters, expected one",
+                parameter.llvm_range.len()
+            ));
+        }
+        let llvm_index = parameter.llvm_range.start;
+        let llvm_arg = llvm_args[llvm_index];
+        if llvm_arg
+            .deref(ctx)
+            .downcast_ref::<llvm_export::types::PointerType>()
+            .is_none()
+        {
+            return Err(anyhow::anyhow!(
+                "kernel grid-constant source parameter {source_index} lowers to non-pointer LLVM parameter {llvm_index}"
+            ));
+        }
+        if alignment == 0 || !alignment.is_power_of_two() {
+            return Err(anyhow::anyhow!(
+                "kernel grid-constant source parameter {source_index} has invalid alignment {alignment}"
+            ));
+        }
+        let pointee = convert_type(ctx, mir_pointee)?;
+        result.push(KernelGridConstantParam {
+            llvm_index,
+            pointee,
+            alignment,
+        });
     }
 
     Ok(result)
@@ -647,6 +767,44 @@ fn propagate_kernel_param_abi_alignments(
     }
 }
 
+fn propagate_kernel_grid_constants(
+    ctx: &mut Context,
+    llvm_func: &llvm::FuncOp,
+    parameters: &[KernelGridConstantParam],
+) {
+    use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
+    use pliron::builtin::types::{IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZero;
+
+    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let width = NonZero::new(64).expect("64 is non-zero");
+    for parameter in parameters {
+        let pointee_key: pliron::identifier::Identifier = format!(
+            "{LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{}",
+            parameter.llvm_index
+        )
+        .as_str()
+        .try_into()
+        .expect("grid-constant pointee attribute name is valid");
+        let align_key: pliron::identifier::Identifier = format!(
+            "{LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{}",
+            parameter.llvm_index
+        )
+        .as_str()
+        .try_into()
+        .expect("grid-constant alignment attribute name is valid");
+        let alignment = APInt::from_u64(parameter.alignment, width);
+        let mut operation = llvm_func.get_operation().deref_mut(ctx);
+        operation
+            .attributes
+            .set(pointee_key, TypeAttr::new(parameter.pointee));
+        operation
+            .attributes
+            .set(align_key, IntegerAttr::new(u64_ty, alignment));
+    }
+}
+
 fn propagate_return_abi_alignment(
     ctx: &mut Context,
     llvm_func: &llvm::FuncOp,
@@ -702,10 +860,8 @@ fn propagate_alwaysinline_attr(
     }
 }
 
-// ============================================================================
-// Entry Block Prologue
-// ============================================================================
-
+// =====================================================================// Entry Block Prologue
+// =====================================================================
 /// Build LLVM entry block prologue: reconstruct aggregate args from flattened
 /// LLVM block arguments and return the values to pass to the MIR entry block.
 ///
@@ -811,10 +967,8 @@ fn build_entry_prologue(
     Ok(result_args)
 }
 
-// ============================================================================
-// Argument Classification
-// ============================================================================
-
+// =====================================================================// Argument Classification
+// =====================================================================
 /// Classification of argument types for reconstruction strategy.
 enum ReconstructKind {
     /// A slice type (`&[T]` or `DisjointSlice<T>`), flattened to `(ptr, len)`
@@ -906,10 +1060,8 @@ fn classify_argument_type(
     }
 }
 
-// ============================================================================
-// Aggregate Reconstruction
-// ============================================================================
-
+// =====================================================================// Aggregate Reconstruction
+// =====================================================================
 /// Reconstruct a slice value from its flattened fields.
 ///
 /// Generates: `undef → insertvalue ptr[0] → insertvalue len[1]`, then one
@@ -1063,10 +1215,8 @@ fn insert_op_sequentially(
     }
 }
 
-// ============================================================================
-// Dynamic Shared Memory Pre-scan
-// ============================================================================
-
+// =====================================================================// Dynamic Shared Memory Pre-scan
+// =====================================================================
 /// Compute the maximum dynamic shared memory alignment across all
 /// `MirExternSharedOp` operations in a function.
 ///
@@ -1098,10 +1248,8 @@ fn compute_max_dynamic_smem_alignment(
     max_alignment
 }
 
-// ============================================================================
-// Error Conversion
-// ============================================================================
-
+// =====================================================================// Error Conversion
+// =====================================================================
 /// Convert an `anyhow::Error` into a `pliron::result::Error`.
 fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
     pliron::create_error!(
@@ -1111,10 +1259,8 @@ fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
     )
 }
 
-// ============================================================================
-// Pass Registration
-// ============================================================================
-
+// =====================================================================// Pass Registration
+// =====================================================================
 /// Register the MIR → LLVM lowering pass (placeholder for pass infrastructure).
 pub fn register(_ctx: &mut Context) {}
 
@@ -1325,8 +1471,10 @@ mod transparent_scalar_abi_tests {
         let mir_func_type = FunctionType::get(&ctx, vec![packed1, packed2], vec![]);
         let llvm_func_type = convert_function_type(&mut ctx, mir_func_type, true)
             .expect("packed kernel parameters must lower");
+        let parameter_layout = kernel_parameter_layout(&mut ctx, mir_func_type, llvm_func_type)
+            .expect("kernel parameters must map");
 
-        let alignments = kernel_param_abi_alignments(&mut ctx, mir_func_type, llvm_func_type)
+        let alignments = kernel_param_abi_alignments(&mut ctx, &parameter_layout, llvm_func_type)
             .expect("kernel parameter alignments must map");
 
         assert_eq!(alignments, vec![(1, 2)]);

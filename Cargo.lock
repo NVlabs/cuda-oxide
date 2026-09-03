@@ -1001,6 +1001,7 @@ dependencies = [
  "oxide-artifacts 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "pliron",
  "pliron-derive",
+ "reserved-oxide-symbols",
  "rustc-hash 2.1.2",
  "thiserror 2.0.18",
 ]

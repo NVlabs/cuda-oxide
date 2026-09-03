@@ -8,7 +8,10 @@
 pub(crate) mod codegen;
 pub(crate) mod scope;
 
-use crate::common::{impl_trait_parameter_error, reject_reserved_name, track_codegen_environment};
+use crate::common::{
+    attr_path_ends_with, grid_constant_pointee, impl_trait_parameter_error, reject_reserved_name,
+    track_codegen_environment,
+};
 use crate::cuda_module::launchers::has_codegen_generics;
 use crate::kernel::codegen::{
     generate_generic_kernel, generate_generic_kernel_no_instantiation, generate_simple_kernel,
@@ -18,7 +21,7 @@ use proc_macro::TokenStream;
 use syn::{
     FnArg, GenericParam, Ident, ItemFn, Token, Type,
     parse::{Parse, ParseStream},
-    parse_macro_input,
+    parse_macro_input, parse_quote,
 };
 
 /// Attribute arguments for `#[kernel(...)]`.
@@ -140,6 +143,32 @@ fn scope_parameter_collision(input: &ItemFn, scope: &Ident) -> Option<Ident> {
     finder.found
 }
 
+/// Consume parameter-local `#[grid_constant]` declarations and plant one
+/// source-index marker per parameter for the MIR importer.
+///
+/// An immutable reference is the source-level representation because LLVM's
+/// grid-constant contract is a pointer parameter with `byval(T)`: device code
+/// must keep the parameter-space address rather than receive a copied `T`.
+pub(crate) fn inject_grid_constant_markers(input: &mut ItemFn) -> syn::Result<()> {
+    let mut markers = Vec::new();
+    for (index, argument) in input.sig.inputs.iter_mut().enumerate() {
+        let FnArg::Typed(argument) = argument else {
+            continue;
+        };
+        if grid_constant_pointee(argument)?.is_none() {
+            continue;
+        }
+        argument
+            .attrs
+            .retain(|attribute| !attr_path_ends_with(attribute, "grid_constant"));
+        markers.push(parse_quote! {
+            ::cuda_device::thread::__grid_constant_config::<#index>();
+        });
+    }
+    input.block.stmts.splice(0..0, markers);
+    Ok(())
+}
+
 pub(crate) fn kernel_entry(attr: TokenStream, item: TokenStream) -> TokenStream {
     track_codegen_environment();
     let args = parse_macro_input!(attr as KernelArgs);
@@ -156,6 +185,9 @@ pub(crate) fn kernel_entry(attr: TokenStream, item: TokenStream) -> TokenStream 
     }
     if let Some(err) = impl_trait_parameter_error(&input, "kernel") {
         return err.to_compile_error().into();
+    }
+    if let Err(error) = inject_grid_constant_markers(&mut input) {
+        return error.to_compile_error().into();
     }
     if let Some(launch_context) = &launch_context
         && let Some(parameter) = scope_parameter_collision(&input, launch_context)

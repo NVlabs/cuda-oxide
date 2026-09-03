@@ -41,6 +41,28 @@ fn one_kernel_module() -> ItemMod {
     }
 }
 
+#[test]
+fn grid_constant_uses_one_by_value_host_argument() {
+    let module: ItemMod = parse_quote! {
+        mod kernels {
+            struct TensorMap([u8; 128]);
+
+            #[kernel]
+            fn copy(#[grid_constant] descriptor: &TensorMap, out: *mut u32) {}
+        }
+    };
+    let expanded = expand_to_compact_string(module);
+
+    assert!(
+        expanded.contains("descriptor:TensorMap,out:*mutu32"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("letmut__cuda_oxide_arg_0=descriptor;::cuda_host::push_kernel_scalar"),
+        "{expanded}"
+    );
+}
+
 /// With the host surface off, nothing in the expansion may name the
 /// `cuda-host` -> `cuda-core` -> `cuda-bindings` -> `cuda.h` stack. That is
 /// the whole point of the feature: a crate that only compiles kernels

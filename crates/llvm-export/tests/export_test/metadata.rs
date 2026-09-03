@@ -9,11 +9,11 @@ use llvm_export::{
         export_module_to_string_with_config,
     },
     ops::{FuncOp, ReturnOp},
-    types::{FuncType, VoidType},
+    types::{ArrayType, FuncType, PointerType, VoidType},
 };
 use pliron::{
     builtin::{
-        attributes::{IntegerAttr, StringAttr},
+        attributes::{IntegerAttr, StringAttr, TypeAttr},
         ops::ModuleOp,
         types::{IntegerType, Signedness},
     },
@@ -24,9 +24,69 @@ use pliron::{
     op::Op,
     utils::apint::APInt,
 };
+use reserved_oxide_symbols::{
+    LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX, LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX,
+};
 use std::num::NonZero;
 
 use crate::common::{DebugConfig, module_top_block, src_location};
+
+#[test]
+fn grid_constant_parameter_emits_byval_and_nvvm_annotation() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+    let module_block = module_top_block(&mut ctx, &module);
+
+    let void_ty = VoidType::get(&ctx);
+    let pointer_ty = PointerType::get(&ctx, 0);
+    let byte_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+    let descriptor_ty = ArrayType::get(&ctx, byte_ty.into(), 128);
+    let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![pointer_ty.into()], false);
+    let func = FuncOp::new(&mut ctx, "consume_map".try_into().unwrap(), func_ty);
+    let entry = func.get_or_create_entry_block(&mut ctx);
+    ReturnOp::new(&mut ctx, None)
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let alignment = IntegerAttr::new(u64_ty, APInt::from_u64(64, NonZero::new(64).unwrap()));
+    {
+        let attrs = &mut func.get_operation().deref_mut(&ctx).attributes;
+        attrs.set(
+            "gpu_kernel".try_into().unwrap(),
+            StringAttr::new("true".into()),
+        );
+        attrs.set(
+            format!("{LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX}0")
+                .as_str()
+                .try_into()
+                .unwrap(),
+            TypeAttr::new(descriptor_ty.into()),
+        );
+        attrs.set(
+            format!("{LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX}0")
+                .as_str()
+                .try_into()
+                .unwrap(),
+            alignment,
+        );
+    }
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let ir = export_module_to_string_with_config(&ctx, &module, &NvvmExportConfig::default())
+        .expect("NVVM export succeeds");
+
+    assert!(
+        ir.contains("define void @consume_map(ptr byval([128 x i8]) align 64 %v0)"),
+        "grid-constant pointer must carry the descriptor bytes by value:\n{ir}"
+    );
+    assert!(ir.contains("!1 = !{i32 1}"), "parameter list:\n{ir}");
+    assert!(
+        ir.contains("!2 = !{ptr @consume_map, !\"grid_constant\", !1}"),
+        "grid-constant annotation:\n{ir}"
+    );
+    assert!(ir.contains("!nvvm.annotations = !{!0, !2}"));
+}
 
 #[test]
 fn nvvm_metadata_version_uses_next_allocated_metadata_id() {

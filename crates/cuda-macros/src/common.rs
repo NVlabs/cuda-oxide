@@ -10,7 +10,7 @@ use proc_macro::TokenStream;
 use reserved_oxide_symbols::{
     CODEGEN_FINGERPRINT_ENV, MATERIALIZE_CUBIN_ENV, MATERIALIZER_PROVENANCE_ENV, RESERVED_ROOT,
 };
-use syn::{FnArg, Ident, ItemFn, visit::Visit};
+use syn::{FnArg, Ident, ItemFn, Meta, PatType, Type, visit::Visit};
 
 /// Record cuda-oxide's exact device-codegen identity in the consuming crate's
 /// dep-info. Cargo then rebuilds only crates that can own or instantiate device
@@ -144,4 +144,48 @@ pub(crate) fn attr_path_ends_with(attr: &syn::Attribute, name: &str) -> bool {
         .last()
         .map(|segment| segment.ident == name)
         .unwrap_or(false)
+}
+
+/// Validate a parameter-local `#[grid_constant]` declaration and return the
+/// immutable, sized pointee that defines both device and host ABI lowering.
+pub(crate) fn grid_constant_pointee(pat_type: &PatType) -> syn::Result<Option<Type>> {
+    let declarations: Vec<_> = pat_type
+        .attrs
+        .iter()
+        .filter(|attribute| attr_path_ends_with(attribute, "grid_constant"))
+        .collect();
+    if declarations.is_empty() {
+        return Ok(None);
+    }
+    if declarations.len() > 1 {
+        return Err(syn::Error::new_spanned(
+            declarations[1],
+            "duplicate #[grid_constant] parameter attribute",
+        ));
+    }
+    if !matches!(declarations[0].meta, Meta::Path(_)) {
+        return Err(syn::Error::new_spanned(
+            declarations[0],
+            "#[grid_constant] takes no arguments",
+        ));
+    }
+    let Type::Reference(reference) = pat_type.ty.as_ref() else {
+        return Err(syn::Error::new_spanned(
+            &pat_type.ty,
+            "#[grid_constant] requires an immutable reference parameter such as &TmaDescriptor",
+        ));
+    };
+    if reference.mutability.is_some() {
+        return Err(syn::Error::new_spanned(
+            reference,
+            "#[grid_constant] parameters are read-only; use &T rather than &mut T",
+        ));
+    }
+    if matches!(reference.elem.as_ref(), Type::Slice(_)) {
+        return Err(syn::Error::new_spanned(
+            &reference.elem,
+            "#[grid_constant] requires one sized pointee, not a slice",
+        ));
+    }
+    Ok(Some(reference.elem.as_ref().clone()))
 }

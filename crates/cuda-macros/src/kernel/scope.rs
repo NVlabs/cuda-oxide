@@ -597,6 +597,7 @@ pub(crate) fn is_kernel_configuration_marker(statement: &Stmt) -> bool {
         (module == "thread"
             && (marker == "__launch_bounds_config"
                 || marker == "__launch_contract_block_config"
+                || marker == "__grid_constant_config"
                 || marker == "__unchecked_indexing_config"))
             || (module == "cluster" && marker == "__cluster_config")
             || (module == "shared" && marker == "__dynamic_shared_alignment")

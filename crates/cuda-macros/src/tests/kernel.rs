@@ -4,7 +4,6 @@
  */
 
 use crate::common::attr_path_ends_with;
-use crate::kernel::KernelArgs;
 use crate::kernel::codegen::{
     generate_cuda_kernel_impl, generic_kernel_instantiation_tokens,
     generic_kernel_no_instantiation_tokens, route_generic_kernel_attrs,
@@ -14,6 +13,7 @@ use crate::kernel::scope::{
     inject_thread_index_scope, is_kernel_configuration_marker, is_unchecked_indexing_config_marker,
     top_level_kernel_configuration_markers,
 };
+use crate::kernel::{KernelArgs, inject_grid_constant_markers};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use reserved_oxide_symbols::{KERNEL_PREFIX, KERNEL_SCOPE_LOCAL};
@@ -60,6 +60,34 @@ fn forwarding_inputs_name_every_irrefutable_parameter_pattern() {
     assert!(forwarded.contains("__cuda_oxide_arg_1:(u16,u16)"));
     assert!(forwarded.contains("__cuda_oxide_arg_2:u8"));
     assert!(forwarded.contains("target(__cuda_oxide_arg_0,__cuda_oxide_arg_1,__cuda_oxide_arg_2)"));
+}
+
+#[test]
+fn grid_constant_parameter_becomes_one_source_index_marker() {
+    let mut function: ItemFn = parse_quote! {
+        fn copy(prefix: u32, #[grid_constant] descriptor: &TensorMap, out: *mut u32) {
+            use_descriptor(descriptor, out);
+        }
+    };
+
+    inject_grid_constant_markers(&mut function).unwrap();
+    let expanded = quote!(#function).to_string().replace(' ', "");
+
+    assert!(!expanded.contains("#[grid_constant]"));
+    assert!(
+        expanded
+            .contains("::cuda_device::thread::__grid_constant_config::<1usize>();use_descriptor")
+    );
+}
+
+#[test]
+fn grid_constant_rejects_mutable_reference() {
+    let mut function: ItemFn = parse_quote! {
+        fn copy(#[grid_constant] descriptor: &mut TensorMap) {}
+    };
+
+    let error = inject_grid_constant_markers(&mut function).unwrap_err();
+    assert!(error.to_string().contains("read-only"));
 }
 
 #[test]
