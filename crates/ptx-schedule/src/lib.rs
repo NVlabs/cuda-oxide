@@ -832,7 +832,12 @@ L_loop:
 
     /// Both spellings are emitted by mir-lower for programmatic dependent
     /// launch. They order one grid against another and must remain distinct
-    /// from the asynchronous proxy pipeline.
+    /// from the asynchronous proxy pipeline. The trailing `fence.acq_rel.gpu`
+    /// is an unaffected control: a neighbouring kind that must keep its kind.
+    /// No in-tree example emits `griddepcontrol` yet, so the spellings come
+    /// from the mir-lower lowering (inline asm on the libNVVM path, the
+    /// `llvm.nvvm.griddepcontrol.*` intrinsics otherwise), as the AsyncProxy
+    /// fixture does for `cp.reduce.async`.
     const GRID_DEPENDENCY: &str = r#".version 8.7
 .target sm_90
 .address_size 64
@@ -841,6 +846,7 @@ L_loop:
 {
     griddepcontrol.launch_dependents;
     griddepcontrol.wait;
+    fence.acq_rel.gpu;
     ret;
 }
 "#;
@@ -854,10 +860,21 @@ L_loop:
             .filter(|site| site.kind == SiteKind::GridDependency)
             .collect();
 
-        assert_eq!(analysis.sites().len(), 2, "{:?}", analysis.sites());
+        assert_eq!(analysis.sites().len(), 3, "{:?}", analysis.sites());
         assert_eq!(sites.len(), 2, "{:?}", sites);
         assert_eq!(sites[0].head, "griddepcontrol.launch_dependents");
         assert_eq!(sites[1].head, "griddepcontrol.wait");
+
+        let control = analysis
+            .sites()
+            .iter()
+            .find(|site| site.head.starts_with("fence."))
+            .expect("the control fence must still be a site");
+        assert_eq!(
+            control.kind,
+            SiteKind::Fence,
+            "a neighbouring kind must keep its kind: {control:?}"
+        );
     }
 
     #[test]
