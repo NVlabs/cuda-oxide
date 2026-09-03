@@ -148,8 +148,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-bindings"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "bindgen 0.69.5",
  "libloading",
@@ -161,8 +161,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-core"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -173,8 +173,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-core-derive"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -210,6 +210,10 @@ dependencies = [
  "reserved-oxide-symbols",
  "syn",
 ]
+
+[[package]]
+name = "cuda-target-spec"
+version = "0.1.0"
 
 [[package]]
 name = "digest"
@@ -367,6 +371,7 @@ dependencies = [
 name = "libnvvm-sys"
 version = "0.2.1"
 dependencies = [
+ "cuda-target-spec",
  "libloading",
  "thiserror",
 ]

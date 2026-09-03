@@ -21,5 +21,5 @@ cuda-device = { path = "../../../cuda-device" }
 cuda-host = { path = "../../../cuda-host" }
 
 # Host-side CUDA runtime
-cuda-core = { git = "https://github.com/NVlabs/cutile-rs", branch = "main" }
+cuda-core = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1" }
 ptx-parse = { path = "../../../ptx-parse" }

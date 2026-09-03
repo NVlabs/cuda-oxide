@@ -169,8 +169,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-async"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -185,8 +185,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-bindings"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "bindgen",
  "libloading",
@@ -198,8 +198,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-core"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "anyhow",
  "cuda-bindings",
@@ -210,8 +210,8 @@ dependencies = [
 
 [[package]]
 name = "cuda-core-derive"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -220,8 +220,8 @@ dependencies = [
 
 [[package]]
 name = "cutile"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "anyhow",
  "cuda-async",
@@ -243,8 +243,8 @@ dependencies = [
 
 [[package]]
 name = "cutile-compiler"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "anyhow",
  "cuda-async",
@@ -264,8 +264,8 @@ dependencies = [
 
 [[package]]
 name = "cutile-ir"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "half",
  "indexmap",
@@ -274,8 +274,8 @@ dependencies = [
 
 [[package]]
 name = "cutile-macro"
-version = "0.3.0"
-source = "git+https://github.com/NVlabs/cutile-rs?branch=main#a2c1ea4bb4ae804f573a879785c96f870a4e1b84"
+version = "0.3.1"
+source = "git+https://github.com/NVlabs/cutile-rs?tag=v0.3.1#9f68be2d0aff0882ec329a453ddc756ad6e4f9e7"
 dependencies = [
  "convert_case",
  "cutile-compiler",

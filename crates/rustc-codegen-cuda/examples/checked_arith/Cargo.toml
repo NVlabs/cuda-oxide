@@ -10,4 +10,4 @@ license = "Apache-2.0"
 [dependencies]
 cuda-device = { path = "../../../cuda-device" }
 cuda-host   = { path = "../../../cuda-host" }
-cuda-core = { git = "https://github.com/NVlabs/cutile-rs", branch = "main" }
+cuda-core = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1" }

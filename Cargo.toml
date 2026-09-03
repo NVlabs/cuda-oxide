@@ -80,9 +80,9 @@ cuda-host = { path = "crates/cuda-host" }
 # `cuda-host` names `features = ["host"]`, so anything that loads or launches a
 # module still gets it.
 cuda-macros = { path = "crates/cuda-macros", default-features = false }
-cuda-bindings = { git = "https://github.com/NVlabs/cutile-rs", branch = "main" }
-cuda-core = { git = "https://github.com/NVlabs/cutile-rs", branch = "main" }
-cuda-async = { git = "https://github.com/NVlabs/cutile-rs", branch = "main" }
+cuda-bindings = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1" }
+cuda-core = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1" }
+cuda-async = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1" }
 libnvvm-sys = { path = "crates/libnvvm-sys" }
 nvjitlink-sys = { path = "crates/nvjitlink-sys" }
 reserved-oxide-symbols = { path = "crates/reserved-oxide-symbols" }
