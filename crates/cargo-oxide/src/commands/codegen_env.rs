@@ -164,12 +164,46 @@ fn command_requests_full_device_debug_with_env(
 
     // Shared alias table: the codegen backend parses `CUDA_OXIDE_DEBUG`
     // with the same function, so every spelling the backend treats as
-    // full debug (including `2`) also disables MIR optimization here.
+    // full debug (including `2`) also selects the full-debug MIR flag here.
     effective_debug.is_some_and(|value| {
         cuda_artifact_finalizer::DebugPolicy::parse_env_override(&value)
             == Some(cuda_artifact_finalizer::DebugPolicy::Full)
     })
 }
+
+/// The MIR passes full device debug turns off.
+///
+/// Full debug keeps every local in memory so cuda-gdb can inspect it. The
+/// pipeline does that on the LLVM side (no mem2reg, no `opt`, `llc -O0`).
+/// On the MIR side, two rustc passes destroy things the debugger needs and
+/// nothing else does:
+///
+/// ```text
+/// pass                             what it does to a local           debugger sees
+/// ScalarReplacementOfAggregates    splits a closure environment       capture_0 "not inspectable"
+///                                  into per-capture scalars
+/// SingleUseConsts                  turns `let k = 41u32;` into        `k` missing from info locals
+///                                  constant debuginfo with no place   (importer describes places only)
+/// ```
+///
+/// Disabling exactly those two keeps every other MIR optimization (inlining,
+/// const-prop, GVN) on, so the importer sees the same MIR shapes as a
+/// release build.
+///
+/// The previous lever was `-Zmir-opt-level=0`, measured on 2026-09-02:
+///
+/// ```text
+/// full-debug MIR flag                        examples that build   closure captures in cuda-gdb
+/// -Zmir-opt-level=0                          145 / 222             visible
+/// (none)                                     201 / 222             not inspectable
+/// -Zmir-enable-passes=-<the two above>       202 / 222             visible
+/// ```
+///
+/// The 56 examples level 0 loses are unoptimized MIR shapes the importer
+/// deliberately does not handle: intrinsic operands that are no longer
+/// literals, helper enums that inlining normally dissolves.
+pub(super) const FULL_DEBUG_MIR_RUSTFLAG: &str =
+    "-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts";
 
 pub(super) fn append_full_debug_mir_rustflag(
     encoded: &mut String,
@@ -182,7 +216,7 @@ pub(super) fn append_full_debug_mir_rustflag(
     if !encoded.is_empty() {
         encoded.push(ENCODED_RUSTFLAGS_SEPARATOR);
     }
-    encoded.push_str("-Zmir-opt-level=0");
+    encoded.push_str(FULL_DEBUG_MIR_RUSTFLAG);
 }
 
 fn apply_codegen_rustflags(

@@ -4232,28 +4232,45 @@ fn passthrough_fingerprint_separates_the_device_debug_policies() {
     assert_ne!(fp(&line_tables), fp(&full));
 }
 
+/// Full debug disables only the two MIR passes that erase debugger-visible
+/// state (scalar replacement splits closure environments, single-use const
+/// folding removes constant locals' places); every other MIR optimization
+/// stays on, so the importer sees release-build MIR shapes.
 #[test]
-fn full_device_debug_disables_mir_optimization() {
+fn full_device_debug_disables_only_debug_hostile_mir_passes() {
     let cmd = Command::new("cargo");
     let mut encoded = "base".to_string();
 
     append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
 
-    assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
+    assert_eq!(
+        decoded_rustflags(&encoded),
+        [
+            "base",
+            "-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts"
+        ]
+    );
+    assert!(!encoded.contains("mir-opt-level"), "{encoded}");
 }
 
 #[test]
-fn numeric_full_debug_alias_disables_mir_optimization() {
+fn numeric_full_debug_alias_selects_the_same_mir_flag() {
     // The backend accepts `CUDA_OXIDE_DEBUG=2` as full debug; the shared
-    // parser guarantees the build policy agrees, so `2` must disable MIR
-    // optimization exactly like `full`.
+    // parser guarantees the build policy agrees, so `2` must select the same
+    // MIR flag as `full`.
     let mut cmd = Command::new("cargo");
     cmd.env("CUDA_OXIDE_DEBUG", "2");
     let mut encoded = "base".to_string();
 
     append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
 
-    assert_eq!(decoded_rustflags(&encoded), ["base", "-Zmir-opt-level=0"]);
+    assert_eq!(
+        decoded_rustflags(&encoded),
+        [
+            "base",
+            "-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts"
+        ]
+    );
 }
 
 #[test]

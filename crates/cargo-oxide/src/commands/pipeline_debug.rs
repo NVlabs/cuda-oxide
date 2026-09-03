@@ -86,7 +86,7 @@ pub fn codegen_show_pipeline(
 
     // The shared codegen env (including the CLI debug level) must be on the
     // command before the rustflags decision below: a full-debug request adds
-    // `-Zmir-opt-level=0`, and `apply_codegen_rustflags` reads the command's
+    // the full-debug MIR flag, and `apply_codegen_rustflags` reads the command's
     // `CUDA_OXIDE_DEBUG` to see it. This is the same ordering build/run use.
     apply_common_codegen_env(
         &mut cmd,

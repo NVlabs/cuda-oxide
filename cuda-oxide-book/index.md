@@ -1,10 +1,17 @@
 # The cuda-oxide Book
 
-```{image} _static/images/logo.png
-:alt: cuda-oxide logo
+```{image} _static/images/banner-light.png
+:alt: cuda-oxide: write CUDA (SIMT) kernels in pure Rust
 :align: center
-:width: 780px
-:class: mb-4
+:width: 640px
+:class: only-light mb-4
+```
+
+```{image} _static/images/banner-dark.png
+:alt: cuda-oxide: write CUDA (SIMT) kernels in pure Rust
+:align: center
+:width: 640px
+:class: only-dark mb-4
 ```
 
 **cuda-oxide** is an experimental Rust-to-CUDA compiler that lets you write (SIMT) GPU kernels in safe(ish), idiomatic Rust. It compiles standard Rust code directly to PTX — no DSLs, no foreign language bindings, just Rust.

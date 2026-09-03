@@ -2922,9 +2922,10 @@ pub fn pointer_debug_types(
     /// layouts only exist inside one), so this test drives the pinned rustc
     /// in-process on a small fixture via `rustc_public::run!`, extracts the
     /// closure-typed local, and asserts on the returned plain data outside
-    /// the session. The fixture is compiled with `-Zmir-opt-level=0`, the
-    /// same flag cargo-oxide adds for full device debug, so the closure
-    /// local survives to MIR exactly as in a real full-debug build.
+    /// the session. The fixture is compiled with the same MIR flags
+    /// cargo-oxide uses for full device debug (`-Copt-level=3` with
+    /// ScalarReplacementOfAggregates and SingleUseConsts disabled), so the
+    /// closure local survives to MIR as in a real full-debug build.
     ///
     /// The `u32`-before-`u64` capture order is deliberate: rustc's layout
     /// sorts closure fields by descending alignment, placing the `u64` at
@@ -2974,7 +2975,9 @@ pub fn closure_host(a: u32, b: u64) -> u32 {
             "--crate-type=rlib".to_string(),
             "--crate-name=closure_debug_fixture".to_string(),
             "--emit=metadata".to_string(),
-            "-Zmir-opt-level=0".to_string(),
+            "-Copt-level=3".to_string(),
+            "-Zmir-enable-passes=-JumpThreading".to_string(),
+            "-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts".to_string(),
             format!("--out-dir={}", root.display()),
             format!("--sysroot={sysroot}"),
             fixture.display().to_string(),

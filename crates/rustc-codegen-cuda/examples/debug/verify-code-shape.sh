@@ -6,10 +6,19 @@
 #
 #   cargo oxide build debug --device-debug
 #
-# This pins the kernel-entry line-table contract in both emitted LLVM IR and
-# PTX. Source lines come from a same-line marker, never an assumed offset from
-# `#[kernel]`; the fixture deliberately has documentation plus multiple
+# This checks the kernel-entry line-table contract in both emitted LLVM IR
+# and PTX. Source lines come from a same-line marker, never an assumed offset
+# from `#[kernel]`; the fixture deliberately has documentation plus multiple
 # attributes before the function.
+#
+# The contract is a negative one: nothing the compiler generates ahead of the
+# user's first statement may be attributed to a macro attribute line. It must
+# hold at any MIR optimization level. At mir-opt-level 0 the generated
+# `make_kernel_scope` call survives and must carry an artificial (line 0)
+# location; at the default level it is inlined away entirely (it returns a
+# zero-sized value), so the check walks every instruction ahead of the index
+# call, through its `inlinedAt` chain, and rejects any location that lands on
+# an attribute line within the kernel's own scope.
 
 set -euo pipefail
 
@@ -35,18 +44,64 @@ llvm_body="$(awk '
 ' "${llvm_ir}")"
 test -n "${llvm_body}"
 
-scope_debug_id="$(
-    grep -m1 'call void @.*make_kernel_scope' <<<"${llvm_body}" |
-        sed -nE 's/.*!dbg !([0-9]+).*/\1/p'
+node() {
+    grep -E "^!${1} = " "${llvm_ir}" || true
+}
+
+kernel_subprogram_id="$(
+    grep -E '^![0-9]+ = distinct !DISubprogram\(name: "clock_test"' "${llvm_ir}" |
+        sed -nE 's/^!([0-9]+) = .*/\1/p' | head -n 1
 )"
+test -n "${kernel_subprogram_id}"
+
+# Does a debug scope belong to the kernel itself (not to an inlined callee)?
+scope_is_in_kernel() {
+    local scope="$1" text
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        [[ "${scope}" == "${kernel_subprogram_id}" ]] && return 0
+        text="$(node "${scope}")"
+        grep -q 'DISubprogram(' <<<"${text}" && return 1
+        scope="$(sed -nE 's/.*scope: !([0-9]+).*/\1/p' <<<"${text}")"
+        [[ -n "${scope}" ]] || return 1
+    done
+    return 1
+}
+
+# Everything ahead of (and including) the rewritten index call.
+llvm_prologue="$(awk '
+    { print }
+    /call i64 @.*index_1d/ { exit }
+' <<<"${llvm_body}")"
 index_debug_id="$(
-    grep -m1 'call i64 @.*index_1d' <<<"${llvm_body}" |
+    grep -m1 'call i64 @.*index_1d' <<<"${llvm_prologue}" |
         sed -nE 's/.*!dbg !([0-9]+).*/\1/p'
 )"
-test -n "${scope_debug_id}"
 test -n "${index_debug_id}"
 
-if ! grep -Eq "^!${scope_debug_id} = !DILocation\\(line: 0, column: 0," "${llvm_ir}"; then
+for id in $(sed -nE 's/.*!dbg !([0-9]+).*/\1/p' <<<"${llvm_prologue}" | sort -u); do
+    location="${id}"
+    for depth in 0 1 2 3 4 5 6 7; do
+        text="$(node "${location}")"
+        grep -q 'DILocation(' <<<"${text}" || break
+        line="$(sed -nE 's/.*DILocation\(line: ([0-9]+),.*/\1/p' <<<"${text}")"
+        scope="$(sed -nE 's/.*scope: !([0-9]+).*/\1/p' <<<"${text}")"
+        if [[ "${line}" == "${kernel_attr_line}" || "${line}" == "${launch_bounds_attr_line}" ]] \
+            && scope_is_in_kernel "${scope}"; then
+            echo "error: kernel prologue instruction (!dbg !${id}, inlinedAt depth ${depth}) maps to macro attribute line ${line}" >&2
+            exit 1
+        fi
+        location="$(sed -nE 's/.*inlinedAt: !([0-9]+)\).*/\1/p' <<<"${text}")"
+        [[ -n "${location}" ]] || break
+    done
+done
+
+# A surviving (un-inlined) kernel-scope call must carry an artificial location.
+scope_debug_id="$(
+    { grep -m1 'call void @.*make_kernel_scope' <<<"${llvm_body}" || true; } |
+        sed -nE 's/.*!dbg !([0-9]+).*/\1/p'
+)"
+if [[ -n "${scope_debug_id}" ]] \
+    && ! grep -Eq "^!${scope_debug_id} = !DILocation\\(line: 0, column: 0," "${llvm_ir}"; then
     echo "error: generated kernel-scope call does not use an artificial LLVM location" >&2
     exit 1
 fi
@@ -70,27 +125,36 @@ ptx_body="$(awk '
 ' "${ptx}")"
 test -n "${ptx_body}"
 
+# PTX .loc directives name a file index; only main.rs lines can be attribute
+# lines, so resolve its index instead of matching any file's line numbers.
+main_file_index="$(
+    sed -nE 's/^[[:space:]]*\.file[[:space:]]+([0-9]+)[[:space:]]+"[^"]*main\.rs".*/\1/p' "${ptx}" | head -n 1
+)"
+test -n "${main_file_index}"
+
 ptx_prologue="$(awk '
     { print }
     /call[.]uni .*index_1d/ { exit }
 ' <<<"${ptx_body}")"
-if grep -Eq "^[[:space:]]*[.]loc[[:space:]]+[0-9]+[[:space:]]+(${kernel_attr_line}|${launch_bounds_attr_line})([[:space:]]|$)" <<<"${ptx_prologue}"; then
+if grep -Eq "^[[:space:]]*[.]loc[[:space:]]+${main_file_index}[[:space:]]+(${kernel_attr_line}|${launch_bounds_attr_line})([[:space:]]|$)" <<<"${ptx_prologue}"; then
     echo "error: synthetic kernel prologue still maps to a macro attribute" >&2
     exit 1
 fi
 
+# A surviving kernel-scope call must sit under an artificial .loc; the
+# rewritten index call must sit under the user's entry line either way.
 if ! awk -v expected_index_line="${entry_line}" '
     $1 == ".loc" { current_line = $3 }
     /call[.]uni .*make_kernel_scope/ {
         saw_scope = 1
         scope_is_artificial = (current_line == 0)
     }
-    /call[.]uni .*index_1d/ {
+    /call[.]uni .*index_1d/ && !saw_index {
         saw_index = 1
         index_is_user_line = (current_line == expected_index_line)
     }
     END {
-        exit !(saw_scope && scope_is_artificial && saw_index && index_is_user_line)
+        exit !((!saw_scope || scope_is_artificial) && saw_index && index_is_user_line)
     }
 ' <<<"${ptx_body}"; then
     echo "error: PTX kernel prologue/index .loc state does not match the source contract" >&2

@@ -24,16 +24,36 @@ linkage_name() {
     sed -E 's/.*linkageName: "([^"]+)".*/\1/'
 }
 
+# A function-local static's expression has one verifier-accepted home per
+# LLVM major: LLVM 23+ retains it on the owning DISubprogram's retainedNodes
+# tuple, LLVM 21/22 list it in the compile unit's globals tuple. The exporter
+# picks the form for the llc it resolved, so accept either here.
 require_retained_class8() {
-    local die="$1" die_id expression expression_id cu globals_id tuple
+    local die="$1" die_id expression expression_id owner_id cu globals_id tuple
     die_id="$(printf '%s\n' "${die}" | sed -E 's/^!([0-9]+) = .*/\1/')"
     expression="$(grep -F "!DIGlobalVariableExpression(var: !${die_id}, expr: !DIExpression(DW_OP_constu, 8, DW_OP_swap, DW_OP_xderef))" "${llvm_ir}")"
     [[ "$(printf '%s\n' "${expression}" | wc -l)" -eq 1 ]]
     expression_id="$(printf '%s\n' "${expression}" | sed -E 's/^!([0-9]+) = .*/\1/')"
+    owner_id="$(printf '%s\n' "${die}" | sed -E 's/.*scope: !([0-9]+).*/\1/')"
+    if grep -Eq "^!${owner_id} = distinct !DISubprogram\\(.*retainedNodes: !\\{([^}]*[{ ])?!${expression_id}[,}]" "${llvm_ir}"; then
+        record_placement retained
+        return 0
+    fi
     cu="$(grep -F '!DICompileUnit(' "${llvm_ir}")"
     globals_id="$(printf '%s\n' "${cu}" | sed -E 's/.*globals: !([0-9]+)\).*/\1/')"
     tuple="$(grep -E "^!${globals_id} = !\\{" "${llvm_ir}")"
-    grep -Fq "!${expression_id}" <<<"${tuple}"
+    grep -Eq "[{ ]!${expression_id}[,}]" <<<"${tuple}"
+    record_placement compile-unit
+}
+
+# Every function-local static must use the same placement.
+placement=""
+record_placement() {
+    if [[ -n "${placement}" && "${placement}" != "$1" ]]; then
+        echo "mixed function-local static placements: ${placement} and $1" >&2
+        exit 1
+    fi
+    placement="$1"
 }
 
 require_physical() {
@@ -94,39 +114,81 @@ right_linkage="$(printf '%s\n' "${same_right_die}" | linkage_name)"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "${tmpdir}"' EXIT
 
-if command -v llvm-as >/dev/null 2>&1; then
-    llvm-as -o "${tmpdir}/shared-debug.bc" "${llvm_ir}"
-    if command -v opt >/dev/null 2>&1; then
-        opt -passes=verify -disable-output "${tmpdir}/shared-debug.bc"
+# Verify the graph with LLVM tools whose major accepts the placement the
+# exporter chose: LLVM 23+ for the retained-nodes form, LLVM 21/22 for the
+# compile-unit form (the other major's verifier rejects the graph by design
+# and, like llc, strips it with an exit status of 0, so stderr is checked
+# too). Candidates are the `-NN`-suffixed tools on PATH and the Rust
+# sysroot's llvm-tools. ptxas's cubin is authoritative for the NVPTX
+# address-class translation; llvm-dwarfdump reads it, with readelf as the
+# fallback when the toolset ships no dwarfdump.
+toolsets=()
+for version in 21 22 23 24 25; do
+    if command -v "llc-${version}" >/dev/null 2>&1; then
+        toolsets+=("|-${version}")
+    fi
+done
+if command -v rustc >/dev/null 2>&1; then
+    sysroot_bin="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
+    if [[ -x "${sysroot_bin}/llc" ]]; then
+        toolsets+=("${sysroot_bin}/|")
     fi
 fi
 
-# Validate the supported LLVM floor and current LLVM independently. PTXAS's
-# final cubin is authoritative for the NVPTX address-class translation.
-for version in 21 22; do
-    llvm_as="llvm-as-${version}"
-    opt="opt-${version}"
-    llc="llc-${version}"
-    dwarfdump="llvm-dwarfdump-${version}"
+reject_stripped_debug_info() {
+    if grep -q 'invalid debug info' "$1"; then
+        echo "$2 rejected the debug graph:" >&2
+        cat "$1" >&2
+        exit 1
+    fi
+}
+
+validated=0
+for entry in "${toolsets[@]}"; do
+    prefix="${entry%%|*}"
+    suffix="${entry##*|}"
+    llvm_as="${prefix}llvm-as${suffix}"
+    opt="${prefix}opt${suffix}"
+    llc="${prefix}llc${suffix}"
+    dwarfdump="${prefix}llvm-dwarfdump${suffix}"
     if ! command -v "${llvm_as}" >/dev/null 2>&1 \
         || ! command -v "${opt}" >/dev/null 2>&1 \
         || ! command -v "${llc}" >/dev/null 2>&1 \
-        || ! command -v "${dwarfdump}" >/dev/null 2>&1 \
         || ! command -v ptxas >/dev/null 2>&1; then
         continue
     fi
+    major="$("${llc}" --version | sed -nE 's/.*LLVM version ([0-9]+)\..*/\1/p' | head -n 1)"
+    [[ -n "${major}" ]] || continue
+    if [[ "${placement}" == retained && "${major}" -lt 23 ]] \
+        || [[ "${placement}" == compile-unit && "${major}" -ge 23 ]]; then
+        continue
+    fi
 
-    bitcode="${tmpdir}/shared-debug-${version}.bc"
-    ptx="${tmpdir}/shared-debug-${version}.ptx"
-    cubin="${tmpdir}/shared-debug-${version}.cubin"
-    dwarf="${tmpdir}/shared-debug-${version}.dwarf"
-    "${llvm_as}" -o "${bitcode}" "${llvm_ir}"
-    "${opt}" -passes=verify -disable-output "${bitcode}"
+    bitcode="${tmpdir}/shared-debug-${major}.bc"
+    ptx="${tmpdir}/shared-debug-${major}.ptx"
+    cubin="${tmpdir}/shared-debug-${major}.cubin"
+    dwarf="${tmpdir}/shared-debug-${major}.dwarf"
+    "${llvm_as}" -o "${bitcode}" "${llvm_ir}" 2>"${tmpdir}/as.err"
+    reject_stripped_debug_info "${tmpdir}/as.err" "${llvm_as}"
+    "${opt}" -passes=verify -disable-output "${bitcode}" 2>"${tmpdir}/opt.err"
+    reject_stripped_debug_info "${tmpdir}/opt.err" "${opt}"
     "${llc}" -march=nvptx64 -mcpu=sm_90 -mattr=+ptx80 -O0 \
-        -filetype=asm "${bitcode}" -o "${ptx}"
+        -filetype=asm "${bitcode}" -o "${ptx}" 2>"${tmpdir}/llc.err"
+    reject_stripped_debug_info "${tmpdir}/llc.err" "${llc}"
+    grep -Eq '^\.target sm_90, debug$' "${ptx}"
     ptxas -arch=sm_90 -g "${ptx}" -o "${cubin}"
-    "${dwarfdump}" --debug-info "${cubin}" >"${dwarf}"
-    [[ "$(grep -c 'DW_AT_address_class.*0x08' "${dwarf}")" -eq 6 ]]
+    if command -v "${dwarfdump}" >/dev/null 2>&1; then
+        "${dwarfdump}" --debug-info "${cubin}" >"${dwarf}"
+        [[ "$(grep -c 'DW_AT_address_class.*0x08' "${dwarf}")" -eq 6 ]]
+    else
+        readelf --debug-dump=info "${cubin}" >"${dwarf}"
+        [[ "$(grep -c 'DW_AT_address_class: 8$' "${dwarf}")" -eq 6 ]]
+    fi
+    validated=$((validated + 1))
 done
 
-echo "shared-static AS3 debug-info shape verified"
+if [[ "${validated}" -eq 0 ]]; then
+    echo "note: no LLVM toolset matching the ${placement} placement was found; graph shape verified from the text only" >&2
+fi
+
+echo "shared-static AS3 debug-info shape verified (placement: ${placement}; LLVM toolsets exercised: ${validated})"

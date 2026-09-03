@@ -26,6 +26,7 @@ use crate::ops::{
     DebugProjectedVariableInfo, DebugSourcePosition,
 };
 
+use super::config::FunctionLocalStaticPlacement;
 use super::state::{ModuleExportState, ResolvedDebugScope};
 
 impl<'a> ModuleExportState<'a> {
@@ -286,7 +287,21 @@ impl<'a> ModuleExportState<'a> {
             expression_id,
             format!("!DIGlobalVariableExpression(var: !{variable_id}, expr: {expression})"),
         ));
-        self.debug_global_expressions.push(expression_id);
+        // A function-local static has exactly one verifier-accepted home,
+        // and which one depends on the consuming LLVM (see
+        // [`FunctionLocalStaticPlacement`]). Module globals always belong to
+        // the compile unit.
+        if info.is_function_local
+            && self.debug_function_local_static_placement
+                == FunctionLocalStaticPlacement::SubprogramRetainedNodes
+        {
+            self.debug_subprogram_retained_globals
+                .entry(scope_id)
+                .or_default()
+                .push(expression_id);
+        } else {
+            self.debug_global_expressions.push(expression_id);
+        }
         self.debug_global_variables.insert(
             linkage_name.to_string(),
             (info.clone(), address_space, owner_function, expression_id),
@@ -328,6 +343,7 @@ impl<'a> ModuleExportState<'a> {
             return;
         }
         self.debug_globals_finalized = true;
+        self.finalize_debug_retained_globals();
         if self.debug_global_expressions.is_empty() {
             return;
         }
@@ -352,6 +368,41 @@ impl<'a> ModuleExportState<'a> {
             return;
         };
         *compile_unit = format!("{prefix}, globals: !{globals_id})");
+    }
+
+    /// Splice function-local static expressions into their owning
+    /// `DISubprogram`'s `retainedNodes` tuple.
+    ///
+    /// Owners are written with an empty tuple when the function is exported,
+    /// because AS3 globals are emitted before functions and the complete
+    /// retained set is only known after top-level export (the same forward
+    /// dependency `finalize_debug_globals` resolves for the compile unit).
+    /// Owners are visited in metadata-id order so the output is
+    /// deterministic; the map is drained, so a repeated call is a no-op.
+    fn finalize_debug_retained_globals(&mut self) {
+        let mut owners: Vec<(usize, Vec<usize>)> =
+            self.debug_subprogram_retained_globals.drain().collect();
+        owners.sort_by_key(|(owner, _)| *owner);
+        for (owner, expressions) in owners {
+            let Some((_, subprogram)) = self.debug_nodes.iter_mut().find(|(id, _)| *id == owner)
+            else {
+                debug_assert!(false, "retained-node owner DISubprogram must exist");
+                continue;
+            };
+            let Some(prefix) = subprogram.strip_suffix("retainedNodes: !{})") else {
+                debug_assert!(
+                    false,
+                    "retained-node owner must be a DISubprogram with an empty retainedNodes tuple"
+                );
+                continue;
+            };
+            let retained = expressions
+                .iter()
+                .map(|id| format!("!{id}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            *subprogram = format!("{prefix}retainedNodes: !{{{retained}}})");
+        }
     }
 
     pub(super) fn debug_local_variable_for_scope(
@@ -774,7 +825,25 @@ impl<'a> ModuleExportState<'a> {
         self.debug_types.insert(ty.clone(), enum_type_id);
 
         let discriminator_member_id = discriminant.as_ref().map(|discriminant| {
-            let base = self.ensure_debug_type(&discriminant.ty);
+            // LLVM MC's NVPTX text writer prints negative one-byte DWARF
+            // constants as 64-bit hex literals, which ptxas rejects.
+            // `DW_FORM_data1` is signless; the discriminator type determines
+            // its interpretation, so an unsigned carrier preserves the tag
+            // bits and comparison semantics. Remove this conversion once all
+            // supported llc versions truncate the literal to the record width.
+            let discriminator_ty = match discriminant.ty.as_ref() {
+                DebugLocalTypeKind::Basic {
+                    size_bits,
+                    encoding,
+                    ..
+                } if *encoding == "DW_ATE_signed" => DebugLocalTypeKind::Basic {
+                    name: format!("u{size_bits}"),
+                    size_bits: *size_bits,
+                    encoding: "DW_ATE_unsigned",
+                },
+                ty => ty.clone(),
+            };
+            let base = self.ensure_debug_type(&discriminator_ty);
             let id = self.alloc_metadata_id();
             self.debug_nodes.push((
                 id,
@@ -1230,6 +1299,7 @@ mod tests {
             true,
             super::super::config::DebugKind::LineTables,
             None,
+            super::super::config::FunctionLocalStaticPlacement::CompileUnitGlobals,
         );
 
         let (path, pos) = state
@@ -1244,8 +1314,13 @@ mod tests {
     #[test]
     fn global_expressions_and_namespaces_are_uniqued_and_conflicts_rejected() {
         let ctx = Context::new();
-        let mut state =
-            ModuleExportState::new(&ctx, true, super::super::config::DebugKind::Full, None);
+        let mut state = ModuleExportState::new(
+            &ctx,
+            true,
+            super::super::config::DebugKind::Full,
+            None,
+            super::super::config::FunctionLocalStaticPlacement::CompileUnitGlobals,
+        );
         let info = global_info();
 
         let first = state

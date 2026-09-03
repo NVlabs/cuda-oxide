@@ -15,7 +15,7 @@ use crate::ops::{
 };
 
 use super::{
-    config::{DebugKind, NvvmIrDialect},
+    config::{DebugKind, FunctionLocalStaticPlacement, NvvmIrDialect},
     externs::DeviceExternDecl,
 };
 
@@ -139,6 +139,8 @@ pub(super) struct ModuleExportState<'a> {
     next_metadata_id: usize,
     /// Which debug metadata tier this export should emit.
     pub(super) debug_kind: DebugKind,
+    /// Where function-local statics are retained (per the consuming LLVM).
+    pub(super) debug_function_local_static_placement: FunctionLocalStaticPlacement,
     /// NVVM textual dialect, or `None` for the ordinary PTX/llc path.
     pub(super) nvvm_ir_dialect: Option<NvvmIrDialect>,
     /// The single compile unit used for Stage 2 line-table debug info.
@@ -179,6 +181,10 @@ pub(super) struct ModuleExportState<'a> {
         FxHashMap<String, (DebugGlobalVariableInfo, u32, Option<String>, usize)>,
     /// Module globals retained by the compile unit.
     pub(super) debug_global_expressions: Vec<usize>,
+    /// Function-local static expressions retained by their owning
+    /// `DISubprogram` (keyed by its metadata id), under the
+    /// [`FunctionLocalStaticPlacement::SubprogramRetainedNodes`] placement.
+    pub(super) debug_subprogram_retained_globals: FxHashMap<usize, Vec<usize>>,
     /// Whether the compile unit's immutable globals tuple has been finalized.
     pub(super) debug_globals_finalized: bool,
     /// `DILocalVariable` nodes keyed by scope, source line, and local identity.
@@ -210,6 +216,7 @@ impl<'a> ModuleExportState<'a> {
         emit_ptx_kernel_keyword: bool,
         debug_kind: DebugKind,
         nvvm_ir_dialect: Option<NvvmIrDialect>,
+        debug_function_local_static_placement: FunctionLocalStaticPlacement,
     ) -> Self {
         Self {
             ctx,
@@ -230,6 +237,7 @@ impl<'a> ModuleExportState<'a> {
             global_sources: FxHashMap::default(),
             next_metadata_id: 0,
             debug_kind,
+            debug_function_local_static_placement,
             nvvm_ir_dialect,
             debug_compile_unit: None,
             debug_files: FxHashMap::default(),
@@ -248,6 +256,7 @@ impl<'a> ModuleExportState<'a> {
             debug_namespaces: FxHashMap::default(),
             debug_global_variables: FxHashMap::default(),
             debug_global_expressions: Vec::new(),
+            debug_subprogram_retained_globals: FxHashMap::default(),
             debug_globals_finalized: false,
             debug_local_variables: FxHashMap::default(),
             debug_nodes: Vec::new(),
