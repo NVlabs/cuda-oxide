@@ -170,3 +170,38 @@ jobs:
       # exactly the dependency this job exists to keep out of the graph.
       - name: Verify a kernel-only crate builds with no host surface
         run: bash scripts/check-device-only-build.sh
+
+  # cuda-bindings, cuda-core, and cuda-async are shared with cutile-rs. Their
+  # roots carry cutile's Tile API and the cuda-oxide surface lives under
+  # `simt`, so an old root path (`cuda_core::LaunchConfig`,
+  # `cuda_async::device_operation::...`) either fails to compile or binds the
+  # Tile-side type. Nothing compiles book, README, or `cargo oxide new`
+  # snippets, which is how some forty stale lines outlived the crate switch.
+  host-api-paths:
+    name: host API paths in docs and templates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads sources only: no rustup, no cargo, no CUDA toolkit.
+      - name: Verify docs and templates spell the shared crates' simt paths
+        run: bash scripts/check-host-api-paths.sh
+
+  # The shared host-crate release is named once in the root workspace and
+  # copied into every example manifest and into the `cargo oxide new`
+  # templates. A drifted example resolves a second runtime and breaks the
+  # shared example build cache; a drifted scaffold hands each new project a
+  # runtime the generated code was not written against.
+  shared-crate-pin-parity:
+    name: shared host-crate pin parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      # Reads sources only: no rustup, no cargo, no CUDA toolkit.
+      - name: Verify every shared-crate pin agrees with the root workspace
+        run: bash scripts/check-shared-crate-pin.sh
