@@ -831,9 +831,14 @@ L_loop:
         );
     }
 
-    /// Both spellings are emitted by the TMA lowering. The release
-    /// fence is the publication edge that orders the generic-proxy descriptor
-    /// mutation before a tensor-map consumer.
+    /// The three operand forms the TMA lowering emits: a register value
+    /// (`global_address`), an ordinal plus register (`global_dim`), and an
+    /// immediate (`swizzle_mode`). The release fence is the publication edge
+    /// that orders the generic-proxy descriptor mutation before a tensor-map
+    /// consumer. No in-tree example emits `tensormap.replace` yet, so the
+    /// spellings come from the mir-lower template
+    /// (`convert/intrinsics/tma.rs`), as the AsyncProxy fixture does for
+    /// `cp.reduce.async`.
     const TENSORMAP_MUTATIONS: &str = r#".version 8.7
 .target sm_90a
 .address_size 64
@@ -844,6 +849,7 @@ L_loop:
     .reg .b64 %rd0;
     tensormap.replace.tile.global_address.global.b1024.b64 [%rd0], %rd0;
     tensormap.replace.tile.global_dim.global.b1024.b32 [%rd0], 0, %r0;
+    tensormap.replace.tile.swizzle_mode.global.b1024.b32 [%rd0], 3;
     fence.proxy.tensormap::generic.release.gpu;
     ret;
 }
@@ -858,7 +864,7 @@ L_loop:
             .filter(|site| site.kind == SiteKind::TensorMapMutation)
             .collect();
 
-        assert_eq!(mutations.len(), 2, "{mutations:?}");
+        assert_eq!(mutations.len(), 3, "{mutations:?}");
         assert!(
             mutations
                 .iter()
@@ -868,6 +874,11 @@ L_loop:
             mutations
                 .iter()
                 .any(|site| site.head.contains(".global_dim."))
+        );
+        assert!(
+            mutations
+                .iter()
+                .any(|site| site.head.contains(".swizzle_mode."))
         );
     }
 
@@ -888,6 +899,10 @@ L_loop:
         );
         assert_eq!(
             kind_of("tensormap.replace.tile.global_dim"),
+            Some(SiteKind::TensorMapMutation)
+        );
+        assert_eq!(
+            kind_of("tensormap.replace.tile.swizzle_mode"),
             Some(SiteKind::TensorMapMutation)
         );
         assert_eq!(kind_of("fence.proxy.tensormap"), Some(SiteKind::Fence));
