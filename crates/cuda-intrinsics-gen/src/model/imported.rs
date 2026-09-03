@@ -4,16 +4,61 @@
  */
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpstreamLock {
     pub schema: u32,
+    pub rust_toolchain: LockedRustToolchain,
     pub llvm: LockedLlvm,
     pub llvm_tblgen: LockedTool,
     #[serde(default)]
     pub comparison_tools: Vec<LockedTool>,
     pub dumps: LockedDumps,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockedRustToolchain {
+    pub commit_hash: RustcCommit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct RustcCommit(String);
+
+impl FromStr for RustcCommit {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.len() == 40
+            && value
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            Ok(Self(value.to_owned()))
+        } else {
+            Err(format!(
+                "expected 40 lowercase hexadecimal characters, found {value:?}"
+            ))
+        }
+    }
+}
+
+impl TryFrom<String> for RustcCommit {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl fmt::Display for RustcCommit {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

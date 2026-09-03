@@ -6,6 +6,9 @@ revision = "16696adcd119e6ba9cc175207d984d7021211acb"
 provenance = "Public rust-lang/llvm-project source revision used by Rust commit e457a7b0d"
 public_output_allowed = true
 
+[rust_toolchain]
+commit_hash = "e457a7b0d326d67b4322ef0d11bd715cfaeda48f"
+
 [llvm_tblgen]
 name = "llvm-tblgen"
 version_line = "LLVM version 23.1.0"

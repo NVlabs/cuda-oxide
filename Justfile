@@ -117,8 +117,8 @@ test-cuda:
 # against 7 that are hand-written.
 #
 # Needs no CUDA toolkit: `--skip-terminal` is CI's own flag for runners without
-# the recorded CUDA 13.3 ptxas, leaving the pinned llc identity and the exact
-# emitted PTX as what gets checked, and llc comes from the pinned toolchain.
+# the recorded CUDA 13.3 ptxas. Identity is llc version plus the rustc commit
+# from upstream.lock; binary bytes are provenance only.
 # The whole recipe is ~13s.
 #
 # `base_ref` is what the append-only ABI ledger is compared against. CI uses the
