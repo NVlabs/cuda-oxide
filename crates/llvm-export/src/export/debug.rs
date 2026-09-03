@@ -825,7 +825,25 @@ impl<'a> ModuleExportState<'a> {
         self.debug_types.insert(ty.clone(), enum_type_id);
 
         let discriminator_member_id = discriminant.as_ref().map(|discriminant| {
-            let base = self.ensure_debug_type(&discriminant.ty);
+            // LLVM MC's NVPTX text writer prints negative one-byte DWARF
+            // constants as 64-bit hex literals, which ptxas rejects.
+            // `DW_FORM_data1` is signless; the discriminator type determines
+            // its interpretation, so an unsigned carrier preserves the tag
+            // bits and comparison semantics. Remove this conversion once all
+            // supported llc versions truncate the literal to the record width.
+            let discriminator_ty = match discriminant.ty.as_ref() {
+                DebugLocalTypeKind::Basic {
+                    size_bits,
+                    encoding,
+                    ..
+                } if *encoding == "DW_ATE_signed" => DebugLocalTypeKind::Basic {
+                    name: format!("u{size_bits}"),
+                    size_bits: *size_bits,
+                    encoding: "DW_ATE_unsigned",
+                },
+                ty => ty.clone(),
+            };
+            let base = self.ensure_debug_type(&discriminator_ty);
             let id = self.alloc_metadata_id();
             self.debug_nodes.push((
                 id,

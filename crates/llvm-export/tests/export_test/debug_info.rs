@@ -14,19 +14,20 @@ use llvm_export::{
         DebugLocalVariableInfo, DebugProjectedVariableInfo, DebugSourcePosition, DebugSourceScope,
         DebugSourceScopeLocation, DebugSourceScopeMap, DebugValueExpression,
         DebugValueExpressionOp, DebugValueListOp, DebugValueOp, FuncOp,
-        GlobalInitializerRelocation, GlobalOp, GlobalOpExt, ReturnOp,
+        GlobalInitializerRelocation, GlobalOp, GlobalOpExt, ReturnOp, StoreOp,
         encode_global_initializer_relocations,
     },
     types::{ArrayType, FuncType, PointerType, StructLayout, StructType, VoidType},
 };
 use pliron::{
     builtin::{
-        attributes::IntegerAttr,
+        attributes::{IntegerAttr, StringAttr},
         op_interfaces::CallOpCallable,
         ops::ModuleOp,
         types::{IntegerType, Signedness},
     },
     context::Context,
+    identifier::Identifier,
     linked_list::ContainsLinkedList,
     location::{Located, Location},
     op::Op,
@@ -1344,8 +1345,13 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     let func = FuncOp::new(&mut ctx, "enum_debug_kernel".try_into().unwrap(), func_ty);
     let func_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 10, 1);
     func.get_operation().deref_mut(&ctx).set_loc(func_loc);
+    func.get_operation().deref_mut(&ctx).attributes.set(
+        Identifier::try_from("gpu_kernel").unwrap(),
+        StringAttr::new("true".into()),
+    );
     let entry = func.get_or_create_entry_block(&mut ctx);
 
+    let i8_ty = IntegerType::get(&ctx, 8, Signedness::Signless);
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
@@ -1398,8 +1404,84 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     );
     direct.get_operation().insert_at_back(entry, &ctx);
 
+    let signed_direct = AllocaOp::new(&mut ctx, i8_ty.into(), one_val);
+    let signed_direct_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 12, 9);
+    signed_direct
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(signed_direct_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        signed_direct.get_operation(),
+        DebugLocalVariableInfo {
+            name: "signed_direct".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::Enum {
+                name: "SignedDirect".to_string(),
+                size_bits: 8,
+                discriminant: Some(DebugEnumDiscriminant {
+                    offset_bits: 0,
+                    ty: Box::new(DebugLocalTypeKind::Basic {
+                        name: "i8".to_string(),
+                        size_bits: 8,
+                        encoding: "DW_ATE_signed",
+                    }),
+                }),
+                variants: vec![
+                    DebugEnumVariant {
+                        name: "MinusOne".to_string(),
+                        discriminant: Some(255),
+                        members: vec![],
+                    },
+                    DebugEnumVariant {
+                        name: "MinusFive".to_string(),
+                        discriminant: Some(251),
+                        members: vec![],
+                    },
+                ],
+            },
+        },
+    );
+    let signed_direct_ptr = signed_direct.get_operation().deref(&ctx).get_result(0);
+    signed_direct.get_operation().insert_at_back(entry, &ctx);
+    let minus_one_attr = IntegerAttr::new(i8_ty, APInt::from_u32(255, NonZero::new(8).unwrap()));
+    let minus_one = ConstantOp::new(&mut ctx, minus_one_attr.into());
+    let minus_one_val = minus_one.get_operation().deref(&ctx).get_result(0);
+    minus_one.get_operation().insert_at_back(entry, &ctx);
+    let keep_signed_direct = StoreOp::new(&mut ctx, minus_one_val, signed_direct_ptr);
+    llvm_export::ops::set_op_volatile(&mut ctx, keep_signed_direct.get_operation(), true);
+    let keep_signed_direct_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 12, 9);
+    keep_signed_direct
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(keep_signed_direct_loc);
+    keep_signed_direct
+        .get_operation()
+        .insert_at_back(entry, &ctx);
+
+    let signed_scalar = AllocaOp::new(&mut ctx, i8_ty.into(), one_val);
+    let signed_scalar_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 13, 9);
+    signed_scalar
+        .get_operation()
+        .deref_mut(&ctx)
+        .set_loc(signed_scalar_loc);
+    llvm_export::ops::set_debug_local_variable(
+        &mut ctx,
+        signed_scalar.get_operation(),
+        DebugLocalVariableInfo {
+            name: "signed_scalar".to_string(),
+            argument_index: None,
+            ty: DebugLocalTypeKind::Basic {
+                name: "i8".to_string(),
+                size_bits: 8,
+                encoding: "DW_ATE_signed",
+            },
+        },
+    );
+    signed_scalar.get_operation().insert_at_back(entry, &ctx);
+
     let niche = AllocaOp::new(&mut ctx, i64_ty.into(), one_val);
-    let niche_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 12, 9);
+    let niche_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 14, 9);
     niche.get_operation().deref_mut(&ctx).set_loc(niche_loc);
     llvm_export::ops::set_debug_local_variable(
         &mut ctx,
@@ -1447,9 +1529,10 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     );
     niche.get_operation().insert_at_back(entry, &ctx);
 
-    ReturnOp::new(&mut ctx, None)
-        .get_operation()
-        .insert_at_back(entry, &ctx);
+    let ret = ReturnOp::new(&mut ctx, None);
+    let ret_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 15, 5);
+    ret.get_operation().deref_mut(&ctx).set_loc(ret_loc);
+    ret.get_operation().insert_at_back(entry, &ctx);
     func.get_operation().insert_at_back(module_block, &ctx);
 
     let config = DebugConfig {
@@ -1502,6 +1585,56 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
         "direct-tag variants must carry their physical discriminant values:\n{ir}"
     );
     assert!(
+        ir.contains("extraData: i8 255") && ir.contains("extraData: i8 251"),
+        "signed direct-tag variants must retain their physical bit patterns:\n{ir}"
+    );
+
+    let signed_enum_id = metadata_id(
+        &ir,
+        "!DICompositeType(tag: DW_TAG_structure_type, name: \"SignedDirect\"",
+    );
+    let signed_discriminator_member = ir
+        .lines()
+        .find(|line| {
+            line.contains("!DIDerivedType(tag: DW_TAG_member")
+                && line.contains(&format!("scope: {signed_enum_id},"))
+                && line.contains("flags: DIFlagArtificial")
+        })
+        .expect("signed enum discriminator member");
+    let signed_discriminator_type_id = signed_discriminator_member
+        .split("baseType: ")
+        .nth(1)
+        .and_then(|tail| tail.split(',').next())
+        .expect("signed enum discriminator base type");
+    let signed_discriminator_type = ir
+        .lines()
+        .find(|line| line.starts_with(&format!("{signed_discriminator_type_id} = ")))
+        .expect("signed enum discriminator base type definition");
+    assert!(
+        signed_discriminator_type
+            .contains("!DIBasicType(name: \"u8\", size: 8, encoding: DW_ATE_unsigned)"),
+        "enum discriminant metadata must describe physical tag bits as unsigned:\n{signed_discriminator_type}\n{ir}"
+    );
+
+    let signed_scalar_id = metadata_id(&ir, "!DILocalVariable(name: \"signed_scalar\"");
+    let signed_scalar_variable = ir
+        .lines()
+        .find(|line| line.starts_with(&format!("{signed_scalar_id} = ")))
+        .expect("signed scalar variable definition");
+    let signed_scalar_type_id = signed_scalar_variable
+        .split("type: ")
+        .nth(1)
+        .and_then(|tail| tail.strip_suffix(')'))
+        .expect("signed scalar type");
+    let signed_scalar_type = ir
+        .lines()
+        .find(|line| line.starts_with(&format!("{signed_scalar_type_id} = ")))
+        .expect("signed scalar type definition");
+    assert!(
+        signed_scalar_type.contains("!DIBasicType(name: \"i8\", size: 8, encoding: DW_ATE_signed)"),
+        "ordinary signed locals must retain signed metadata:\n{signed_scalar_type}\n{ir}"
+    );
+    assert!(
         ir.contains("extraData: i64 0"),
         "the tagged niche variant must carry the niche value:\n{ir}"
     );
@@ -1517,6 +1650,42 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
         !some_variant_member.contains("extraData:"),
         "the untagged niche variant must be the default branch:\n{some_variant_member}\n{ir}"
     );
+
+    let tools = discover_llc_tools();
+    if tools.is_empty() {
+        eprintln!("skipping enum discriminator PTX gate: llc unavailable");
+        return;
+    }
+    for (tool, major) in tools {
+        let output = run_llc(&tool, &ir, &format!("enum_{major}"));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "{tool} (LLVM {major}) rejected enum debug metadata:\n{stderr}\n--- module ---\n{ir}"
+        );
+        let ptx = String::from_utf8(output.stdout)
+            .unwrap_or_else(|error| panic!("{tool} (LLVM {major}) emitted invalid UTF-8: {error}"));
+        let discriminant_values = ptx
+            .lines()
+            .filter(|line| line.contains("DW_AT_discr_value"))
+            .map(|record| {
+                let value = parse_ptx_byte_record(record).unwrap_or_else(|| {
+                    panic!(
+                        "{tool} (LLVM {major}) emitted an unreadable DW_AT_discr_value record: {record}"
+                    )
+                });
+                assert!(
+                    value <= u128::from(u8::MAX),
+                    "{tool} (LLVM {major}) emitted an out-of-range PTX byte record: {record}"
+                );
+                value
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            discriminant_values.contains(&255) && discriminant_values.contains(&251),
+            "{tool} (LLVM {major}) must preserve signed enum physical tag bits:\n{ptx}"
+        );
+    }
 }
 
 #[test]
@@ -2680,9 +2849,18 @@ fn retained_node_placement_leaves_module_globals_in_the_compile_unit() {
 /// `llvm-as-NN` / `llvm-as` names on `PATH` plus the Rust sysroot's
 /// llvm-tools copy, deduplicated by major.
 fn discover_llvm_as_tools() -> Vec<(String, u32)> {
-    let mut candidates: Vec<String> = ["llvm-as-23", "llvm-as-22", "llvm-as-21", "llvm-as"]
+    discover_llvm_tools("llvm-as")
+}
+
+fn discover_llc_tools() -> Vec<(String, u32)> {
+    discover_llvm_tools("llc")
+}
+
+fn discover_llvm_tools(name: &str) -> Vec<(String, u32)> {
+    let mut candidates: Vec<String> = [23, 22, 21]
         .into_iter()
-        .map(str::to_owned)
+        .map(|major| format!("{name}-{major}"))
+        .chain(std::iter::once(name.to_owned()))
         .collect();
     if let Some(sysroot) = std::process::Command::new("rustc")
         .args(["--print", "sysroot"])
@@ -2701,7 +2879,7 @@ fn discover_llvm_as_tools() -> Vec<(String, u32)> {
                     .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
             })
     {
-        candidates.push(format!("{sysroot}/lib/rustlib/{host}/bin/llvm-as"));
+        candidates.push(format!("{sysroot}/lib/rustlib/{host}/bin/{name}"));
     }
     let mut tools: Vec<(String, u32)> = Vec::new();
     for tool in candidates {
@@ -2727,6 +2905,37 @@ fn discover_llvm_as_tools() -> Vec<(String, u32)> {
         }
     }
     tools
+}
+
+fn run_llc(tool: &str, ir: &str, tag: &str) -> std::process::Output {
+    let ll_path = std::env::temp_dir().join(format!(
+        "cuda_oxide_enum_debug_gate_{}_{tag}.ll",
+        std::process::id()
+    ));
+    std::fs::write(&ll_path, ir).expect("write temp .ll");
+    let output = std::process::Command::new(tool)
+        .args(["-O0", "-mtriple=nvptx64-nvidia-cuda", "-mcpu=sm_80"])
+        .arg("-o")
+        .arg("-")
+        .arg(&ll_path)
+        .output()
+        .expect("run llc");
+    let _ = std::fs::remove_file(&ll_path);
+    output
+}
+
+fn parse_ptx_byte_record(record: &str) -> Option<u128> {
+    let literal = record
+        .split("//")
+        .next()?
+        .trim()
+        .strip_prefix(".b8")?
+        .trim();
+    if let Some(hex) = literal.strip_prefix("0x") {
+        u128::from_str_radix(hex, 16).ok()
+    } else {
+        literal.parse().ok()
+    }
 }
 
 fn run_llvm_as(tool: &str, ir: &str, tag: &str) -> std::process::Output {
