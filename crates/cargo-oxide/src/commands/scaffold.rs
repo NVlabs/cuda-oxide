@@ -13,6 +13,12 @@ use super::*;
 
 const GIT_REPO: &str = "https://github.com/NVlabs/cuda-oxide.git";
 
+/// crates.io release of the host-side runtime shared with cutile-rs
+/// (`cuda-core`, `cuda-async`). The device and host glue crates above still
+/// come from this repository; the runtime is published from NVlabs/cutile-rs
+/// and the SIMT surface lives under its `simt` modules.
+pub(super) const SHARED_HOST_CRATES_VERSION: &str = "0.3.1";
+
 const RUST_TOOLCHAIN_TOML: &str = r#"[toolchain]
 channel = "nightly-2026-08-28"
 components = ["rust-src", "rustc-dev", "rust-analyzer", "clippy", "rustfmt", "llvm-tools"]
@@ -111,9 +117,9 @@ edition = "2024"
 [dependencies]
 cuda-device = {{ git = "{GIT_REPO}" }}
 cuda-host = {{ git = "{GIT_REPO}", features = ["async"] }}
-cuda-core = {{ git = "{GIT_REPO}" }}
-cuda-async = {{ git = "{GIT_REPO}" }}
-cuda-bindings = {{ git = "{GIT_REPO}" }}
+# Shared host-side runtime, published from NVlabs/cutile-rs.
+cuda-core = "{SHARED_HOST_CRATES_VERSION}"
+cuda-async = "{SHARED_HOST_CRATES_VERSION}"
 tokio = {{ version = "1", features = ["rt", "rt-multi-thread", "macros"] }}
 "#
         )
@@ -129,7 +135,8 @@ edition = "2024"
 [dependencies]
 cuda-device = {{ git = "{GIT_REPO}" }}
 cuda-host = {{ git = "{GIT_REPO}" }}
-cuda-core = {{ git = "{GIT_REPO}" }}
+# Shared host-side runtime, published from NVlabs/cutile-rs.
+cuda-core = "{SHARED_HOST_CRATES_VERSION}"
 "#
         )
     }
@@ -137,9 +144,9 @@ cuda-core = {{ git = "{GIT_REPO}" }}
 
 fn scaffold_main_rs(async_mode: bool) -> String {
     if async_mode {
-        r#"use cuda_async::device_context::init_device_contexts;
-use cuda_async::device_operation::DeviceOperation;
-use cuda_core::LaunchConfig;
+        r#"use cuda_async::simt::device_context::{init_device_contexts, with_cuda_context};
+use cuda_async::simt::device_operation::DeviceOperation;
+use cuda_core::simt::LaunchConfig;
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
@@ -159,8 +166,8 @@ mod kernels {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use cuda_async::device_box::DeviceBox;
-    use cuda_core::memory::{malloc_async, memcpy_dtoh_async, memcpy_htod_async};
+    use cuda_async::simt::device_box::DeviceBox;
+    use cuda_core::simt::memory::{malloc_async, memcpy_dtoh_async, memcpy_htod_async};
     use std::mem;
 
     init_device_contexts(0, 1)?;
@@ -170,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let a_host: Vec<f32> = (0..N).map(|i| i as f32).collect();
     let b_host: Vec<f32> = (0..N).map(|i| (i * 2) as f32).collect();
 
-    let (a_dev, b_dev, mut c_dev) = cuda_async::device_context::with_cuda_context(0, |ctx| {
+    let (a_dev, b_dev, mut c_dev) = with_cuda_context(0, |ctx| {
         let stream = ctx.default_stream();
         let num_bytes = N * mem::size_of::<f32>();
         unsafe {
@@ -201,7 +208,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .sync()?;
 
     let mut c_host = vec![0.0f32; N];
-    cuda_async::device_context::with_cuda_context(0, |ctx| {
+    with_cuda_context(0, |ctx| {
         let stream = ctx.default_stream();
         unsafe {
             memcpy_dtoh_async(

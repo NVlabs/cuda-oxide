@@ -74,8 +74,8 @@ method. It looks like the sync method, but without the stream argument, and it
 returns a recipe instead of cooking immediately:
 
 ```rust
-use cuda_async::device_context::init_device_contexts;
-use cuda_core::LaunchConfig;
+use cuda_async::simt::device_context::init_device_contexts;
+use cuda_core::simt::LaunchConfig;
 
 // One-time setup: create a stream pool for scheduling
 init_device_contexts(0, 1)?;
@@ -265,7 +265,7 @@ weight vector -- into a chain of device operations. The `value()` function
 wraps any `Send` type in a no-op `DeviceOperation` that returns it immediately:
 
 ```rust
-use cuda_async::device_operation::value;
+use cuda_async::simt::device_operation::value;
 
 let weights = vec![1.0f32; 1024];
 let op = value(weights);  // impl DeviceOperation<Output = Vec<f32>>
@@ -297,8 +297,8 @@ The stream is assigned later, by the scheduling policy.
 until the `ExecutionContext` is available:
 
 ```rust
-use cuda_async::device_operation::{with_context, value};
-use cuda_core::memory::{malloc_async, memcpy_htod_async};
+use cuda_async::simt::device_operation::{with_context, value};
+use cuda_core::simt::memory::{malloc_async, memcpy_htod_async};
 
 fn h2d(host_data: Vec<f32>) -> impl DeviceOperation<Output = DeviceBox<[f32]>> {
     with_context(move |ctx| {

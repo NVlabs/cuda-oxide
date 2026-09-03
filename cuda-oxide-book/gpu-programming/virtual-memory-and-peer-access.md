@@ -26,12 +26,12 @@ This chapter covers:
 
 :::{seealso}
 The complete integration test is available in
-[`crates/cuda-core/tests/vmm_p2p.rs`](https://github.com/NVlabs/cuda-oxide/blob/main/crates/cuda-core/tests/vmm_p2p.rs).
+[`cuda-core/tests/simt_vmm_p2p.rs` in cutile-rs](https://github.com/NVlabs/cutile-rs/blob/main/cuda-core/tests/simt_vmm_p2p.rs).
 
 The corresponding implementations are:
 
-* [`crates/cuda-core/src/vmm.rs`](https://github.com/NVlabs/cuda-oxide/blob/main/crates/cuda-core/src/vmm.rs)
-* [`crates/cuda-core/src/peer.rs`](https://github.com/NVlabs/cuda-oxide/blob/main/crates/cuda-core/src/peer.rs)
+* [`cuda-core/src/simt/vmm.rs` in cutile-rs](https://github.com/NVlabs/cutile-rs/blob/main/cuda-core/src/simt/vmm.rs)
+* [`cuda-core/src/simt/peer.rs` in cutile-rs](https://github.com/NVlabs/cutile-rs/blob/main/cuda-core/src/simt/peer.rs)
 :::
 
 ## VMM and P2P solve different problems
@@ -235,7 +235,7 @@ fn single_gpu_vmm_roundtrip() -> Result<(), DriverError> {
     let input: Vec<u8> = (0..64).map(|i| (i * 3 + 7) as u8).collect();
 
     unsafe {
-        cuda_core::memory::memcpy_htod_async(
+        cuda_core::simt::memory::memcpy_htod_async(
             reservation.base(),
             input.as_ptr(),
             input.len(),
@@ -248,7 +248,7 @@ fn single_gpu_vmm_roundtrip() -> Result<(), DriverError> {
     let mut output = vec![0u8; input.len()];
 
     unsafe {
-        cuda_core::memory::memcpy_dtoh_async(
+        cuda_core::simt::memory::memcpy_dtoh_async(
             output.as_mut_ptr(),
             reservation.base(),
             output.len(),
@@ -376,7 +376,7 @@ fn cross_gpu_vmm_roundtrip() -> Result<(), DriverError> {
     ctx0.bind_to_thread()?;
 
     unsafe {
-        cuda_core::memory::memcpy_htod_async(
+        cuda_core::simt::memory::memcpy_htod_async(
             reservation0.base(),
             input.as_ptr(),
             byte_length,
@@ -391,7 +391,7 @@ fn cross_gpu_vmm_roundtrip() -> Result<(), DriverError> {
     ctx1.bind_to_thread()?;
 
     unsafe {
-        cuda_core::memory::memcpy_dtoh_async(
+        cuda_core::simt::memory::memcpy_dtoh_async(
             output.as_mut_ptr(),
             reservation1.base(),
             byte_length,

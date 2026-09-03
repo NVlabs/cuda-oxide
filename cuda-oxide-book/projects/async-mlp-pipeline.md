@@ -339,7 +339,7 @@ copies.
 This is where the magic lives. For each batch, we build a four-stage chain:
 
 ```rust
-    use cuda_async::launch::{AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch};
+    use cuda_async::simt::launch::{AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch};
 
     let pipeline = zip!(h2d(batch_data), zeros(DIM * DIM), zeros(DIM))
         .and_then(move |(input, hidden, output)| {

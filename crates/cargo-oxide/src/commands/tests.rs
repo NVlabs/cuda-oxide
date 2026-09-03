@@ -4078,6 +4078,15 @@ fn scaffold_sync_template_uses_launch_contract_and_docs() {
     assert!(files.main_rs.contains("prepare_vecadd"));
     assert!(files.main_rs.contains("LaunchConfig1D"));
     assert!(!files.main_rs.contains("LaunchConfig::for_num_elems"));
+    // The host runtime is the crates.io release shared with cutile-rs. A git
+    // pin at this repository would resolve to nothing (the local copies are
+    // retired) or, worse, to a stale copy on an old revision.
+    assert!(
+        files
+            .cargo_toml
+            .contains(&format!("cuda-core = \"{SHARED_HOST_CRATES_VERSION}\""))
+    );
+    assert!(!files.cargo_toml.contains("cuda-core = {"));
 }
 
 #[test]
@@ -4095,6 +4104,20 @@ fn scaffold_async_template_keeps_async_deps_and_docs() {
     assert!(files.main_rs.contains("vecadd_async"));
     assert!(files.main_rs.contains("use cuda_host::cuda_module;"));
     assert!(!files.main_rs.contains("use cuda_device::{cuda_module"));
+    // Shared host runtime from crates.io; the SIMT surface lives under simt::.
+    assert!(
+        files
+            .cargo_toml
+            .contains(&format!("cuda-async = \"{SHARED_HOST_CRATES_VERSION}\""))
+    );
+    assert!(!files.cargo_toml.contains("cuda-async = {"));
+    assert!(!files.cargo_toml.contains("cuda-bindings"));
+    assert!(files.main_rs.contains("use cuda_core::simt::LaunchConfig;"));
+    assert!(
+        files
+            .main_rs
+            .contains("use cuda_async::simt::device_operation::DeviceOperation;")
+    );
 }
 
 /// A scaffolded project must already be `rustfmt`-clean.

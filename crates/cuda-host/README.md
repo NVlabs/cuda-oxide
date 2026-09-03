@@ -198,7 +198,7 @@ Enable the `async` feature to generate async launch methods. They use the same
 scalar mapping, but take no stream argument:
 
 ```rust
-use cuda_async::device_operation::DeviceOperation;
+use cuda_async::simt::device_operation::DeviceOperation;
 
 let module = kernels::load_async(0)?;
 let launch = unsafe {
@@ -214,7 +214,7 @@ launch.sync()?;
 ```
 
 For async launches, device-slice parameters accept either `DeviceBuffer<T>` or
-`cuda_async::device_box::DeviceBox<[T]>`. The mutable
+`cuda_async::simt::device_box::DeviceBox<[T]>`. The mutable
 `AsyncKernelLaunchBuilder` collects arguments and options. Finalizing it with a
 raw configuration is unsafe and produces an immutable `AsyncKernelLaunch<'_>`;
 geometry cannot be changed after that point. Rust keeps referenced buffers and
