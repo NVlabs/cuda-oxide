@@ -650,10 +650,10 @@ pub fn doctor(ctx: &Context) {
 /// CUDA toolkit install root for doctor's `cuda.h` probe: the first set
 /// variable among `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, else `/usr/local/cuda`.
 ///
-/// Kept in lockstep BY HAND with `crates/cuda-bindings/build.rs`
-/// (`cuda_toolkit_dir` / `find_cuda_include_dir`): doctor cannot import that
-/// probe because build.rs logic is not a library. If the build.rs discovery
-/// changes, mirror it here.
+/// Mirrors BY HAND the toolkit probe in the shared `cuda-bindings` build
+/// script, which lives in NVlabs/cutile-rs (`cuda-bindings/build.rs`): doctor
+/// cannot import it because build-script logic is not a library. If that
+/// discovery changes, mirror it here.
 pub(super) fn cuda_toolkit_root(mut get_env: impl FnMut(&str) -> Option<String>) -> String {
     ["CUDA_TOOLKIT_PATH", "CUDA_HOME"]
         .iter()
@@ -670,10 +670,11 @@ pub(super) fn cuda_toolkit_root(mut get_env: impl FnMut(&str) -> Option<String>)
 /// `CUDA_TOOLKIT_TARGET_DIR` variable, like nvcc's `-target-dir`) replaces
 /// the table with that single directory.
 ///
-/// Kept in lockstep BY HAND with the selection table in
-/// `crates/cuda-bindings/toolkit_target.rs` (`resolve_toolkit_target_dirs`):
-/// doctor cannot import it because build-script sources are not a library.
-/// If the selection there changes, mirror it here.
+/// Mirrors BY HAND the selection table in the shared `cuda-bindings` build
+/// sources in NVlabs/cutile-rs (`cuda-bindings/toolkit_target.rs`,
+/// `resolve_toolkit_target_dirs`): doctor cannot import it because
+/// build-script sources are not a library. If the selection there changes,
+/// mirror it here.
 ///
 /// `arch` and `os` are the host CPU architecture and OS; the caller passes
 /// `std::env::consts::ARCH` / `std::env::consts::OS` (doctor runs at

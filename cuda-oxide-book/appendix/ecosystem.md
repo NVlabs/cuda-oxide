@@ -72,8 +72,8 @@ projects mature, and we expect to keep doing so.
   implicit.
 - **cudarc** provides safe Rust bindings to the CUDA driver API. It's a
   host-side library for launching kernels written elsewhere (typically PTX
-  or CUDA C++). cuda-oxide ships its own host-side bindings layer
-  (`cuda-core`) tightly integrated with `cuda-host`'s launch macros, but
+  or CUDA C++). cuda-oxide's host-side layer (`cuda-core`, shared with
+  cutile-rs) is tightly integrated with `cuda-host`'s launch macros, but
   the PTX cuda-oxide produces is portable — cudarc is a fine option if you
   want to launch cuda-oxide kernels from a project that doesn't depend on
   the rest of the cuda-oxide stack.

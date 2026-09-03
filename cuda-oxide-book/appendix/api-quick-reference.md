@@ -513,7 +513,8 @@ N_COLS must be a power of 2 in the range [32, 512].
 ### Typed Synchronous
 
 ```rust
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 
 let ctx = CudaContext::new(0).unwrap();
 let stream = ctx.default_stream();

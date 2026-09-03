@@ -83,7 +83,8 @@ to access each other directly.
 Always query support before enabling peer access:
 
 ```rust
-use cuda_core::{peer, CudaContext, DriverError};
+use cuda_core::simt::peer;
+use cuda_core::{CudaContext, DriverError};
 
 fn check_peer_access() -> Result<(), DriverError> {
     let ctx0 = CudaContext::new(0)?;
@@ -113,7 +114,8 @@ Use `peer::enable_peer_access` to allow one context to access memory associated
 with another device:
 
 ```rust
-use cuda_core::{peer, CudaContext, DriverError};
+use cuda_core::simt::peer;
+use cuda_core::{CudaContext, DriverError};
 
 fn enable_bidirectional_peer_access() -> Result<(), DriverError> {
     let ctx0 = CudaContext::new(0)?;
@@ -181,7 +183,8 @@ of the device's allocation granularity.
 Use `allocation_granularity` and `align_size` before allocating:
 
 ```rust
-use cuda_core::{vmm, CudaContext, DriverError};
+use cuda_core::simt::vmm;
+use cuda_core::{CudaContext, DriverError};
 
 fn aligned_allocation_size(requested: usize) -> Result<usize, DriverError> {
     let ctx = CudaContext::new(0)?;
@@ -200,7 +203,8 @@ The following example allocates physical memory, maps it into a virtual address
 range, writes data through the mapping, and reads it back.
 
 ```rust
-use cuda_core::{vmm, CudaContext, DriverError};
+use cuda_core::simt::vmm;
+use cuda_core::{CudaContext, DriverError};
 
 fn single_gpu_vmm_roundtrip() -> Result<(), DriverError> {
     let ctx = CudaContext::new(0)?;
@@ -288,8 +292,8 @@ The following pattern:
 * Reads the same physical memory through GPU 1's mapping.
 
 ```rust
-use cuda_core::error::IntoResult;
-use cuda_core::{peer, vmm, CudaContext, DriverError};
+use cuda_core::simt::{peer, vmm};
+use cuda_core::{CudaContext, DriverError, IntoResult};
 use std::mem::MaybeUninit;
 
 fn gpu_count() -> Result<usize, DriverError> {

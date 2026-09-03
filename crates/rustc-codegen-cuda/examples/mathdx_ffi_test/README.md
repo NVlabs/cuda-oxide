@@ -15,7 +15,7 @@ compiles them to LTOIR, and links them with cuda-oxide generated code.
 
 ## Prerequisites
 
-1. **CUDA Toolkit 12.x+** with nvcc
+1. **CUDA Toolkit 13.0+** with nvcc
 2. **MathDx Library** - Download from: https://developer.nvidia.com/cublasdx-downloads
 3. **cuda-oxide compiler** toolchain
 
@@ -337,7 +337,7 @@ Set `MATHDX_ROOT` to your MathDx installation directory.
 
 ### Compilation errors in C++ wrappers
 
-Ensure you have the correct CUDA Toolkit version (12.x+) and C++17 support.
+Ensure you have the correct CUDA Toolkit version (13.0+) and C++17 support.
 
 ### Shared memory errors at runtime
 

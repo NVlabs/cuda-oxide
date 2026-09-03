@@ -121,12 +121,6 @@ FIRST_PARTY_WORKSPACE_ROOTS=(
     Cargo.toml
     crates/rustc-codegen-cuda/Cargo.toml
     crates/cuda-macros/tests/device-only/Cargo.toml
-    # The three host crates retired by the shared-crate switch: standalone
-    # packages kept on disk so the example workspaces keep building unchanged.
-    # First-party, so their declared dependencies stay in the inventory.
-    crates/cuda-bindings/Cargo.toml
-    crates/cuda-core/Cargo.toml
-    crates/cuda-async/Cargo.toml
 )
 
 # The vendored rustlantis subtree also declares `[workspace]`. It is
@@ -286,20 +280,12 @@ echo "OK: ${CSV} records all $(printf '%s\n' "${required}" | grep -c .) declared
 # friends in cutile_inter_kernel), so a heuristic over names would misfile
 # them.
 # Examples whose third-party dependencies are deliberately out of inventory
-# scope.  cutile_inter_kernel links cutile-rs by git, which resolves a further
-# ~60 crates (wasm-bindgen, wit-bindgen, wasmparser, windows-targets) that exist
-# in this tree only to build one interop example.
-#
-# Be clear about what this withholds: the same example is also on
-# check-example-license-policy.sh's POLICY_EXEMPT_EXAMPLES, so those crates get
-# neither a CSV row nor a `cargo deny check`.  Every other example workspace is
-# covered by both since #664 and #681.  This one is the single hole, and it is
-# open deliberately -- see that script for the two blockers.
-#
-# Tracked in #953.  (This comment used to cite #663, which is closed; the
-# general gap it tracked was fixed, but the decisions keeping this example
-# exempt were not, so they moved to their own issue.)  Delete the entry to
-# require the rows.
+# scope.  cutile_inter_kernel pulls the cutile compiler stack from cutile-rs,
+# which resolves a further ~60 crates (wasm-bindgen, wit-bindgen, wasmparser,
+# windows-targets) that exist in this tree only to build one interop example.
+# Those crates still get a `cargo deny check` from
+# check-example-license-policy.sh (the example is no longer exempt there);
+# only the CSV rows are withheld.  Delete the entry to require the rows.
 #
 # Every name here is checked against the examples on disk below, so a typo or a
 # rename fails the run instead of quietly exempting nothing -- or everything.

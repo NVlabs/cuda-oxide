@@ -72,41 +72,20 @@ test:
     # it and `-p` from the root cannot reach it.
     cd crates/rustc-codegen-cuda && cargo test --lib
 
-# The five packages CI's matrix marks `needs_cuda`, kept separate so `test`
-# runs on a machine with no CUDA at all.
+# The packages CI's matrix marks `needs_cuda`, kept separate so `test` runs on
+# a machine with no CUDA at all.
 #
-# These need cuda.h for cuda-bindings' bindgen at build time, and their test
-# binaries keep a DT_NEEDED on `libcuda.so.1`, so without a driver they fail to
-# *load* -- `error while loading shared libraries: libcuda.so.1` -- which is a
-# loader failure, not a test failure. CI runs them on driverless runners by
-# shadowing the toolkit's link-time stub under that name; see unit-tests.yml.
+# These need cuda.h and curand.h at build time: the shared cuda-bindings
+# (cutile-rs) runs bindgen over them. No driver is needed: that crate loads
+# libcuda at run time through libloading, so the test binaries carry no
+# DT_NEEDED on `libcuda.so.1` and load without one. Tests that need a real
+# driver are `#[ignore]`d.
 #
-# Run the CUDA-linked packages (shadows the libcuda stub if no driver)
+# cuda-core and cuda-async are the shared host-side crates from cutile-rs;
+# their unit tests run in cutile-rs CI.
+#
+# Run the CUDA-toolkit-dependent packages (no driver required)
 test-cuda:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # The toolkit ships only the link-time stub `libcuda.so`, while the linker
-    # stamps `libcuda.so.1` into the binary, so a machine with a toolkit but no
-    # driver cannot even load these tests. CI shadows the stub under that name
-    # (unit-tests.yml) and CONTRIBUTING documents the same recipe by hand; do it
-    # here so `just check` works on the driverless machine CONTRIBUTING calls
-    # the common case. A real driver already provides the name, so this is a
-    # no-op there.
-    if ! ldconfig -p 2>/dev/null | grep -q 'libcuda\.so\.1'; then
-        for root in "${CUDA_TOOLKIT_PATH:-}" "${CUDA_HOME:-}" /usr/local/cuda; do
-            if [ -n "${root}" ] && [ -f "${root}/lib64/stubs/libcuda.so" ]; then
-                shadow="$(mktemp -d)"
-                trap 'rm -rf "${shadow}"' EXIT
-                ln -sf "${root}/lib64/stubs/libcuda.so" "${shadow}/libcuda.so.1"
-                # `:+` keeps the joining colon out when the variable is unset:
-                # a trailing colon would put the cwd on the loader search path.
-                export LD_LIBRARY_PATH="${shadow}${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
-                break
-            fi
-        done
-    fi
-    # cuda-core and cuda-async are the shared host-side crates from cutile-rs
-    # now; their unit tests run in cutile-rs CI.
     cargo test --all-targets \
         -p cuda-oxide-codegen -p cuda-macros -p cuda-host
 
@@ -133,12 +112,10 @@ check-intrinsics base_ref="HEAD^":
 
 # Build docs warning-free + run doctests (mirrors the docs CI gate). The `test`
 # recipe uses `--all-targets`, which skips doctests, so this covers them.
-# cuda-bindings is excluded from doctests (its generated C doc comments are not
-# valid Rust); its docs still build under the rustdoc allows in its lib.rs.
 # Build docs warning-free and run doctests
 doc-check:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
-    cargo test --doc --workspace --exclude cuda-bindings
+    cargo test --doc --workspace
     # The docs gate builds this workspace's rustdoc separately too (#725); the
     # root `--workspace` cannot reach it.
     cd crates/rustc-codegen-cuda && RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
@@ -146,7 +123,7 @@ doc-check:
 # Run all checks (fmt + clippy + tests + guards + docs). Includes `test-cuda`:
 # `clippy` and `doc-check` already build cuda-bindings, so this recipe needs a
 # CUDA toolkit either way. Machines without even a toolkit get `test`. A driver
-# is no longer required: `test-cuda` shadows the toolkit's libcuda stub itself.
+# is not required: the shared cuda-bindings loads libcuda at run time.
 # `check-guards` covers the status-guard, naming-guard and cargo-deny workflows
 # in full, and `check-intrinsics` the generated-intrinsics job; see their
 # comments for prerequisites. Still CI-only: clippy's per-example pass (one run

@@ -21,18 +21,18 @@ impl FakeModule {
 mod cuda_async {
     pub mod simt {
         pub mod launch {
-            use cuda_core::simt::LaunchConfig;
             use cuda_core::CudaFunction;
+            use cuda_core::simt::LaunchConfig;
             use std::sync::Arc;
 
-        pub struct AsyncKernelLaunchBuilder;
+            pub struct AsyncKernelLaunchBuilder;
 
-        impl AsyncKernelLaunchBuilder {
-            pub fn new(_function: Arc<CudaFunction>) -> Self {
-                Self
-            }
+            impl AsyncKernelLaunchBuilder {
+                pub fn new(_function: Arc<CudaFunction>) -> Self {
+                    Self
+                }
 
-            pub unsafe fn finalize_unchecked(self, _config: LaunchConfig) {}
+                pub unsafe fn finalize_unchecked(self, _config: LaunchConfig) {}
             }
         }
     }

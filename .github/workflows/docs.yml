@@ -46,25 +46,12 @@ jobs:
           export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
           export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
 
-          # See unit-tests.yml for the rationale: shadow the link-time libcuda
-          # stub as `libcuda.so.1` so any doctests that reference `cu*` symbols
-          # load on a GPU-less runner.
-          if [ -n "${CUDA_TOOLKIT_PATH:-}" ] && [ -f "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" ]; then
-            stub_shadow="${RUNNER_TEMP}/libcuda-stub"
-            mkdir -p "${stub_shadow}"
-            ln -sf "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" "${stub_shadow}/libcuda.so.1"
-            export LD_LIBRARY_PATH="${stub_shadow}:${LD_LIBRARY_PATH}"
-          fi
-
-          # Docs must build warning-free (RUSTDOCFLAGS=-D warnings above). The
-          # generated cuda-bindings crate keeps its CUDA doc comments but allows
-          # the rustdoc lints they trip (see crates/cuda-bindings/src/lib.rs).
+          # Docs must build warning-free (RUSTDOCFLAGS=-D warnings above).
           cargo doc --no-deps --workspace
 
-          # Run doctests. cuda-bindings is excluded: its doctests come from
-          # bindgen-generated C doxygen comments, and its `doctest = false`
-          # (which `cargo test --doc` otherwise bypasses) signals that intent.
-          cargo test --doc --workspace --exclude cuda-bindings
+          # Run doctests. The shared cuda-bindings is not a workspace member,
+          # so nothing here reaches its bindgen-generated doc comments.
+          cargo test --doc --workspace
 
       # `rustc-codegen-cuda` is its own [workspace] (it links against
       # rustc-private dylibs), so `--workspace` above never reaches it. fmt,

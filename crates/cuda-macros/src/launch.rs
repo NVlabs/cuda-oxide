@@ -516,7 +516,7 @@ pub(crate) struct CudaLaunchAsyncInput {
     kernel: syn::Path,
     /// Expression resolving to an `Arc<CudaModule>` that contains the compiled PTX.
     module: syn::Expr,
-    /// Expression resolving to a [`LaunchConfig`](https://docs.rs/cuda-core/latest/cuda_core/struct.LaunchConfig.html) (grid/block dims, shared mem).
+    /// Expression resolving to a [`LaunchConfig`](https://docs.rs/cuda-core/latest/cuda_core/simt/launch/struct.LaunchConfig.html) (grid/block dims, shared mem).
     config: syn::Expr,
     /// Kernel arguments: `slice(x)`, `slice_mut(x)`, direct values, or closures.
     args: Vec<CudaLaunchArg>,

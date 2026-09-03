@@ -131,9 +131,10 @@ workflows:
 just check
 ```
 
-It needs a CUDA toolkit, `cargo-deny`, and `python3` on `PATH`; it does not
-need a GPU -- the CUDA-linked test packages shadow the toolkit's `libcuda` stub
-when no driver is present. Individual recipes exist for each piece, and
+It needs a CUDA toolkit (13.0 or newer, with the cuRAND headers), `cargo-deny`,
+and `python3` on `PATH`; it does not need a GPU or a driver: the shared
+`cuda-bindings` crate loads `libcuda` at run time, so test binaries load without
+one. Individual recipes exist for each piece, and
 `just --list` shows them with a one-line description each.
 
 A few CI jobs deliberately stay outside `just check` -- ones that need the
@@ -209,30 +210,17 @@ that script.
   `smoketest.sh`; CI runs it as the `status-guard / smoketest example contract`
   job.
 
-#### Running the driver-linked crates without a GPU
+#### Running the CUDA-dependent crates without a GPU
 
-Most crates test on a machine with no GPU and no NVIDIA driver. `cuda-core`,
-`cuda-host`, and `cuda-async` link the CUDA driver, so their test binaries need
-`libcuda.so.1` at load time even when no test calls the driver:
-
-```text
-error while loading shared libraries: libcuda.so.1: cannot open shared object file
-```
-
-The toolkit ships only the link-time stub `libcuda.so`, with no `libcuda.so.1`
-alias, while the linker stamps that SONAME into the binary. Point the loader at a
-directory that supplies the name:
-
-```bash
-mkdir -p /tmp/libcuda-stub
-ln -sf "$CUDA_TOOLKIT_PATH/lib64/stubs/libcuda.so" /tmp/libcuda-stub/libcuda.so.1
-export LD_LIBRARY_PATH="/tmp/libcuda-stub:$LD_LIBRARY_PATH"
-```
-
-The stub only satisfies the loader; tests that need a real driver are already
-`#[ignore]`d, so the suites run unchanged. `.github/workflows/unit-tests.yml`
-does the same thing for CI and remains the source of truth for how those jobs
-are configured.
+Most crates test on a machine with no GPU and no NVIDIA driver. `cuda-host`
+and `cuda-macros` build against the shared `cuda-bindings` crate from
+cutile-rs, which needs `cuda.h` and `curand.h` from a CUDA 13.0+ toolkit at
+build time but loads `libcuda` at run time through `libloading`. The test
+binaries therefore carry no `libcuda.so.1` dependency and load without a
+driver; tests that need a real driver are `#[ignore]`d. A driver call made
+without `libcuda` present fails with `CUDA_ERROR_NOT_INITIALIZED`, and the
+error's `Display` names the library candidates the loader tried.
+`.github/workflows/unit-tests.yml` runs the same suites on driverless runners.
 
 ### Dependencies
 

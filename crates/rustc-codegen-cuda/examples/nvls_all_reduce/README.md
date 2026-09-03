@@ -26,7 +26,7 @@ this kernel doubles as its reference PTX.
 - An NVLink-switch system: HGX/DGX H100 or B200 (the driver reports
   `CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED`). PCIe-only or NVLink
   point-to-point boxes do not qualify.
-- 2+ GPUs, CUDA 12.1+ driver.
+- 2+ GPUs, CUDA 13.x driver (R580+).
 
 On any other machine the example prints `skipping: ...` and exits cleanly
 (so CI smoketests pass everywhere).

@@ -8,7 +8,8 @@ keep `#[kernel]` on the actual GPU entry points, then load the embedded device
 artifact as a typed Rust value.
 
 ```rust
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
@@ -353,5 +354,5 @@ specific 8x8 tile arrangements:
 
 - [cuda-device](../cuda-device/) -- device-side intrinsics
 - [cuda-macros](../cuda-macros/) -- proc-macro implementations
-- [cuda-core](../cuda-core/) -- CUDA driver API, `DeviceBuffer`, `LaunchConfig`
-- [cuda-async](../cuda-async/) -- async scheduling
+- [cuda-core](https://github.com/NVlabs/cutile-rs/tree/main/cuda-core) -- shared CUDA driver API crate; `DeviceBuffer`, `simt::LaunchConfig`
+- [cuda-async](https://github.com/NVlabs/cutile-rs/tree/main/cuda-async) -- shared async crate; the SIMT model lives under `cuda_async::simt`

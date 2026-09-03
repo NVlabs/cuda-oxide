@@ -517,37 +517,11 @@ supported. `"C"` operands count toward the 16-input limit.
 combined with clobbers. `options(may_diverge)` must be paired with
 `register_only`. More than 16 output operands are not implemented yet.
 
-## `#[derive(DeviceCopy)]` -- Device-Copyable Types
-
-The crate's one derive macro. It implements the `unsafe` trait
-`cuda_core::DeviceCopy` for a type whose fields are all themselves
-`DeviceCopy`. That trait is the promise that every bit pattern of the type is a
-valid value, which is what `DeviceBuffer` needs to turn raw device bytes back
-into initialized Rust values. `Copy` alone is not enough: `bool`, `char` and
-`NonZeroU32` are all `Copy`, and none of them accepts every bit pattern.
-
-Structs and unions only. Enums are rejected with a diagnostic: a struct is
-`DeviceCopy` whenever all its fields are, but an enum's discriminant makes most
-bit patterns invalid, so no field-by-field rule can prove it safe.
-
-Unlike the macros above, this one is re-exported from `cuda_core`, next to the
-trait it implements. One import brings both into scope, the same way serde
-pairs `Serialize` with its derive:
-
-```rust
-use cuda_core::DeviceCopy;
-
-#[derive(Copy, Clone, DeviceCopy)]
-#[repr(C)]
-struct Params { scale: f32, count: u32 }
-```
-
 ## Source Layout
 
 ```text
 src/
 ├── lib.rs         # All proc-macro definitions (kernel, device, launch, etc.)
-├── device_copy.rs # #[derive(DeviceCopy)] implementation
 ├── printf.rs      # gpu_printf! implementation
 └── ptx_asm.rs     # ptx_asm! implementation
 ```

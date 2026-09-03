@@ -31,7 +31,8 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) if you're interested in contributi
 
 ```rust
 use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 
 // Device: generic kernel that applies any function to each element.
 // F can be a closure with captures — rustc monomorphizes it to a concrete type.
@@ -150,7 +151,7 @@ cargo oxide update
 
 - **cargo-oxide** — cargo subcommand that drives the build pipeline (`cargo oxide run`, `build`, `sanitize`, `debug`, etc.)
 - **Rust nightly** with `rust-src` and `rustc-dev` and `llvm-tools` components (pinned in `rust-toolchain.toml`)
-- **CUDA Toolkit** (12.x+)
+- **CUDA Toolkit** (13.0+, including the cuRAND headers; `libcurand-dev` on Ubuntu). The shared `cuda-bindings` crate loads `libcuda` at run time and needs a CUDA 13.x driver (R580+)
 - **Clang + libclang dev headers** (`clang-21` / `libclang-common-21-dev`) — needed by `bindgen` when building the host `cuda-bindings` crate
 - **Linux** (tested on Ubuntu 24.04)
 

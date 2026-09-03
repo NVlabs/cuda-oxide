@@ -121,6 +121,10 @@ pub use launch::{
     set_async_kernel_cluster_dim, set_async_kernel_cooperative,
 };
 
+/// The shared async crate, re-exported whole. Its root is cutile's Tile API;
+/// the SIMT surface cuda-host builds on is `cuda_host::cuda_async::simt::*`.
+/// Same-named root items such as `DeviceError` or `init_device_contexts` are
+/// the Tile ones and do not interoperate with the generated launch methods.
 #[cfg(feature = "async")]
 pub use cuda_async;
 #[cfg(feature = "async")]

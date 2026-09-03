@@ -25,9 +25,9 @@ members = [
     "crates/cargo-oxide",
     "crates/oxide-artifacts",
     # FFI bindings
-    # cuda-bindings, cuda-core, and cuda-async are the shared host-side crates
-    # from cutile-rs now. The local copies stay on disk as standalone packages
-    # (rustc-codegen-cuda pattern) so the example workspaces build unchanged.
+    # cuda-bindings, cuda-core, and cuda-async are the host-side crates shared
+    # with cutile-rs and published from NVlabs/cutile-rs; the cuda-oxide SIMT
+    # surface lives under their `simt` modules. The local copies are gone.
     "crates/libnvvm-sys",
     "crates/nvjitlink-sys",
     # Internal naming contract (workspace-private; publish = false)
