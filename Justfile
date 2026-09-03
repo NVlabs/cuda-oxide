@@ -218,6 +218,7 @@ check-guards:
     bash scripts/check-test-matrix-coverage.sh
     bash scripts/check-host-api-paths.sh
     bash scripts/check-shared-crate-pin.sh
+    bash scripts/check-oxide-artifacts-parity.sh
     cargo deny --locked check
     cargo deny --manifest-path crates/rustc-codegen-cuda/Cargo.toml --locked check
     cargo deny --manifest-path crates/cuda-macros/tests/device-only/Cargo.toml --locked check
