@@ -405,8 +405,6 @@ fn generate_generic_cuda_kernel_impl(
     };
     let (impl_generics, _, _) = generics.split_for_impl();
     let hash = internal_ident("__cuda_oxide_kernel_hash");
-    let kernel_ptr = internal_ident("__cuda_oxide_kernel_ptr");
-    let force_mono = internal_ident("__cuda_oxide_force_mono");
 
     quote! {
         /// Marker type for a generic kernel; implements `GenericCudaKernel`.
@@ -431,15 +429,14 @@ fn generate_generic_cuda_kernel_impl(
         }
 
         /// Retains this concrete kernel specialization and returns its PTX entry name.
+        ///
+        /// The reify cast is what makes rustc collect the monomorphized kernel
+        /// item for the device backend; `black_box` keeps the otherwise unused
+        /// cast from being optimized away without touching any pointer.
         #(#cfg_attrs)*
         #[inline(never)]
         #vis fn #ptx_name_fn #generics () -> &'static str #where_clause {
-            let #kernel_ptr = #kernel_name #kernel_turbofish as *const ();
-            unsafe {
-                let mut #force_mono: *const () = ::core::ptr::null();
-                ::core::ptr::write_volatile(&mut #force_mono, #kernel_ptr);
-                let _ = ::core::ptr::read_volatile(&#force_mono);
-            }
+            ::core::hint::black_box(#kernel_name #kernel_turbofish as *const ());
             <#marker_type as ::cuda_host::GenericCudaKernel>::ptx_name()
         }
     }
