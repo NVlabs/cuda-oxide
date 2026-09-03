@@ -675,6 +675,8 @@ fn is_launch_metadata_marker_path(fn_path: &str) -> bool {
             | "cuda_device::thread::__launch_contract_config"
             | "cuda_device::__launch_contract_block_config"
             | "cuda_device::thread::__launch_contract_block_config"
+            | "cuda_device::__grid_constant_config"
+            | "cuda_device::thread::__grid_constant_config"
             | "cuda_device::__unchecked_indexing_config"
             | "cuda_device::thread::__unchecked_indexing_config"
     ) || fn_path.strip_prefix("cuda_device::").is_some_and(|path| {
@@ -684,6 +686,8 @@ fn is_launch_metadata_marker_path(fn_path: &str) -> bool {
             || path.starts_with("thread::__launch_contract_config::<")
             || path.starts_with("__launch_contract_block_config::<")
             || path.starts_with("thread::__launch_contract_block_config::<")
+            || path.starts_with("__grid_constant_config::<")
+            || path.starts_with("thread::__grid_constant_config::<")
             || path.starts_with("__unchecked_indexing_config::<")
             || path.starts_with("thread::__unchecked_indexing_config::<")
     })

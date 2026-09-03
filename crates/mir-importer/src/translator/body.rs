@@ -36,10 +36,13 @@ use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
 use pliron::context::{Context, Ptr};
 use pliron::identifier::{Identifier, Legaliser};
-use pliron::input_err_noloc;
 use pliron::location::Located;
 use pliron::op::Op;
 use pliron::operation::Operation;
+use pliron::{input_err_noloc, input_error_noloc};
+use reserved_oxide_symbols::{
+    MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX, MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX,
+};
 use rustc_public::CrateDefType;
 
 // Re-export rustc_public types for convenience
@@ -147,6 +150,68 @@ fn detect_cluster_config(
         });
     }
     None
+}
+
+/// Source parameter indices declared with `#[grid_constant]`.
+///
+/// `#[kernel]` replaces each parameter attribute with one
+/// `__grid_constant_config::<INDEX>()` marker. Indices remain source-level
+/// here; mir-lower maps them through slice scalarization to LLVM parameter
+/// positions exactly once.
+fn detect_grid_constant_params(
+    body: &mir::Body,
+    reachable: &std::collections::BTreeSet<usize>,
+) -> Result<Vec<usize>, String> {
+    use rustc_public::ty::TyConstKind;
+
+    let mut indices = std::collections::BTreeSet::new();
+    for &block_idx in reachable {
+        let block = &body.blocks[block_idx];
+        let mir::TerminatorKind::Call { func, .. } = &block.terminator.kind else {
+            continue;
+        };
+        let mir::Operand::Constant(constant) = func else {
+            continue;
+        };
+        let ConstantKind::ZeroSized = constant.const_.kind() else {
+            continue;
+        };
+        let TyKind::RigidTy(RigidTy::FnDef(def_id, args)) = constant.const_.ty().kind() else {
+            continue;
+        };
+        let definition_name = def_id.name();
+        if def_id.krate().name.as_str() != "cuda_device"
+            || (definition_name != "__grid_constant_config"
+                && !definition_name.ends_with("::__grid_constant_config"))
+        {
+            continue;
+        }
+        if args.0.len() != 1 {
+            return Err(format!(
+                "cuda_device grid-constant marker has {} generic arguments; expected exactly 1",
+                args.0.len()
+            ));
+        }
+        let rustc_public::ty::GenericArgKind::Const(index) = &args.0[0] else {
+            return Err("cuda_device grid-constant parameter index is not a constant".to_string());
+        };
+        let raw = match index.kind() {
+            TyConstKind::Value(_, allocation) => allocation.read_uint().map_err(|error| {
+                format!("could not read grid-constant parameter index: {error:?}")
+            })?,
+            _ => u128::from(index.eval_target_usize().map_err(|error| {
+                format!("could not evaluate grid-constant parameter index: {error:?}")
+            })?),
+        };
+        let index = usize::try_from(raw)
+            .map_err(|_| format!("grid-constant parameter index {raw} does not fit usize"))?;
+        if !indices.insert(index) {
+            return Err(format!(
+                "kernel contains duplicate grid-constant marker for source parameter {index}"
+            ));
+        }
+    }
+    Ok(indices.into_iter().collect())
 }
 
 /// Scans MIR for `__launch_bounds_config::<MAX, MIN>()` marker and extracts launch bounds.
@@ -1984,6 +2049,71 @@ pub fn translate_body(
             .deref_mut(ctx)
             .attributes
             .set(key, kernel_attr);
+
+        let grid_constant_params = match detect_grid_constant_params(body, &reachable) {
+            Ok(params) => params,
+            Err(error) => {
+                return input_err_noloc!(TranslationErr::invalid_op(error));
+            }
+        };
+        for source_index in grid_constant_params {
+            if source_index >= num_args {
+                return input_err_noloc!(TranslationErr::invalid_op(format!(
+                    "grid-constant source parameter index {source_index} is out of range for {num_args} parameters"
+                )));
+            }
+            let local = mir::Local::from(source_index + 1);
+            let parameter_ty = body.locals()[local].ty;
+            let TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) = parameter_ty.kind() else {
+                return input_err_noloc!(TranslationErr::invalid_op(format!(
+                    "grid-constant source parameter {source_index} is not a reference"
+                )));
+            };
+            if mutability != mir::Mutability::Not {
+                return input_err_noloc!(TranslationErr::invalid_op(format!(
+                    "grid-constant source parameter {source_index} is mutable"
+                )));
+            }
+            let layout = pointee.layout().map_err(|error| {
+                input_error_noloc!(TranslationErr::unsupported(format!(
+                    "could not query grid-constant parameter {source_index} pointee layout: {error:?}"
+                )))
+            })?;
+            let shape = layout.shape();
+            if shape.size.bytes() == 0 {
+                return input_err_noloc!(TranslationErr::invalid_op(format!(
+                    "grid-constant source parameter {source_index} has a zero-sized pointee"
+                )));
+            }
+            let pointee_ty = types::translate_type(ctx, &pointee)?;
+            let type_key: Identifier =
+                format!("{MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{source_index}")
+                    .as_str()
+                    .try_into()
+                    .expect("grid-constant pointee attribute name is valid");
+            let align_key: Identifier =
+                format!("{MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{source_index}")
+                    .as_str()
+                    .try_into()
+                    .expect("grid-constant alignment attribute name is valid");
+            let align_ty = pliron::builtin::types::IntegerType::get(
+                ctx,
+                64,
+                pliron::builtin::types::Signedness::Unsigned,
+            );
+            let align = pliron::utils::apint::APInt::from_u64(
+                shape.abi_align,
+                std::num::NonZero::new(64).expect("64 is non-zero"),
+            );
+            let mut operation = mir_func_op.get_operation().deref_mut(ctx);
+            operation
+                .attributes
+                .set(type_key, TypeAttr::new(pointee_ty));
+            operation.attributes.set(
+                align_key,
+                pliron::builtin::attributes::IntegerAttr::new(align_ty, align),
+            );
+        }
 
         // Detect compile-time cluster configuration from #[cluster(x,y,z)] attribute
         if let Some(cluster_dims) = detect_cluster_config(body, &reachable) {

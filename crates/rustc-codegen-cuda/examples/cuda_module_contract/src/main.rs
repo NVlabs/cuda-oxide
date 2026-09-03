@@ -14,6 +14,12 @@ use cuda_device::{
     DisjointSlice, DynamicSharedArray, cuda_module, kernel, launch_bounds, launch_contract, thread,
 };
 
+#[repr(C, align(64))]
+#[derive(Clone, Copy)]
+struct GridConstants {
+    values: [u32; 32],
+}
+
 #[cuda_module]
 mod kernels {
     use super::*;
@@ -73,6 +79,23 @@ mod kernels {
         if let Some(out_elem) = output.get_mut(idx) {
             let offset = unsafe { *raw_offsets.add(idx_raw) };
             *out_elem = input[idx_raw] * scale + bias + extra + offset;
+        }
+    }
+
+    /// One source declaration drives both sides of the launch ABI: device code
+    /// receives a read-only parameter-space reference while the generated host
+    /// method accepts and marshals the 128-byte value directly.
+    #[kernel]
+    #[launch_bounds(32)]
+    #[launch_contract(domain = 1, block = (32, 1, 1))]
+    pub fn grid_constant_read(
+        mut output: DisjointSlice<u32>,
+        #[grid_constant] constants: &GridConstants,
+    ) {
+        let index = thread::index_1d();
+        let linear = index.get();
+        if let Some(output) = output.get_mut(index) {
+            *output = constants.values[linear];
         }
     }
 
@@ -220,6 +243,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .count();
 
     assert_eq!(errors, 0, "mixed ABI kernel produced {errors} errors");
+
+    let constants = GridConstants {
+        values: core::array::from_fn(|index| 0x600d_0000 | index as u32),
+    };
+    let mut constants_output = DeviceBuffer::<u32>::zeroed(&stream, constants.values.len())?;
+    let constants_launch = module.prepare_grid_constant_read(LaunchConfig1D::new(1, 32, 0))?;
+    module.grid_constant_read(&stream, &constants_launch, &mut constants_output, constants)?;
+    assert_eq!(constants_output.to_host_vec(&stream)?, constants.values);
 
     let mut generic_output = DeviceBuffer::<u32>::zeroed(&stream, N)?;
     let add_three = |value: u32| value + 3;
@@ -371,6 +402,7 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
     for (entry, geometry) in [
         ("aligned_dynamic_shared", ".reqntid 256, 1, 1"),
         ("mixed_abi", ".reqntid 256, 1, 1"),
+        ("grid_constant_read", ".reqntid 32, 1, 1"),
         ("strided_scale", ".reqntid 128, 1, 1"),
         ("helper_contract_32", ".reqntid 32, 1, 1"),
         ("helper_contract_256", ".reqntid 32, 1, 1"),

@@ -3,9 +3,8 @@
 
 //! # `reserved-oxide-symbols` — INTERNAL workspace crate
 //!
-//! Single source of truth for the mangled symbol prefixes that the
-//! `#[kernel]` / `#[device]` proc macros emit and that the codegen
-//! backend, MIR-lowering, and LLVM-export passes consume.
+//! Single source of truth for the internal names that the procedural macros,
+//! codegen backend, MIR-lowering, and LLVM-export passes exchange.
 //!
 //! ## Not a public API
 //!
@@ -17,7 +16,8 @@
 //!
 //! ## What this crate owns
 //!
-//! The `cuda_oxide_*` namespace, reserved for cuda-oxide internal symbols.
+//! The `cuda_oxide_*` namespace, reserved for cuda-oxide internal symbols and
+//! compiler attributes.
 //! Every prefix below contains the component `246e25db_`, which is
 //! `sha256("cuda_oxide_ + rust")` truncated to 8 hex chars. The hash
 //! makes accidental collisions effectively impossible — nobody writes
@@ -81,6 +81,18 @@ pub const DEVICE_CODEGEN_CRATE_ENV: &str = "CUDA_OXIDE_DEVICE_CODEGEN_CRATE";
 /// the source-code level by checking `name.starts_with(RESERVED_ROOT)`
 /// and emitting a compile error.
 pub const RESERVED_ROOT: &str = "cuda_oxide_";
+
+/// MIR function-attribute prefix carrying a grid-constant pointee type.
+pub const MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX: &str = "cuda_oxide_grid_constant_pointee_";
+
+/// MIR function-attribute prefix carrying a grid-constant pointee alignment.
+pub const MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_grid_constant_align_";
+
+/// LLVM-dialect function-attribute prefix carrying a grid-constant pointee type.
+pub const LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX: &str = "cuda_oxide_param_grid_constant_pointee_";
+
+/// LLVM-dialect function-attribute prefix carrying a grid-constant pointee alignment.
+pub const LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_param_grid_constant_align_";
 
 /// Magic component embedded in every prefix to defend against accidental name
 /// collisions in user code.
