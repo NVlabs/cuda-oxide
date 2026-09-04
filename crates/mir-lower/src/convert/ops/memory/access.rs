@@ -12,6 +12,7 @@ use super::common::{
 use super::debug::copy_debug_local_variable;
 use crate::convert::types::{convert_type, mir_type_abi_align};
 use dialect_mir::types::MirPtrType;
+use llvm_export::attributes::GepNoWrapFlags;
 use llvm_export::ops as llvm;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -259,14 +260,18 @@ pub(crate) fn convert_ptr_offset(
         })?;
     let elem_ty = convert_type(ctx, pointee).map_err(anyhow_to_pliron)?;
 
-    let llvm_gep = llvm::GetElementPtrOp::new(
+    let no_wrap_flags = if dialect_mir::ops::MirPtrOffsetOp::new(op).is_inbounds(ctx) {
+        GepNoWrapFlags::INBOUNDS
+    } else {
+        GepNoWrapFlags::empty()
+    };
+    let llvm_gep = llvm::GetElementPtrOp::new_with_no_wrap_flags(
         ctx,
         ptr,
         vec![llvm_export::ops::GepIndex::Value(offset)],
         elem_ty,
+        no_wrap_flags,
     );
-    let inbounds = dialect_mir::ops::MirPtrOffsetOp::new(op).is_inbounds(ctx);
-    llvm::set_gep_inbounds(ctx, llvm_gep.get_operation(), inbounds);
     rewriter.insert_operation(ctx, llvm_gep.get_operation());
     rewriter.replace_operation(ctx, op, llvm_gep.get_operation());
 

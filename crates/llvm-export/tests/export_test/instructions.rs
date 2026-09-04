@@ -4,6 +4,7 @@
  */
 
 use llvm_export::{
+    attributes::GepNoWrapFlags,
     export::{
         NvvmExportConfig, NvvmIrDialect, export_module_to_string,
         export_module_to_string_with_config,
@@ -238,7 +239,7 @@ fn legacy_gep_rejects_a_result_address_space_different_from_its_base() {
 }
 
 #[test]
-fn gep_inbounds_marker_controls_exported_pointer_semantics() {
+fn gep_no_wrap_flags_control_exported_pointer_semantics() {
     let mut ctx = Context::new();
     let module = ModuleOp::new(&mut ctx, "gep_semantics".try_into().unwrap());
     let module_block = module_top_block(&mut ctx, &module);
@@ -251,12 +252,23 @@ fn gep_inbounds_marker_controls_exported_pointer_semantics() {
     let entry = func.get_or_create_entry_block(&mut ctx);
     let base = entry.deref(&ctx).get_argument(0);
 
-    let ordinary = GetElementPtrOp::new(&mut ctx, base, vec![GepIndex::Constant(1)], i32_ty.into());
-    ordinary.get_operation().insert_at_back(entry, &ctx);
-
-    let wrapping = GetElementPtrOp::new(&mut ctx, base, vec![GepIndex::Constant(2)], i32_ty.into());
-    llvm_export::ops::set_gep_inbounds(&mut ctx, wrapping.get_operation(), false);
-    wrapping.get_operation().insert_at_back(entry, &ctx);
+    let cases = [
+        (1, GepNoWrapFlags::empty()),
+        (2, GepNoWrapFlags::NUSW),
+        (3, GepNoWrapFlags::NUW),
+        (4, GepNoWrapFlags::INBOUNDS),
+        (5, GepNoWrapFlags::INBOUNDS | GepNoWrapFlags::NUW),
+    ];
+    for (index, flags) in cases {
+        let gep = GetElementPtrOp::new_with_no_wrap_flags(
+            &mut ctx,
+            base,
+            vec![GepIndex::Constant(index)],
+            i32_ty.into(),
+            flags,
+        );
+        gep.get_operation().insert_at_back(entry, &ctx);
+    }
 
     ReturnOp::new(&mut ctx, None)
         .get_operation()
@@ -268,12 +280,29 @@ fn gep_inbounds_marker_controls_exported_pointer_semantics() {
         .lines()
         .filter(|line| line.contains("getelementptr"))
         .collect();
-    assert_eq!(gep_lines.len(), 2, "{ir}");
-    assert!(gep_lines[0].contains("getelementptr inbounds"), "{ir}");
+    assert_eq!(gep_lines.len(), 5, "{ir}");
+
+    assert!(gep_lines[0].contains("getelementptr i32"), "{ir}");
     assert!(
-        gep_lines[1].contains("getelementptr i32")
-            && !gep_lines[1].contains("getelementptr inbounds"),
+        !gep_lines[0].contains("inbounds")
+            && !gep_lines[0].contains("nusw")
+            && !gep_lines[0].contains("nuw"),
         "{ir}"
+    );
+    assert!(gep_lines[1].contains("getelementptr nusw i32"), "{ir}");
+    assert!(gep_lines[2].contains("getelementptr nuw i32"), "{ir}");
+    assert!(gep_lines[3].contains("getelementptr inbounds i32"), "{ir}");
+    assert!(
+        !gep_lines[3].contains("nusw"),
+        "inbounds must not redundantly print implied nusw:\n{ir}"
+    );
+    assert!(
+        gep_lines[4].contains("getelementptr inbounds nuw i32"),
+        "{ir}"
+    );
+    assert!(
+        !gep_lines[4].contains("nusw"),
+        "inbounds nuw must not redundantly print implied nusw:\n{ir}"
     );
 }
 

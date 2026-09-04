@@ -342,7 +342,7 @@ fn export_addressof_uses_symbol_when_definition_block_prints_later() {
     // The GEP base operand must be the global symbol, not a stale `%vN`.
     let gep_line = ir
         .lines()
-        .find(|line| line.contains("getelementptr inbounds"))
+        .find(|line| line.contains("getelementptr"))
         .expect("exported GEP line");
     assert!(
         gep_line.contains("@__shared_mem_20"),

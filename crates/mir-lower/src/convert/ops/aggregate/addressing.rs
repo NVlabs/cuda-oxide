@@ -11,6 +11,7 @@ use crate::convert::types::{
 };
 use dialect_mir::ops::{MirConstantOp, MirFieldAddrOp};
 use dialect_mir::types::{MirEnumType, MirPtrType, MirStructType, MirTupleType, MirUnionType};
+use llvm_export::attributes::GepNoWrapFlags;
 use llvm_export::ops as llvm;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -91,7 +92,13 @@ pub(crate) fn convert_field_addr(
         // for repeated field accesses and for `union.struct_field.inner`.
         use llvm_export::ops::GepIndex;
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-        let gep = llvm::GetElementPtrOp::new(ctx, ptr_operand, vec![GepIndex::Constant(0)], i8_ty);
+        let gep = llvm::GetElementPtrOp::new_with_no_wrap_flags(
+            ctx,
+            ptr_operand,
+            vec![GepIndex::Constant(0)],
+            i8_ty,
+            GepNoWrapFlags::INBOUNDS,
+        );
         rewriter.insert_operation(ctx, gep.get_operation());
         rewriter.replace_operation(ctx, op, gep.get_operation());
         return Ok(());
@@ -144,11 +151,12 @@ pub(crate) fn convert_field_addr(
 
         use llvm_export::ops::GepIndex;
         let gep = match slot_entry {
-            Some(slot) => llvm::GetElementPtrOp::new(
+            Some(slot) => llvm::GetElementPtrOp::new_with_no_wrap_flags(
                 ctx,
                 ptr_operand,
                 vec![GepIndex::Constant(0), GepIndex::Constant(slot)],
                 map.llvm_struct_ty,
+                GepNoWrapFlags::INBOUNDS,
             ),
             None => {
                 // No slot of its own: address the bytes directly, off the
@@ -167,11 +175,12 @@ pub(crate) fn convert_field_addr(
                     )
                 })?;
                 let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-                llvm::GetElementPtrOp::new(
+                llvm::GetElementPtrOp::new_with_no_wrap_flags(
                     ctx,
                     ptr_operand,
                     vec![GepIndex::Constant(offset)],
                     i8_ty,
+                    GepNoWrapFlags::INBOUNDS,
                 )
             }
         };
@@ -217,8 +226,13 @@ pub(crate) fn convert_field_addr(
             // that captures other ZST closures, like iter map_fold).
             use llvm_export::ops::GepIndex;
             let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-            let gep =
-                llvm::GetElementPtrOp::new(ctx, ptr_operand, vec![GepIndex::Constant(0)], i8_ty);
+            let gep = llvm::GetElementPtrOp::new_with_no_wrap_flags(
+                ctx,
+                ptr_operand,
+                vec![GepIndex::Constant(0)],
+                i8_ty,
+                GepNoWrapFlags::INBOUNDS,
+            );
             rewriter.insert_operation(ctx, gep.get_operation());
             rewriter.replace_operation(ctx, op, gep.get_operation());
             return Ok(());
@@ -266,7 +280,13 @@ pub(crate) fn convert_field_addr(
     use llvm_export::ops::GepIndex;
     let gep_indices = vec![GepIndex::Constant(0), GepIndex::Constant(slot)];
 
-    let gep_op = llvm::GetElementPtrOp::new(ctx, ptr_operand, gep_indices, map.llvm_struct_ty);
+    let gep_op = llvm::GetElementPtrOp::new_with_no_wrap_flags(
+        ctx,
+        ptr_operand,
+        gep_indices,
+        map.llvm_struct_ty,
+        GepNoWrapFlags::INBOUNDS,
+    );
     rewriter.insert_operation(ctx, gep_op.get_operation());
     stamp_field_address_alignment(
         ctx,
@@ -396,7 +416,13 @@ pub(crate) fn convert_array_element_addr(
 
     let element_align = element_address_provable_alignment(ctx, arr_ptr, element_ty, index);
 
-    let gep_op = llvm::GetElementPtrOp::new(ctx, arr_ptr, gep_indices, llvm_element_ty);
+    let gep_op = llvm::GetElementPtrOp::new_with_no_wrap_flags(
+        ctx,
+        arr_ptr,
+        gep_indices,
+        llvm_element_ty,
+        GepNoWrapFlags::INBOUNDS,
+    );
     rewriter.insert_operation(ctx, gep_op.get_operation());
     if let Some(align) = element_align {
         llvm_export::ops::set_address_alignment(ctx, gep_op.get_operation(), align);

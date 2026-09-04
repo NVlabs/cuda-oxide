@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use llvm_export::attributes::GepNoWrapFlags;
 use llvm_export::ops as llvm;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::Context;
@@ -77,7 +78,13 @@ pub(super) fn byte_offset_gep(
     use llvm_export::ops::GepIndex;
     let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
     let offset = emit_integer_constant(ctx, rewriter, 64, u128::from(offset));
-    let gep_op = llvm::GetElementPtrOp::new(ctx, base, vec![GepIndex::Value(offset)], i8_ty);
+    let gep_op = llvm::GetElementPtrOp::new_with_no_wrap_flags(
+        ctx,
+        base,
+        vec![GepIndex::Value(offset)],
+        i8_ty,
+        GepNoWrapFlags::INBOUNDS,
+    );
     rewriter.insert_operation(ctx, gep_op.get_operation());
     gep_op.get_operation().deref(ctx).get_result(0)
 }

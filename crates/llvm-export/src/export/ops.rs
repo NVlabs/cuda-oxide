@@ -27,7 +27,7 @@ use pliron::{
 use crate::{
     attributes::{
         AtomicOrderingAttr, AtomicRmwKindAttr, FCmpPredicateAttr, FPHalfAttr, FastmathFlags,
-        FastmathFlagsAttr, GepIndexAttr, ICmpPredicateAttr, SyncScopeAttr,
+        FastmathFlagsAttr, GepIndexAttr, GepNoWrapFlags, ICmpPredicateAttr, SyncScopeAttr,
     },
     op_interfaces::{ATTR_KEY_FAST_MATH_FLAGS, PointerTypeResult, SyncScopeInterface},
     ops,
@@ -1161,8 +1161,14 @@ impl<'a> ModuleExportState<'a> {
         };
 
         write!(output, "  {gep_name} = getelementptr").unwrap();
-        if ops::gep_inbounds(self.ctx, op.get_operation()) {
+        let no_wrap_flags = op.no_wrap_flags(self.ctx);
+        if no_wrap_flags.contains(GepNoWrapFlags::INBOUNDS) {
             write!(output, " inbounds").unwrap();
+        } else if no_wrap_flags.contains(GepNoWrapFlags::NUSW) {
+            write!(output, " nusw").unwrap();
+        }
+        if no_wrap_flags.contains(GepNoWrapFlags::NUW) {
+            write!(output, " nuw").unwrap();
         }
         write!(output, " ").unwrap();
         self.export_type(elem_ty, output)?;

@@ -103,6 +103,10 @@ pub fn convert_extern_shared_dc(
         let offset_value = offset_const.get_operation().deref(ctx).get_result(0);
 
         let i8_ty = IntegerType::get(ctx, 8, Signedness::Signless);
+        // Keep this GEP unflagged. The LLVM symbol is nominally `[0 x i8]`,
+        // while the actual dynamic shared-memory allocation is supplied at
+        // kernel launch, so this lowering cannot prove LLVM's `inbounds`
+        // allocated-object contract for a nonzero byte offset.
         let gep_op = llvm::GetElementPtrOp::new(
             ctx,
             base_ptr,
