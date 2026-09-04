@@ -4,6 +4,7 @@
  */
 
 use crate::backend;
+use crate::backend_source;
 
 use super::*;
 
@@ -31,12 +32,22 @@ pub fn setup(ctx: &Context) {
     // shared cache, since `find_workspace_root` finds no
     // `crates/rustc-codegen-cuda` above it. Publishing the build there keeps
     // those projects on the backend that was just built instead of on whatever
-    // the cache last held.
+    // the cache last held. The cache records the commit it came from, so only
+    // projects whose cuda-oxide dependency resolves to this checkout's HEAD
+    // pick it up; any other project rebuilds from its own dependency.
     match backend::publish_to_cache(&built_so, &ctx.codegen_crate) {
-        Some(path) => {
+        Some(published) => {
             println!();
-            println!("✓ Published to {}", path.display());
-            println!("  Projects outside this repo will now use this build.");
+            println!("✓ Published to {}", published.path.display());
+            match published.source_rev {
+                Some(rev) => println!(
+                    "  Projects outside this repo whose cuda-oxide dependency resolves to {} will use this build.",
+                    backend_source::short_rev(&rev)
+                ),
+                None => println!(
+                    "  Projects outside this repo without a cuda-oxide dependency will use this build."
+                ),
+            }
         }
         None => {
             eprintln!();
@@ -71,7 +82,8 @@ pub fn plan_update(is_workspace: bool, force: bool) -> UpdatePlan {
 /// Inside the cuda-oxide workspace the authoritative backend is the local
 /// source tree, so the default path points at `cargo oxide setup`. Outside
 /// the workspace, the shared `~/.cargo/cuda-oxide/` cache is cleared and
-/// rebuilt via the auto-fetch path.
+/// rebuilt from the commit the project's cuda-oxide dependency resolves to
+/// (or from a fresh `main` clone when the project has no such dependency).
 /// The backend pin that outranks the shared cache `update` refreshes, if any.
 ///
 /// Both the `CUDA_OXIDE_BACKEND` env var and a `.cargo/cuda-oxide.toml`
@@ -131,11 +143,14 @@ pub fn update(ctx: &Context, force: bool) {
             setup(ctx);
         }
         UpdatePlan::RefreshCache => {
-            println!("Refreshing the shared codegen backend cache for external projects...");
+            // Each route prints its own specific line (cached from the
+            // dependency, built in place for a path dependency, or fetched
+            // from main), so the framing here stays route-neutral.
+            println!("Rebuilding the codegen backend for this project...");
             println!();
-            let so = backend::refresh_cached_backend();
+            let so = backend::refresh_cached_backend(&ctx.workspace_root);
             println!();
-            println!("✓ Cached backend ready at {}", so.display());
+            println!("✓ Backend ready at {}", so.display());
         }
     }
 }
