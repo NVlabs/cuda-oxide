@@ -6,6 +6,7 @@
 #![allow(clippy::disallowed_methods)]
 
 use super::*;
+use llvm_export::attributes::GepNoWrapFlags;
 
 #[test]
 fn convert_alloca_lowers_to_llvm_alloca() {
@@ -434,7 +435,7 @@ fn convert_ptr_offset_lowers_to_gep_with_pointee_elem_type() {
         .expect("gep src_elem_type should be IntegerType");
     assert_eq!(int_ty.width(), 32, "gep elem type must be i32 (pointee)");
     assert!(
-        llvm::gep_inbounds(&ctx, gep.get_operation()),
+        gep.no_wrap_flags(&ctx).contains(GepNoWrapFlags::INBOUNDS),
         "ordinary pointer offsets retain the in-bounds contract"
     );
 }
@@ -467,7 +468,7 @@ fn convert_wrapping_ptr_offset_lowers_to_non_inbounds_gep() {
     let body = kernel_blocks(&ctx, module_ptr);
     let gep = find_first::<llvm::GetElementPtrOp>(&ctx, &body).expect("expected one llvm.gep");
     assert!(
-        !llvm::gep_inbounds(&ctx, gep.get_operation()),
+        gep.no_wrap_flags(&ctx).is_empty(),
         "wrapping pointer offsets must not promise in-bounds arithmetic"
     );
 }

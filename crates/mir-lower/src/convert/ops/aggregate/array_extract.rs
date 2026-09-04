@@ -6,7 +6,7 @@
 use super::common::anyhow_to_pliron;
 use crate::convert::types::{convert_type, mir_type_abi_align};
 use dialect_mir::types::MirArrayType;
-use llvm_export::attributes::ICmpPredicateAttr;
+use llvm_export::attributes::{GepNoWrapFlags, ICmpPredicateAttr};
 use llvm_export::ops as llvm;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -161,7 +161,13 @@ pub(crate) fn convert_extract_array_element(
 
     use llvm_export::ops::GepIndex;
     let gep_indices = vec![GepIndex::Constant(0), GepIndex::Value(index_val)];
-    let gep_op = llvm::GetElementPtrOp::new(ctx, array_ptr, gep_indices, llvm_array_ty.into());
+    let gep_op = llvm::GetElementPtrOp::new_with_no_wrap_flags(
+        ctx,
+        array_ptr,
+        gep_indices,
+        llvm_array_ty.into(),
+        GepNoWrapFlags::INBOUNDS,
+    );
     rewriter.insert_operation(ctx, gep_op.get_operation());
     let element_ptr = gep_op.get_operation().deref(ctx).get_result(0);
 
