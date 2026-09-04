@@ -200,6 +200,11 @@ mod pointer_origin {
         pub(crate) fn is_mutable(self) -> bool {
             self.mutable
         }
+
+        /// Whether rustc witnessed this origin as a Rust reference.
+        pub(crate) fn is_reference(self) -> bool {
+            self.kind.is_reference()
+        }
     }
 
     // --- rustc-derived origins ---------------------------------------------
@@ -342,6 +347,68 @@ mod pointer_origin {
 }
 
 pub(crate) use pointer_origin::*;
+
+// ============================================================================
+// Kernel reference validity facts (typed rustc_public reads only)
+// ============================================================================
+
+/// Validity facts that are safe to expose on a Rust-reference kernel parameter.
+///
+/// Presence of this fact proves non-nullness. `pointee_alignment` is rustc's
+/// ABI alignment for the pointee represented by the physical data pointer.
+/// No aliasing, lifetime, or dereferenceability guarantee is encoded here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReferenceParamValidity {
+    pub(crate) pointee_alignment: u64,
+}
+
+/// Return validity facts for the currently audited Rust-reference kernel scope.
+///
+/// The only accepted evidence is the typed `rustc_public` type/layout API:
+///
+/// * `RigidTy::Ref` proves that the source value is a Rust reference and thus
+///   that its data pointer is non-null.
+/// * a sized pointee's `Ty::layout()` supplies its ABI alignment;
+/// * for `&[T]` / `&mut [T]`, the physical data pointer points at `T`, so the
+///   element layout supplies the alignment.
+///
+/// Other DSTs, raw pointers, ADTs such as `DisjointSlice`, and any type whose
+/// required typed layout is unavailable fail closed with no fact.
+pub(crate) fn reference_param_validity(
+    ty: &rustc_public::ty::Ty,
+) -> Option<ReferenceParamValidity> {
+    use rustc_public::ty::{RigidTy, TyKind};
+
+    // Reuse #1186's typed pointer-origin oracle rather than independently
+    // recognizing reference provenance here. Raw pointers are therefore
+    // rejected by the same rustc_public-derived classification that mints
+    // concrete MIR pointer kinds.
+    let (pointee, origin) = pointer_origin_of_ty(ty)?;
+    if !origin.is_reference() {
+        return None;
+    }
+
+    let alignment = match pointee.kind() {
+        TyKind::RigidTy(RigidTy::Slice(element)) => {
+            let shape = element.layout().ok()?.shape();
+            if !shape.is_sized() {
+                return None;
+            }
+            shape.abi_align
+        }
+        _ => {
+            let shape = pointee.layout().ok()?.shape();
+            if !shape.is_sized() {
+                return None;
+            }
+            shape.abi_align
+        }
+    };
+
+    (alignment != 0 && alignment.is_power_of_two()).then_some(ReferenceParamValidity {
+        pointee_alignment: alignment,
+    })
+}
 
 // ============================================================================
 // Constant facts (typed reads; exact or hard error)
@@ -514,4 +581,124 @@ pub(crate) fn extract_enum_variant(
             adt_def.trimmed_name()
         ))
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reference_param_validity_uses_only_typed_rustc_public_facts() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_reference_validity_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("reference_validity_fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+#[repr(align(16))]
+pub struct AlignedZst;
+
+pub struct ByValue {
+    pub pointer: *const f32,
+}
+
+pub fn reference_validity(
+    _shared: &f32,
+    _unique: &mut f32,
+    _slice: &[f32],
+    _unique_slice: &mut [f32],
+    _align_one: &u8,
+    _zst: &AlignedZst,
+    _raw: *const f32,
+    _by_value: ByValue,
+) {}
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=reference_validity_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Zmir-opt-level=0".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let facts = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    use rustc_public::CrateDef;
+
+                    let body = rustc_public::all_local_items()
+                        .into_iter()
+                        .find(|item| item.name().ends_with("::reference_validity"))
+                        .and_then(|item| item.body())
+                        .expect("fixture function body");
+                    let facts = body
+                        .locals()
+                        .iter()
+                        .skip(1)
+                        .take(8)
+                        .map(|decl| reference_param_validity(&decl.ty))
+                        .collect::<Vec<_>>();
+                    std::ops::ControlFlow::<(), _>::Continue(facts)
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(
+            facts,
+            vec![
+                Some(ReferenceParamValidity {
+                    pointee_alignment: 4,
+                }),
+                Some(ReferenceParamValidity {
+                    pointee_alignment: 4,
+                }),
+                Some(ReferenceParamValidity {
+                    pointee_alignment: 4,
+                }),
+                Some(ReferenceParamValidity {
+                    pointee_alignment: 4,
+                }),
+                Some(ReferenceParamValidity {
+                    pointee_alignment: 1,
+                }),
+                Some(ReferenceParamValidity {
+                    pointee_alignment: 16,
+                }),
+                None,
+                None,
+            ]
+        );
+    }
 }

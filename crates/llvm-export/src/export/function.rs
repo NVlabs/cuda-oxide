@@ -638,6 +638,34 @@ impl<'a> ModuleExportState<'a> {
             .downcast_ref::<FuncType>()
             .ok_or("Not a function type")?;
         let legacy_atomic_add = self.legacy_nvvm_atomic_add_signature(&fixed_func_name, func_ty)?;
+
+        // Reference validity is transported as a typed LLVM-dialect fact.
+        // The exporter does not infer Rust semantics: it only checks that a
+        // fact is attached to an in-range pointer parameter of a kernel entry
+        // before spelling the corresponding LLVM attributes.
+        let mut reference_param_validities = vec![None; func_ty.arg_types().len()];
+        for (index, validity) in
+            ops::kernel_reference_param_validity_entries(self.ctx, func.get_operation())?
+        {
+            if !is_kernel {
+                return Err(format!(
+                    "function `@{fixed_func_name}` carries kernel reference parameter validity but is not a kernel entry"
+                ));
+            }
+            let Some(arg_ty) = func_ty.arg_types().get(index).copied() else {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` reference validity parameter index {index} is out of range for {} parameters",
+                    func_ty.arg_types().len()
+                ));
+            };
+            if !arg_ty.deref(self.ctx).is::<PointerType>() {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` reference validity parameter {index} is not an LLVM pointer"
+                ));
+            }
+            reference_param_validities[index] = Some(validity.0);
+        }
+
         let is_declaration = func.get_operation().deref(self.ctx).regions().count() == 0;
         if legacy_atomic_add.is_some() && !is_declaration {
             return Err(format!(
@@ -785,6 +813,12 @@ impl<'a> ModuleExportState<'a> {
                 } else {
                     self.export_type(*arg_ty, output)?;
                 }
+                if let Some(alignment) = reference_param_validities[i] {
+                    write!(output, " nonnull").unwrap();
+                    if alignment > 1 {
+                        write!(output, " align {alignment}").unwrap();
+                    }
+                }
             }
             write!(output, ")").unwrap();
 
@@ -843,28 +877,27 @@ impl<'a> ModuleExportState<'a> {
 
             let block = entry_block.deref(self.ctx);
             let args = block.arguments();
-            // Parameters are emitted bare: `<type> %vN` with no LLVM parameter
-            // attributes (no `noalias`, `nocapture`, `dereferenceable`, etc.).
-            // This is deliberate and load-bearing for `DisjointSlice`.
+            // Kernel Rust references may carry importer-proven `nonnull` and
+            // pointee `align N`. Every other parameter remains bare.
             //
-            // `DisjointSlice::from_raw_parts` is `unsafe fn` whose contract
-            // says callers must not construct two slices over the same range.
-            // Violating that contract creates two `&mut T` to the same byte —
-            // which is simply UB. Today, because we don't tag pointer
-            // parameters with `noalias`, LLVM treats them conservatively and
-            // the violation doesn't *miscompile*; it just runs as written.
-            //
-            // If a future change here adds `noalias` (e.g. for a perf win on
-            // read-only `&[T]` inputs), that property goes away and any code
-            // that double-constructed a `DisjointSlice` starts seeing folded
-            // writes / reordered reads on PTX. Don't add parameter attributes
-            // here without re-auditing the `from_raw_parts` callers.
+            // In particular this deliberately does NOT infer `noalias`,
+            // `readonly`, `dereferenceable`, or any validity fact from LLVM
+            // pointer shape. `DisjointSlice` and raw pointers therefore retain
+            // the conservative behavior required by their unsafe construction
+            // contracts. Future alias attributes need their own audited proof
+            // source rather than extending this mechanical export step.
             for (i, arg) in args.enumerate() {
                 if i > 0 {
                     write!(output, ", ").unwrap();
                 }
                 let arg_ty = arg.get_type(self.ctx);
                 self.export_type(arg_ty, output)?;
+                if let Some(alignment) = reference_param_validities[i] {
+                    write!(output, " nonnull").unwrap();
+                    if alignment > 1 {
+                        write!(output, " align {alignment}").unwrap();
+                    }
+                }
                 let name = format!("%v{next_value_id}");
                 value_names.insert(arg, name.clone());
                 write!(output, " {name}").unwrap();

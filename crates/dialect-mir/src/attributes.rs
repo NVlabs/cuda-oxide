@@ -76,6 +76,23 @@ pub enum MirPointerKindAuthorityAttr {
 #[derive(PartialEq, Eq, Clone, Debug, Hash)]
 pub struct MutabilityAttr(pub bool);
 
+/// Proven validity facts for one Rust-reference kernel parameter.
+///
+/// Presence of this attribute means the source argument is a Rust reference
+/// proven non-null by `rustc_public`. The payload is the pointee alignment in
+/// bytes; it must be a non-zero power of two. LLVM `align 1` is redundant and
+/// is omitted during export, but retaining `1` here keeps the proof complete.
+///
+/// The attribute is stored on `mir.func` under a source-argument-indexed key.
+/// It intentionally carries no aliasing or dereferenceability promise.
+#[pliron_attr(
+    name = "mir.reference_param_validity",
+    format = "$0",
+    verifier = "succ"
+)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
+pub struct ReferenceParamValidityAttr(pub u64);
+
 /// Structural field index for aggregate access ops
 /// (`mir.extract_field`, `mir.insert_field`, `mir.field_addr`, `mir.enum_payload`).
 #[pliron_attr(name = "mir.field_index", format = "$0", verifier = "succ")]
@@ -182,6 +199,7 @@ pub fn register(ctx: &mut Context) {
     MirCastKindAttr::register(ctx);
     MirPointerKindAuthorityAttr::register(ctx);
     MutabilityAttr::register(ctx);
+    ReferenceParamValidityAttr::register(ctx);
     FieldIndexAttr::register(ctx);
     VariantIndexAttr::register(ctx);
     UnrollAttr::register(ctx);

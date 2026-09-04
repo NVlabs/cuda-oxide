@@ -146,6 +146,25 @@ pub fn push_kernel_scalar<T: KernelScalar>(args: &mut Vec<*mut c_void>, value: &
     args.push(value as *mut T as *mut c_void);
 }
 
+/// Returns a Rust-valid data pointer spelling for a kernel slice launch packet.
+///
+/// `DeviceBuffer` represents a zero-byte allocation with `CUdeviceptr == 0`,
+/// while a Rust slice reference still requires its data pointer to be non-null
+/// and aligned even when its byte extent is zero. Normalize only the launch
+/// packet in that case; the owning buffer keeps its original pointer and no
+/// backing allocation is implied by this sentinel.
+#[inline]
+fn kernel_slice_device_ptr<T>(
+    ptr: cuda_core::sys::CUdeviceptr,
+    len: usize,
+) -> cuda_core::sys::CUdeviceptr {
+    if len == 0 || std::mem::size_of::<T>() == 0 {
+        std::mem::align_of::<T>() as cuda_core::sys::CUdeviceptr
+    } else {
+        ptr
+    }
+}
+
 /// Returns the `(device pointer, element count)` pair used for read-only slice
 /// parameters such as `&[T]`.
 #[inline]
@@ -153,17 +172,29 @@ pub fn push_kernel_scalar<T: KernelScalar>(args: &mut Vec<*mut c_void>, value: &
 pub fn read_only_device_buffer_arg<T>(
     buffer: &cuda_core::DeviceBuffer<T>,
 ) -> (cuda_core::sys::CUdeviceptr, u64) {
-    (buffer.cu_deviceptr(), buffer.len() as u64)
+    let len = buffer.len();
+    (
+        kernel_slice_device_ptr::<T>(buffer.cu_deviceptr(), len),
+        len as u64,
+    )
 }
 
 /// Returns the `(device pointer, element count)` pair used for writable slice
 /// parameters such as `&mut [T]` and `DisjointSlice<T>`.
+///
+/// `DisjointSlice` shares this host packet helper, so its zero-byte packet gets
+/// the same harmless canonical pointer spelling. That does not derive or imply
+/// any LLVM reference-validity attribute for `DisjointSlice`.
 #[inline]
 #[doc(hidden)]
 pub fn writable_device_buffer_arg<T>(
     buffer: &mut cuda_core::DeviceBuffer<T>,
 ) -> (cuda_core::sys::CUdeviceptr, u64) {
-    (buffer.cu_deviceptr(), buffer.len() as u64)
+    let len = buffer.len();
+    (
+        kernel_slice_device_ptr::<T>(buffer.cu_deviceptr(), len),
+        len as u64,
+    )
 }
 
 /// Pushes a device slice argument pair into a CUDA driver argument list.
@@ -324,10 +355,13 @@ pub fn push_kernel_row_width_device_slice(
 /// [`cu_deviceptr`](Self::cu_deviceptr) must identify a live, correctly aligned
 /// device allocation covering at least `len()` consecutive `Elem` values. The
 /// allocation must remain valid for the full borrow or owned operation in
-/// which this value is used. When used as a read-only `KernelSliceArg`, the
-/// reported range must obey Rust's shared-reference rules: it cannot be
-/// mutated except through `UnsafeCell`-based or atomic element types under
-/// their synchronization contract.
+/// which this value is used. Zero-byte views do not require backing allocation;
+/// the launch adapter replaces their packet pointer with a non-null value
+/// aligned for `Elem` so the device-side Rust slice keeps its validity
+/// invariant. When used as a read-only `KernelSliceArg`, the reported range
+/// must obey Rust's shared-reference rules: it cannot be mutated except through
+/// `UnsafeCell`-based or atomic element types under their synchronization
+/// contract.
 ///
 /// Implementing this trait is unsafe because generated launch methods trust
 /// the pointer and length without inspecting the allocation:
@@ -657,8 +691,12 @@ pub fn push_async_read_only_device_slice<B>(
 ) where
     B: KernelSliceArg + ?Sized,
 {
-    launch.push_scalar_arg(buffer.cu_deviceptr());
-    launch.push_scalar_arg(buffer.len() as u64);
+    let len = buffer.len();
+    launch.push_scalar_arg(kernel_slice_device_ptr::<B::Elem>(
+        buffer.cu_deviceptr(),
+        len,
+    ));
+    launch.push_scalar_arg(len as u64);
 }
 
 #[doc(hidden)]
@@ -669,8 +707,12 @@ pub fn push_async_writable_device_slice<B>(
 ) where
     B: KernelSliceArgMut + ?Sized,
 {
-    launch.push_scalar_arg(buffer.cu_deviceptr());
-    launch.push_scalar_arg(buffer.len() as u64);
+    let len = buffer.len();
+    launch.push_scalar_arg(kernel_slice_device_ptr::<B::Elem>(
+        buffer.cu_deviceptr(),
+        len,
+    ));
+    launch.push_scalar_arg(len as u64);
 }
 
 /// Pushes a row-width device slice as three async kernel arguments.
@@ -896,6 +938,36 @@ mod tests {
 
         assert_eq!(args.len(), 1);
         assert_eq!(unsafe { *(args[0] as *const *const f32) }, ptr);
+    }
+
+    #[repr(align(32))]
+    struct AlignedZst;
+
+    #[test]
+    fn test_kernel_slice_device_ptr_preserves_nonzero_extent_pointer() {
+        let ptr: cuda_core::sys::CUdeviceptr = 0x1000;
+
+        assert_eq!(kernel_slice_device_ptr::<u32>(ptr, 4), ptr);
+    }
+
+    #[test]
+    fn test_kernel_slice_device_ptr_normalizes_empty_slice() {
+        let ptr = kernel_slice_device_ptr::<u32>(0, 0);
+        let align = std::mem::align_of::<u32>() as cuda_core::sys::CUdeviceptr;
+
+        assert_ne!(ptr, 0);
+        assert_eq!(ptr, align);
+        assert_eq!(ptr % align, 0);
+    }
+
+    #[test]
+    fn test_kernel_slice_device_ptr_normalizes_overaligned_zst() {
+        let ptr = kernel_slice_device_ptr::<AlignedZst>(0, 8);
+        let align = std::mem::align_of::<AlignedZst>() as cuda_core::sys::CUdeviceptr;
+
+        assert_ne!(ptr, 0);
+        assert_eq!(ptr, align);
+        assert_eq!(ptr % align, 0);
     }
 
     #[test]

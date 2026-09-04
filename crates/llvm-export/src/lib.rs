@@ -208,6 +208,85 @@ pub mod ops {
         Pure,
     }
 
+    /// Kernel-entry parameter validity proven at the Rust MIR import boundary.
+    ///
+    /// Presence proves `nonnull`; the payload is the rustc ABI alignment of
+    /// the pointee represented by this physical LLVM parameter. It deliberately
+    /// carries no aliasing, readonly, or dereferenceability promise.
+    #[pliron_attr(
+        name = "llvm.kernel_reference_param_validity",
+        format = "$0",
+        verifier = "succ"
+    )]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct KernelReferenceParamValidityAttr(pub u64);
+
+    /// Indexed op-attribute key used on lowered `llvm.func` operations.
+    const KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX: &str =
+        "cuda_oxide_kernel_reference_param_validity_";
+
+    fn kernel_reference_param_validity_key(index: usize) -> Identifier {
+        Identifier::try_new(format!(
+            "{KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX}{index}"
+        ))
+        .expect("valid kernel reference parameter validity attribute key")
+    }
+
+    /// Attach a proven reference-validity fact to one physical kernel parameter.
+    pub fn set_kernel_reference_param_validity(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        index: usize,
+        validity: KernelReferenceParamValidityAttr,
+    ) {
+        op.deref_mut(ctx)
+            .attributes
+            .set(kernel_reference_param_validity_key(index), validity);
+    }
+
+    /// Collect and structurally validate all physical kernel parameter facts.
+    ///
+    /// Semantic proof is owned by `mir-importer`; this helper only validates
+    /// the transport representation before textual LLVM export.
+    pub fn kernel_reference_param_validity_entries(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Result<Vec<(usize, KernelReferenceParamValidityAttr)>, String> {
+        let operation = op.deref(ctx);
+        let mut result = Vec::new();
+        for (key, _) in &operation.attributes.0 {
+            let key_text = key.to_string();
+            let Some(index_text) =
+                key_text.strip_prefix(KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX)
+            else {
+                continue;
+            };
+            let index = index_text.parse::<usize>().map_err(|_| {
+                format!(
+                    "kernel reference parameter validity attribute `{key_text}` has an invalid parameter index"
+                )
+            })?;
+            let Some(validity) = operation
+                .attributes
+                .get::<KernelReferenceParamValidityAttr>(key)
+                .copied()
+            else {
+                return Err(format!(
+                    "kernel reference parameter validity attribute `{key_text}` has the wrong attribute type"
+                ));
+            };
+            if validity.0 == 0 || !validity.0.is_power_of_two() {
+                return Err(format!(
+                    "kernel reference parameter {index} alignment must be a non-zero power of two, found {}",
+                    validity.0
+                ));
+            }
+            result.push((index, validity));
+        }
+        result.sort_unstable_by_key(|(index, _)| *index);
+        Ok(result)
+    }
+
     /// Op-attribute key for the inline-asm kind tag.
     const ASM_KIND_KEY: &str = "cuda_oxide_asm_kind";
 

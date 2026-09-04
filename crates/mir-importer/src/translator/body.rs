@@ -20,11 +20,13 @@
 //!   `#[launch_bounds(...)]`)
 
 use super::block;
+use super::facts;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::pipeline::StatementDebugInfoMap;
 use crate::translator::location::span_to_location;
 use crate::translator::values::{self, SlotAddrSpaceMap, ValueMap};
+use dialect_mir::attributes::ReferenceParamValidityAttr;
 use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::address_space;
 use llvm_export::export::DebugKind;
@@ -2015,6 +2017,29 @@ pub fn translate_body(
     // physical symbol may be legalized (non-generic) or mangled (generic).
     let debug_name = function_debug_name(instance, is_kernel, &name_str);
     llvm_export::ops::set_debug_function_name(ctx, op_ptr, &debug_name);
+
+    // Stamp only the currently audited Rust-ABI kernel reference facts.
+    // `facts.rs` is the semantic oracle: this layer merely associates each
+    // typed rustc_public proof with its source argument index. Foreign-ABI
+    // kernels intentionally remain bare even when a parameter happens to have
+    // a reference-shaped Rust type.
+    let has_rust_abi = fn_ty.kind().fn_sig().is_some_and(|signature| {
+        matches!(signature.skip_binder().abi, rustc_public::ty::Abi::Rust)
+    });
+    if is_kernel && has_rust_abi {
+        for arg_idx in 0..num_args {
+            let local = mir::Local::from(arg_idx + 1);
+            let source_ty = &body.locals()[local].ty;
+            let Some(validity) = facts::reference_param_validity(source_ty) else {
+                continue;
+            };
+            mir_func_op.set_reference_param_validity(
+                ctx,
+                arg_idx,
+                ReferenceParamValidityAttr(validity.pointee_alignment),
+            );
+        }
+    }
 
     // Check if the function has the #[cuda_oxide::kernel] attribute (passed via is_kernel flag)
     if is_kernel {

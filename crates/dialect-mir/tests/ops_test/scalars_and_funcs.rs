@@ -4,13 +4,13 @@
  */
 
 use dialect_mir::{
-    attributes::MirCastKindAttr,
+    attributes::{MirCastKindAttr, ReferenceParamValidityAttr},
     ops::{
         MirAddOp, MirAssignOp, MirCallOp, MirCastOp, MirCheckedAddOp, MirCmpOp, MirConstantOp,
         MirDivOp, MirEqOp, MirFuncOp, MirGeOp, MirGtOp, MirLeOp, MirLtOp, MirMulOp, MirNeOp,
         MirNegOp, MirNotOp, MirRemOp, MirSubOp,
     },
-    types::{EnumVariant, MirEnumType, MirTupleType},
+    types::{EnumVariant, MirEnumType, MirPointerKind, MirPtrType, MirSliceType, MirTupleType},
 };
 use pliron::{
     basic_block::BasicBlock,
@@ -444,4 +444,111 @@ fn test_mir_call_verify() {
     let name = StringAttr::new("my_func".to_string());
     call_op.set_attr_callee(&ctx, name);
     assert!(call_op.verify(&ctx).is_ok(), "Valid MirCallOp");
+}
+
+#[test]
+fn test_mir_func_reference_param_validity_verify() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+
+    let f32_ty = FP32Type::get(&ctx);
+    let shared_ref = MirPtrType::get_generic_with_kind(
+        &mut ctx,
+        f32_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    );
+    let shared_slice = MirSliceType::get_with_mutability_and_kind(
+        &mut ctx,
+        f32_ty.into(),
+        false,
+        MirPointerKind::SharedRef,
+    );
+    let raw_ptr =
+        MirPtrType::get_generic_with_kind(&mut ctx, f32_ty.into(), false, MirPointerKind::RawConst);
+    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signed);
+
+    let make_func = |ctx: &mut Context, kernel: bool| {
+        let func_ty = FunctionType::get(
+            ctx,
+            vec![
+                shared_ref.into(),
+                shared_slice.into(),
+                raw_ptr.into(),
+                i32_ty.into(),
+            ],
+            vec![],
+        );
+        let op = Operation::new(
+            ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let func = MirFuncOp::new(ctx, op, TypeAttr::new(func_ty.into()));
+        if kernel {
+            func.get_operation().deref_mut(ctx).attributes.set(
+                "gpu_kernel".try_into().unwrap(),
+                StringAttr::new("true".to_string()),
+            );
+        }
+        let region = func.get_operation().deref(ctx).get_region(0);
+        BasicBlock::new(
+            ctx,
+            None,
+            vec![
+                shared_ref.into(),
+                shared_slice.into(),
+                raw_ptr.into(),
+                i32_ty.into(),
+            ],
+        )
+        .insert_at_front(region, ctx);
+        func
+    };
+
+    let valid = make_func(&mut ctx, true);
+    valid.set_reference_param_validity(&mut ctx, 0, ReferenceParamValidityAttr(4));
+    valid.set_reference_param_validity(&mut ctx, 1, ReferenceParamValidityAttr(4));
+    assert!(
+        valid.verify(&ctx).is_ok(),
+        "Rust reference facts on kernel source arguments are valid"
+    );
+
+    let non_kernel = make_func(&mut ctx, false);
+    non_kernel.set_reference_param_validity(&mut ctx, 0, ReferenceParamValidityAttr(4));
+    assert!(
+        non_kernel.verify(&ctx).is_err(),
+        "reference validity is kernel-entry-only"
+    );
+
+    let raw = make_func(&mut ctx, true);
+    raw.set_reference_param_validity(&mut ctx, 2, ReferenceParamValidityAttr(4));
+    assert!(
+        raw.verify(&ctx).is_err(),
+        "raw pointers cannot carry Rust-reference validity"
+    );
+
+    let scalar = make_func(&mut ctx, true);
+    scalar.set_reference_param_validity(&mut ctx, 3, ReferenceParamValidityAttr(4));
+    assert!(
+        scalar.verify(&ctx).is_err(),
+        "non-pointer parameters cannot carry Rust-reference validity"
+    );
+
+    let bad_alignment = make_func(&mut ctx, true);
+    bad_alignment.set_reference_param_validity(&mut ctx, 0, ReferenceParamValidityAttr(3));
+    assert!(
+        bad_alignment.verify(&ctx).is_err(),
+        "alignment must be a non-zero power of two"
+    );
+
+    let out_of_range = make_func(&mut ctx, true);
+    out_of_range.set_reference_param_validity(&mut ctx, 9, ReferenceParamValidityAttr(4));
+    assert!(
+        out_of_range.verify(&ctx).is_err(),
+        "source argument index must be in range"
+    );
 }

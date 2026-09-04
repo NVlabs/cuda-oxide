@@ -14,7 +14,7 @@ use pliron::{
     attribute::attr_cast,
     builtin::{
         attr_interfaces::TypedAttrInterface,
-        attributes::TypeAttr,
+        attributes::{StringAttr, TypeAttr},
         op_interfaces::{
             ATTR_KEY_SYM_NAME, IsolatedFromAboveInterface, NOpdsInterface, NRegionsInterface,
             NResultsInterface, OneRegionInterface, SymbolOpInterface,
@@ -43,6 +43,18 @@ use pliron::{
 };
 use pliron_derive::pliron_op;
 
+use crate::{
+    attributes::ReferenceParamValidityAttr,
+    types::{MirPtrType, MirSliceType},
+};
+
+const REFERENCE_PARAM_VALIDITY_ATTR_PREFIX: &str = "reference_param_validity_";
+
+fn reference_param_validity_key(index: usize) -> Identifier {
+    Identifier::try_new(format!("{REFERENCE_PARAM_VALIDITY_ATTR_PREFIX}{index}"))
+        .expect("reference parameter validity attribute name is valid")
+}
+
 /// MIR function operation.
 ///
 /// Represents a function in MIR. Contains a single region with basic blocks.
@@ -54,6 +66,7 @@ use pliron_derive::pliron_op;
 /// |----------------|-----------|------------------------------------|
 /// | `sym_name`     | StringAttr| Function name (from SymbolOpInterface) |
 /// | `mir_func_type`| TypeAttr  | Function type (mir.func_type)      |
+/// | `reference_param_validity_N` | ReferenceParamValidityAttr | Proven nonnull/alignment for source argument `N` on a kernel entry |
 /// ```
 ///
 /// # Verification
@@ -99,6 +112,36 @@ impl MirFuncOp {
             .unwrap()
             .get_type(ctx);
         TypedHandle::from_handle(ty, ctx).unwrap()
+    }
+
+    /// Record rustc-proven validity for one source-level kernel argument.
+    ///
+    /// Presence proves `nonnull`; the payload carries the rustc ABI alignment
+    /// of the pointee. The source argument index is deliberately retained until
+    /// kernel ABI lowering decides which physical LLVM parameter represents it.
+    pub fn set_reference_param_validity(
+        &self,
+        ctx: &mut Context,
+        index: usize,
+        validity: ReferenceParamValidityAttr,
+    ) {
+        self.get_operation()
+            .deref_mut(ctx)
+            .attributes
+            .set(reference_param_validity_key(index), validity);
+    }
+
+    /// Return the rustc-proven validity fact for one source argument, if any.
+    pub fn reference_param_validity(
+        &self,
+        ctx: &Context,
+        index: usize,
+    ) -> Option<ReferenceParamValidityAttr> {
+        self.get_operation()
+            .deref(ctx)
+            .attributes
+            .get::<ReferenceParamValidityAttr>(&reference_param_validity_key(index))
+            .copied()
     }
 }
 
@@ -199,14 +242,79 @@ impl Verify for MirFuncOp {
             }
         };
 
+        // Reference validity is an importer-produced kernel-entry proof.
+        // Verify only structural consistency here; semantic facts such as
+        // non-nullness and alignment are never re-derived downstream.
+        let kernel_key: Identifier = "gpu_kernel".try_into().unwrap();
+        let is_kernel = op.attributes.get::<StringAttr>(&kernel_key).is_some();
+        let inputs = interface.arg_types();
+
+        for (key, _) in &op.attributes.0 {
+            let key_text = key.to_string();
+            let Some(index_text) = key_text.strip_prefix(REFERENCE_PARAM_VALIDITY_ATTR_PREFIX)
+            else {
+                continue;
+            };
+            let Ok(index) = index_text.parse::<usize>() else {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp reference validity attribute `{}` has an invalid source argument index",
+                    key_text
+                );
+            };
+            if !is_kernel {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp reference validity fact on argument {} is only valid on a kernel entry",
+                    index
+                );
+            }
+            if index >= inputs.len() {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp reference validity argument index {} is out of range for {} inputs",
+                    index,
+                    inputs.len()
+                );
+            }
+            let Some(validity) = op.attributes.get::<ReferenceParamValidityAttr>(key) else {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp reference validity attribute `{}` has the wrong attribute type",
+                    key_text
+                );
+            };
+            if validity.0 == 0 || !validity.0.is_power_of_two() {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp reference validity alignment on argument {} must be a non-zero power of two, found {}",
+                    index,
+                    validity.0
+                );
+            }
+
+            let input_ref = inputs[index].deref(ctx);
+            let is_reference = input_ref
+                .downcast_ref::<MirPtrType>()
+                .is_some_and(|pointer| pointer.pointer_kind().is_reference())
+                || input_ref
+                    .downcast_ref::<MirSliceType>()
+                    .is_some_and(|slice| slice.pointer_kind().is_reference());
+            if !is_reference {
+                return verify_err!(
+                    op.loc(),
+                    "MirFuncOp reference validity fact on argument {} requires a rustc-proven Rust reference type",
+                    index
+                );
+            }
+        }
+
         // Verify region arguments match function type inputs
         let region = op.get_region(0).deref(ctx);
 
         // Check if there is an entry block
         if let Some(entry_block_ptr) = region.get_head() {
             let entry_block = entry_block_ptr.deref(ctx);
-            let inputs = interface.arg_types();
-
             if entry_block.get_num_arguments() != inputs.len() {
                 return verify_err!(
                     op.loc(),

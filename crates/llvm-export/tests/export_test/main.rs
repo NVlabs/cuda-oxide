@@ -12,3 +12,5 @@ mod globals;
 mod instructions;
 mod kernels_and_roots;
 mod metadata;
+
+mod reference_validity;

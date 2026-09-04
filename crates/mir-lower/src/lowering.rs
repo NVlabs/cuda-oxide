@@ -262,6 +262,12 @@ pub fn convert_func(
     } else {
         Vec::new()
     };
+    let kernel_reference_param_validities = if is_kernel {
+        kernel_reference_param_validities(ctx, &mir_func, func_type, llvm_func_type)
+            .map_err(anyhow_to_pliron)?
+    } else {
+        Vec::new()
+    };
     let return_abi_alignment =
         function_return_abi_alignment(ctx, func_type, llvm_func_type).map_err(anyhow_to_pliron)?;
 
@@ -272,6 +278,11 @@ pub fn convert_func(
     if is_kernel {
         propagate_kernel_attrs(ctx, op, &llvm_func, &kernel_key);
         propagate_kernel_param_abi_alignments(ctx, &llvm_func, &kernel_param_alignments);
+        propagate_kernel_reference_param_validities(
+            ctx,
+            &llvm_func,
+            &kernel_reference_param_validities,
+        );
     }
     propagate_return_abi_alignment(ctx, &llvm_func, return_abi_alignment);
 
@@ -373,6 +384,115 @@ fn propagate_kernel_attrs(
             .deref_mut(ctx)
             .attributes
             .set(key, attr);
+    }
+}
+
+/// Map rustc-proven source-argument reference validity onto physical kernel
+/// parameters after ABI flattening.
+///
+/// This is transport only: the MIR attribute was already proven by
+/// `mir-importer`. Slices map the fact to their data pointer and leave the
+/// length (and any index-space fields) bare.
+fn kernel_reference_param_validities(
+    ctx: &mut Context,
+    mir_func: &MirFuncOp,
+    mir_func_type: pliron::r#type::TypedHandle<pliron::builtin::types::FunctionType>,
+    llvm_func_type: pliron::r#type::TypedHandle<llvm_export::types::FuncType>,
+) -> std::result::Result<Vec<(usize, u64)>, anyhow::Error> {
+    use pliron::builtin::type_interfaces::FunctionTypeInterface;
+
+    let mir_args = {
+        let func_ref = mir_func_type.deref(ctx);
+        func_ref.arg_types().to_vec()
+    };
+    let llvm_args = {
+        let func_ref = llvm_func_type.deref(ctx);
+        func_ref.arg_types().to_vec()
+    };
+
+    let mut result = Vec::new();
+    let mut llvm_arg_index = 0usize;
+
+    for (source_index, mir_ty) in mir_args.into_iter().enumerate() {
+        let validity = mir_func.reference_param_validity(ctx, source_index);
+        match classify_argument_type(ctx, mir_ty, true)? {
+            ReconstructKind::Slice { space_fields } => {
+                if let Some(validity) = validity {
+                    let llvm_ty = *llvm_args.get(llvm_arg_index).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "kernel reference validity mapping ran past LLVM argument {}",
+                            llvm_arg_index
+                        )
+                    })?;
+                    if !llvm_ty.deref(ctx).is::<llvm_export::types::PointerType>() {
+                        return Err(anyhow::anyhow!(
+                            "kernel source argument {} carries reference validity but its slice data component is not an LLVM pointer",
+                            source_index
+                        ));
+                    }
+                    result.push((llvm_arg_index, validity.0));
+                }
+                llvm_arg_index = llvm_arg_index
+                    .checked_add(2 + space_fields)
+                    .ok_or_else(|| anyhow::anyhow!("kernel parameter index overflow"))?;
+            }
+            ReconstructKind::TransparentScalar | ReconstructKind::None => {
+                if let Some(validity) = validity {
+                    let llvm_ty = *llvm_args.get(llvm_arg_index).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "kernel reference validity mapping ran past LLVM argument {}",
+                            llvm_arg_index
+                        )
+                    })?;
+                    if !llvm_ty.deref(ctx).is::<llvm_export::types::PointerType>() {
+                        return Err(anyhow::anyhow!(
+                            "kernel source argument {} carries reference validity but lowers to a non-pointer parameter",
+                            source_index
+                        ));
+                    }
+                    result.push((llvm_arg_index, validity.0));
+                }
+                llvm_arg_index += 1;
+            }
+            ReconstructKind::Zst => {
+                if validity.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "kernel source argument {} carries reference validity but was removed as a zero-sized ABI argument",
+                        source_index
+                    ));
+                }
+            }
+            ReconstructKind::Struct(_) => {
+                return Err(anyhow::anyhow!(
+                    "kernel parameter unexpectedly used the internal flattened struct ABI"
+                ));
+            }
+        }
+    }
+
+    if llvm_arg_index != llvm_args.len() {
+        return Err(anyhow::anyhow!(
+            "kernel reference validity mapping consumed {} LLVM arguments, expected {}",
+            llvm_arg_index,
+            llvm_args.len()
+        ));
+    }
+
+    Ok(result)
+}
+
+fn propagate_kernel_reference_param_validities(
+    ctx: &mut Context,
+    llvm_func: &llvm::FuncOp,
+    validities: &[(usize, u64)],
+) {
+    for &(index, alignment) in validities {
+        llvm::set_kernel_reference_param_validity(
+            ctx,
+            llvm_func.get_operation(),
+            index,
+            llvm::KernelReferenceParamValidityAttr(alignment),
+        );
     }
 }
 
@@ -1280,5 +1400,84 @@ mod transparent_scalar_abi_tests {
             .err()
             .expect("malformed transparent scalar must fail");
         assert!(error.to_string().contains("more than one non-ZST field"));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)]
+mod reference_param_validity_tests {
+    use super::*;
+    use dialect_mir::{
+        attributes::ReferenceParamValidityAttr,
+        types::{MirPointerKind, MirPtrType, MirSliceType},
+    };
+    use pliron::{
+        builtin::{
+            attributes::TypeAttr,
+            types::{FP32Type, FunctionType},
+        },
+        operation::Operation,
+    };
+
+    #[test]
+    fn reference_param_validity_maps_only_to_physical_pointer_components() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        crate::register(&mut ctx);
+
+        let f32_ty: TypeHandle = FP32Type::get(&ctx).into();
+        let shared_ref: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, f32_ty, false, MirPointerKind::SharedRef)
+                .into();
+        let shared_slice: TypeHandle = MirSliceType::get_with_mutability_and_kind(
+            &mut ctx,
+            f32_ty,
+            false,
+            MirPointerKind::SharedRef,
+        )
+        .into();
+        let raw_ptr: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, f32_ty, false, MirPointerKind::RawConst)
+                .into();
+
+        let mir_func_type =
+            FunctionType::get(&ctx, vec![shared_ref, shared_slice, raw_ptr], vec![]);
+        let op = Operation::new(
+            &mut ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let mir_func = MirFuncOp::new(&mut ctx, op, TypeAttr::new(mir_func_type.into()));
+        mir_func.set_reference_param_validity(&mut ctx, 0, ReferenceParamValidityAttr(4));
+        mir_func.set_reference_param_validity(&mut ctx, 1, ReferenceParamValidityAttr(4));
+
+        let llvm_func_type =
+            convert_function_type(&mut ctx, mir_func_type, true).expect("kernel type lowers");
+        let mapped =
+            kernel_reference_param_validities(&mut ctx, &mir_func, mir_func_type, llvm_func_type)
+                .expect("reference validity mapping succeeds");
+
+        assert_eq!(mapped, vec![(0, 4), (1, 4)]);
+
+        use pliron::builtin::type_interfaces::FunctionTypeInterface;
+        let llvm_args = llvm_func_type.deref(&ctx).arg_types().to_vec();
+        assert_eq!(
+            llvm_args.len(),
+            4,
+            "slice lowers to data pointer + length while raw pointer stays one parameter"
+        );
+        assert!(
+            llvm_args[0]
+                .deref(&ctx)
+                .is::<llvm_export::types::PointerType>()
+        );
+        assert!(
+            llvm_args[1]
+                .deref(&ctx)
+                .is::<llvm_export::types::PointerType>()
+        );
     }
 }
