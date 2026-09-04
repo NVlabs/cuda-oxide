@@ -35,6 +35,7 @@ use std::path::PathBuf;
 
 mod artifact_identity;
 mod backend;
+mod backend_source;
 mod commands;
 
 /// Top-level CLI structure parsed by clap.
