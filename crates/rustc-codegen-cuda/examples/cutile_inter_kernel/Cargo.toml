@@ -16,8 +16,8 @@ ptx-dir = "simt"
 resolver = "2"
 
 [dependencies]
-cutile = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1", package = "cutile" }
-cutile-compiler = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1", package = "cutile-compiler" }
-cuda-async = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1" }
-cutile-cuda-core = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1", package = "cuda-core" }
+cutile = "0.3.1"
+cutile-compiler = "0.3.1"
+cuda-async = "0.3.1"
+cutile-cuda-core = { version = "0.3.1", package = "cuda-core" }
 tokio = { version = "1", features = ["full"] }

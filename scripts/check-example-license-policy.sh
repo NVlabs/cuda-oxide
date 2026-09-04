@@ -43,9 +43,9 @@ EXAMPLES_ROOT=crates/rustc-codegen-cuda/examples
 # None today.  cutile_inter_kernel used to be exempt (#953): it linked
 # NVlabs/cutile-rs by git while `[sources] allow-git` listed only pliron, and
 # cutile-rs's cuda-bindings 0.1.0 carried no license.  Both are gone: every
-# example now takes the shared host crates from the same cutile-rs pin as the
-# root workspace, deny.toml allows that source, and the 0.3.x crates are
-# Apache-2.0, so the example is judged like every other one.
+# example now takes the shared host crates from the same crates.io release as
+# the root workspace, and the 0.3.x crates are Apache-2.0, so the example is
+# judged like every other one.
 #
 # Every name here is checked against the examples on disk below, so a typo or a
 # rename fails the run instead of quietly exempting nothing -- or everything.

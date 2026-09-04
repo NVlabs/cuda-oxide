@@ -11,7 +11,7 @@ license = "Apache-2.0"
 [dependencies]
 cuda-device = { path = "../../../cuda-device" }
 cuda-host = { path = "../../../cuda-host" }
-cuda-core = { git = "https://github.com/NVlabs/cutile-rs", tag = "v0.3.1" }
+cuda-core = "0.3.1"
 
 # The importer's `Rvalue::Reborrow` arm has a `Mutability::Mut` half that only
 # exists in unoptimized MIR: GVN folds a mutable reborrow into a plain copy at
