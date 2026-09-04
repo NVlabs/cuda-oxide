@@ -56,7 +56,7 @@ Their roles are different:
 
 | File / artifact | Role |
 | :-------------- | :--- |
-| `intrinsics/upstream.lock` | Pins the LLVM source/extraction identity used by the imported facts. |
+| `intrinsics/upstream.lock` | Pins the LLVM source/extraction identity used by the imported facts, and the rustc commit whose `llc` the evidence probe must run under. |
 | `intrinsics/imported.json` | Records what the pinned LLVM/NVPTX source declares. Normal intrinsic additions consume this committed file; they do not rerun extraction. |
 | `intrinsics/overlay.toml` | Explicitly indexes the admitted overlay shards. |
 | `intrinsics/overlay/*.toml` | Records cuda-oxide policy for reviewed intrinsic families. |

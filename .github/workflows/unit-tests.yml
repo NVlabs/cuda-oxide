@@ -188,7 +188,8 @@ jobs:
       - name: Probe every declared LLVM-NVPTX target
         run: |
           # Stock runners do not carry the recorded CUDA 13.3 ptxas binary.
-          # This still checks the pinned llc identity and exact emitted PTX.
+          # Identity is llc version plus the rustc commit from upstream.lock;
+          # binary bytes are provenance only.
           cargo run -p cuda-intrinsics-gen -- probe --all --skip-terminal --per-target
 
       - name: Check append-only intrinsic ABI ledger

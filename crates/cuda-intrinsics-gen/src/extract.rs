@@ -742,6 +742,59 @@ fn llvm_name(source_record: &str, record: &Value) -> Result<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TestRepo(PathBuf);
+
+    impl Drop for TestRepo {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn repo_with_lock(contents: &str) -> TestRepo {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "cuda-intrinsics-upstream-lock-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("intrinsics")).unwrap();
+        fs::write(root.join("intrinsics/upstream.lock"), contents).unwrap();
+        TestRepo(root)
+    }
+
+    fn committed_lock() -> (&'static str, UpstreamLock) {
+        let text = include_str!("../../../intrinsics/upstream.lock");
+        let lock = toml::from_str(text).unwrap();
+        (text, lock)
+    }
+
+    #[test]
+    fn upstream_lock_requires_rust_toolchain_table() {
+        let (original, parsed) = committed_lock();
+        let commit = format!("commit_hash = \"{}\"", parsed.rust_toolchain.commit_hash);
+        let mutated = original
+            .replace("[rust_toolchain]", "")
+            .replace(&commit, "");
+        assert_ne!(mutated, original);
+        let repo = repo_with_lock(&mutated);
+        let error = read_upstream_lock(&repo.0).unwrap_err();
+        assert!(format!("{error:#}").contains("rust_toolchain"));
+    }
+
+    #[test]
+    fn upstream_lock_rejects_malformed_rust_toolchain_commit_hash() {
+        let (original, parsed) = committed_lock();
+        let commit = format!("commit_hash = \"{}\"", parsed.rust_toolchain.commit_hash);
+        let mutated = original.replace(&commit, "commit_hash = \"not-a-commit\"");
+        assert_ne!(mutated, original);
+        let repo = repo_with_lock(&mutated);
+        let error = read_upstream_lock(&repo.0).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("commit_hash"), "{message}");
+        assert!(message.contains("40 lowercase hexadecimal"), "{message}");
+    }
 
     #[test]
     fn joins_selection_by_def_reference_not_printable_text() {

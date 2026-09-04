@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+use crate::extract::read_upstream_lock;
 use crate::model::{
     BackendLoweringMechanism, CatalogFile, CatalogInputs, CatalogIntrinsic, CatalogLlvm,
     CatalogTargetRequirement, CpAsyncSourceSize, EvidenceStageKind, IntrinsicBackend,
-    IntrinsicSource, SparseMmaSelector, WarpShuffleAdapter,
+    IntrinsicSource, RustcCommit, SparseMmaSelector, WarpShuffleAdapter,
 };
 use crate::ptx::{
     InstructionPattern, OperandPattern, instructions_with_matching_head, matching_instructions,
@@ -23,16 +24,35 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ProbeMode {
-    SelectedEvidence,
-    Comparison,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolIdentity {
+    version: String,
+    sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LlcIdentity {
-    version: String,
-    sha256: String,
+struct SelectedBackendIdentity {
+    tool: ToolIdentity,
+    rustc_commit: RustcCommit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProbeBackendIdentity {
+    SelectedEvidence(SelectedBackendIdentity),
+    Comparison(ToolIdentity),
+}
+
+impl ProbeBackendIdentity {
+    fn tool(&self) -> &ToolIdentity {
+        match self {
+            Self::SelectedEvidence(identity) => &identity.tool,
+            Self::Comparison(identity) => identity,
+        }
+    }
+
+    fn is_selected_evidence(&self) -> bool {
+        matches!(self, Self::SelectedEvidence(_))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,15 +157,12 @@ pub fn run_all(
     let runner = ProbeRunner::new(repo_root, &catalog, llc, skip_terminal)?;
 
     validate_backend_identities(
-        runner.mode,
-        catalog.intrinsics.iter().map(|record| {
-            (
-                record.id.as_str(),
-                record.backend.version.as_str(),
-                record.backend.sha256.as_str(),
-            )
-        }),
         &runner.identity,
+        &runner.expected_commit,
+        catalog.intrinsics.iter().map(|record| BackendExpectation {
+            intrinsic_id: &record.id,
+            version: &record.backend.version,
+        }),
     )?;
 
     let total = catalog.intrinsics.len();
@@ -165,8 +182,8 @@ pub fn run_all(
 struct ProbeRunner<'a> {
     catalog: &'a CatalogFile,
     llc: PathBuf,
-    mode: ProbeMode,
-    identity: LlcIdentity,
+    identity: ProbeBackendIdentity,
+    expected_commit: RustcCommit,
     output_dir: PathBuf,
     catalog_hash: String,
     skip_terminal: bool,
@@ -179,11 +196,22 @@ impl<'a> ProbeRunner<'a> {
         llc: Option<PathBuf>,
         skip_terminal: bool,
     ) -> Result<Self> {
-        let (llc, mode) = match llc {
-            Some(path) => (path, ProbeMode::Comparison),
-            None => (rust_toolchain_llc()?, ProbeMode::SelectedEvidence),
+        let expected_commit = read_upstream_lock(repo_root)?.rust_toolchain.commit_hash;
+        let (llc, identity) = match llc {
+            Some(path) => {
+                let identity = ProbeBackendIdentity::Comparison(llc_identity(&path)?);
+                (path, identity)
+            }
+            None => {
+                let (path, rustc_commit) = rust_toolchain_llc()?;
+                let tool = llc_identity(&path)?;
+                let identity = ProbeBackendIdentity::SelectedEvidence(SelectedBackendIdentity {
+                    tool,
+                    rustc_commit,
+                });
+                (path, identity)
+            }
         };
-        let identity = llc_identity(&llc)?;
         let output_dir = repo_root.join("target/intrinsics/probes");
         fs::create_dir_all(&output_dir)?;
         let catalog_json = pretty_json(catalog)?;
@@ -191,8 +219,8 @@ impl<'a> ProbeRunner<'a> {
         Ok(Self {
             catalog,
             llc,
-            mode,
             identity,
+            expected_commit,
             output_dir,
             catalog_hash,
             skip_terminal,
@@ -201,9 +229,8 @@ impl<'a> ProbeRunner<'a> {
 
     fn validate_backend(&self, record: &CatalogIntrinsic) -> Result<()> {
         validate_backend_identity(
-            self.mode,
             &record.backend.version,
-            &record.backend.sha256,
+            &self.expected_commit,
             &self.identity,
         )
     }
@@ -218,7 +245,7 @@ impl<'a> ProbeRunner<'a> {
         .with_context(|| format!("write in-memory probe {}", input.display()))?;
 
         if record.llvm.is_some()
-            && self.mode == ProbeMode::SelectedEvidence
+            && self.identity.is_selected_evidence()
             && uses_typed_llvm_nvptx_lowering(record)
         {
             assert_intrinsic_declaration_canonicalizes(
@@ -289,7 +316,7 @@ impl<'a> ProbeRunner<'a> {
                     .iter()
                     .any(|stage| stage.stage == EvidenceStageKind::PtxAssembly)
         });
-        if self.mode == ProbeMode::SelectedEvidence && has_terminal_stage {
+        if self.identity.is_selected_evidence() && has_terminal_stage {
             if !selected_evidence_target {
                 println!(
                     "derived target {gpu_target} is LLVM-selection-only; terminal assembly evidence exists only for selected target {}",
@@ -310,20 +337,25 @@ impl<'a> ProbeRunner<'a> {
                 effective_floor % 10
             )
         });
-        match self.mode {
-            ProbeMode::SelectedEvidence if selected_evidence_target => println!(
-                "selected evidence backend {} (SHA-256 {}) lowered {} to `{}` for selected evidence target {} {}",
-                self.identity.version,
-                self.identity.sha256,
-                intrinsic_id,
-                record.expected_ptx,
-                gpu_target,
-                ptx_configuration,
-            ),
-            ProbeMode::SelectedEvidence => println!(
-                "selected evidence backend {} (SHA-256 {}) lowered {} to `{}` for derived target {} {}; record evidence selects {} {}",
-                self.identity.version,
-                self.identity.sha256,
+        let tool = self.identity.tool();
+        match &self.identity {
+            ProbeBackendIdentity::SelectedEvidence(identity) if selected_evidence_target => {
+                println!(
+                    "selected evidence backend {} (rustc commit {}; llc SHA-256 {}) lowered {} to `{}` for selected evidence target {} {}",
+                    tool.version,
+                    identity.rustc_commit,
+                    tool.sha256,
+                    intrinsic_id,
+                    record.expected_ptx,
+                    gpu_target,
+                    ptx_configuration,
+                )
+            }
+            ProbeBackendIdentity::SelectedEvidence(identity) => println!(
+                "selected evidence backend {} (rustc commit {}; llc SHA-256 {}) lowered {} to `{}` for derived target {} {}; record evidence selects {} {}",
+                tool.version,
+                identity.rustc_commit,
+                tool.sha256,
                 intrinsic_id,
                 record.expected_ptx,
                 gpu_target,
@@ -331,10 +363,10 @@ impl<'a> ProbeRunner<'a> {
                 record.backend.gpu_target,
                 record.backend.ptx_feature,
             ),
-            ProbeMode::Comparison => println!(
+            ProbeBackendIdentity::Comparison(_) => println!(
                 "comparison backend {} (SHA-256 {}) lowered {} to `{}` for {} target {} {}; record evidence selects {} {}; this does not validate selected evidence {} (SHA-256 {})",
-                self.identity.version,
-                self.identity.sha256,
+                tool.version,
+                tool.sha256,
                 intrinsic_id,
                 record.expected_ptx,
                 if selected_evidence_target {
@@ -378,14 +410,19 @@ fn derived_ptx_feature(gpu_target: &str, instruction_floor: u16) -> Result<(Opti
     }
 }
 
+struct BackendExpectation<'a> {
+    intrinsic_id: &'a str,
+    version: &'a str,
+}
+
 fn validate_backend_identities<'a>(
-    mode: ProbeMode,
-    identities: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
-    actual: &LlcIdentity,
+    actual: &ProbeBackendIdentity,
+    expected_commit: &RustcCommit,
+    identities: impl IntoIterator<Item = BackendExpectation<'a>>,
 ) -> Result<()> {
-    for (intrinsic_id, expected_version, expected_sha256) in identities {
-        validate_backend_identity(mode, expected_version, expected_sha256, actual)
-            .with_context(|| format!("validate probe backend for {intrinsic_id}"))?;
+    for expectation in identities {
+        validate_backend_identity(expectation.version, expected_commit, actual)
+            .with_context(|| format!("validate probe backend for {}", expectation.intrinsic_id))?;
     }
     Ok(())
 }
@@ -749,7 +786,7 @@ fn validate_candidate_cubin(cubin: &Path) -> Result<()> {
     Ok(())
 }
 
-fn candidate_tool(role: &str, path: &Path, identity: &LlcIdentity) -> CandidateToolDraft {
+fn candidate_tool(role: &str, path: &Path, identity: &ToolIdentity) -> CandidateToolDraft {
     CandidateToolDraft {
         role: role.into(),
         path: path.display().to_string(),
@@ -1702,7 +1739,7 @@ fn resolve_evidence_tool_with_path(
         })
 }
 
-fn llc_identity(llc: &Path) -> Result<LlcIdentity> {
+fn llc_identity(llc: &Path) -> Result<ToolIdentity> {
     let version = Command::new(llc)
         .arg("--version")
         .output()
@@ -1718,13 +1755,13 @@ fn llc_identity(llc: &Path) -> Result<LlcIdentity> {
         .context("llc --version did not report an LLVM version")?
         .trim()
         .to_owned();
-    Ok(LlcIdentity {
+    Ok(ToolIdentity {
         version,
         sha256: sha256_file(llc)?,
     })
 }
 
-fn ptxas_identity(ptxas: &Path) -> Result<LlcIdentity> {
+fn ptxas_identity(ptxas: &Path) -> Result<ToolIdentity> {
     let output = Command::new(ptxas)
         .arg("--version")
         .output()
@@ -1737,7 +1774,7 @@ fn ptxas_identity(ptxas: &Path) -> Result<LlcIdentity> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let version = parse_ptxas_version(&stdout, &stderr)?;
-    Ok(LlcIdentity {
+    Ok(ToolIdentity {
         version,
         sha256: sha256_file(ptxas)?,
     })
@@ -1763,28 +1800,27 @@ fn parse_ptxas_version(stdout: &str, stderr: &str) -> Result<String> {
 }
 
 fn validate_backend_identity(
-    mode: ProbeMode,
     expected_version: &str,
-    expected_sha256: &str,
-    actual: &LlcIdentity,
+    expected_commit: &RustcCommit,
+    actual: &ProbeBackendIdentity,
 ) -> Result<()> {
-    if mode == ProbeMode::Comparison {
+    let ProbeBackendIdentity::SelectedEvidence(actual) = actual else {
         return Ok(());
-    }
+    };
     ensure!(
-        actual.version == expected_version,
+        actual.tool.version == expected_version,
         "rust-toolchain llc version mismatch: selected evidence records {expected_version:?}, found {:?}; use an explicit `--llc` only for a comparison probe",
-        actual.version
+        actual.tool.version
     );
     ensure!(
-        actual.sha256 == expected_sha256,
-        "rust-toolchain llc SHA-256 mismatch: selected evidence records {expected_sha256}, found {}; use an explicit `--llc` only for a comparison probe",
-        actual.sha256
+        actual.rustc_commit == *expected_commit,
+        "rust-toolchain commit mismatch: upstream.lock records {expected_commit}, found {}; use an explicit `--llc` only for a comparison probe",
+        actual.rustc_commit
     );
     Ok(())
 }
 
-fn rust_toolchain_llc() -> Result<PathBuf> {
+fn rust_toolchain_llc() -> Result<(PathBuf, RustcCommit)> {
     let sysroot = Command::new("rustc")
         .args(["--print", "sysroot"])
         .output()
@@ -1795,11 +1831,8 @@ fn rust_toolchain_llc() -> Result<PathBuf> {
         .output()
         .context("query rustc host")?;
     ensure!(verbose.status.success(), "rustc -vV failed");
-    let host = String::from_utf8_lossy(&verbose.stdout)
-        .lines()
-        .find_map(|line| line.strip_prefix("host: "))
-        .context("rustc -vV did not report a host")?
-        .to_owned();
+    let verbose = String::from_utf8_lossy(&verbose.stdout);
+    let (host, commit) = parse_rustc_verbose(&verbose)?;
     let path = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim())
         .join("lib/rustlib")
         .join(host)
@@ -1809,7 +1842,23 @@ fn rust_toolchain_llc() -> Result<PathBuf> {
         "rust toolchain has no llc at {}",
         path.display()
     );
-    Ok(path)
+    Ok((path, commit))
+}
+
+fn parse_rustc_verbose(stdout: &str) -> Result<(String, RustcCommit)> {
+    let host = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("host: "))
+        .context("rustc -vV did not report a host")?
+        .to_owned();
+    let commit = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("commit-hash: "))
+        .context("rustc -vV did not report a commit-hash")?
+        .parse()
+        .map_err(anyhow::Error::msg)
+        .context("parse rustc -vV commit-hash")?;
+    Ok((host, commit))
 }
 
 #[cfg(test)]
@@ -2186,62 +2235,92 @@ mod tests {
         assert!(error.to_string().contains("expected PTX must be"));
     }
 
-    fn identity() -> LlcIdentity {
-        LlcIdentity {
+    fn commit(value: &str) -> RustcCommit {
+        value.parse().unwrap()
+    }
+
+    fn tool_identity() -> ToolIdentity {
+        ToolIdentity {
             version: "LLVM version 22.1.2-test".into(),
             sha256: "abc123".into(),
         }
     }
 
+    fn selected_identity(commit_hash: &str) -> ProbeBackendIdentity {
+        ProbeBackendIdentity::SelectedEvidence(SelectedBackendIdentity {
+            tool: tool_identity(),
+            rustc_commit: commit(commit_hash),
+        })
+    }
+
     #[test]
-    fn selected_probe_requires_exact_recorded_backend() {
+    fn selected_probe_accepts_same_version_and_commit_with_different_llc_sha256() {
         validate_backend_identity(
-            ProbeMode::SelectedEvidence,
             "LLVM version 22.1.2-test",
-            "abc123",
-            &identity(),
+            &commit("1111111111111111111111111111111111111111"),
+            &ProbeBackendIdentity::SelectedEvidence(SelectedBackendIdentity {
+                tool: ToolIdentity {
+                    sha256: "different".into(),
+                    ..tool_identity()
+                },
+                rustc_commit: commit("1111111111111111111111111111111111111111"),
+            }),
         )
         .unwrap();
+    }
 
+    #[test]
+    fn selected_probe_rejects_different_commit() {
+        let commit_error = validate_backend_identity(
+            "LLVM version 22.1.2-test",
+            &commit("2222222222222222222222222222222222222222"),
+            &selected_identity("1111111111111111111111111111111111111111"),
+        )
+        .unwrap_err();
+        assert!(commit_error.to_string().contains("commit"));
+    }
+
+    #[test]
+    fn selected_probe_rejects_different_version() {
         let version_error = validate_backend_identity(
-            ProbeMode::SelectedEvidence,
             "LLVM version 21",
-            "abc123",
-            &identity(),
+            &commit("1111111111111111111111111111111111111111"),
+            &selected_identity("1111111111111111111111111111111111111111"),
         )
         .unwrap_err();
         assert!(version_error.to_string().contains("version mismatch"));
-
-        let hash_error = validate_backend_identity(
-            ProbeMode::SelectedEvidence,
-            "LLVM version 22.1.2-test",
-            "different",
-            &identity(),
-        )
-        .unwrap_err();
-        assert!(hash_error.to_string().contains("SHA-256 mismatch"));
     }
 
     #[test]
     fn all_probe_preflight_checks_every_backend_identity() {
         let error = validate_backend_identities(
-            ProbeMode::SelectedEvidence,
+            &selected_identity("1111111111111111111111111111111111111111"),
+            &commit("1111111111111111111111111111111111111111"),
             [
-                ("first", "LLVM version 22.1.2-test", "abc123"),
-                ("last", "LLVM version 22.1.2-test", "different"),
+                BackendExpectation {
+                    intrinsic_id: "first",
+                    version: "LLVM version 22.1.2-test",
+                },
+                BackendExpectation {
+                    intrinsic_id: "last",
+                    version: "LLVM version 21",
+                },
             ],
-            &identity(),
         )
         .unwrap_err();
         let message = format!("{error:#}");
         assert!(message.contains("validate probe backend for last"));
-        assert!(message.contains("SHA-256 mismatch"));
+        assert!(message.contains("version mismatch"));
     }
 
     #[test]
     fn explicit_probe_is_always_comparison_only() {
-        validate_backend_identity(ProbeMode::Comparison, "different", "different", &identity())
-            .unwrap();
+        validate_backend_identity(
+            "different",
+            &commit("2222222222222222222222222222222222222222"),
+            &ProbeBackendIdentity::Comparison(tool_identity()),
+        )
+        .unwrap();
     }
 
     fn llvm_facts(
@@ -2732,6 +2811,30 @@ attributes #0 = { speculatable memory(none) }
         ] {
             assert!(parse_ptxas_version(invalid, "").is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn rustc_verbose_requires_a_concrete_commit_hash() {
+        let valid = "rustc 1.100.0-nightly (e457a7b0d 2026-08-27)\n\
+                     binary: rustc\n\
+                     commit-hash: e457a7b0d326d67b4322ef0d11bd715cfaeda48f\n\
+                     commit-date: 2026-08-27\n\
+                     host: x86_64-unknown-linux-gnu\n\
+                     release: 1.100.0-nightly\n\
+                     LLVM version: 23.1.0\n";
+        let (host, commit) = parse_rustc_verbose(valid).unwrap();
+        assert_eq!(host, "x86_64-unknown-linux-gnu");
+        assert_eq!(
+            commit,
+            "e457a7b0d326d67b4322ef0d11bd715cfaeda48f".parse().unwrap()
+        );
+
+        let missing = parse_rustc_verbose("host: x86_64-unknown-linux-gnu\n").unwrap_err();
+        assert!(missing.to_string().contains("commit-hash"));
+
+        let unknown = parse_rustc_verbose("commit-hash: unknown\nhost: x86_64-unknown-linux-gnu\n")
+            .unwrap_err();
+        assert!(format!("{unknown:#}").contains("commit-hash"));
     }
 
     #[cfg(unix)]
