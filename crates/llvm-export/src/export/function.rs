@@ -15,7 +15,7 @@ use std::fmt::Write;
 use pliron::{
     basic_block::BasicBlock,
     builtin::{
-        attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr},
+        attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr, TypeAttr},
         op_interfaces::{BranchOpInterface, SymbolOpInterface},
         type_interfaces::FunctionTypeInterface,
         types::IntegerType,
@@ -26,8 +26,11 @@ use pliron::{
     op::Op,
     operation::Operation,
     printable::Printable,
-    r#type::Typed,
+    r#type::{TypeHandle, Typed},
     value::Value,
+};
+use reserved_oxide_symbols::{
+    LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX, LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX,
 };
 
 use crate::{
@@ -40,8 +43,8 @@ use super::{
     literals::{format_float_literal, format_half_literal},
     names::{decode_intrinsic_identifier, has_device_prefix, strip_device_prefix},
     state::{
-        FunctionAbiAlignment, KernelBlockGeometry, KernelClusterConfig, KernelInfo,
-        KernelLaunchBounds, ModuleExportState, PredecessorMap,
+        FunctionAbiAlignment, KernelBlockGeometry, KernelClusterConfig, KernelGridConstants,
+        KernelInfo, KernelLaunchBounds, ModuleExportState, PredecessorMap,
     },
 };
 
@@ -555,6 +558,22 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
+    fn export_grid_constant_parameter_attrs(
+        &self,
+        pointee: TypeHandle,
+        alignment: u64,
+        output: &mut String,
+    ) -> Result<(), String> {
+        if self.legacy_typed_pointers() {
+            write!(output, " byval align {alignment}").unwrap();
+        } else {
+            write!(output, " byval(").unwrap();
+            self.export_type(pointee, output)?;
+            write!(output, ") align {alignment}").unwrap();
+        }
+        Ok(())
+    }
+
     pub(super) fn export_function(
         &mut self,
         func: &FuncOp,
@@ -644,6 +663,78 @@ impl<'a> ModuleExportState<'a> {
         }
 
         self.function_types.insert(fixed_func_name.clone(), ft);
+
+        // A grid-constant source parameter is represented in LLVM by the
+        // original pointer type plus `byval(Pointee)`. The body therefore
+        // addresses the launch-time parameter bytes directly instead of a
+        // compiler-created per-thread copy. The same parameter positions are
+        // also emitted through NVVM's `grid_constant` annotation below.
+        let mut grid_constant_params: Vec<(usize, TypeHandle, u64)> = Vec::new();
+        for (index, arg_ty) in func_ty.arg_types().iter().enumerate() {
+            let pointee_key = format!("{LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{index}");
+            let align_key = format!("{LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{index}");
+            let pointee_key_id: pliron::identifier::Identifier = pointee_key
+                .as_str()
+                .try_into()
+                .map_err(|_| format!("invalid grid-constant attribute name `{pointee_key}`"))?;
+            let align_key_id: pliron::identifier::Identifier = align_key
+                .as_str()
+                .try_into()
+                .map_err(|_| format!("invalid grid-constant attribute name `{align_key}`"))?;
+            let pointee = attrs.get::<TypeAttr>(&pointee_key_id);
+            let alignment = attrs.get::<IntegerAttr>(&align_key_id);
+            let (Some(pointee), Some(alignment)) = (pointee, alignment) else {
+                if pointee.is_some() || alignment.is_some() {
+                    return Err(format!(
+                        "function `@{fixed_func_name}` parameter {index} has incomplete grid-constant metadata"
+                    ));
+                }
+                continue;
+            };
+            if !is_kernel {
+                return Err(format!(
+                    "non-kernel function `@{fixed_func_name}` parameter {index} is marked grid-constant"
+                ));
+            }
+            if arg_ty
+                .deref(self.ctx)
+                .downcast_ref::<PointerType>()
+                .is_none()
+            {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` grid-constant parameter {index} is not a pointer"
+                ));
+            }
+            let value = alignment.value();
+            if value.bw() > 64 {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` grid-constant alignment for parameter {index} is wider than 64 bits"
+                ));
+            }
+            let alignment = value.to_u64();
+            if alignment == 0 || !alignment.is_power_of_two() {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` grid-constant alignment for parameter {index} must be a non-zero power of two, found {alignment}"
+                ));
+            }
+            grid_constant_params.push((index, pointee.get_type(self.ctx), alignment));
+        }
+        if !grid_constant_params.is_empty() {
+            let positions = grid_constant_params
+                .iter()
+                .map(|(index, _, _)| {
+                    u32::try_from(index + 1).map_err(|_| {
+                        format!(
+                            "kernel `@{fixed_func_name}` grid-constant parameter index {index} exceeds NVVM's 32-bit position field"
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            self.grid_constant_kernels.push(KernelGridConstants {
+                name: fixed_func_name.clone(),
+                positions,
+            });
+        }
 
         // MIR lowering records source-language ABI alignments only when the
         // direct LLVM aggregate type is naturally under-aligned. NVVM represents
@@ -783,6 +874,12 @@ impl<'a> ModuleExportState<'a> {
                 } else {
                     self.export_type(*arg_ty, output)?;
                 }
+                if let Some((_, pointee, alignment)) = grid_constant_params
+                    .iter()
+                    .find(|(index, _, _)| *index == i)
+                {
+                    self.export_grid_constant_parameter_attrs(*pointee, *alignment, output)?;
+                }
             }
             write!(output, ")").unwrap();
 
@@ -863,6 +960,12 @@ impl<'a> ModuleExportState<'a> {
                 }
                 let arg_ty = arg.get_type(self.ctx);
                 self.export_type(arg_ty, output)?;
+                if let Some((_, pointee, alignment)) = grid_constant_params
+                    .iter()
+                    .find(|(index, _, _)| *index == i)
+                {
+                    self.export_grid_constant_parameter_attrs(*pointee, *alignment, output)?;
+                }
                 let name = format!("%v{next_value_id}");
                 value_names.insert(arg, name.clone());
                 write!(output, " {name}").unwrap();

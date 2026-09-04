@@ -73,6 +73,13 @@ pub(super) struct FunctionAbiAlignment {
     pub(super) alignment: u16,
 }
 
+/// Kernel parameters whose by-value storage remains in kernel parameter space
+/// and is shared by the whole grid. NVVM numbers parameters from one.
+pub(super) struct KernelGridConstants {
+    pub(super) name: String,
+    pub(super) positions: Vec<u32>,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct GlobalSymbolInfo {
     pub(super) value_type: TypeHandle,
@@ -100,6 +107,8 @@ pub(super) struct ModuleExportState<'a> {
     /// Direct aggregate argument/return alignments that LLVM structural types
     /// cannot encode and NVVM therefore requires as `"align"` annotations.
     pub(super) function_abi_alignments: Vec<FunctionAbiAlignment>,
+    /// Parameters carrying LLVM `byval` plus NVVM `grid_constant` semantics.
+    pub(super) grid_constant_kernels: Vec<KernelGridConstants>,
     /// Whether to print `ptx_kernel` on kernel definitions.
     pub(super) emit_ptx_kernel_keyword: bool,
     /// Track device function names for @llvm.used (standalone device fn compilation)
@@ -225,6 +234,7 @@ impl<'a> ModuleExportState<'a> {
             launch_bounds_kernels: Vec::new(),
             all_kernels: Vec::new(),
             function_abi_alignments: Vec::new(),
+            grid_constant_kernels: Vec::new(),
             emit_ptx_kernel_keyword,
             device_functions: Vec::new(),
             public_globals: Vec::new(),
