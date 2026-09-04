@@ -32,7 +32,8 @@
 //! cargo oxide run cross_crate_kernel
 //! ```
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 
 // Import the public kernel functions and their generated `<kernel>_ptx_name`
 // helpers. Entry symbols and marker types remain implementation details.

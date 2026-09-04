@@ -38,9 +38,11 @@ alongside the normal host binary.
 
 ## `cuda-async`
 
-The async execution layer. Provides `DeviceOperation` (lazy GPU work
-description), `DeviceFuture` (stream-bound execution), and `DeviceBox<T>`
-(device-owned memory). Compose work with `zip!`, `and_then`, and `value()`.
+The async execution layer, a crate shared with cutile-rs and published from
+NVlabs/cutile-rs. The cuda-oxide model lives under `cuda_async::simt`:
+`DeviceOperation` (lazy GPU work description), `DeviceFuture` (stream-bound
+execution), and `DeviceBox<T>` (device-owned memory). Compose work with
+`zip!`, `and_then`, and `value()`.
 
 ## `cuda-device`
 
@@ -52,7 +54,9 @@ cores, atomics, and debug facilities.
 
 Safe RAII wrappers around the CUDA Driver API: `CudaContext`, `CudaStream`,
 `DeviceBuffer<T>`, and module loading. Handles GPU context and memory management
-on the host side.
+on the host side. Shared with cutile-rs and published from NVlabs/cutile-rs;
+the cuda-oxide surface is re-exported at the crate root except
+`simt::LaunchConfig`, `simt::vmm`, `simt::peer`, and `simt::memory`.
 
 ## `DeviceOperation`
 

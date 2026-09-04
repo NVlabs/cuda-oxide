@@ -97,7 +97,9 @@
 //! unsafe { cuda_launch! { kernel: reduce::<f32>, ... } }  // PTX generated here!
 //! ```
 //!
-//! Functions from `std` are FORBIDDEN because they require OS/threads/IO.
+//! Functions from `std` are FORBIDDEN because they require OS/threads/IO. The
+//! one exception is std's inherent float wrappers (`std::f32::<impl f32>::atan`
+//! and friends), which are collected; see `is_std_float_inherent_method`.
 //!
 //! ## MIR Access
 //!
@@ -629,6 +631,31 @@ fn is_intrinsic_lowered_cmath_shim(fn_path: &str) -> bool {
             | "std::sys::cmath::hypotf"
             | "std::sys::cmath::hypot"
     )
+}
+
+/// `std`'s inherent float methods: `std::f32::<impl f32>::atan` and friends.
+///
+/// `x.atan()` resolves to a one-line `#[inline]` wrapper in `std` whose body
+/// bottoms out in a `core` intrinsic or a `std::sys::cmath` shim. Whether the
+/// kernel ever *calls* that wrapper depends on rustc's MIR inliner, which is
+/// off under `-C incremental` (every Cargo dev-profile build, `cargo oxide
+/// test`, `CARGO_INCREMENTAL=1`):
+///
+/// ```text
+/// build                          kernel MIR calls              std guard
+/// release, non-incremental       std::sys::cmath::atanf        whitelisted shim
+/// -C incremental / opt-level 0   std::f32::<impl f32>::atan    was: forbidden crate `std`
+/// ```
+///
+/// Nothing in these wrappers touches the OS or the heap, so collect them like
+/// any other reachable pure function. Every stable method's shim is in
+/// `is_intrinsic_lowered_cmath_shim`; the unstable `gamma`/`erf` family and
+/// `f128` still stop one level deeper, at their shim, with the guard naming
+/// that shim.
+fn is_std_float_inherent_method(fn_path: &str) -> bool {
+    ["f16", "f32", "f64", "f128"]
+        .iter()
+        .any(|ty| fn_path.starts_with(&format!("std::{ty}::<impl {ty}>::")))
 }
 
 /// Returns true for hidden `cuda_device::ptx_asm!` marker functions.
@@ -1907,7 +1934,9 @@ impl<'tcx> DeviceCollector<'tcx> {
     ///
     /// ## Forbidden (Error)
     ///
-    /// - `std`: OS, I/O, threads - can't run on GPU
+    /// - `std`: OS, I/O, threads - can't run on GPU. Two exceptions: the
+    ///   inherent float wrappers (`std::f32::<impl f32>::*`, collected) and
+    ///   the `std::sys::cmath` shims (skipped, lowered to libdevice).
     fn should_collect_from_crate(&self, def_id: DefId) -> CollectDecision {
         // Always collect from local crate
         if def_id.krate == LOCAL_CRATE {
@@ -1944,14 +1973,21 @@ impl<'tcx> DeviceCollector<'tcx> {
         // Forbidden crate: std (OS, I/O, threads) - absolutely can't run on GPU
         if name_str == "std" {
             let fn_path = self.tcx.def_path_str(def_id);
+            // The `#[inline]` float wrappers (`f32::atan`, `f64::sinh`, ...)
+            // are pure and bottom out in a `core` intrinsic or a cmath shim.
+            // They only reach the guard when the MIR inliner is off, so
+            // collect them as ordinary device functions.
+            if is_std_float_inherent_method(&fn_path) {
+                return CollectDecision::Collect;
+            }
             // A handful of `std::sys::cmath::*` libm shims are intercepted
             // by mir-importer's float-math intrinsic dispatch and lowered
             // directly to libdevice (`__nv_atan2f` etc.). They never enter
             // device codegen, so silently skip them here instead of tripping
             // the std-crate guard. This is what makes `f32::atan2`,
-            // `f32::atan`, and the f64 counterparts usable from device code
-            // (MIR-opt inlines the `#[inline]` `std` wrapper, leaving a
-            // direct call to the cmath shim at the kernel call site).
+            // `f32::atan`, and the f64 counterparts usable from device code,
+            // whether the kernel calls the shim directly (MIR-opt inlined the
+            // wrapper) or through the collected wrapper above.
             if is_intrinsic_lowered_cmath_shim(&fn_path) {
                 return CollectDecision::SkipIntentional;
             }
@@ -2510,14 +2546,34 @@ pub fn dump_device_mir_info<'tcx>(tcx: TyCtxt<'tcx>, functions: &[CollectedFunct
 #[cfg(test)]
 mod tests {
     use super::{
-        device_runtime_checks_target, is_kernel_entry_def_path, truncate_path_for_box,
-        unsupported_codegen_protocol_root,
+        device_runtime_checks_target, is_kernel_entry_def_path, is_std_float_inherent_method,
+        truncate_path_for_box, unsupported_codegen_protocol_root,
     };
     use reserved_oxide_symbols::{
         DEVICE_PREFIX, KERNEL_PREFIX, LEGACY_DEVICE_PREFIX, LEGACY_KERNEL_PREFIX,
         PTX_MERGE_REQUIRED_PREFIX, is_ptx_merge_required_marker, ptx_merge_required_marker,
     };
     use rustc_middle::mir::BasicBlock;
+
+    #[test]
+    fn std_float_wrappers_are_collected_not_forbidden() {
+        for ty in ["f16", "f32", "f64", "f128"] {
+            assert!(is_std_float_inherent_method(&format!(
+                "std::{ty}::<impl {ty}>::atan"
+            )));
+        }
+        assert!(is_std_float_inherent_method("std::f64::<impl f64>::atan2"));
+        assert!(is_std_float_inherent_method(
+            "std::f32::<impl f32>::sin_cos"
+        ));
+        // The shim a wrapper calls is skipped rather than collected, core's
+        // float methods never reach the std guard, and the rest of std stays
+        // forbidden.
+        assert!(!is_std_float_inherent_method("std::sys::cmath::atanf"));
+        assert!(!is_std_float_inherent_method("core::f32::<impl f32>::abs"));
+        assert!(!is_std_float_inherent_method("std::f32::consts::PI"));
+        assert!(!is_std_float_inherent_method("std::io::stdio::_print"));
+    }
 
     #[test]
     fn ptx_merge_marker_matches_only_the_final_path_component() {

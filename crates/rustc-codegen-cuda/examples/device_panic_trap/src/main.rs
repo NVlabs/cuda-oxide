@@ -18,7 +18,8 @@
 //! driver reports as a launch failure. A launch that instead *succeeds* would
 //! mean the panic path fell through rather than trapping.
 
-use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 use std::sync::Arc;

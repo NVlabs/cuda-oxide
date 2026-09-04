@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use cuda_core::{CudaStream, LaunchConfig};
+use cuda_core::CudaStream;
+use cuda_core::simt::LaunchConfig;
 use cuda_macros::cuda_module;
 
 #[cuda_module]

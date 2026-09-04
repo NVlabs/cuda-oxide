@@ -14,7 +14,8 @@
 //! Build and run with:
 //!   cargo oxide run cp_async_small
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::async_copy::{
     cp_async_ca_4, cp_async_ca_8, cp_async_ca_16, cp_async_ca_zfill_4, cp_async_ca_zfill_8,
     cp_async_ca_zfill_16, cp_async_cg_16, cp_async_cg_zfill_16, cp_async_commit_group,

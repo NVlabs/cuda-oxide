@@ -378,10 +378,13 @@ Explicitly builds (or rebuilds) the codegen backend. Normally this happens autom
 
 ### `cargo oxide update [--force]`
 
-Refreshes the shared codegen backend cache used by projects outside this
-repository (`~/.cargo/cuda-oxide/`). Inside the cuda-oxide workspace the local
-source tree is authoritative, so the default path prints how to run
-`cargo oxide setup`; pass `--force` to run setup from this command.
+Rebuilds the shared codegen backend cache used by projects outside this
+repository (`~/.cargo/cuda-oxide/`) from the commit the project's cuda-oxide
+dependency resolves to (see [Backend Discovery](#backend-discovery)). You
+rarely need it: a changed dependency rebuilds the cache on the next build by
+itself. Inside the cuda-oxide workspace the local source tree is
+authoritative, so the default path prints how to run `cargo oxide setup`;
+pass `--force` to run setup from this command.
 
 ```bash
 cargo oxide update
@@ -392,11 +395,34 @@ cargo oxide update --force
 
 When `cargo oxide` needs the `librustc_codegen_cuda.so` backend, it searches in this order:
 
-1. **`CUDA_OXIDE_BACKEND` env var** — explicit path override
-2. **Project config** — `.cargo/cuda-oxide.toml`
-3. **Local repo** — detects `crates/rustc-codegen-cuda` relative to workspace root, builds from source
-4. **Cached `.so`** — checks `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`
-5. **Auto-fetch** — clones the cuda-oxide repo, builds, and caches (one-time)
+1. **`CUDA_OXIDE_BACKEND` env var**: explicit path override
+2. **Project config**: `.cargo/cuda-oxide.toml`
+3. **Local repo**: detects `crates/rustc-codegen-cuda` relative to workspace root, builds from source
+4. **Cached `.so`**: `~/.cargo/cuda-oxide/librustc_codegen_cuda.so`, when it was built from the commit the project's cuda-oxide dependency resolves to
+5. **Build from the dependency**: builds `crates/rustc-codegen-cuda` out of the checkout Cargo already made for the project's `cuda-device` / `cuda-host` dependency, and caches it
+
+Outside the repository the backend follows the project's `Cargo.lock`:
+
+```text
+Cargo.lock   cuda-device = git+https://github.com/NVlabs/cuda-oxide.git#a1b4f118...
+                 │
+                 ▼
+~/.cargo/git/checkouts/cuda-oxide-*/a1b4f11/        Cargo's checkout of that commit
+                 │  crates/rustc-codegen-cuda  →  cargo build
+                 ▼
+~/.cargo/cuda-oxide/librustc_codegen_cuda.so         + source-rev.txt = a1b4f118...
+```
+
+The kernels compile against the crates at that commit and the backend that
+lowers them is built from the same commit, so the two cannot drift. Changing
+the dependency (`cargo update`, a new `rev = ...`) rebuilds the cache on the
+next build. The checkout's `rust-toolchain.toml` names the nightly that commit
+needs; if the project pins a different one, the build stops before compiling
+and tells you which channel to set. A path dependency on a local checkout
+builds in place, like step 3. Projects with no cuda-oxide dependency fall back
+to a one-time clone of `main`. The backend's build tree lives at
+`~/.cargo/cuda-oxide/target` (shared by every commit's builds; delete it to
+reclaim the space).
 
 Project config can also provide the default architecture, extra rustc flags,
 and child-process environment:

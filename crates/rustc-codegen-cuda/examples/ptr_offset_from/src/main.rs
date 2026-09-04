@@ -13,7 +13,8 @@
 //! offsets by the pointee type, retain pointer mutability through libcore's cast,
 //! and leave zero-sized pointees stationary.
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
 #[cuda_module]

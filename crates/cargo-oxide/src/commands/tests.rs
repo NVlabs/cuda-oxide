@@ -4078,6 +4078,15 @@ fn scaffold_sync_template_uses_launch_contract_and_docs() {
     assert!(files.main_rs.contains("prepare_vecadd"));
     assert!(files.main_rs.contains("LaunchConfig1D"));
     assert!(!files.main_rs.contains("LaunchConfig::for_num_elems"));
+    // The host runtime is the crates.io release shared with cutile-rs. A git
+    // pin at this repository would resolve to nothing (the local copies are
+    // retired) or, worse, to a stale copy on an old revision.
+    assert!(
+        files
+            .cargo_toml
+            .contains(&format!("cuda-core = \"{SHARED_HOST_CRATES_VERSION}\""))
+    );
+    assert!(!files.cargo_toml.contains("cuda-core = {"));
 }
 
 #[test]
@@ -4095,6 +4104,20 @@ fn scaffold_async_template_keeps_async_deps_and_docs() {
     assert!(files.main_rs.contains("vecadd_async"));
     assert!(files.main_rs.contains("use cuda_host::cuda_module;"));
     assert!(!files.main_rs.contains("use cuda_device::{cuda_module"));
+    // Shared host runtime from crates.io; the SIMT surface lives under simt::.
+    assert!(
+        files
+            .cargo_toml
+            .contains(&format!("cuda-async = \"{SHARED_HOST_CRATES_VERSION}\""))
+    );
+    assert!(!files.cargo_toml.contains("cuda-async = {"));
+    assert!(!files.cargo_toml.contains("cuda-bindings"));
+    assert!(files.main_rs.contains("use cuda_core::simt::LaunchConfig;"));
+    assert!(
+        files
+            .main_rs
+            .contains("use cuda_async::simt::device_operation::DeviceOperation;")
+    );
 }
 
 /// A scaffolded project must already be `rustfmt`-clean.
@@ -4293,4 +4316,98 @@ fn explicit_line_tables_override_inherited_full_debug_for_mir_optimization() {
     append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
 
     assert_eq!(decoded_rustflags(&encoded), ["base"]);
+}
+
+// ---------------------------------------------------------------------------
+// doctor: "Backend source (cuda-oxide commit)" line
+// ---------------------------------------------------------------------------
+
+/// Every branch of the backend-source line, from the resolved dependency and
+/// the commit recorded in the shared cache. The line is informational, so no
+/// branch may flip doctor's exit status.
+#[test]
+fn doctor_backend_source_check_covers_every_branch() {
+    use crate::backend_source::DependencySource;
+    let sha_a = "a1b4f11882592fae9d022c86a9d8d1a4c9426980";
+    let sha_b = "596a6353de480662bbc03cb2d3c0f92e88f1e6c6";
+    let git = |rev: &str| {
+        Some(DependencySource::Git {
+            checkout: PathBuf::from("/checkouts/x"),
+            rev: rev.to_string(),
+        })
+    };
+
+    let check = backend_source_check(
+        Err("`cargo metadata` failed (exit status: 101)".into()),
+        None,
+    );
+    assert!(
+        check
+            .headline
+            .starts_with("- could not resolve the cuda-oxide dependency offline ("),
+        "{}",
+        check.headline
+    );
+    assert!(
+        check.headline.contains("exit status: 101"),
+        "{}",
+        check.headline
+    );
+
+    let check = backend_source_check(Ok(None), Some(sha_a.into()));
+    assert!(
+        check
+            .headline
+            .starts_with("- no cuda-device/cuda-host dependency"),
+        "{}",
+        check.headline
+    );
+
+    let check = backend_source_check(
+        Ok(Some(DependencySource::Path {
+            checkout: PathBuf::from("/dev/cuda-oxide"),
+        })),
+        None,
+    );
+    assert_eq!(
+        check.headline,
+        "✓ cuda-oxide checkout /dev/cuda-oxide (path dependency) builds in place"
+    );
+
+    let check = backend_source_check(Ok(git(sha_a)), Some(sha_a.into()));
+    assert_eq!(
+        check.headline,
+        "✓ cache built from a1b4f11882, matching this project's dependency"
+    );
+    assert!(check.details.is_empty());
+
+    // The mismatch line must put the CACHE's commit first and the PROJECT's
+    // second; swapped, it would send the user chasing the wrong commit.
+    let check = backend_source_check(Ok(git(sha_a)), Some(sha_b.into()));
+    assert_eq!(
+        check.headline,
+        "⚠ cache built from 596a6353de but this project depends on a1b4f11882"
+    );
+    assert_eq!(check.details.len(), 1, "{:?}", check.details);
+    assert!(
+        check.details[0].contains("rebuilds the cache"),
+        "{:?}",
+        check.details
+    );
+
+    let check = backend_source_check(Ok(git(sha_a)), None);
+    assert!(
+        check.headline.starts_with("⚠ cache records no commit"),
+        "{}",
+        check.headline
+    );
+    assert!(check.headline.ends_with("a1b4f11882"), "{}", check.headline);
+    assert_eq!(check.details.len(), 1, "{:?}", check.details);
+
+    for source in [Err("x".to_string()), Ok(None), Ok(git(sha_a))] {
+        assert!(
+            !backend_source_check(source, Some(sha_b.into())).failed,
+            "the backend-source line is informational and must never fail doctor"
+        );
+    }
 }

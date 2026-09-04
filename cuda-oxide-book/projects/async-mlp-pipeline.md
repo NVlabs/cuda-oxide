@@ -76,8 +76,8 @@ The `Cargo.toml` pulls in exactly the crates we need:
 ```toml
 [dependencies]
 cuda-device   = { path = "../../../cuda-device" }       # #[kernel], DisjointSlice, thread::*
-cuda-core = { path = "../../../cuda-core" }      # CudaModule, LaunchConfig
-cuda-async  = { path = "../../../cuda-async" }       # DeviceOperation, zip!, and_then, spawn
+cuda-core     = "0.3.1"                                 # shared with cutile-rs: CudaModule, simt::LaunchConfig
+cuda-async    = "0.3.1"                                 # shared with cutile-rs: simt::DeviceOperation, zip!, and_then
 tokio       = { version = "1", features = ["rt", "macros"] }
 ```
 
@@ -339,7 +339,7 @@ copies.
 This is where the magic lives. For each batch, we build a four-stage chain:
 
 ```rust
-    use cuda_async::launch::{AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch};
+    use cuda_async::simt::launch::{AsyncKernelLaunchBuilder, OwnedAsyncKernelLaunch};
 
     let pipeline = zip!(h2d(batch_data), zeros(DIM * DIM), zeros(DIM))
         .and_then(move |(input, hidden, output)| {

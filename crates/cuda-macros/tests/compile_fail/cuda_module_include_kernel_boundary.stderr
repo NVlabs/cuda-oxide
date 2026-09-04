@@ -1,5 +1,5 @@
 error[E0599]: no method named `from_include` found for reference `&LoadedModule` in the current scope
-  --> tests/compile_fail/cuda_module_include_kernel_boundary.rs:22:20
+  --> tests/compile_fail/cuda_module_include_kernel_boundary.rs:23:20
    |
-22 |     let _ = module.from_include(stream, config, 1u32);
+23 |     let _ = module.from_include(stream, config, 1u32);
    |                    ^^^^^^^^^^^^ method not found in `&LoadedModule`

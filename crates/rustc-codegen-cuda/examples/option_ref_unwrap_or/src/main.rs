@@ -30,7 +30,8 @@
 //! Run with:
 //!   cargo oxide run option_ref_unwrap_or
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 

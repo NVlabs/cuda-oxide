@@ -25,9 +25,9 @@ members = [
     "crates/cargo-oxide",
     "crates/oxide-artifacts",
     # FFI bindings
-    "crates/cuda-bindings",
-    "crates/cuda-core",
-    "crates/cuda-async",
+    # cuda-bindings, cuda-core, and cuda-async are the host-side crates shared
+    # with cutile-rs and published from NVlabs/cutile-rs; the cuda-oxide SIMT
+    # surface lives under their `simt` modules. The local copies are gone.
     "crates/libnvvm-sys",
     "crates/nvjitlink-sys",
     # Internal naming contract (workspace-private; publish = false)
@@ -80,14 +80,19 @@ cuda-host = { path = "crates/cuda-host" }
 # `cuda-host` names `features = ["host"]`, so anything that loads or launches a
 # module still gets it.
 cuda-macros = { path = "crates/cuda-macros", default-features = false }
-cuda-bindings = { path = "crates/cuda-bindings" }
-cuda-core = { path = "crates/cuda-core" }
-cuda-async = { path = "crates/cuda-async" }
+cuda-bindings = "0.3.1"
+cuda-core = "0.3.1"
+cuda-async = "0.3.1"
 libnvvm-sys = { path = "crates/libnvvm-sys" }
 nvjitlink-sys = { path = "crates/nvjitlink-sys" }
 reserved-oxide-symbols = { path = "crates/reserved-oxide-symbols" }
 fuzzer = { path = "crates/fuzzer" }
-oxide-artifacts = { path = "crates/oxide-artifacts" }
+# The crates.io release, not the in-tree path: the shared cuda-core (cutile-rs)
+# reads artifact bundles through crates.io oxide-artifacts, and a path copy of
+# the same version is a second crate to rustc. crates/oxide-artifacts stays in
+# the workspace as the source this release is published from; bump, publish,
+# then move this line. scripts/check-oxide-artifacts-parity.sh keeps them equal.
+oxide-artifacts = "0.2.1"
 ptx-parse = { path = "crates/ptx-parse" }
 ptx-schedule = { path = "crates/ptx-schedule" }
 

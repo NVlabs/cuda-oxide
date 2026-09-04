@@ -143,4 +143,4 @@ cargo oxide run clc
 
 - **GPU:** Blackwell (B200, GB200) with SM 100+
 - **PTX ISA:** 8.6+
-- **Driver:** CUDA 12.8+
+- **Driver:** CUDA 13.x (R580+)

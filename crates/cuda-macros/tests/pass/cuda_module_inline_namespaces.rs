@@ -4,7 +4,8 @@
 #![feature(proc_macro_hygiene)]
 #![allow(dead_code)]
 
-use cuda_core::{CudaStream, LaunchConfig};
+use cuda_core::CudaStream;
+use cuda_core::simt::LaunchConfig;
 use cuda_macros::{cuda_module, kernel};
 
 #[derive(Clone, Copy)]

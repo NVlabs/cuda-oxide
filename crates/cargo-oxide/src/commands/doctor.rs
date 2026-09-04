@@ -4,6 +4,7 @@
  */
 
 use crate::backend;
+use crate::backend_source::{self, DependencySource, short_rev};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -15,9 +16,9 @@ use super::*;
 
 /// Parsed contents of a `rust-toolchain.toml` pin.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RustToolchainPin {
-    pub(super) channel: String,
-    pub(super) components: Vec<String>,
+pub(crate) struct RustToolchainPin {
+    pub(crate) channel: String,
+    pub(crate) components: Vec<String>,
 }
 
 /// Components that doctor treats as hard requirements for the cuda-oxide
@@ -45,7 +46,7 @@ pub(super) fn doctor_verified_components(pin: &RustToolchainPin) -> Vec<String> 
 }
 
 /// Parse a `rust-toolchain.toml` document for channel and components.
-pub(super) fn parse_rust_toolchain_toml(contents: &str) -> Result<RustToolchainPin, String> {
+pub(crate) fn parse_rust_toolchain_toml(contents: &str) -> Result<RustToolchainPin, String> {
     let value: toml::Value =
         toml::from_str(contents).map_err(|error| format!("invalid TOML: {error}"))?;
     let toolchain = value
@@ -91,7 +92,7 @@ pub(super) fn parse_rust_toolchain_toml(contents: &str) -> Result<RustToolchainP
 ///   (verified against rustup 1.29.0);
 /// - 1.28.x: the bare name on the first line with the reason on a second
 ///   `active because: ...` line.
-pub(super) fn active_toolchain_matches_channel(active_toolchain: &str, channel: &str) -> bool {
+pub(crate) fn active_toolchain_matches_channel(active_toolchain: &str, channel: &str) -> bool {
     let active = active_toolchain
         .lines()
         .next()
@@ -239,6 +240,107 @@ fn doctor_report_toolchain_pin(ctx: &Context, ok: &mut bool) {
     }
 }
 
+/// Reports whether the cached backend came from the commit this project's
+/// cuda-oxide dependency resolves to.
+///
+/// Resolves offline: doctor must not fetch, and the dependency is already
+/// checked out once the project has resolved its lockfile. Informational,
+/// never fatal: a mismatch heals itself on the next build.
+fn doctor_report_backend_source(ctx: &Context) {
+    print!("Backend source (cuda-oxide commit)... ");
+    // Both pins sit above the dependency in backend discovery, so the
+    // dependency's commit plays no part while either is set.
+    if std::env::var_os("CUDA_OXIDE_BACKEND").is_some() || ctx.config.backend.is_some() {
+        println!(
+            "- backend pinned by CUDA_OXIDE_BACKEND or `.cargo/cuda-oxide.toml`; the \
+             dependency's commit is not consulted"
+        );
+        return;
+    }
+    // Read-only resolution needs a lockfile to read; a fresh project has none
+    // until its first build, which is the normal state, not a fault.
+    if !ctx.workspace_root.join("Cargo.lock").is_file() {
+        println!(
+            "- no Cargo.lock yet; run `cargo oxide build` once, then doctor can compare the \
+             cache with the dependency"
+        );
+        return;
+    }
+    let check = backend_source_check(
+        backend_source::resolve_dependency_source(&ctx.workspace_root, true),
+        backend::cached_backend_source_rev(),
+    );
+    println!("{}", check.headline);
+    for line in check.details {
+        println!("  {line}");
+    }
+}
+
+/// The backend-source verdict, from the resolved dependency and the commit
+/// recorded in the shared cache. Reuses the config check's struct so doctor
+/// prints it the same way; pure, so every branch is testable.
+pub(super) fn backend_source_check(
+    source: Result<Option<DependencySource>, String>,
+    recorded: Option<String>,
+) -> OxideConfigCheck {
+    let check = |headline: String, details: Vec<String>| OxideConfigCheck {
+        headline,
+        details,
+        failed: false,
+    };
+    let source = match source {
+        Ok(source) => source,
+        Err(error) => {
+            return check(
+                format!("- could not resolve the cuda-oxide dependency offline ({error})"),
+                Vec::new(),
+            );
+        }
+    };
+    let Some(source) = source else {
+        return check(
+            "- no cuda-device/cuda-host dependency; the cache follows cuda-oxide main".to_string(),
+            Vec::new(),
+        );
+    };
+    let Some(expected) = source.rev() else {
+        return check(
+            format!("✓ {} builds in place", source.describe()),
+            Vec::new(),
+        );
+    };
+    match recorded {
+        Some(recorded) if recorded == expected => check(
+            format!(
+                "✓ cache built from {}, matching this project's dependency",
+                short_rev(expected)
+            ),
+            Vec::new(),
+        ),
+        Some(recorded) => check(
+            format!(
+                "⚠ cache built from {} but this project depends on {}",
+                short_rev(&recorded),
+                short_rev(expected)
+            ),
+            vec![
+                "The next `cargo oxide build` or `run` rebuilds the cache from the dependency."
+                    .to_string(),
+            ],
+        ),
+        None => check(
+            format!(
+                "⚠ cache records no commit (built by an older cargo-oxide); this project depends on {}",
+                short_rev(expected)
+            ),
+            vec![
+                "The next `cargo oxide build` or `run` rebuilds the cache and records it."
+                    .to_string(),
+            ],
+        ),
+    }
+}
+
 /// Validate the development environment.
 ///
 /// Checks for: Rust nightly toolchain, `rust-toolchain.toml`, the codegen
@@ -315,6 +417,14 @@ pub fn doctor(ctx: &Context) {
             }
         },
         None => println!("- cache directory unknown (set CARGO_HOME or HOME)"),
+    }
+
+    // 3c. Backend source. Outside the repository the backend is built from
+    // the commit Cargo resolved for the project's cuda-oxide dependency, and
+    // the cache records which commit it came from. Informational: a mismatch
+    // heals itself on the next build.
+    if !ctx.is_workspace {
+        doctor_report_backend_source(ctx);
     }
 
     // 4. CUDA headers (cuda.h). The host `cuda-bindings` crate cannot build
@@ -650,10 +760,10 @@ pub fn doctor(ctx: &Context) {
 /// CUDA toolkit install root for doctor's `cuda.h` probe: the first set
 /// variable among `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, else `/usr/local/cuda`.
 ///
-/// Kept in lockstep BY HAND with `crates/cuda-bindings/build.rs`
-/// (`cuda_toolkit_dir` / `find_cuda_include_dir`): doctor cannot import that
-/// probe because build.rs logic is not a library. If the build.rs discovery
-/// changes, mirror it here.
+/// Mirrors BY HAND the toolkit probe in the shared `cuda-bindings` build
+/// script, which lives in NVlabs/cutile-rs (`cuda-bindings/build.rs`): doctor
+/// cannot import it because build-script logic is not a library. If that
+/// discovery changes, mirror it here.
 pub(super) fn cuda_toolkit_root(mut get_env: impl FnMut(&str) -> Option<String>) -> String {
     ["CUDA_TOOLKIT_PATH", "CUDA_HOME"]
         .iter()
@@ -670,10 +780,11 @@ pub(super) fn cuda_toolkit_root(mut get_env: impl FnMut(&str) -> Option<String>)
 /// `CUDA_TOOLKIT_TARGET_DIR` variable, like nvcc's `-target-dir`) replaces
 /// the table with that single directory.
 ///
-/// Kept in lockstep BY HAND with the selection table in
-/// `crates/cuda-bindings/toolkit_target.rs` (`resolve_toolkit_target_dirs`):
-/// doctor cannot import it because build-script sources are not a library.
-/// If the selection there changes, mirror it here.
+/// Mirrors BY HAND the selection table in the shared `cuda-bindings` build
+/// sources in NVlabs/cutile-rs (`cuda-bindings/toolkit_target.rs`,
+/// `resolve_toolkit_target_dirs`): doctor cannot import it because
+/// build-script sources are not a library. If the selection there changes,
+/// mirror it here.
 ///
 /// `arch` and `os` are the host CPU architecture and OS; the caller passes
 /// `std::env::consts::ARCH` / `std::env::consts::OS` (doctor runs at

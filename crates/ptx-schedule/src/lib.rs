@@ -863,27 +863,32 @@ L_loop:
     #[test]
     fn grid_dependency_instructions_are_sites() {
         let analysis = analyze_ptx(GRID_DEPENDENCY).unwrap();
-        let sites: Vec<_> = analysis
+        let grid_dependency_sites: Vec<_> = analysis
             .sites()
             .iter()
             .filter(|site| site.kind == SiteKind::GridDependency)
             .collect();
 
         assert_eq!(analysis.sites().len(), 3, "{:?}", analysis.sites());
-        assert_eq!(sites.len(), 2, "{:?}", sites);
-        assert_eq!(sites[0].head, "griddepcontrol.launch_dependents");
-        assert_eq!(sites[1].head, "griddepcontrol.wait");
+        assert_eq!(
+            grid_dependency_sites.len(),
+            2,
+            "{:?}",
+            grid_dependency_sites
+        );
+        assert_eq!(
+            grid_dependency_sites[0].head,
+            "griddepcontrol.launch_dependents"
+        );
+        assert_eq!(grid_dependency_sites[1].head, "griddepcontrol.wait");
 
-        let control = analysis
+        let fence = analysis
             .sites()
             .iter()
-            .find(|site| site.head.starts_with("fence."))
-            .expect("the control fence must still be a site");
-        assert_eq!(
-            control.kind,
-            SiteKind::Fence,
-            "a neighbouring kind must keep its kind: {control:?}"
-        );
+            .find(|site| site.head == "fence.acq_rel.gpu")
+            .expect("fence control should remain a schedule site");
+
+        assert_eq!(fence.kind, SiteKind::Fence);
     }
 
     #[test]

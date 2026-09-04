@@ -91,7 +91,8 @@ mod kernels {
 // =============================================================================
 
 fn main() {
-    use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+    use cuda_core::simt::LaunchConfig;
+    use cuda_core::{CudaContext, DeviceBuffer};
 
     println!("=== redux.sync integer family (sm_80+) ===\n");
 

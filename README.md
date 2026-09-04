@@ -31,7 +31,8 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) if you're interested in contributi
 
 ```rust
 use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 
 // Device: generic kernel that applies any function to each element.
 // F can be a closure with captures — rustc monomorphizes it to a concrete type.
@@ -94,7 +95,7 @@ lazy `DeviceOperation`, and execution happens when you call `.sync()` or
 `.await`.
 
 ```rust
-use cuda_async::device_operation::DeviceOperation;
+use cuda_async::simt::device_operation::DeviceOperation;
 
 // Assuming `module`, `input`, and `output` come from the cuda-async setup:
 let factor = 2.5f32;
@@ -111,7 +112,7 @@ launch.sync()?;
 // or: .await?;
 ```
 
-See the `async_mlp` example and `crates/cuda-async/README.md` for the full async setup.
+See the `async_mlp` example for the full async setup. The host runtime (`cuda-core`, `cuda-async`) is shared with cutile-rs and published from [NVlabs/cutile-rs](https://github.com/NVlabs/cutile-rs); the cuda-oxide SIMT surface lives under its `simt` modules.
 
 ```bash
 # Build and run an example
@@ -150,7 +151,7 @@ cargo oxide update
 
 - **cargo-oxide** — cargo subcommand that drives the build pipeline (`cargo oxide run`, `build`, `sanitize`, `debug`, etc.)
 - **Rust nightly** with `rust-src` and `rustc-dev` and `llvm-tools` components (pinned in `rust-toolchain.toml`)
-- **CUDA Toolkit** (12.x+)
+- **CUDA Toolkit** (13.0+, including the cuRAND headers; `libcurand-dev` on Ubuntu). The shared `cuda-bindings` crate loads `libcuda` at run time and needs a CUDA 13.x driver (R580+)
 - **Clang + libclang dev headers** (`clang-21` / `libclang-common-21-dev`) — needed by `bindgen` when building the host `cuda-bindings` crate
 - **Linux** (tested on Ubuntu 24.04)
 
@@ -295,9 +296,9 @@ cargo oxide run gemm_sol_final
 | `cuda-intrinsics`   | Generated low-level CUDA intrinsic declarations                           |
 | `cuda-host`         | Typed module loading, launch helpers, LTOIR loader                        |
 | `cuda-macros`       | Proc macros (`#[cuda_module]`, `#[kernel]`, `gpu_printf!`)                |
-| `cuda-bindings`     | Raw `bindgen` FFI bindings to `cuda.h`                                    |
-| `cuda-core`         | Safe RAII wrappers (`CudaContext`, `CudaStream`, `DeviceBuffer<T>`, ...)  |
-| `cuda-async`        | Async execution layer (`DeviceOperation`, `DeviceFuture`, `DeviceBox<T>`) |
+| `cuda-bindings`     | Raw `bindgen` FFI bindings to `cuda.h` (shared with cutile-rs)             |
+| `cuda-core`         | Safe RAII wrappers (`CudaContext`, `DeviceBuffer<T>`, ...); SIMT API under `cuda_core::simt` |
+| `cuda-async`        | Async layer (`DeviceOperation`, `DeviceBox<T>`, ...); SIMT API under `cuda_async::simt` |
 | `libnvvm-sys`       | `dlopen` bindings to libNVVM (used by `cuda-host::ltoir`)                 |
 | `cuda-target-spec`  | Shared CUDA target parsing and recorded LLVM PTX-floor policy             |
 | `nvjitlink-sys`     | `dlopen` bindings to nvJitLink (used by `cuda-host::ltoir`)               |

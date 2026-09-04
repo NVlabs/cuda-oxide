@@ -12,7 +12,8 @@
 
 use std::sync::Arc;
 
-use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use cuda_device::atomic::{AtomicOrdering, DeviceAtomicF16, DeviceAtomicF32};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
@@ -177,7 +178,7 @@ fn reset<T>(
     stream: &CudaStream,
 ) -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
-        cuda_core::memory::memset_d8_async(
+        cuda_core::simt::memory::memset_d8_async(
             buffer.cu_deviceptr(),
             0,
             buffer.num_bytes(),

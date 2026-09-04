@@ -48,8 +48,10 @@ pub struct Context {
 ///   `crates/rustc-codegen-cuda` directory). Examples are resolved from the
 ///   workspace examples directory.
 /// - **Standalone mode**: CWD has a `Cargo.toml` but is not inside the
-///   workspace. The backend is located via cache or auto-fetch. Commands
-///   like `run` operate on the current directory directly.
+///   workspace. The backend is built from the commit the project's cuda-oxide
+///   dependency resolves to, or taken from the shared cache when that already
+///   holds it (see `backend::standalone_backend`). Commands like `run`
+///   operate on the current directory directly.
 pub fn resolve_context() -> Context {
     if let Some(workspace_root) = backend::find_workspace_root() {
         let codegen_crate = workspace_root.join("crates/rustc-codegen-cuda");

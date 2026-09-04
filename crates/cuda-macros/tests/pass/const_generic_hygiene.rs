@@ -3,7 +3,8 @@
 
 #![allow(dead_code, non_upper_case_globals)]
 
-use cuda_core::{CudaModule, CudaStream, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaModule, CudaStream};
 use cuda_macros::{cuda_launch, kernel};
 use std::sync::Arc;
 

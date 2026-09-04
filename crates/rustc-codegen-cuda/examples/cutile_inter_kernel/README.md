@@ -44,7 +44,7 @@ custom threshold/scale post-process to each element.
 ## Requirements
 
 - cuda-oxide from this repository.
-- Network access the first time Cargo fetches `https://github.com/NVlabs/cutile-rs.git`.
+- Network access the first time Cargo fetches the `cutile` crates from crates.io.
 - CUDA Toolkit 13.1+ with `nvcc` and `tileiras` available. This example
   defaults `CUDA_TOOLKIT_PATH` to `/usr/local/cuda` through its local Cargo
   config for the cutile-rs CUDA bindings build; set `CUDA_TOOLKIT_PATH`

@@ -34,7 +34,8 @@
 //!
 //! Exits 0 on PASS, 1 on FAIL.
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::{cuda_module, ltoir};
 

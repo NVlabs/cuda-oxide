@@ -8,7 +8,8 @@ keep `#[kernel]` on the actual GPU entry points, then load the embedded device
 artifact as a typed Rust value.
 
 ```rust
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 
@@ -198,7 +199,7 @@ Enable the `async` feature to generate async launch methods. They use the same
 scalar mapping, but take no stream argument:
 
 ```rust
-use cuda_async::device_operation::DeviceOperation;
+use cuda_async::simt::device_operation::DeviceOperation;
 
 let module = kernels::load_async(0)?;
 let launch = unsafe {
@@ -214,7 +215,7 @@ launch.sync()?;
 ```
 
 For async launches, device-slice parameters accept either `DeviceBuffer<T>` or
-`cuda_async::device_box::DeviceBox<[T]>`. The mutable
+`cuda_async::simt::device_box::DeviceBox<[T]>`. The mutable
 `AsyncKernelLaunchBuilder` collects arguments and options. Finalizing it with a
 raw configuration is unsafe and produces an immutable `AsyncKernelLaunch<'_>`;
 geometry cannot be changed after that point. Rust keeps referenced buffers and
@@ -353,5 +354,5 @@ specific 8x8 tile arrangements:
 
 - [cuda-device](../cuda-device/) -- device-side intrinsics
 - [cuda-macros](../cuda-macros/) -- proc-macro implementations
-- [cuda-core](../cuda-core/) -- CUDA driver API, `DeviceBuffer`, `LaunchConfig`
-- [cuda-async](../cuda-async/) -- async scheduling
+- [cuda-core](https://github.com/NVlabs/cutile-rs/tree/main/cuda-core) -- shared CUDA driver API crate; `DeviceBuffer`, `simt::LaunchConfig`
+- [cuda-async](https://github.com/NVlabs/cutile-rs/tree/main/cuda-async) -- shared async crate; the SIMT model lives under `cuda_async::simt`

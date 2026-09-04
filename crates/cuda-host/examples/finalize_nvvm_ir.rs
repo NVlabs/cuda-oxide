@@ -7,7 +7,7 @@
 //! supported by CUDA device 0. For example:
 //!
 //! ```text
-//! CUDA_TOOLKIT_PATH=/usr/local/cuda-12.8 cargo run -p cuda-host \
+//! CUDA_TOOLKIT_PATH=/usr/local/cuda-13.0 cargo run -p cuda-host \
 //!   --example finalize_nvvm_ir -- /tmp/example-sm86.cubin sm_86
 //! ```
 

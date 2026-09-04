@@ -34,7 +34,6 @@
 mod common;
 mod cuda_module;
 mod device;
-mod device_copy;
 mod kernel;
 mod launch;
 mod launch_attrs;
@@ -50,7 +49,6 @@ use crate::common::track_codegen_environment;
 use crate::launch::{
     CudaLaunchAsyncInput, CudaLaunchInput, expand_cuda_launch, expand_cuda_launch_async,
 };
-use quote::quote;
 use syn::parse_macro_input;
 
 /// GPU printf macro for formatted output from GPU kernels.
@@ -168,19 +166,6 @@ pub fn ptx_asm(input: TokenStream) -> TokenStream {
     ptx_asm::ptx_asm_impl(input).into()
 }
 
-/// Derive `cuda_core::DeviceCopy` for a type whose fields are all themselves
-/// `DeviceCopy`.
-///
-/// Re-exported from `cuda_core` next to the `DeviceCopy` trait so that
-/// `use cuda_core::DeviceCopy;` brings both the trait and this derive into scope
-/// (the serde `Serialize` trait+derive pattern).
-#[proc_macro_derive(DeviceCopy)]
-pub fn device_copy(input: TokenStream) -> TokenStream {
-    let ast = syn::parse(input).unwrap();
-    let code = device_copy::impl_device_copy(&ast, quote!(::cuda_core::DeviceCopy));
-    code.into()
-}
-
 /// Generates a typed host-side loader and launch surface for the kernels in an
 /// inline module.
 ///
@@ -261,7 +246,7 @@ pub fn device_copy(input: TokenStream) -> TokenStream {
 ///
 /// # Raw launch safety
 ///
-/// A raw [`LaunchConfig`](https://docs.rs/cuda-core/latest/cuda_core/struct.LaunchConfig.html)
+/// A raw [`LaunchConfig`](https://docs.rs/cuda-core/latest/cuda_core/simt/launch/struct.LaunchConfig.html)
 /// is not tied to the kernel's indexing model. The generated raw synchronous,
 /// borrowed-async, and owned-async methods are therefore `unsafe`: callers must
 /// prove that the chosen dimensions and resources satisfy the kernel. Add
@@ -547,7 +532,7 @@ pub fn launch_bounds(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `#[cuda_module]` uses this opt-in declaration to generate a prepared,
 /// kernel-branded launch path. A prepared launch can be reused without
 /// repeating CUDA capability and function-resource queries, while raw
-/// [`LaunchConfig`](https://docs.rs/cuda-core/latest/cuda_core/struct.LaunchConfig.html)
+/// [`LaunchConfig`](https://docs.rs/cuda-core/latest/cuda_core/simt/launch/struct.LaunchConfig.html)
 /// remains available through an explicitly unsafe generated method.
 ///
 /// ```ignore
@@ -1078,7 +1063,7 @@ pub fn cuda_launch(input: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// use cuda_host::cuda_launch_async;
-/// use cuda_core::LaunchConfig;
+/// use cuda_core::simt::LaunchConfig;
 ///
 /// // SAFETY: ABI, lifetimes, geometry, and resources match vecadd.
 /// let op = unsafe {

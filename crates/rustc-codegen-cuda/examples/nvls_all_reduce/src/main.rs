@@ -24,9 +24,10 @@
 //! example needs a CUDA 12.1+ toolkit: cuda-core compiles out the
 //! multicast wrappers on older toolkits (see its build script probe).
 
-use cuda_core::error::IntoResult;
-use cuda_core::vmm;
-use cuda_core::{CudaContext, LaunchConfig};
+use cuda_core::CudaContext;
+use cuda_core::IntoResult;
+use cuda_core::simt::LaunchConfig;
+use cuda_core::simt::vmm;
 use cuda_device::{cuda_module, kernel, ptx_asm};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
@@ -69,7 +70,7 @@ fn input_value(gpu: usize, i: usize) -> f32 {
     ((gpu + 1) + (i % 1024)) as f32
 }
 
-fn gpu_count() -> Result<usize, cuda_core::error::DriverError> {
+fn gpu_count() -> Result<usize, cuda_core::DriverError> {
     unsafe { cuda_core::init(0)? };
     let mut count = MaybeUninit::uninit();
     unsafe {
@@ -148,7 +149,7 @@ fn main() {
         let input: Vec<f32> = (0..ELEMS).map(|i| input_value(g, i)).collect();
         let stream = ctx.default_stream();
         unsafe {
-            cuda_core::memory::memcpy_htod_async(
+            cuda_core::simt::memory::memcpy_htod_async(
                 views[g].0.base(),
                 input.as_ptr(),
                 bytes,
@@ -196,7 +197,7 @@ fn main() {
         let mut result = vec![0f32; ELEMS];
         let stream = ctx.default_stream();
         unsafe {
-            cuda_core::memory::memcpy_dtoh_async(
+            cuda_core::simt::memory::memcpy_dtoh_async(
                 result.as_mut_ptr(),
                 views[g].0.base(),
                 bytes,

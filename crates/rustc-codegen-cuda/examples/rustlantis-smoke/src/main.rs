@@ -34,7 +34,8 @@
 //!   cargo oxide run rustlantis-smoke
 
 use core::intrinsics::mir::*;
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 use fuzzer::{dump_var, trace_finish, trace_reset};

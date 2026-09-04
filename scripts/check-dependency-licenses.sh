@@ -262,7 +262,7 @@ echo "OK: ${CSV} records all $(printf '%s\n' "${required}" | grep -c .) declared
 # [workspace], so neither `cargo deny check` nor the check above resolves any
 # of them -- both stop at the root workspace boundary.  Most examples declare
 # only path dependencies on first-party crates and so bring nothing new, but a
-# few link third-party code (tokio, rayon, libm, the cutile-rs git dependency),
+# few link third-party code (tokio, rayon, libm, the shared cutile-rs crates),
 # and that code is compiled by `cargo oxide run <example>` and by
 # scripts/smoketest.sh without any license gate seeing it.
 #
@@ -276,24 +276,15 @@ echo "OK: ${CSV} records all $(printf '%s\n' "${required}" | grep -c .) declared
 # A package counts as covered when it is in the root graph, has a CSV row, or
 # carries no `source` field.  That last case is a path dependency, which is
 # first-party by construction.  Name matching is deliberately avoided -- some
-# first-party crates are pulled by git rather than by path (cuda-core and
-# friends in cutile_inter_kernel), so a heuristic over names would misfile
-# them.
+# first-party crates are pulled from crates.io rather than by path (cuda-core
+# and friends from cutile-rs), so a heuristic over names would misfile them.
 # Examples whose third-party dependencies are deliberately out of inventory
-# scope.  cutile_inter_kernel links cutile-rs by git, which resolves a further
-# ~60 crates (wasm-bindgen, wit-bindgen, wasmparser, windows-targets) that exist
-# in this tree only to build one interop example.
-#
-# Be clear about what this withholds: the same example is also on
-# check-example-license-policy.sh's POLICY_EXEMPT_EXAMPLES, so those crates get
-# neither a CSV row nor a `cargo deny check`.  Every other example workspace is
-# covered by both since #664 and #681.  This one is the single hole, and it is
-# open deliberately -- see that script for the two blockers.
-#
-# Tracked in #953.  (This comment used to cite #663, which is closed; the
-# general gap it tracked was fixed, but the decisions keeping this example
-# exempt were not, so they moved to their own issue.)  Delete the entry to
-# require the rows.
+# scope.  cutile_inter_kernel pulls the cutile compiler stack from cutile-rs,
+# which resolves a further ~60 crates (wasm-bindgen, wit-bindgen, wasmparser,
+# windows-targets) that exist in this tree only to build one interop example.
+# Those crates still get a `cargo deny check` from
+# check-example-license-policy.sh (the example is no longer exempt there);
+# only the CSV rows are withheld.  Delete the entry to require the rows.
 #
 # Every name here is checked against the examples on disk below, so a typo or a
 # rename fails the run instead of quietly exempting nothing -- or everything.

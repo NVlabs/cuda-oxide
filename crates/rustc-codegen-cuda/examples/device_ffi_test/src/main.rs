@@ -511,7 +511,8 @@ fn build_pipeline() -> Result<std::path::PathBuf, String> {
 // Uses cuda-driver to load the merged cubin, launch kernels, and verify results.
 // =============================================================================
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use std::sync::Arc;
 
 /// Main entry point - builds the pipeline and runs GPU tests.

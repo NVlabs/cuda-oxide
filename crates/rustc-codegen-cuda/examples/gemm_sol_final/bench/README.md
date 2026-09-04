@@ -30,7 +30,7 @@ the accepted final measurements are recorded in `../README.md`.
 ## Requirements
 
 - **GPU**: Datacenter Blackwell. Verified on the current B300 (sm_103a).
-- **CUDA Toolkit**: 12.8+ at build time, plus a compatible NVIDIA driver at runtime
+- **CUDA Toolkit**: 13.0+ at build time, plus a compatible NVIDIA driver at runtime
 - **Python**: 3.12+ (for Python benchmarks only)
 
 ## Setup

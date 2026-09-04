@@ -140,7 +140,7 @@ Before any async operation can run, you initialize the thread-local device
 context:
 
 ```rust
-use cuda_async::device_context::init_device_contexts;
+use cuda_async::simt::device_context::init_device_contexts;
 
 init_device_contexts(0, 1)?;
 ```

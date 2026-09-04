@@ -19,18 +19,21 @@ impl FakeModule {
 }
 
 mod cuda_async {
-    pub mod launch {
-        use cuda_core::{CudaFunction, LaunchConfig};
-        use std::sync::Arc;
+    pub mod simt {
+        pub mod launch {
+            use cuda_core::CudaFunction;
+            use cuda_core::simt::LaunchConfig;
+            use std::sync::Arc;
 
-        pub struct AsyncKernelLaunchBuilder;
+            pub struct AsyncKernelLaunchBuilder;
 
-        impl AsyncKernelLaunchBuilder {
-            pub fn new(_function: Arc<CudaFunction>) -> Self {
-                Self
+            impl AsyncKernelLaunchBuilder {
+                pub fn new(_function: Arc<CudaFunction>) -> Self {
+                    Self
+                }
+
+                pub unsafe fn finalize_unchecked(self, _config: LaunchConfig) {}
             }
-
-            pub unsafe fn finalize_unchecked(self, _config: LaunchConfig) {}
         }
     }
 }
@@ -39,7 +42,7 @@ fn launch_without_unsafe(module: &FakeModule) {
     let _ = cuda_launch_async! {
         kernel: raw,
         module: module,
-        config: cuda_core::LaunchConfig {
+        config: cuda_core::simt::LaunchConfig {
             grid_dim: (1, 2, 1),
             block_dim: (64, 1, 1),
             shared_mem_bytes: 0,

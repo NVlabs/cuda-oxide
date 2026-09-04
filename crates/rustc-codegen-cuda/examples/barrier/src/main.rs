@@ -15,7 +15,8 @@
 //! Build and run with:
 //!   cargo oxide run barrier
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::barrier::{
     Barrier, mbarrier_arrive, mbarrier_arrive_no_complete, mbarrier_init, mbarrier_inval,
     mbarrier_test_wait, mbarrier_wait,
