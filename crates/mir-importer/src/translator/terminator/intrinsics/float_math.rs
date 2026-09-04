@@ -558,6 +558,16 @@ pub fn emit_sincos(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let (sin_callee, cos_callee) = if is_f64 {
         (
             rust_intrinsics::CALLEE_SIN_F64,
@@ -623,37 +633,18 @@ pub fn emit_sincos(
     tuple_op.insert_after(ctx, cos_op);
     let tuple_val = tuple_op.deref(ctx).get_result(0);
 
-    // Store through the projected place, not the bare local: the tuple value
-    // above is typed from the projection, so a `(*p) = sincos(x)`-style
-    // destination written to the local's slot would be a type-mismatched
-    // store aimed at the wrong address.
-    let goto_prev = helpers::store_result_to_place(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        body,
-        destination,
+        prepared_destination,
         tuple_val,
-        value_map,
+        target,
         block_ptr,
         tuple_op,
-        loc.clone(),
-    )?;
-
-    if let Some(target_idx) = target {
-        Ok(helpers::emit_goto(
-            ctx,
-            *target_idx,
-            goto_prev,
-            block_map,
-            loc,
-        ))
-    } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(
-                "libm::sincos call without target not supported".to_string()
-            )
-        )
-    }
+        value_map,
+        block_map,
+        loc,
+        "libm::sincos call without target not supported",
+    )
 }
 
 /// Emit a placeholder `mir.call` for a rustc float math intrinsic.

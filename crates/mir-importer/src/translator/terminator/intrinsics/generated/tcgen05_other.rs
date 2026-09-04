@@ -726,7 +726,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0356");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -770,9 +779,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -813,7 +822,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0355");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -857,9 +875,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

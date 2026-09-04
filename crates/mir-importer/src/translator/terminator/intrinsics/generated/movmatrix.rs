@@ -49,11 +49,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MovmatrixTransB16Op::build(ctx, arg0);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0305");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

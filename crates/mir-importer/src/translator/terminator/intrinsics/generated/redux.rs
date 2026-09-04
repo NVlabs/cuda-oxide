@@ -63,11 +63,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncAddOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i0017");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -102,11 +111,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncAndOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i0022");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -141,11 +159,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncFmaxAbsOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i1009");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -180,11 +207,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncFmaxAbsNanOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i1010");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -219,11 +255,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncFmaxOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i1007");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -258,11 +303,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncMaxOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i0021");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -297,11 +351,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncFmaxNanOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i1008");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -336,11 +399,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncUmaxOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i0020");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -375,11 +447,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncFminAbsOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i1005");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -414,11 +495,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncFminAbsNanOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i1006");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -453,11 +543,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncFminOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i1003");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -492,11 +591,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncMinOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i0019");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -531,11 +639,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncFminNanOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i1004");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -570,11 +687,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncUminOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i0018");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -609,11 +735,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncOrOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i0023");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -648,11 +783,20 @@ pub(super) fn try_dispatch(
             let reduction = ReduxSyncXorOp::build(ctx, member_mask, value);
             reduction.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, reduction, "v1:i0024");
-            helpers::insert_op(ctx, reduction, block_ptr, last_op);
-            let result = reduction.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);
+            let result = reduction.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

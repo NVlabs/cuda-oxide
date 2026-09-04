@@ -104,12 +104,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0219");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -182,12 +191,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0223");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -260,12 +278,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0220");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -338,12 +365,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0224");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -416,12 +452,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0221");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -494,12 +539,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0222");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -572,12 +626,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0226");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -650,12 +713,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0225");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -728,12 +800,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0163");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -806,12 +887,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0167");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -884,12 +974,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0164");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -962,12 +1061,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0168");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1040,12 +1148,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0165");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1118,12 +1235,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0166");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1196,12 +1322,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0170");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1274,12 +1409,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0169");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1352,12 +1496,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0211");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1430,12 +1583,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0215");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1508,12 +1670,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0212");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1586,12 +1757,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0216");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1664,12 +1844,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0187");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1742,12 +1931,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0191");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1820,12 +2018,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0188");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1898,12 +2105,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0192");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1976,12 +2192,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0213");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2054,12 +2279,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0214");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2132,12 +2366,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0218");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2210,12 +2453,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0217");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2288,12 +2540,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0189");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2366,12 +2627,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0190");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2444,12 +2714,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0194");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2522,12 +2801,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0193");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2600,12 +2888,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0203");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2678,12 +2975,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0207");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2756,12 +3062,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0204");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2834,12 +3149,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0208");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2912,12 +3236,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0205");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2990,12 +3323,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0206");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3068,12 +3410,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0210");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3146,12 +3497,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0209");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3228,12 +3588,21 @@ pub(super) fn try_dispatch(
             );
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i1021");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3310,12 +3679,21 @@ pub(super) fn try_dispatch(
             );
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i1020");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3392,12 +3770,21 @@ pub(super) fn try_dispatch(
             );
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i1022");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3470,12 +3857,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i1019");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3548,12 +3944,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i1024");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3626,12 +4031,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i1023");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3704,12 +4118,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i1025");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3782,12 +4205,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0171");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3860,12 +4292,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0175");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3938,12 +4379,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0172");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4016,12 +4466,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0176");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4094,12 +4553,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0173");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4172,12 +4640,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0174");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4250,12 +4727,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0178");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4328,12 +4814,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0177");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4406,12 +4901,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0525");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4484,12 +4988,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0526");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4562,12 +5075,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0527");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4640,12 +5162,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0528");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4718,12 +5249,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0529");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4796,12 +5336,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0530");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4874,12 +5423,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0531");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4952,12 +5510,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0532");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5030,12 +5597,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0533");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5108,12 +5684,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0534");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5186,12 +5771,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0535");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5264,12 +5858,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0536");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5342,12 +5945,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0537");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5420,12 +6032,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0538");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5498,12 +6119,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0539");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5576,12 +6206,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0540");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5654,12 +6293,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0541");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5732,12 +6380,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0542");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5810,12 +6467,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0543");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5888,12 +6554,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0544");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5966,12 +6641,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0545");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6044,12 +6728,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0546");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6122,12 +6815,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0547");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6200,12 +6902,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0548");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6278,12 +6989,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0549");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6356,12 +7076,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0227");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6434,12 +7163,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0228");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6512,12 +7250,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0229");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6590,12 +7337,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0230");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6668,12 +7424,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0231");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6746,12 +7511,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0232");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6824,12 +7598,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0233");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6902,12 +7685,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0234");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6980,12 +7772,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0235");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7058,12 +7859,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0236");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7136,12 +7946,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0237");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7214,12 +8033,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0238");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7292,12 +8120,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0239");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7370,12 +8207,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0240");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7448,12 +8294,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0241");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7526,12 +8381,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0242");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7604,12 +8468,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0243");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7682,12 +8555,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0244");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7760,12 +8642,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0245");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7838,12 +8729,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0246");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7916,12 +8816,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0247");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7994,12 +8903,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0248");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8072,12 +8990,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0249");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8150,12 +9077,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0250");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8228,12 +9164,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0251");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8306,12 +9251,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0195");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8384,12 +9338,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0199");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8462,12 +9425,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0196");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8540,12 +9512,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0200");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8618,12 +9599,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0179");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8696,12 +9686,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0183");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8774,12 +9773,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0180");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8852,12 +9860,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0184");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -8930,12 +9947,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0197");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -9008,12 +10034,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0198");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -9086,12 +10121,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0202");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -9164,12 +10208,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZeroOrOne);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0201");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -9242,12 +10295,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0181");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -9320,12 +10382,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0182");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -9398,12 +10469,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0186");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -9476,12 +10556,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0185");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -9558,12 +10647,21 @@ pub(super) fn try_dispatch(
             );
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i1018");
-            helpers::insert_op(ctx, mma, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

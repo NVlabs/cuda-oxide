@@ -60,11 +60,20 @@ pub(super) fn try_dispatch(
             let warp_match = MatchAllSyncI64Op::build(ctx, member_mask, value);
             warp_match.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, warp_match, "v1:i0048");
-            helpers::insert_op(ctx, warp_match, block_ptr, last_op);
-            let result = warp_match.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, warp_match, block_ptr, prepared_last_op);
+            let result = warp_match.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -99,11 +108,20 @@ pub(super) fn try_dispatch(
             let warp_match = MatchAllSyncI32Op::build(ctx, member_mask, value);
             warp_match.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, warp_match, "v1:i0047");
-            helpers::insert_op(ctx, warp_match, block_ptr, last_op);
-            let result = warp_match.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, warp_match, block_ptr, prepared_last_op);
+            let result = warp_match.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -138,11 +156,20 @@ pub(super) fn try_dispatch(
             let warp_match = MatchAnySyncI64Op::build(ctx, member_mask, value);
             warp_match.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, warp_match, "v1:i0046");
-            helpers::insert_op(ctx, warp_match, block_ptr, last_op);
-            let result = warp_match.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, warp_match, block_ptr, prepared_last_op);
+            let result = warp_match.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -177,11 +204,20 @@ pub(super) fn try_dispatch(
             let warp_match = MatchAnySyncI32Op::build(ctx, member_mask, value);
             warp_match.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, warp_match, "v1:i0045");
-            helpers::insert_op(ctx, warp_match, block_ptr, last_op);
-            let result = warp_match.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, warp_match, block_ptr, prepared_last_op);
+            let result = warp_match.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

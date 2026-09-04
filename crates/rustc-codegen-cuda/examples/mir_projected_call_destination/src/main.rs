@@ -13,14 +13,13 @@
     clippy::unit_arg
 )]
 
-//! An intrinsic call writing through a projected destination.
+//! Calls writing through prepared projected destinations.
 //!
-//! rustc lowers an ordinary call whose destination carries a projection into a
-//! call to a temporary followed by a store, so the projection never reaches
-//! code generation. An intrinsic keeps its destination, which leaves three
-//! shapes to translate: a dereferenced pointer, a struct field, and an array
-//! element. Each is written here in custom MIR, since surface Rust cannot
-//! produce them.
+//! rustc normally lowers an ordinary surface-Rust call whose destination
+//! carries a projection into a temporary followed by a store, so chained call
+//! destinations rarely survive to code generation. Custom MIR keeps shapes
+//! such as `RET.1[i]`, `(*ptr).field`, and `RET[i].field` intact so the importer
+//! has to translate the actual destination chain.
 //!
 //! Three translation paths build or store the call result themselves and so
 //! have store sites of their own, exercised separately: a float-math
@@ -34,9 +33,13 @@
 //! the bodies are `inline(never)` and the sincos pointer arrives as an
 //! opaque argument.
 //!
-//! Each case runs on the device and on the host from the same body, and the
-//! two results must agree. A result that landed at the wrong address shows up
-//! as a difference, since the host reads what the device wrote back.
+//! The ordinary-call cases run on the device and on the host from the same
+//! bodies and must agree. The generated-SREG case is device-only because the
+//! host implementation intentionally traps; its observed value is checked
+//! against the launch configuration. The `through_mutating_index` case is
+//! deliberately adversarial: its callee mutates the runtime index after MIR
+//! has fixed the destination, so #1164 requires the store to keep using the
+//! pre-call address.
 //!
 //! Build and run with:
 //!   cargo oxide run mir_projected_call_destination
@@ -96,6 +99,39 @@ fn through_index(mut _1: usize) -> [i32; 3] {
         {
             RET = [11_i32, 22_i32, 33_i32];
             Call(RET[_1] = core::intrinsics::bswap(451059808_i32), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            Return()
+        }
+    }
+}
+
+/// Callee for the destination-ordering regression.
+///
+/// The call mutates the runtime index local. MIR semantics require the call
+/// destination to be evaluated before entering this callee.
+#[inline(never)]
+fn mutate_index(_1: *mut usize) -> i32 {
+    unsafe { *_1 = 2 };
+    7
+}
+
+/// `RET[i] = mutate_index(&mut i)`: destination evaluation must precede the call.
+///
+/// With `_1 = 0`, rustc fixes the destination as `RET[0]` before the callee
+/// mutates `_1` to 2, so the correct result is `[7, 0, 0]`. Before #1164 the
+/// importer materialized the destination after the call and wrote to `RET[2]`,
+/// producing `[0, 0, 7]`; this case pins the corrected ordering.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_mutating_index(mut _1: usize) -> [i32; 3] {
+    mir! {
+        type RET = [i32; 3];
+        let _2: *mut usize;
+        {
+            RET = [0_i32, 0_i32, 0_i32];
+            _2 = core::ptr::addr_of_mut!(_1);
+            Call(RET[_1] = mutate_index(_2), ReturnTo(bb1), UnwindUnreachable())
         }
         bb1 = {
             Return()
@@ -200,10 +236,123 @@ fn through_deref_sincos(_1: *mut (f32, f32), _2: f32) {
     }
 }
 
-/// Folds the seven results into one word per case, so the device can report
-/// them through a `u64` slice and the host can compare without a layout
-/// assumption.
-fn case_results() -> [u64; 7] {
+/// `RET.1[i] = double_it(x)`: Field -> Index chain.
+///
+/// The first projection selects the array field and the second selects one
+/// runtime element. Both projections must be materialized before the callee
+/// executes, then the result is written through that prepared address.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_field_index(mut _1: usize, _2: u32) -> (u64, [u32; 3]) {
+    mir! {
+        type RET = (u64, [u32; 3]);
+        {
+            RET.1 = [3_u32, 5_u32, 7_u32];
+            Call(RET.1[_1] = double_it(_2), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            RET.0 = 11_u64;
+            Return()
+        }
+    }
+}
+
+/// `(*p).1 = double_it(x)`: Deref -> Field chain.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_deref_field(_1: *mut (u64, u32), _2: u32) {
+    mir! {
+        {
+            Call((*_1).1 = double_it(_2), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            Return()
+        }
+    }
+}
+
+/// `RET[i].1 = double_it(x)`: Index -> Field chain.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_index_field(
+    mut _1: usize,
+    _2: u32,
+    _3: [(u64, u32); 2],
+) -> [(u64, u32); 2] {
+    mir! {
+        type RET = [(u64, u32); 2];
+        {
+            RET = _3;
+            Call(RET[_1].1 = double_it(_2), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            Return()
+        }
+    }
+}
+
+/// Bare-local control: the prepared-destination abstraction must leave the
+/// established `ValueMap::store_local` path unchanged.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_bare_local(_1: u32) -> u32 {
+    mir! {
+        type RET = u32;
+        {
+            Call(RET = double_it(_1), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            Return()
+        }
+    }
+}
+
+/// Generated intrinsic acceptance case.
+///
+/// `thread::blockDim_x()` is generated from the SREG catalog and is replaced
+/// by the importer during device compilation. Its host body intentionally
+/// traps, so this helper is called only from the kernel. The nested
+/// `RET.1[i]` destination proves that generated dispatch consumes the same
+/// prepared-destination abstraction as ordinary calls.
+#[custom_mir(dialect = "runtime", phase = "initial")]
+#[inline(never)]
+fn through_generated_sreg(mut _1: usize) -> (u64, [u32; 3]) {
+    mir! {
+        type RET = (u64, [u32; 3]);
+        {
+            RET.1 = [0_u32, 0_u32, 0_u32];
+            Call(RET.1[_1] = thread::blockDim_x(), ReturnTo(bb1), UnwindUnreachable())
+        }
+        bb1 = {
+            RET.0 = 29_u64;
+            Return()
+        }
+    }
+}
+
+fn fold_case_results(results: &[u64; 12]) -> u64 {
+    let mut folded = 0_u64;
+    let mut i = 0_usize;
+    while i < results.len() {
+        folded ^= results[i].rotate_left((i as u32 * 5) & 63);
+        i += 1;
+    }
+    folded
+}
+
+fn fold_generated_sreg(result: (u64, [u32; 3])) -> u64 {
+    result.0
+        ^ u64::from(result.1[0]).rotate_left(8)
+        ^ u64::from(result.1[1]).rotate_left(24)
+        ^ u64::from(result.1[2]).rotate_left(40)
+}
+
+fn expected_generated_sreg(block_dim_x: u32) -> u64 {
+    fold_generated_sreg((29_u64, [0_u32, block_dim_x, 0_u32]))
+}
+
+/// Folds twelve host/device-comparable results into one word per case.
+fn case_results() -> [u64; 12] {
     let deref = through_deref(0) as u32 as u64;
 
     let field = through_field();
@@ -213,6 +362,11 @@ fn case_results() -> [u64; 7] {
     let index = (indexed[0] as u32 as u64)
         ^ ((indexed[1] as u32 as u64) << 8)
         ^ ((indexed[2] as u32 as u64) << 16);
+
+    let mutated_index = through_mutating_index(0);
+    let mutating_index = (mutated_index[0] as u32 as u64)
+        ^ ((mutated_index[1] as u32 as u64) << 16)
+        ^ ((mutated_index[2] as u32 as u64) << 32);
 
     let field_float = through_field_float(2.0_f32);
     let field_float = field_float.0 ^ u64::from(field_float.1.to_bits());
@@ -229,14 +383,37 @@ fn case_results() -> [u64; 7] {
     through_deref_sincos(&raw mut pair, 0.0_f32);
     let sincos = u64::from(pair.0.to_bits()) ^ (u64::from(pair.1.to_bits()) << 32);
 
+    let field_index_value = through_field_index(2, 13);
+    let field_index = field_index_value.0
+        ^ u64::from(field_index_value.1[0]).rotate_left(8)
+        ^ u64::from(field_index_value.1[1]).rotate_left(24)
+        ^ u64::from(field_index_value.1[2]).rotate_left(40);
+
+    let mut deref_field_value = (23_u64, 3_u32);
+    through_deref_field(&raw mut deref_field_value, 17);
+    let deref_field = deref_field_value.0 ^ u64::from(deref_field_value.1).rotate_left(32);
+
+    let index_field_value = through_index_field(1, 19, [(17_u64, 1_u32), (19_u64, 2_u32)]);
+    let index_field = index_field_value[0].0
+        ^ u64::from(index_field_value[0].1).rotate_left(8)
+        ^ index_field_value[1].0.rotate_left(24)
+        ^ u64::from(index_field_value[1].1).rotate_left(48);
+
+    let bare_local = u64::from(through_bare_local(23));
+
     [
         deref,
         field,
         index,
+        mutating_index,
         field_float,
         index_float,
         field_fn,
         sincos,
+        field_index,
+        deref_field,
+        index_field,
+        bare_local,
     ]
 }
 
@@ -246,37 +423,31 @@ mod kernels {
 
     #[kernel]
     pub fn projected_destinations(mut out: DisjointSlice<u64>) {
-        let results = case_results();
+        let host_comparable = fold_case_results(&case_results());
+        let generated = fold_generated_sreg(through_generated_sreg(1));
         if let Some(slot) = out.get_mut(thread::index_1d()) {
-            *slot = results[0]
-                ^ results[1].rotate_left(8)
-                ^ results[2].rotate_left(16)
-                ^ results[3].rotate_left(24)
-                ^ results[4].rotate_left(32)
-                ^ results[5].rotate_left(40)
-                ^ results[6].rotate_left(48);
+            *slot = host_comparable ^ generated.rotate_left(17);
         }
     }
 }
 
 fn main() {
     let host = case_results();
-    let host_folded = host[0]
-        ^ host[1].rotate_left(8)
-        ^ host[2].rotate_left(16)
-        ^ host[3].rotate_left(24)
-        ^ host[4].rotate_left(32)
-        ^ host[5].rotate_left(40)
-        ^ host[6].rotate_left(48);
+    let host_comparable = fold_case_results(&host);
 
-    println!("=== intrinsic calls writing through a projected destination ===\n");
-    println!("host  deref case:       0x{:016x}", host[0]);
-    println!("host  field case:       0x{:016x}", host[1]);
-    println!("host  index case:       0x{:016x}", host[2]);
-    println!("host  float field case: 0x{:016x}", host[3]);
-    println!("host  float index case: 0x{:016x}", host[4]);
-    println!("host  fn field case:    0x{:016x}", host[5]);
-    println!("host  sincos case:      0x{:016x}", host[6]);
+    println!("=== calls writing through prepared projected destinations ===\n");
+    println!("host  deref case:          0x{:016x}", host[0]);
+    println!("host  field case:          0x{:016x}", host[1]);
+    println!("host  index case:          0x{:016x}", host[2]);
+    println!("host  mutating index case: 0x{:016x}", host[3]);
+    println!("host  float field case:    0x{:016x}", host[4]);
+    println!("host  float index case:    0x{:016x}", host[5]);
+    println!("host  fn field case:       0x{:016x}", host[6]);
+    println!("host  sincos case:         0x{:016x}", host[7]);
+    println!("host  Field -> Index:      0x{:016x}", host[8]);
+    println!("host  Deref -> Field:      0x{:016x}", host[9]);
+    println!("host  Index -> Field:      0x{:016x}", host[10]);
+    println!("host  bare-local control:  0x{:016x}", host[11]);
 
     let ctx = CudaContext::new(0).expect("failed to create CUDA context");
     let stream = ctx.default_stream();
@@ -288,17 +459,22 @@ fn main() {
         block_dim: (1, 1, 1),
         shared_mem_bytes: 0,
     };
+    let generated_expected = expected_generated_sreg(cfg.block_dim.0);
+    let host_folded = host_comparable ^ generated_expected.rotate_left(17);
 
     // SAFETY: the one argument matches `projected_destinations`' single slice
     // parameter, and `out` is a live DeviceBuffer allocated above.
     unsafe { module.projected_destinations(&stream, cfg, &mut out) }.expect("kernel launch failed");
 
     let device_folded = out.to_host_vec(&stream).expect("readback")[0];
+    println!("host  generated SREG expected: 0x{generated_expected:016x}");
     println!("\nhost  folded:     0x{host_folded:016x}");
     println!("device folded:    0x{device_folded:016x}");
 
     if device_folded == host_folded {
-        println!("\nPASS: device and host agree on all seven projections");
+        println!(
+            "\nPASS: host/device agree on twelve call-destination cases and the generated SREG projection"
+        );
     } else {
         println!("\nFAIL: device and host disagree");
         std::process::exit(1);

@@ -67,11 +67,20 @@ pub(super) fn try_dispatch(
             let dot = Dp2aS32Op::build(ctx, a, b, c);
             dot.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, dot, "v1:i0032");
-            helpers::insert_op(ctx, dot, block_ptr, last_op);
-            let result = dot.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, dot, block_ptr, prepared_last_op);
+            let result = dot.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -115,11 +124,20 @@ pub(super) fn try_dispatch(
             let dot = Dp2aU32Op::build(ctx, a, b, c);
             dot.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, dot, "v1:i0033");
-            helpers::insert_op(ctx, dot, block_ptr, last_op);
-            let result = dot.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, dot, block_ptr, prepared_last_op);
+            let result = dot.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -163,11 +181,20 @@ pub(super) fn try_dispatch(
             let dot = Dp4aS32Op::build(ctx, a, b, c);
             dot.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, dot, "v1:i0030");
-            helpers::insert_op(ctx, dot, block_ptr, last_op);
-            let result = dot.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, dot, block_ptr, prepared_last_op);
+            let result = dot.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -211,11 +238,20 @@ pub(super) fn try_dispatch(
             let dot = Dp4aU32Op::build(ctx, a, b, c);
             dot.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, dot, "v1:i0031");
-            helpers::insert_op(ctx, dot, block_ptr, last_op);
-            let result = dot.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, dot, block_ptr, prepared_last_op);
+            let result = dot.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

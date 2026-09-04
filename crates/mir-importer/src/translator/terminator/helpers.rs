@@ -8,8 +8,10 @@
 //! This module contains utility functions shared across terminator handlers:
 //!
 //! - [`emit_goto`]: Unconditional zero-operand branch to a target block.
-//! - [`emit_store_result_and_goto`]: Write an intrinsic result to the
-//!   destination local's slot, then branch to the success target.
+//! - [`prepare_destination_write`]: Materialize a call/intrinsic destination
+//!   before its result-producing operation executes.
+//! - [`emit_prepared_result_and_goto`]: Write through a prepared destination
+//!   and branch to the success target.
 //! - [`emit_function_call`]: General function call emission.
 //! - [`emit_generated_nvvm_intrinsic`]: Zero-operand NVVM intrinsic emission
 //!   for a catalog intrinsic, carrying its generated ABI marker.
@@ -17,8 +19,8 @@
 //! - [`insert_op`]: Common operation insertion pattern.
 
 use crate::error::{TranslationErr, TranslationResult};
-use crate::translator::rvalue;
 use crate::translator::values::{ValueMap, establish_declared_pointer_type};
+use crate::translator::{payload_store, rvalue};
 use dialect_mir::{
     attributes::MirPointerKindAuthorityAttr,
     ops::{MirCallOp, MirConstructArrayOp, MirGotoOp},
@@ -61,227 +63,154 @@ pub fn emit_goto(
     goto_op
 }
 
-/// Writes `value` into `destination`, honouring a projection on it.
+/// A call destination whose observable projection state has already been
+/// evaluated.
 ///
-/// A bare local goes to its slot, as before. A projected destination needs the
-/// address of the place rather than of the local, because storing to the local
-/// would overwrite the whole aggregate (or the pointer itself) instead of the
-/// part the call names.
+/// Calls prepare this value before the callee executes and only perform the
+/// final write afterward. This matches MIR call semantics even when the callee
+/// mutates locals used by the destination projection.
+pub(crate) enum PreparedDestinationWrite {
+    /// A bare local. Local storage remains responsible for pointer
+    /// representation coercions and ZST handling.
+    Local(mir::Local),
+    /// An ordinary projected place whose writable address is fixed already.
+    Address(Value),
+    /// An enum payload that must be rebuilt rather than written through a raw
+    /// payload pointer.
+    CanonicalPayload(payload_store::PreparedCanonicalPayloadStore),
+}
+
+fn require_writable_destination_address(
+    translated: Option<(Value, Option<Ptr<Operation>>)>,
+    projection: &dyn std::fmt::Debug,
+    loc: Location,
+) -> TranslationResult<(Value, Option<Ptr<Operation>>)> {
+    let Some(address) = translated else {
+        return input_err!(
+            loc,
+            TranslationErr::unsupported(format!(
+                "cannot prepare writable call destination {projection:?}"
+            ))
+        );
+    };
+    Ok(address)
+}
+
+/// Evaluate a call destination before the callee executes.
 ///
-/// Only the single-element projections a call destination is observed to carry
-/// are modelled. Anything else is refused rather than written to the wrong
-/// place, since a store aimed at the wrong address is a miscompile and an
-/// unsupported-construct error is not.
-///
-/// Known fidelity gap: rustc evaluates the destination address *before* the
-/// call, but this path materializes it *after* the call op. The difference is
-/// observable only from custom MIR where the callee mutates the destination's
-/// base local through a `&mut` argument.
-pub fn store_result_to_place(
+/// Bare locals require no address materialization. Canonical enum payloads
+/// prepare the enclosing enum address, while every other projected place uses
+/// the shared writable place-address walker. Unsupported destinations fail
+/// before a call can be emitted with ambiguous store semantics.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_destination_write(
     ctx: &mut Context,
     body: &mir::Body,
     destination: &mir::Place,
+    value_map: &ValueMap,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<(PreparedDestinationWrite, Option<Ptr<Operation>>)> {
+    if destination.projection.is_empty() {
+        return Ok((PreparedDestinationWrite::Local(destination.local), prev_op));
+    }
+
+    if let Some(payload) = payload_store::classify(ctx, body, destination)? {
+        let Some((prepared, prepared_prev)) = payload_store::prepare_call_store(
+            ctx,
+            body,
+            value_map,
+            payload,
+            block_ptr,
+            prev_op,
+            loc.clone(),
+        )?
+        else {
+            return input_err!(
+                loc,
+                TranslationErr::unsupported(format!(
+                    "cannot prepare canonical payload call destination {:?}",
+                    destination.projection
+                ))
+            );
+        };
+        return Ok((
+            PreparedDestinationWrite::CanonicalPayload(prepared),
+            prepared_prev.or(prev_op),
+        ));
+    }
+
+    let translated_address = rvalue::translate_place_address(
+        ctx,
+        body,
+        value_map,
+        destination,
+        /* is_mutable */ true,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+    let (address, address_prev) =
+        require_writable_destination_address(translated_address, &destination.projection, loc)?;
+
+    Ok((
+        PreparedDestinationWrite::Address(address),
+        address_prev.or(prev_op),
+    ))
+}
+
+/// Store a call result through a destination prepared before the callee ran.
+pub(crate) fn finish_destination_write(
+    ctx: &mut Context,
+    destination: PreparedDestinationWrite,
     value: Value,
     value_map: &mut ValueMap,
     block_ptr: Ptr<BasicBlock>,
     prev_op: Ptr<Operation>,
     loc: Location,
 ) -> TranslationResult<Ptr<Operation>> {
-    use crate::translator::statement::{
-        emit_array_element_store, pointer_address_space, pointer_is_mutable,
-        reject_raw_field_index_on_enum_pointee, slot_array_element_ty,
-    };
-    use dialect_mir::ops::{MirFieldAddrOp, MirStoreOp};
+    use dialect_mir::ops::MirStoreOp;
 
-    match destination.projection.as_slice() {
-        [] => Ok(value_map
-            .store_local(ctx, destination.local, value, block_ptr, Some(prev_op))
+    match destination {
+        PreparedDestinationWrite::Local(local) => Ok(value_map
+            .store_local(ctx, local, value, block_ptr, Some(prev_op))
             .unwrap_or(prev_op)),
-
-        [mir::ProjectionElem::Deref] => {
-            let base_place = mir::Place {
-                local: destination.local,
-                projection: vec![],
-            };
-            let (ptr_val, after_ptr) = rvalue::translate_place(
-                ctx,
-                body,
-                &base_place,
-                value_map,
-                block_ptr,
-                Some(prev_op),
-                loc.clone(),
-            )?;
+        PreparedDestinationWrite::Address(address) => {
             let store_op = Operation::new(
                 ctx,
                 MirStoreOp::get_concrete_op_info(),
                 vec![],
-                vec![ptr_val, value],
+                vec![address, value],
                 vec![],
                 0,
             );
             store_op.deref_mut(ctx).set_loc(loc);
-            store_op.insert_after(ctx, after_ptr.unwrap_or(prev_op));
+            store_op.insert_after(ctx, prev_op);
             Ok(store_op)
         }
-
-        [mir::ProjectionElem::Field(field_idx, field_ty)] => {
-            let Some(slot) = value_map.get_slot(destination.local) else {
-                return input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "Local {:?} has no alloca slot for a field destination",
-                        destination.local
-                    ))
-                );
-            };
-            reject_raw_field_index_on_enum_pointee(ctx, slot, &destination.projection, &loc)?;
-
-            let field_type = crate::translator::types::translate_type(ctx, field_ty)?;
-            let field_ptr_ty = dialect_mir::types::MirPtrType::get(
+        PreparedDestinationWrite::CanonicalPayload(payload) => {
+            payload_store::rebuild_and_store_prepared(
                 ctx,
-                field_type,
-                pointer_is_mutable(ctx, slot),
-                pointer_address_space(ctx, slot),
+                &payload,
+                value,
+                block_ptr,
+                Some(prev_op),
+                loc,
             )
-            .into();
-            let field_addr_op = MirFieldAddrOp::build(ctx, slot, field_ptr_ty, *field_idx as u32)?;
-            field_addr_op.deref_mut(ctx).set_loc(loc.clone());
-            field_addr_op.insert_after(ctx, prev_op);
-            let field_ptr = field_addr_op.deref(ctx).get_result(0);
-
-            let store_op = Operation::new(
-                ctx,
-                MirStoreOp::get_concrete_op_info(),
-                vec![],
-                vec![field_ptr, value],
-                vec![],
-                0,
-            );
-            store_op.deref_mut(ctx).set_loc(loc);
-            store_op.insert_after(ctx, field_addr_op);
-            Ok(store_op)
         }
-
-        [mir::ProjectionElem::Index(index_local)] => {
-            let Some(arr_ptr) = value_map.get_slot(destination.local) else {
-                return input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "Local {:?} has no alloca slot for a runtime index destination",
-                        destination.local
-                    ))
-                );
-            };
-            let index_place = mir::Place {
-                local: *index_local,
-                projection: vec![],
-            };
-            let (index_value, after_index) = rvalue::translate_place(
-                ctx,
-                body,
-                &index_place,
-                value_map,
-                block_ptr,
-                Some(prev_op),
-                loc.clone(),
-            )?;
-            let (element_ty, address_space) = slot_array_element_ty(ctx, arr_ptr, &loc)?;
-            Ok(emit_array_element_store(
-                ctx,
-                arr_ptr,
-                index_value,
-                value,
-                element_ty,
-                address_space,
-                block_ptr,
-                after_index,
-                loc,
-            ))
-        }
-
-        [
-            mir::ProjectionElem::ConstantIndex {
-                offset,
-                min_length: _,
-                from_end,
-            },
-        ] => {
-            if *from_end {
-                return input_err!(
-                    loc,
-                    TranslationErr::unsupported(
-                        "ConstantIndex with from_end=true is not supported for a call destination"
-                            .to_string()
-                    )
-                );
-            }
-            let Some(arr_ptr) = value_map.get_slot(destination.local) else {
-                return input_err!(
-                    loc,
-                    TranslationErr::unsupported(format!(
-                        "Local {:?} has no alloca slot for an array element destination",
-                        destination.local
-                    ))
-                );
-            };
-            let (element_ty, address_space) = slot_array_element_ty(ctx, arr_ptr, &loc)?;
-
-            let i64_ty = IntegerType::get(ctx, 64, Signedness::Signed);
-            let index_attr = pliron::builtin::attributes::IntegerAttr::new(
-                i64_ty,
-                pliron::utils::apint::APInt::from_i64(
-                    *offset as i64,
-                    std::num::NonZeroUsize::new(64).unwrap(),
-                ),
-            );
-            let const_op = Operation::new(
-                ctx,
-                dialect_mir::ops::MirConstantOp::get_concrete_op_info(),
-                vec![i64_ty.into()],
-                vec![],
-                vec![],
-                0,
-            );
-            const_op.deref_mut(ctx).set_loc(loc.clone());
-            dialect_mir::ops::MirConstantOp::new(const_op).set_attr_value(ctx, index_attr);
-            const_op.insert_after(ctx, prev_op);
-            let index_value = const_op.deref(ctx).get_result(0);
-
-            Ok(emit_array_element_store(
-                ctx,
-                arr_ptr,
-                index_value,
-                value,
-                element_ty,
-                address_space,
-                block_ptr,
-                Some(const_op),
-                loc,
-            ))
-        }
-
-        projection => input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "call destination with projection {:?} is not supported",
-                projection
-            ))
-        ),
     }
 }
 
-/// Stores `result_value` into `destination`'s slot and emits a branch to
-/// `target`.
+/// Store a result through a destination prepared before the producer ran,
+/// then branch to the success target.
 ///
-/// Shared "write result + branch to success block" epilogue for intrinsic
-/// handlers. The store is emitted after `prev_op`; the goto chains after the
-/// store (or after `prev_op` directly if the destination is a ZST with no
-/// backing slot). Returns the goto operation.
+/// Generated intrinsic dispatch uses this epilogue after materializing the
+/// destination before inserting the result-producing operation.
 #[allow(clippy::too_many_arguments)]
-pub fn emit_store_result_and_goto(
+pub(crate) fn emit_prepared_result_and_goto(
     ctx: &mut Context,
-    destination: &mir::Place,
+    destination: PreparedDestinationWrite,
     result_value: Value,
     target: &Option<usize>,
     block_ptr: Ptr<BasicBlock>,
@@ -291,42 +220,20 @@ pub fn emit_store_result_and_goto(
     loc: Location,
     no_target_msg: &str,
 ) -> TranslationResult<Ptr<Operation>> {
-    // This epilogue has no `body`, so it cannot compute the address of a
-    // projected place the way [`store_result_to_place`] does. Refusing is the
-    // alternative to storing to `destination.local`, which for `x.0 = f()` or
-    // `(*p) = f()` writes the result over the whole aggregate or over the
-    // pointer. Most callers are generated, so the signature stays as it is.
-    if !destination.projection.is_empty() {
-        return input_err!(
-            loc,
-            TranslationErr::unsupported(format!(
-                "intrinsic result written to a projected destination {:?} is not supported",
-                destination.projection
-            ))
-        );
-    }
-
-    // Every pointer-producing intrinsic must establish its exact Rust result
-    // kind at the producer. This shared epilogue is intentionally ordinary
-    // local storage: it may preserve or erase provenance, but it must never
-    // manufacture a concrete pointer/reference kind for an emitter.
-    let goto_prev = value_map
-        .store_local(
-            ctx,
-            destination.local,
-            result_value,
-            block_ptr,
-            Some(prev_op),
-        )
-        .unwrap_or(prev_op);
+    let goto_prev = finish_destination_write(
+        ctx,
+        destination,
+        result_value,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
 
     if let Some(target_idx) = target {
         Ok(emit_goto(ctx, *target_idx, goto_prev, block_map, loc))
     } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(no_target_msg.to_string())
-        )
+        input_err!(loc, TranslationErr::unsupported(no_target_msg.to_string()))
     }
 }
 
@@ -409,9 +316,10 @@ pub fn bundle_generated_u32_results_as_array(
 /// 1. Translate all MIR arguments to Pliron IR values
 /// 2. At a foreign ABI boundary, adapt pointer address spaces to the exact
 ///    declared parameter types without changing pointer kind or mutability
-/// 3. Create a `mir.call` operation carrying the callee's name attribute
-/// 4. Store the result into the destination local's slot
-/// 5. Emit a zero-operand goto to the call's success target
+/// 3. Prepare the call destination using the current projection state
+/// 4. Create a `mir.call` operation carrying the callee's name attribute
+/// 5. Store the result through the prepared destination
+/// 6. Emit a zero-operand goto to the call's success target
 ///
 /// Reference arguments (`&mut local`) are handed the local's alloca slot
 /// pointer directly, so callee writes through the reference are observed by
@@ -475,6 +383,17 @@ pub fn emit_function_call(
         }
     }
 
+    let (prepared_destination, prepared_last_op) = prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+    last_op = prepared_last_op;
+
     use pliron::builtin::attributes::StringAttr;
 
     let call_op = Operation::new(
@@ -506,10 +425,9 @@ pub fn emit_function_call(
 
     let result_value = call_op.deref(ctx).get_result(0);
 
-    let goto_prev = store_result_to_place(
+    let goto_prev = finish_destination_write(
         ctx,
-        body,
-        destination,
+        prepared_destination,
         result_value,
         value_map,
         block_ptr,
@@ -578,6 +496,7 @@ fn normalize_foreign_pointer_argument(
 #[allow(clippy::too_many_arguments)]
 pub fn emit_generated_nvvm_intrinsic(
     ctx: &mut Context,
+    body: &mir::Body,
     opid: (
         fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
         std::any::TypeId,
@@ -593,6 +512,7 @@ pub fn emit_generated_nvvm_intrinsic(
 ) -> TranslationResult<Ptr<Operation>> {
     emit_nvvm_integer_intrinsic(
         ctx,
+        body,
         opid,
         32,
         Some(marker),
@@ -611,6 +531,7 @@ pub fn emit_generated_nvvm_intrinsic(
 #[allow(clippy::too_many_arguments)]
 pub fn emit_generated_nvvm_intrinsic_u64(
     ctx: &mut Context,
+    body: &mir::Body,
     opid: (
         fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
         std::any::TypeId,
@@ -626,6 +547,7 @@ pub fn emit_generated_nvvm_intrinsic_u64(
 ) -> TranslationResult<Ptr<Operation>> {
     emit_nvvm_integer_intrinsic(
         ctx,
+        body,
         opid,
         64,
         Some(marker),
@@ -642,6 +564,7 @@ pub fn emit_generated_nvvm_intrinsic_u64(
 #[allow(clippy::too_many_arguments)]
 fn emit_nvvm_integer_intrinsic(
     ctx: &mut Context,
+    body: &mir::Body,
     opid: (
         fn(pliron::context::Ptr<pliron::operation::Operation>) -> pliron::op::OpObj,
         std::any::TypeId,
@@ -658,13 +581,23 @@ fn emit_nvvm_integer_intrinsic(
 ) -> TranslationResult<Ptr<Operation>> {
     let result_type = IntegerType::get(ctx, result_width, Signedness::Unsigned);
 
+    let (prepared_destination, prepared_last_op) = prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op = Operation::new(ctx, opid, vec![result_type.to_handle()], vec![], vec![], 0);
     nvvm_op.deref_mut(ctx).set_loc(loc.clone());
     if let Some(marker) = generated_marker {
         set_generated_intrinsic_marker(ctx, nvvm_op, marker);
     }
 
-    let last_op = if let Some(prev) = prev_op {
+    let last_op = if let Some(prev) = prepared_last_op {
         nvvm_op.insert_after(ctx, prev);
         nvvm_op
     } else {
@@ -674,15 +607,15 @@ fn emit_nvvm_integer_intrinsic(
 
     let result_value = nvvm_op.deref(ctx).get_result(0);
 
-    let goto_prev = value_map
-        .store_local(
-            ctx,
-            destination.local,
-            result_value,
-            block_ptr,
-            Some(last_op),
-        )
-        .unwrap_or(last_op);
+    let goto_prev = finish_destination_write(
+        ctx,
+        prepared_destination,
+        result_value,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
 
     if let Some(target_idx) = target {
         Ok(emit_goto(ctx, *target_idx, goto_prev, block_map, loc))
@@ -702,6 +635,7 @@ fn emit_nvvm_integer_intrinsic(
 #[allow(clippy::too_many_arguments)]
 pub fn emit_unit_noop_intrinsic(
     ctx: &mut Context,
+    body: &mir::Body,
     destination: &mir::Place,
     target: &Option<usize>,
     block_ptr: Ptr<BasicBlock>,
@@ -711,6 +645,16 @@ pub fn emit_unit_noop_intrinsic(
     loc: Location,
     intrinsic_name: &str,
 ) -> TranslationResult<Ptr<Operation>> {
+    let (prepared_destination, prepared_last_op) = prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
     let unit_ty = dialect_mir::types::MirTupleType::get(ctx, vec![]);
     let unit_op = Operation::new(
         ctx,
@@ -721,24 +665,22 @@ pub fn emit_unit_noop_intrinsic(
         0,
     );
     unit_op.deref_mut(ctx).set_loc(loc.clone());
-    insert_op(ctx, unit_op, block_ptr, prev_op);
+    insert_op(ctx, unit_op, block_ptr, prepared_last_op);
 
     let unit_val = unit_op.deref(ctx).get_result(0);
-    let goto_prev = value_map
-        .store_local(ctx, destination.local, unit_val, block_ptr, Some(unit_op))
-        .unwrap_or(unit_op);
-
-    if let Some(target_idx) = target {
-        Ok(emit_goto(ctx, *target_idx, goto_prev, block_map, loc))
-    } else {
-        input_err!(
-            loc.clone(),
-            TranslationErr::unsupported(format!(
-                "{} call without target not supported",
-                intrinsic_name
-            ))
-        )
-    }
+    let no_target_msg = format!("{} call without target not supported", intrinsic_name);
+    emit_prepared_result_and_goto(
+        ctx,
+        prepared_destination,
+        unit_val,
+        target,
+        block_ptr,
+        unit_op,
+        value_map,
+        block_map,
+        loc,
+        &no_target_msg,
+    )
 }
 
 #[cfg(test)]
@@ -762,6 +704,78 @@ mod tests {
         region::Region,
         r#type::TypeHandle,
     };
+
+    #[test]
+    fn opaque_cast_destination_walker_punt_is_an_unsupported_construct() {
+        use rustc_public_bridge::IndexedVal;
+
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+
+        let pointee: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let slot_ty: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, true).into();
+        let block = BasicBlock::new(&mut ctx, None, vec![slot_ty]);
+        let slot = block.deref(&ctx).get_argument(0);
+
+        let local: mir::Local = 0;
+        let mut value_map = ValueMap::new(1);
+        value_map.set_slot(local, slot);
+
+        // These synthetic rustc_public handles are never dereferenced by this
+        // fixture. The address walker punts as soon as it sees OpaqueCast.
+        let rust_ty = rustc_public::ty::Ty::to_val(0);
+        let rust_span = rustc_public::ty::Span::to_val(0);
+        let body = mir::Body::new(
+            vec![],
+            vec![mir::LocalDecl {
+                ty: rust_ty,
+                span: rust_span,
+                mutability: mir::Mutability::Mut,
+            }],
+            0,
+            vec![],
+            None,
+            rust_span,
+        );
+        let place = mir::Place {
+            local,
+            projection: vec![mir::ProjectionElem::OpaqueCast(rust_ty)],
+        };
+
+        let walked = rvalue::translate_place_address(
+            &mut ctx,
+            &body,
+            &value_map,
+            &place,
+            /* is_mutable */ true,
+            block,
+            None,
+            Location::Unknown,
+        )
+        .expect("an unsupported projection must punt rather than fail internally");
+
+        assert!(
+            walked.is_none(),
+            "OpaqueCast must make the writable place-address walker punt"
+        );
+
+        // Avoid formatting the synthetic Ty in `place`: this half of the test
+        // checks the call-result boundary that converts a real walker punt
+        // into the importer's unsupported-construct category.
+        let projection = ["OpaqueCast"];
+        let error = require_writable_destination_address(walked, &projection, Location::Unknown)
+            .expect_err("an address-walker punt must stop result emission");
+
+        let message = error.to_string();
+        assert!(
+            message.contains("Unsupported construct"),
+            "walker punt must keep the unsupported-construct category: {message}"
+        );
+        assert!(
+            message.contains("cannot prepare writable call destination"),
+            "walker punt must identify the call destination: {message}"
+        );
+    }
 
     #[test]
     fn generated_u32_result_array_is_marked_for_forwarding() {

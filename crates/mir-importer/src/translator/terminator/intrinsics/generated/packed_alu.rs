@@ -55,11 +55,20 @@ pub(super) fn try_dispatch(
             let intrinsic = AbsBf16x2Op::build(ctx, arg0);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0070");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -85,11 +94,20 @@ pub(super) fn try_dispatch(
             let intrinsic = AbsF16x2Op::build(ctx, arg0);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0080");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -124,11 +142,20 @@ pub(super) fn try_dispatch(
             let intrinsic = AddBf16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0064");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -163,11 +190,20 @@ pub(super) fn try_dispatch(
             let intrinsic = AddF16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0074");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -202,11 +238,20 @@ pub(super) fn try_dispatch(
             let intrinsic = AddF32x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0995");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -241,11 +286,20 @@ pub(super) fn try_dispatch(
             let intrinsic = AddFtzF32x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0996");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -289,11 +343,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaBf16x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0062");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -337,11 +400,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaF16x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0072");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -385,11 +457,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaF32x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i1001");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -433,11 +514,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaFtzF16x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0854");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -481,11 +571,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaFtzF32x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i1002");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -529,11 +628,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaFtzReluF16x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0857");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -577,11 +685,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaFtzSatF16x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0856");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -625,11 +742,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaReluBf16x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0063");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -673,11 +799,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaReluF16x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0073");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -721,11 +856,20 @@ pub(super) fn try_dispatch(
             let intrinsic = FmaSatF16x2Op::build(ctx, arg0, arg1, arg2);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0855");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -760,11 +904,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MaxBf16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0068");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -799,11 +952,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MaxF16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0078");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -838,11 +1000,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MinBf16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0067");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -877,11 +1048,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MinF16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0077");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -916,11 +1096,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MulBf16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0066");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -955,11 +1144,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MulF16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0076");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -994,11 +1192,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MulF32x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0999");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1033,11 +1240,20 @@ pub(super) fn try_dispatch(
             let intrinsic = MulFtzF32x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i1000");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1063,11 +1279,20 @@ pub(super) fn try_dispatch(
             let intrinsic = NegBf16x2Op::build(ctx, arg0);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0069");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1093,11 +1318,20 @@ pub(super) fn try_dispatch(
             let intrinsic = NegF16x2Op::build(ctx, arg0);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0079");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1132,11 +1366,20 @@ pub(super) fn try_dispatch(
             let intrinsic = SubBf16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0065");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1171,11 +1414,20 @@ pub(super) fn try_dispatch(
             let intrinsic = SubF16x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0075");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1210,11 +1462,20 @@ pub(super) fn try_dispatch(
             let intrinsic = SubF32x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0997");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1249,11 +1510,20 @@ pub(super) fn try_dispatch(
             let intrinsic = SubFtzF32x2Op::build(ctx, arg0, arg1);
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0998");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
-            let result = intrinsic.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
+            let result = intrinsic.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

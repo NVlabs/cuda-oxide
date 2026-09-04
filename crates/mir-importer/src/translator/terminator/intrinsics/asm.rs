@@ -5,7 +5,7 @@
 
 //! Inline PTX marker-call translation.
 
-use super::super::helpers::{emit_goto, emit_store_result_and_goto};
+use super::super::helpers::{self, emit_goto};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
 use crate::translator::{rvalue, types};
@@ -169,6 +169,16 @@ pub fn emit_inline_ptx(
         }
     }
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     if num_outputs <= 1 {
         // Single-output (backward-compatible path): the destination type is the result type.
         let result_tys = vec![types::translate_destination_type(
@@ -207,9 +217,9 @@ pub fn emit_inline_ptx(
         };
 
         let result_value = inline_ptx.deref(ctx).get_result(0);
-        emit_store_result_and_goto(
+        helpers::emit_prepared_result_and_goto(
             ctx,
-            destination,
+            prepared_destination,
             result_value,
             target,
             block_ptr,
@@ -285,9 +295,9 @@ pub fn emit_inline_ptx(
         super::super::helpers::set_compiler_result_bundle_marker(ctx, tuple_op);
         let tuple_val = tuple_op.deref(ctx).get_result(0);
 
-        emit_store_result_and_goto(
+        helpers::emit_prepared_result_and_goto(
             ctx,
-            destination,
+            prepared_destination,
             tuple_val,
             target,
             block_ptr,

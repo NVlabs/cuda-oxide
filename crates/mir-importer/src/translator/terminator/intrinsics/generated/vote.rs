@@ -57,11 +57,20 @@ pub(super) fn try_dispatch(
             let vote = VoteSyncAllOp::build(ctx, member_mask, predicate);
             vote.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, vote, "v1:i0040");
-            helpers::insert_op(ctx, vote, block_ptr, last_op);
-            let result = vote.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, vote, block_ptr, prepared_last_op);
+            let result = vote.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -95,11 +104,20 @@ pub(super) fn try_dispatch(
             let vote = VoteSyncAnyOp::build(ctx, member_mask, predicate);
             vote.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, vote, "v1:i0041");
-            helpers::insert_op(ctx, vote, block_ptr, last_op);
-            let result = vote.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, vote, block_ptr, prepared_last_op);
+            let result = vote.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -134,11 +152,20 @@ pub(super) fn try_dispatch(
             let vote = VoteSyncBallotOp::build(ctx, member_mask, predicate);
             vote.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, vote, "v1:i0042");
-            helpers::insert_op(ctx, vote, block_ptr, last_op);
-            let result = vote.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, vote, block_ptr, prepared_last_op);
+            let result = vote.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -172,11 +199,20 @@ pub(super) fn try_dispatch(
             let vote = VoteSyncUniOp::build(ctx, member_mask, predicate);
             vote.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, vote, "v1:i0043");
-            helpers::insert_op(ctx, vote, block_ptr, last_op);
-            let result = vote.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, vote, block_ptr, prepared_last_op);
+            let result = vote.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

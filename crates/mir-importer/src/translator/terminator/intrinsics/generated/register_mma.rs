@@ -75,12 +75,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0161");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -125,12 +134,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0158");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -175,12 +193,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0524");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -225,12 +252,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0105");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -275,12 +311,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0106");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -325,12 +370,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0504");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -375,12 +429,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0505");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -425,12 +488,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0506");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -475,12 +547,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0507");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -525,12 +606,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0508");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -575,12 +665,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0509");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -625,12 +724,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0510");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -675,12 +783,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0511");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -725,12 +842,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0110");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -775,12 +901,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0117");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -825,12 +960,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0111");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -875,12 +1019,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0118");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -925,12 +1078,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0112");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -975,12 +1137,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0113");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1025,12 +1196,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0120");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1075,12 +1255,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0119");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1125,12 +1314,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0162");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1175,12 +1373,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0159");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1225,12 +1432,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0479");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1275,12 +1491,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0480");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1325,12 +1550,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0481");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1375,12 +1609,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0482");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1425,12 +1668,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0483");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1475,12 +1727,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0484");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1525,12 +1786,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0485");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1575,12 +1845,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0486");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1625,12 +1904,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0487");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1675,12 +1963,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0488");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1725,12 +2022,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0489");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1775,12 +2081,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0490");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1825,12 +2140,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0491");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1875,12 +2199,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0492");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1925,12 +2258,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0493");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1975,12 +2317,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0494");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2025,12 +2376,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0495");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2075,12 +2435,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0496");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2125,12 +2494,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0497");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2175,12 +2553,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0498");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2225,12 +2612,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0499");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2275,12 +2671,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0500");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2325,12 +2730,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0501");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2375,12 +2789,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0502");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2425,12 +2848,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0503");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2475,12 +2907,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0454");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2525,12 +2966,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0455");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2575,12 +3025,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0456");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2625,12 +3084,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0457");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2675,12 +3143,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0458");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2725,12 +3202,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0459");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2775,12 +3261,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0460");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2825,12 +3320,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0461");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2875,12 +3379,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0462");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2925,12 +3438,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0463");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2975,12 +3497,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0464");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3025,12 +3556,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0465");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3075,12 +3615,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0466");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3125,12 +3674,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0467");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3175,12 +3733,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0468");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3225,12 +3792,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0469");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3275,12 +3851,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0470");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3325,12 +3910,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0471");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3375,12 +3969,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0472");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3425,12 +4028,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0473");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3475,12 +4087,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0474");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3525,12 +4146,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0475");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3575,12 +4205,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0476");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3625,12 +4264,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0477");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3675,12 +4323,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0478");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3725,12 +4382,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0512");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3775,12 +4441,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0513");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3825,12 +4500,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0514");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3875,12 +4559,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0515");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3925,12 +4618,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0516");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3975,12 +4677,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0517");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4025,12 +4736,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0518");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4075,12 +4795,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0519");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4125,12 +4854,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0858");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4175,12 +4913,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0859");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4225,12 +4972,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0860");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4275,12 +5031,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0861");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4325,12 +5090,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0862");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4375,12 +5149,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0863");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4425,12 +5208,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0864");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4475,12 +5267,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0865");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4525,12 +5326,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0866");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4575,12 +5385,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0867");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4625,12 +5444,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0868");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4675,12 +5503,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0869");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4725,12 +5562,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0870");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4775,12 +5621,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0871");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4825,12 +5680,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0872");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4875,12 +5739,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0873");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4925,12 +5798,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0874");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4975,12 +5857,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0875");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5025,12 +5916,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0876");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5075,12 +5975,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0877");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5125,12 +6034,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0878");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5175,12 +6093,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0879");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5225,12 +6152,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0880");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5275,12 +6211,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0881");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5325,12 +6270,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0882");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5375,12 +6329,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0141");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5425,12 +6388,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0149");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5475,12 +6447,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0142");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5525,12 +6506,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0150");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5575,12 +6565,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0108");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5625,12 +6624,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0121");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5675,12 +6683,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0114");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5725,12 +6742,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0122");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5775,12 +6801,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0143");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5825,12 +6860,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0144");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5875,12 +6919,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0152");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5925,12 +6978,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0151");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5975,12 +7037,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0115");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6025,12 +7096,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0116");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6075,12 +7155,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0124");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6125,12 +7214,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0123");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6175,12 +7273,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0520");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6225,12 +7332,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0145");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6275,12 +7391,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0153");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6325,12 +7450,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0146");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6375,12 +7509,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0154");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6425,12 +7568,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0147");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6475,12 +7627,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0148");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6525,12 +7686,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0156");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6575,12 +7745,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0155");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6625,12 +7804,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0521");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6675,12 +7863,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0522");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6725,12 +7922,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0523");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6775,12 +7981,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0107");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6825,12 +8040,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0160");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6875,12 +8099,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0157");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6925,12 +8158,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0125");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6975,12 +8217,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0129");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7025,12 +8276,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0126");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7075,12 +8335,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0130");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7125,12 +8394,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0127");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7175,12 +8453,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0128");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7225,12 +8512,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0132");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7275,12 +8571,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0131");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7325,12 +8630,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0133");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7375,12 +8689,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0137");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7425,12 +8748,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0134");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7475,12 +8807,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0138");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7525,12 +8866,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0135");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7575,12 +8925,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Wrapping);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0136");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7625,12 +8984,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0140");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7675,12 +9043,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::Satfinite);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0139");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -7725,12 +9102,21 @@ pub(super) fn try_dispatch(
             mma.set_attr_nvvm_register_mma_overflow(ctx, RegisterMmaOverflowAttr::NotApplicable);
             let mma = mma.get_operation();
             helpers::set_generated_intrinsic_marker(ctx, mma, "v1:i0109");
-            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                Some(last_op),
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);
             let (result, last_op) =
                 bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

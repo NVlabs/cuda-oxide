@@ -99,7 +99,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0637");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -143,9 +152,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -186,7 +195,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0636");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -230,9 +248,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -273,7 +291,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0629");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..2)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -317,9 +344,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -360,7 +387,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0628");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..2)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -404,9 +440,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -447,7 +483,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0631");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -491,9 +536,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -534,7 +579,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0630");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -578,9 +632,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -621,7 +675,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0639");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -665,9 +728,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -708,7 +771,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0638");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -752,9 +824,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -795,7 +867,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0633");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -839,9 +920,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -882,7 +963,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0632");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -926,9 +1016,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -969,7 +1059,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0641");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1013,9 +1112,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1056,7 +1155,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0640");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1100,9 +1208,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1143,7 +1251,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0635");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1187,9 +1304,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1230,7 +1347,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0634");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1274,9 +1400,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1317,7 +1443,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0651");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1361,9 +1496,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1404,7 +1539,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0650");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1448,9 +1592,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1491,7 +1635,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0643");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1535,9 +1688,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1578,7 +1731,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0642");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1622,9 +1784,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1665,7 +1827,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0645");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1709,9 +1880,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1752,7 +1923,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0644");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1796,9 +1976,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1839,7 +2019,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0653");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1883,9 +2072,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -1926,7 +2115,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0652");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -1970,9 +2168,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2013,7 +2211,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0647");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2057,9 +2264,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2100,7 +2307,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0646");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2144,9 +2360,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2187,7 +2403,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0649");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2231,9 +2456,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2274,7 +2499,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0648");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2318,9 +2552,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2383,7 +2617,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0743");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2427,9 +2670,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2492,7 +2735,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0742");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2536,9 +2788,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2601,7 +2853,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0737");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2645,9 +2906,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2710,7 +2971,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0736");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2754,9 +3024,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2819,12 +3089,21 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0729");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let result = intrinsic.deref(ctx).get_result(0);
             let value = intrinsic;
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2887,12 +3166,21 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0728");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let result = intrinsic.deref(ctx).get_result(0);
             let value = intrinsic;
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -2955,7 +3243,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0731");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..2)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -2999,9 +3296,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3064,7 +3361,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0730");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..2)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3108,9 +3414,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3173,7 +3479,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0739");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3217,9 +3532,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3282,7 +3597,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0738");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3326,9 +3650,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3391,7 +3715,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0733");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3435,9 +3768,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3500,7 +3833,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0732");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3544,9 +3886,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3609,7 +3951,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0741");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3653,9 +4004,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3718,7 +4069,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0740");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3762,9 +4122,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3827,7 +4187,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0735");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3871,9 +4240,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -3936,7 +4305,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0734");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -3980,9 +4358,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4023,7 +4401,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0627");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4067,9 +4454,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4110,7 +4497,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0626");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4154,9 +4550,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4197,7 +4593,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0621");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4241,9 +4646,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4284,7 +4689,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0620");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4328,9 +4742,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4371,12 +4785,21 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0613");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let result = intrinsic.deref(ctx).get_result(0);
             let value = intrinsic;
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4417,12 +4840,21 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0612");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let result = intrinsic.deref(ctx).get_result(0);
             let value = intrinsic;
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4463,7 +4895,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0615");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..2)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4507,9 +4948,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4550,7 +4991,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0614");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..2)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4594,9 +5044,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4637,7 +5087,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0623");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4681,9 +5140,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4724,7 +5183,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0622");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4768,9 +5236,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4811,7 +5279,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0617");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4855,9 +5332,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4898,7 +5375,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0616");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -4942,9 +5428,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -4985,7 +5471,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0625");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5029,9 +5524,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5072,7 +5567,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0624");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5116,9 +5620,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5159,7 +5663,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0619");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5203,9 +5716,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5246,7 +5759,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0618");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5290,9 +5812,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5333,7 +5855,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0669");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5377,9 +5908,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5420,7 +5951,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0668");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..128)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5464,9 +6004,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5507,7 +6047,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0663");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5551,9 +6100,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5594,7 +6143,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0662");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..16)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5638,9 +6196,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5681,12 +6239,21 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0655");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let result = intrinsic.deref(ctx).get_result(0);
             let value = intrinsic;
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5727,12 +6294,21 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0654");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let result = intrinsic.deref(ctx).get_result(0);
             let value = intrinsic;
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5773,7 +6349,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0657");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..2)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5817,9 +6402,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5860,7 +6445,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0656");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..2)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5904,9 +6498,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -5947,7 +6541,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0665");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -5991,9 +6594,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6034,7 +6637,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0664");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..32)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -6078,9 +6690,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6121,7 +6733,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0659");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -6165,9 +6786,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6208,7 +6829,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0658");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..4)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -6252,9 +6882,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6295,7 +6925,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0667");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -6339,9 +6978,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6382,7 +7021,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0666");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..64)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -6426,9 +7074,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6469,7 +7117,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0661");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -6513,9 +7170,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -6556,7 +7213,16 @@ pub(super) fn try_dispatch(
             );
             intrinsic.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, intrinsic, "v1:i0660");
-            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);
             let results: Vec<Value> = (0..8)
                 .map(|index| intrinsic.deref(ctx).get_result(index))
                 .collect();
@@ -6600,9 +7266,9 @@ pub(super) fn try_dispatch(
                 (value.deref(ctx).get_result(0), value)
             };
             helpers::set_compiler_result_bundle_marker(ctx, value);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

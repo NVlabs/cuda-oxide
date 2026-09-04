@@ -1236,6 +1236,7 @@ fn translate_call(
         }
         return helpers::emit_unit_noop_intrinsic(
             ctx,
+            body,
             destination,
             &target_usize,
             block_ptr,
@@ -1579,6 +1580,22 @@ fn translate_function_item_call(
         }
     }
 
+    let prepared_destination = if target.is_some() {
+        let (prepared, prepared_last_op) = helpers::prepare_destination_write(
+            ctx,
+            body,
+            destination,
+            value_map,
+            block_ptr,
+            last_op,
+            loc.clone(),
+        )?;
+        last_op = prepared_last_op;
+        Some(prepared)
+    } else {
+        None
+    };
+
     let call_op = Operation::new(
         ctx,
         MirCallOp::get_concrete_op_info(),
@@ -1604,15 +1621,10 @@ fn translate_function_item_call(
         return Ok(emit_unreachable_after(ctx, block_ptr, Some(call_op), loc));
     }
 
-    // The result is typed from the projected destination above, so it must
-    // also be stored through the projection: a bare-local store would aim a
-    // field-typed value at the aggregate's slot (or a pointee-typed value at
-    // the pointer's).
     let result_value = call_op.deref(ctx).get_result(0);
-    let last_inserted = helpers::store_result_to_place(
+    let last_inserted = helpers::finish_destination_write(
         ctx,
-        body,
-        destination,
+        prepared_destination.expect("returning call prepared its destination"),
         result_value,
         value_map,
         block_ptr,
@@ -1858,6 +1870,22 @@ fn translate_closure_call(
         unpacked_args.push(tuple_value);
     }
 
+    let prepared_destination = if target.is_some() {
+        let (prepared, prepared_last_op) = helpers::prepare_destination_write(
+            ctx,
+            body,
+            destination,
+            value_map,
+            block_ptr,
+            last_op,
+            loc.clone(),
+        )?;
+        last_op = prepared_last_op;
+        Some(prepared)
+    } else {
+        None
+    };
+
     // Now emit the call with unpacked arguments
     let call_op = Operation::new(
         ctx,
@@ -1889,14 +1917,10 @@ fn translate_closure_call(
         return Ok(emit_unreachable_after(ctx, block_ptr, Some(call_op), loc));
     }
 
-    // Store the call result into the destination place. The result is typed
-    // from the projected destination above, so it must also be stored
-    // through the projection, not the bare local's slot.
     let result_value = call_op.deref(ctx).get_result(0);
-    let last_inserted = helpers::store_result_to_place(
+    let last_inserted = helpers::finish_destination_write(
         ctx,
-        body,
-        destination,
+        prepared_destination.expect("returning call prepared its destination"),
         result_value,
         value_map,
         block_ptr,
@@ -2418,16 +2442,27 @@ fn emit_ptr_memmove(
     let (count, last) =
         rvalue::translate_operand(ctx, body, &args[2], value_map, block_ptr, last, loc.clone())?;
 
+    let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last,
+        loc.clone(),
+    )?;
+
     // `mir.memmove` operand order is (dst, src, count). The typed builder
     // stamps the elem_type fact from dst for lowering's byte count.
     let xfer = MirMemmoveOp::build(ctx, dst, src, count)?;
     xfer.deref_mut(ctx).set_loc(loc.clone());
-    match last {
+    match prepared_last_op {
         Some(p) => xfer.insert_after(ctx, p),
         None => xfer.insert_at_front(block_ptr, ctx),
     }
 
-    // The intrinsic yields `()`; materialize it for the destination local.
+    // The intrinsic yields `()`; materialize it after the memmove and write it
+    // through the destination prepared before the memory operation ran.
     let unit_ty = MirTupleType::get(ctx, vec![]);
     let unit_op = Operation::new(
         ctx,
@@ -2441,26 +2476,18 @@ fn emit_ptr_memmove(
     unit_op.insert_after(ctx, xfer);
     let unit_val = unit_op.deref(ctx).get_result(0);
 
-    let goto_prev = value_map
-        .store_local(ctx, destination.local, unit_val, block_ptr, Some(unit_op))
-        .unwrap_or(unit_op);
-
-    if let Some(target_idx) = target {
-        Ok(helpers::emit_goto(
-            ctx,
-            *target_idx,
-            goto_prev,
-            block_map,
-            loc,
-        ))
-    } else {
-        input_err!(
-            loc,
-            TranslationErr::unsupported(
-                "ptr::copy intrinsic call without target not supported".to_string()
-            )
-        )
-    }
+    helpers::emit_prepared_result_and_goto(
+        ctx,
+        prepared_destination,
+        unit_val,
+        target,
+        block_ptr,
+        unit_op,
+        value_map,
+        block_map,
+        loc,
+        "ptr::copy intrinsic call without target not supported",
+    )
 }
 
 /// Lower `core::intrinsics::typed_swap_nonoverlapping::<T>(x, y)`, the
@@ -2521,6 +2548,16 @@ fn emit_typed_swap(
         }
     };
 
+    let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last,
+        loc.clone(),
+    )?;
+
     // t0 = *x
     let load_x = Operation::new(
         ctx,
@@ -2531,7 +2568,7 @@ fn emit_typed_swap(
         0,
     );
     load_x.deref_mut(ctx).set_loc(loc.clone());
-    match last {
+    match prepared_last_op {
         Some(p) => load_x.insert_after(ctx, p),
         None => load_x.insert_at_front(block_ptr, ctx),
     }
@@ -2588,26 +2625,18 @@ fn emit_typed_swap(
     unit_op.insert_after(ctx, store_y);
     let unit_val = unit_op.deref(ctx).get_result(0);
 
-    let goto_prev = value_map
-        .store_local(ctx, destination.local, unit_val, block_ptr, Some(unit_op))
-        .unwrap_or(unit_op);
-
-    if let Some(target_idx) = target {
-        Ok(helpers::emit_goto(
-            ctx,
-            *target_idx,
-            goto_prev,
-            block_map,
-            loc,
-        ))
-    } else {
-        input_err!(
-            loc,
-            TranslationErr::unsupported(
-                "typed_swap_nonoverlapping call without target not supported".to_string()
-            )
-        )
-    }
+    helpers::emit_prepared_result_and_goto(
+        ctx,
+        prepared_destination,
+        unit_val,
+        target,
+        block_ptr,
+        unit_op,
+        value_map,
+        block_map,
+        loc,
+        "typed_swap_nonoverlapping call without target not supported",
+    )
 }
 
 /// Dispatches `cuda_device` intrinsic calls to their respective handlers.
@@ -2838,6 +2867,7 @@ fn try_dispatch_intrinsic(
         "core::intrinsics::cold_path" | "std::intrinsics::cold_path" => {
             Ok(Some(helpers::emit_unit_noop_intrinsic(
                 ctx,
+                body,
                 destination,
                 target,
                 block_ptr,
