@@ -152,7 +152,7 @@ TMEM address: 0x00000000
 
 - **Required GPU**: Blackwell datacenter B100, B200 or newer (sm_100a)
 - **NOT supported**: Hopper (sm_90, uses WGMMA), Ada (sm_89), Consumer Blackwell (sm_120)
-- **CUDA Driver**: 12.x with Blackwell support
+- **CUDA Driver**: 13.x (R580+) with Blackwell support
 
 ## tcgen05 vs WGMMA (Hopper)
 

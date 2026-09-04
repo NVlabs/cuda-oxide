@@ -10,8 +10,9 @@
 //! Build and run with:
 //!   cargo oxide run tcgen05_matmul
 
+use cuda_core::simt::LaunchConfig;
 use cuda_core::{
-    CudaContext, CudaStream, DeviceBuffer, LaunchConfig,
+    CudaContext, CudaStream, DeviceBuffer,
     sys::{
         self as cuda_sys, CUtensorMap, CUtensorMapDataType_enum_CU_TENSOR_MAP_DATA_TYPE_FLOAT16,
         CUtensorMapFloatOOBfill_enum_CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE,

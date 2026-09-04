@@ -24,7 +24,8 @@
 //! wrote a constant, or that addressed the wrong element, fails the check
 //! rather than passing quietly.
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, Runtime2DIndex, cuda_module, device, kernel, thread};
 
 const LEN: u32 = 1 << 12;

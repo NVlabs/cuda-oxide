@@ -37,8 +37,8 @@ jobs:
       - name: Example lockfiles resolve identical dependency versions
         run: bash scripts/sync-example-locks.sh --check
 
-      # Needed for cuda.h (bindgen in cuda-bindings) and the link-time
-      # libcuda.so stub. Same shape as unit-tests.yml / clippy.yml.
+      # Needed for cuda.h and curand.h: bindgen runs in the shared
+      # cuda-bindings build script. Same setup as unit-tests.yml / clippy.yml.
       - name: Install CUDA toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-toolkit

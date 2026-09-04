@@ -36,7 +36,8 @@
 //! cargo oxide run abi_hmm
 //! ```
 
-use cuda_core::{CudaContext, LaunchConfig};
+use cuda_core::CudaContext;
+use cuda_core::simt::LaunchConfig;
 use cuda_device::{cuda_module, kernel, thread};
 
 // =============================================================================

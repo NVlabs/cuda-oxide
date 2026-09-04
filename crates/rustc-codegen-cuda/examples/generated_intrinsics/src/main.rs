@@ -8,7 +8,8 @@
 //! The kernel calls generated coordinate, lane-mask, vote, and shuffle intrinsics
 //! directly. This covers the raw path instead of only `cuda-device` wrappers.
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, cuda_module, kernel};
 use cuda_device::{
     bf16 as device_bf16, bf16x2 as device_bf16x2, f16 as device_f16, f16x2 as device_f16x2,

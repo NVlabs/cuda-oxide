@@ -1,2 +1,3 @@
-# Low-level CUDA FFI changes require review from the cuda-bindings maintainer.
-/crates/cuda-bindings/ @nihalpasham
+# The raw CUDA FFI crate (cuda-bindings) is shared with cutile-rs and lives in
+# NVlabs/cutile-rs since the host-crate migration; review ownership for it is
+# declared there. No path in this repository currently needs a code owner.

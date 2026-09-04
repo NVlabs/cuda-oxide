@@ -238,7 +238,8 @@ mod kernels {
 // =============================================================================
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+    use cuda_core::simt::LaunchConfig;
+    use cuda_core::{CudaContext, DeviceBuffer};
 
     println!("=== Future APIs Test (Unified) ===\n");
 

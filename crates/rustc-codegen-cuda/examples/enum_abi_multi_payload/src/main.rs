@@ -31,7 +31,8 @@
 //! Run with:
 //!   cargo oxide run enum_abi_multi_payload
 
-use cuda_core::{CudaContext, DeviceBuffer, DeviceCopy, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer, DeviceCopy};
 use cuda_device::{DisjointSlice, kernel, thread};
 use cuda_host::cuda_module;
 

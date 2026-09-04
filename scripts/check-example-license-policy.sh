@@ -18,8 +18,9 @@
 #
 # Why one run per distinct dependency set, not one per workspace:
 #
-#   Every example depends on cuda-core/cuda-device/cuda-host by path, so each
-#   lock file re-lists the root workspace's own transitive crates.  Grouping the
+#   Every example depends on cuda-device/cuda-host by path and on the shared
+#   cuda-core by the same cutile-rs pin as the root workspace, so each lock
+#   file re-lists the root workspace's own transitive crates.  Grouping the
 #   lock files by their exact set of third-party (name, version, source) triples
 #   collapses every example lock file (one per example directory, plus one per
 #   nested sub-workspace) to far fewer distinct sets, and one cargo-deny run
@@ -37,32 +38,20 @@ cd "$(dirname "$0")/.."
 
 EXAMPLES_ROOT=crates/rustc-codegen-cuda/examples
 
-# Examples whose dependencies deliberately cannot satisfy deny.toml today.
+# Examples whose dependencies deliberately cannot satisfy deny.toml.
 #
-# cutile_inter_kernel links NVlabs/cutile-rs by git.  Measured against the
-# current policy it fails two ways, neither of which this guard should paper
-# over:
-#
-#   error[source-not-allowed]: detected 'git' source not explicitly allowed  (x7)
-#   error[unlicensed]: cuda-bindings = 0.1.0 is unlicensed
-#
-# The first needs cutile-rs added to `[sources] allow-git`; `deny.toml`'s
-# allow-git still lists only pliron.  The second is not ours to fix: that
-# `cuda-bindings` is cutile-rs's own vendored copy at 0.1.0, not this
-# repository's crate of the same name (ours is 0.2.1 and inherits the workspace
-# license).  Both are policy calls for a maintainer.
-#
-# Tracked in #953.  (This comment used to cite #663, which is closed; that
-# issue's general gap was fixed by #664 and #681, but neither of these two
-# decisions was, so they moved to their own issue.)  The example is exempt from
-# the inventory guard for the same reason, so these crates are governed by
-# neither -- the one such hole in the tree.  Delete the entry once settled.
+# None today.  cutile_inter_kernel used to be exempt (#953): it linked
+# NVlabs/cutile-rs by git while `[sources] allow-git` listed only pliron, and
+# cutile-rs's cuda-bindings 0.1.0 carried no license.  Both are gone: every
+# example now takes the shared host crates from the same crates.io release as
+# the root workspace, and the 0.3.x crates are Apache-2.0, so the example is
+# judged like every other one.
 #
 # Every name here is checked against the examples on disk below, so a typo or a
 # rename fails the run instead of quietly exempting nothing -- or everything.
-# An exemption covers every lock file under the example, so
-# cutile_inter_kernel/simt (a nested sub-workspace) is exempt with its parent.
-POLICY_EXEMPT_EXAMPLES=(cutile_inter_kernel)
+# An exemption covers every lock file under the example, nested sub-workspaces
+# included.
+POLICY_EXEMPT_EXAMPLES=()
 
 command -v cargo-deny >/dev/null 2>&1 || {
     echo "error: cargo-deny not found; install it with 'cargo install cargo-deny --locked'" >&2

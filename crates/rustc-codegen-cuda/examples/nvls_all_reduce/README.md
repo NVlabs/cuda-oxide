@@ -1,7 +1,7 @@
 # nvls_all_reduce
 
 Single-process NVLS (NVLink SHARP) all-reduce across every multicast-capable
-GPU in the machine, built on the `cuda_core::vmm` multicast wrappers
+GPU in the machine, built on the `cuda_core::simt::vmm` multicast wrappers
 (`MulticastObject`, `Mapping::new_multicast`).
 
 ## What it demonstrates
@@ -26,7 +26,7 @@ this kernel doubles as its reference PTX.
 - An NVLink-switch system: HGX/DGX H100 or B200 (the driver reports
   `CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED`). PCIe-only or NVLink
   point-to-point boxes do not qualify.
-- 2+ GPUs, CUDA 12.1+ driver.
+- 2+ GPUs, CUDA 13.x driver (R580+).
 
 On any other machine the example prints `skipping: ...` and exits cleanly
 (so CI smoketests pass everywhere).
@@ -54,7 +54,7 @@ integers, so the sums are exact and order-independent).
 
 ## See also
 
-- `crates/cuda-core/tests/vmm_multicast.rs`: host-side team plumbing test
+- `cuda-core/tests/simt_vmm_multicast.rs` in cutile-rs: host-side team plumbing test
   (bind/map/unbind lifecycle) that runs without issuing `multimem`.
 - PTX ISA section 9.7.13.4 (`multimem.ld_reduce`, `multimem.st`,
   `multimem.red`).

@@ -16,7 +16,8 @@
 //!
 //!   cargo oxide run generated_intrinsics_blackwell
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{
     DisjointSlice,
     barrier::Barrier,

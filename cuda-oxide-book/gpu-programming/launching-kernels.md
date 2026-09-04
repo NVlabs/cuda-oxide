@@ -54,7 +54,8 @@ GPU execution can still overlap the host until you synchronize.
 
 ```rust
 use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 
 #[cuda_module]
 mod kernels {
@@ -525,7 +526,7 @@ explains why this can differ from the normal LLVM-to-PTX path.
 `LaunchConfig` specifies the grid shape:
 
 ```rust
-use cuda_core::LaunchConfig;
+use cuda_core::simt::LaunchConfig;
 
 let config = LaunchConfig {
     grid_dim: (num_blocks, 1, 1),
@@ -585,8 +586,8 @@ instead of enqueuing immediately. No stream is specified at launch time -- the
 scheduling policy chooses one when the operation is executed:
 
 ```rust
-use cuda_async::device_context::init_device_contexts;
-use cuda_async::device_operation::DeviceOperation;
+use cuda_async::simt::device_context::init_device_contexts;
+use cuda_async::simt::device_operation::DeviceOperation;
 
 init_device_contexts(0, 1)?;
 let module = kernels::load_async(0)?;
@@ -783,6 +784,8 @@ in doubt.
 | `CUDA_ERROR_ILLEGAL_INSTRUCTION`       | Kernel hit a trap (panic, assert failure, OOB)         | Debug with `cargo oxide debug` or `gpu_printf!`                      |
 | `CUDA_ERROR_NO_BINARY_FOR_GPU`         | PTX compiled for wrong architecture                    | Rebuild with `--arch` matching your GPU                              |
 | `CUDA_ERROR_UNSUPPORTED_PTX_VERSION` (222) | Driver cannot compile the PTX version in the module | Select a compatible `CUDA_TOOLKIT_PATH` or upgrade the driver        |
+| `CUDA_ERROR_NOT_INITIALIZED`           | `libcuda` missing, or the driver's CUDA major is older than the toolkit's | Install an R580+ driver; the error text names the files the loader tried |
+| `CUDA_ERROR_NOT_FOUND` (from a non-launch call) | Driver symbol missing from the loaded `libcuda`     | Upgrade the driver to the toolkit's CUDA version                       |
 
 :::{seealso}
 The [Error Handling and Debugging](error-handling-and-debugging.md) chapter

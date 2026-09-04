@@ -165,5 +165,5 @@ are required on `and_then` closure parameters:
 The `Zippable` trait must also be explicitly imported for `zip!` to work:
 
 ```rust
-use cuda_async::device_operation::Zippable;
+use cuda_async::simt::device_operation::Zippable;
 ```

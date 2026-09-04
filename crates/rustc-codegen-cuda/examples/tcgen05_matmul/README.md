@@ -159,7 +159,7 @@ GPU Compute Capability: sm_120
 
 - **Required GPU**: Blackwell datacenter B100, B200 or newer (sm_100a)
 - **NOT supported**: Consumer Blackwell (sm_120), Hopper (sm_90), Ada (sm_89)
-- **CUDA Driver**: 12.x with Blackwell support
+- **CUDA Driver**: 13.x (R580+) with Blackwell support
 - **Memory**: ~32KB shared memory per block
 
 ## Test Data

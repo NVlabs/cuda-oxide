@@ -114,7 +114,8 @@ mod kernels {
 // =============================================================================
 
 fn main() {
-    use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+    use cuda_core::simt::LaunchConfig;
+    use cuda_core::{CudaContext, DeviceBuffer};
 
     println!("=== Lane-Position Masks & Warp Prefix Sum ===\n");
 

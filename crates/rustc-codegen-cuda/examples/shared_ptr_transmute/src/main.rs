@@ -39,7 +39,8 @@
 
 #![allow(static_mut_refs)]
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, SharedArray, cuda_module, device, kernel, thread};
 
 #[cuda_module]

@@ -16,7 +16,8 @@
 //! Build and run with:
 //!   cargo oxide run wgmma
 
-use cuda_core::{CudaContext, CudaStream, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use cuda_device::shared::SharedArray;
 use cuda_device::wgmma::{make_smem_desc, wgmma_commit_group, wgmma_fence, wgmma_wait_group};
 use cuda_device::{DisjointSlice, kernel, thread};

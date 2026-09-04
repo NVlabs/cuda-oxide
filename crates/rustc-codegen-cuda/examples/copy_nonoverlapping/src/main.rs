@@ -19,7 +19,8 @@
 //! Usage:
 //!   cargo oxide run copy_nonoverlapping
 
-use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig};
+use cuda_core::simt::LaunchConfig;
+use cuda_core::{CudaContext, DeviceBuffer};
 use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, thread};
 
 #[cuda_module]

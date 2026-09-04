@@ -22,11 +22,12 @@ jobs:
         # no live GPU. `needs_cuda: true` installs the CUDA toolkit for build-
         # time bindgen (every crate that transitively depends on
         # `cuda-bindings` needs `cuda.h` to compile). `test_args` overrides
-        # the default `--all-targets`, used by `cuda-core` to skip its
-        # GPU-only `tests/vmm_p2p.rs` integration test.
+        # the default `--all-targets` where a crate needs a narrower set.
+        #
+        # cuda-bindings, cuda-core, and cuda-async are the shared host-side
+        # crates from cutile-rs now; their unit tests run in cutile-rs CI.
         #
         # Crates intentionally not in this matrix:
-        #   * `cuda-bindings` — generated sys bindings covered transitively.
         #   * `fuzzer` — differential-testing infra with no unit tests.
         #   * `rustc-codegen-cuda` — its own [workspace] that links against
         #     `rustc-private` dylibs; covered by the separate job below.
@@ -64,9 +65,10 @@ jobs:
           - package: mir-transforms
           - package: nvvm-transforms
           # `default = []`, but every consumer turns the object features on:
-          # rustc-codegen-cuda and cuda-core take `object-write`, cuda-core
-          # also `object-read`. Testing the default set alone skips the eight
-          # ELF emit/extract tests that cover the configuration actually built.
+          # rustc-codegen-cuda takes `object-write`, and the shared cuda-core
+          # (cutile-rs, via its crates.io oxide-artifacts) takes `object-read`.
+          # Testing the default set alone skips the eight ELF emit/extract
+          # tests that cover the configuration actually built.
           - package: oxide-artifacts
             test_args: --all-targets --features object
           - package: reserved-oxide-symbols
@@ -91,14 +93,6 @@ jobs:
           # Running it on a runner with NO toolkit installed is the
           # regression gate for issue #87.
           - package: cargo-oxide
-          # async DeviceOperation pipeline; transitively pulls cuda-bindings
-          - package: cuda-async
-            needs_cuda: true
-          # CUDA driver wrappers; `--lib` skips the GPU-only VMM/P2P
-          # integration test in `tests/vmm_p2p.rs`.
-          - package: cuda-core
-            needs_cuda: true
-            test_args: --lib
 
     steps:
       - name: Clone repository
@@ -137,25 +131,10 @@ jobs:
           export LIBRARY_PATH="${sysroot}/lib:${LIBRARY_PATH:-}"
           export LD_LIBRARY_PATH="${sysroot}/lib:${LD_LIBRARY_PATH:-}"
 
-          # cuda-bindings emits `cargo:rustc-link-lib=dylib=cuda`, and the
-          # linker stamps the stub's SONAME (`libcuda.so.1`) into the test
-          # binary's DT_NEEDED. The CUDA dev sub-packages only ship the
-          # link-time stub named `libcuda.so`, with no `libcuda.so.1` alias.
-          # Binaries that actually reference `cu*` symbols (cuda-core,
-          # cuda-async) keep the NEEDED entry and fail to load at runtime
-          # on a GPU-less runner. Binaries whose `cu*` calls were pruned by
-          # `--as-needed` (e.g. cuda-host's tests) load fine without it.
-          # Create a writable shadow with the `libcuda.so.1` filename
-          # pointing at the stub, and prepend it to LD_LIBRARY_PATH. The
-          # stub returns errors for any real driver call, which is fine
-          # because the unit tests selected here never invoke one.
-          if [ -n "${CUDA_TOOLKIT_PATH:-}" ] && [ -f "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" ]; then
-            stub_shadow="${RUNNER_TEMP}/libcuda-stub"
-            mkdir -p "${stub_shadow}"
-            ln -sf "${CUDA_TOOLKIT_PATH}/lib64/stubs/libcuda.so" "${stub_shadow}/libcuda.so.1"
-            export LD_LIBRARY_PATH="${stub_shadow}:${LD_LIBRARY_PATH}"
-          fi
-
+          # No libcuda shadowing: the shared cuda-bindings (cutile-rs) loads
+          # libcuda at run time through libloading, so test binaries carry no
+          # DT_NEEDED on `libcuda.so.1` and load on a driverless runner. The
+          # tests that need a real driver are `#[ignore]`d.
           cargo test -p ${{ matrix.package }} ${{ matrix.test_args || '--all-targets' }}
 
       # End-to-end proof for issue #87: on this runner there is no CUDA
