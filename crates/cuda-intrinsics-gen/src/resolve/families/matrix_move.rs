@@ -580,9 +580,12 @@ pub(in crate::resolve) fn validate_ldmatrix_policy(
             && policy.safe_allowlist_reason.is_none()
             && {
                 let expected_compatibility_paths = if classic {
-                    vec![format!(
-                        "cuda_device::wmma::ldmatrix_{count_name}{trans_record}"
-                    )]
+                    vec![
+                        format!("cuda_device::wmma::ldmatrix_{count_name}{trans_record}"),
+                        format!(
+                            "cuda_device::wmma::ldmatrix_{count_name}{trans_record}_shared_u32"
+                        ),
+                    ]
                 } else if matches!(
                     policy.id.as_str(),
                     "ldmatrix_m8n16_x2_b8x16_b4x16_p64" | "ldmatrix_m8n16_x4_b8x16_b4x16_p64"

@@ -1227,7 +1227,7 @@ pub fn emit_dynamic_shared_offset(
     )
 }
 
-/// Emit `cuda_device::shared::cvta_generic_to_shared_offset(ptr) -> u64`.
+/// Emit a generic-to-shared conversion with the requested integer width.
 ///
 /// Converts a generic-address pointer into its raw `.shared` window offset,
 /// the value hardware SMEM descriptors (WGMMA/tcgen05) encode. Mirrors CUDA
@@ -1245,6 +1245,7 @@ pub fn emit_cvta_generic_to_shared_offset(
     value_map: &mut ValueMap,
     block_map: &[Ptr<BasicBlock>],
     loc: Location,
+    result_width: u32,
 ) -> TranslationResult<Ptr<Operation>> {
     use dialect_nvvm::ops::CvtaGenericToSharedOffsetOp;
     use pliron::builtin::types::Signedness;
@@ -1253,7 +1254,7 @@ pub fn emit_cvta_generic_to_shared_offset(
         return input_err!(
             loc.clone(),
             TranslationErr::unsupported(format!(
-                "cvta_generic_to_shared_offset expects 1 argument, got {}",
+                "generic-to-shared address conversion expects 1 argument, got {}",
                 args.len()
             ))
         );
@@ -1269,11 +1270,11 @@ pub fn emit_cvta_generic_to_shared_offset(
         loc.clone(),
     )?;
 
-    let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
+    let result_ty = IntegerType::get(ctx, result_width, Signedness::Unsigned);
     let cvta_op = Operation::new(
         ctx,
         CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
-        vec![u64_ty.into()],
+        vec![result_ty.into()],
         vec![ptr_val],
         vec![],
         0,
@@ -1297,7 +1298,7 @@ pub fn emit_cvta_generic_to_shared_offset(
         value_map,
         block_map,
         loc,
-        "cvta_generic_to_shared_offset call without target block",
+        "generic-to-shared address conversion call without target block",
     )
 }
 

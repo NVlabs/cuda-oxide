@@ -3,13 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! End-to-end oracle for the generated `ldmatrix.m8n8.x4.b16` intrinsic.
+//! End-to-end oracle for the generated `ldmatrix.m8n8.x4.b16` intrinsic and
+//! its native-u32 shared-address adapter.
 //!
 //! One warp fills four distinct 8x8 b16 matrices in shared memory. Every lane
 //! then supplies one 16-byte row address to `ldmatrix`; the host checks all 128
 //! returned register fragments against their exact source matrix, row, and
-//! column pair. A second kernel selects one returned register with a source-
-//! level remainder-bounded dynamic index, while a third uses an exact
+//! column pair through the native-address form. A second kernel selects one
+//! returned register with a source-level remainder-bounded dynamic index,
+//! while a third uses an exact
 //! `assert(index < C)` bound. Together they exercise compiler-owned bundle
 //! forwarding through the real rustc-to-PTX pipeline.
 //!
@@ -18,8 +20,11 @@
 
 use cuda_core::simt::LaunchConfig;
 use cuda_core::{CudaContext, DeviceBuffer};
+use cuda_device::shared::cvta_generic_to_shared_u32;
 use cuda_device::wmma::{
-    ldmatrix_x1, ldmatrix_x1_trans, ldmatrix_x2, ldmatrix_x2_trans, ldmatrix_x4, ldmatrix_x4_trans,
+    ldmatrix_x1, ldmatrix_x1_shared_u32, ldmatrix_x1_trans, ldmatrix_x1_trans_shared_u32,
+    ldmatrix_x2, ldmatrix_x2_shared_u32, ldmatrix_x2_trans, ldmatrix_x2_trans_shared_u32,
+    ldmatrix_x4, ldmatrix_x4_shared_u32, ldmatrix_x4_trans, ldmatrix_x4_trans_shared_u32,
 };
 use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, thread};
 use cuda_intrinsics::matrix::ldmatrix_m8n8_x4_b16;
@@ -34,7 +39,7 @@ const SHARED_WORDS: usize = MATRICES * ROWS * WORDS_PER_ROW;
 const OUTPUT_WORDS: usize = LANES * MATRICES;
 const DYNAMIC_OUTPUT_WORDS: usize = LANES;
 const ASSERTED_REGISTER: usize = 2;
-const LEGACY_REGISTERS: usize = 14;
+const LEGACY_REGISTERS: usize = 28;
 
 /// A distinct nonzero value for every matrix element.
 ///
@@ -103,7 +108,10 @@ mod kernels {
         // - lane `n` supplies row `n % 8` of matrix `n / 8`, as x4 requires;
         // - each address points to a live, initialized, 16-byte-aligned row;
         // - the barrier above orders the shared-memory writes before the load.
-        let registers = unsafe { ldmatrix_m8n8_x4_b16(shared.add(row_word).cast_const()) };
+        let shared_address = unsafe {
+            cvta_generic_to_shared_u32(shared.add(row_word).cast_const().cast::<u8>())
+        };
+        let registers = unsafe { ldmatrix_x4_shared_u32(shared_address) };
 
         // Result register m contains matrix m, row lane/4, column pair lane%4.
         // Each lane owns four unique output slots.
@@ -227,6 +235,13 @@ mod kernels {
         let x2_trans = unsafe { ldmatrix_x2_trans(address) };
         let x4 = unsafe { ldmatrix_x4(address) };
         let x4_trans = unsafe { ldmatrix_x4_trans(address) };
+        let shared_address = unsafe { cvta_generic_to_shared_u32(address.cast::<u8>()) };
+        let address_x1 = unsafe { ldmatrix_x1_shared_u32(shared_address) };
+        let address_x1_trans = unsafe { ldmatrix_x1_trans_shared_u32(shared_address) };
+        let address_x2 = unsafe { ldmatrix_x2_shared_u32(shared_address) };
+        let address_x2_trans = unsafe { ldmatrix_x2_trans_shared_u32(shared_address) };
+        let address_x4 = unsafe { ldmatrix_x4_shared_u32(shared_address) };
+        let address_x4_trans = unsafe { ldmatrix_x4_trans_shared_u32(shared_address) };
 
         let base = lane * LEGACY_REGISTERS;
         unsafe {
@@ -244,6 +259,20 @@ mod kernels {
             *output.get_unchecked_mut(base + 11) = x4_trans[1];
             *output.get_unchecked_mut(base + 12) = x4_trans[2];
             *output.get_unchecked_mut(base + 13) = x4_trans[3];
+            *output.get_unchecked_mut(base + 14) = address_x1;
+            *output.get_unchecked_mut(base + 15) = address_x1_trans;
+            *output.get_unchecked_mut(base + 16) = address_x2[0];
+            *output.get_unchecked_mut(base + 17) = address_x2[1];
+            *output.get_unchecked_mut(base + 18) = address_x2_trans[0];
+            *output.get_unchecked_mut(base + 19) = address_x2_trans[1];
+            *output.get_unchecked_mut(base + 20) = address_x4[0];
+            *output.get_unchecked_mut(base + 21) = address_x4[1];
+            *output.get_unchecked_mut(base + 22) = address_x4[2];
+            *output.get_unchecked_mut(base + 23) = address_x4[3];
+            *output.get_unchecked_mut(base + 24) = address_x4_trans[0];
+            *output.get_unchecked_mut(base + 25) = address_x4_trans[1];
+            *output.get_unchecked_mut(base + 26) = address_x4_trans[2];
+            *output.get_unchecked_mut(base + 27) = address_x4_trans[3];
         }
     }
 }
