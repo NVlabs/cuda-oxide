@@ -61,7 +61,7 @@ support race-free parallel writes:
 Put them together and you get a kernel body with zero `unsafe`:
 
 ```rust
-use cuda_device::{kernel, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel};
 
 #[kernel]
 pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
@@ -140,9 +140,7 @@ checks Z and returns `None` when it is active.
 For a small fixed tile, one bounds check can cover every element in that tile:
 
 ```rust
-use cuda_device::{
-    DisjointSlice, LinearTiles, kernel, launch_contract, thread,
-};
+use cuda_device::{DisjointSlice, LinearTiles, kernel, launch_contract, thread};
 
 #[kernel(launch_context = launch_context)]
 #[launch_contract(

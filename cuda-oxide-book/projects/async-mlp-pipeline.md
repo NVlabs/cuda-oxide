@@ -99,7 +99,7 @@ them.
 ### sgemm_naive — matrix multiply
 
 ```rust
-use cuda_device::{kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel, thread};
 
 use cuda_device::thread::Runtime2DIndex;
 

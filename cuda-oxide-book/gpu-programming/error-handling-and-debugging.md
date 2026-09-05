@@ -37,7 +37,7 @@ poisoned, so terminate and relaunch it.
 uses CUDA's built-in `vprintf` mechanism:
 
 ```rust
-use cuda_device::{kernel, thread, gpu_printf, DisjointSlice};
+use cuda_device::{DisjointSlice, gpu_printf, kernel, thread};
 
 #[kernel]
 pub fn debug_kernel(data: &[f32], mut out: DisjointSlice<f32>) {

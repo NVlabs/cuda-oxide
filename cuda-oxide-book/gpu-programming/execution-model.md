@@ -41,7 +41,7 @@ CUDA provides built-in variables (`threadIdx`, `blockIdx`, `blockDim`,
 `gridDim`); cuda-oxide wraps these in the `cuda_device::thread` module:
 
 ```rust
-use cuda_device::{kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel, thread};
 
 #[kernel]
 pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {

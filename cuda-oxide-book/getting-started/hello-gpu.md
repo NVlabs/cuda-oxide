@@ -58,9 +58,9 @@ You should see `PASSED: all 1024 elements correct`. The generated template is a 
 Here's a vector addition with a twist: the element-wise addition is factored out into a plain helper function. Both the kernel and the helper live in the same file alongside host code:
 
 ```rust
-use cuda_device::{kernel, launch_bounds, launch_contract, thread, DisjointSlice};
-use cuda_host::cuda_module;
 use cuda_core::{CudaContext, DeviceBuffer, LaunchConfig1D};
+use cuda_device::{DisjointSlice, kernel, launch_bounds, launch_contract, thread};
+use cuda_host::cuda_module;
 
 /// Plain helper function -- no annotation needed.
 /// The compiler discovers it automatically because `vecadd` calls it.

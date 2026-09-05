@@ -227,7 +227,7 @@ wraps a mutable slice and only allows writes through a `ThreadIndex` whose
 this ensures each thread accesses a unique element:
 
 ```rust
-use cuda_device::{kernel, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel};
 
 #[kernel]
 pub fn double(input: &[f32], mut out: DisjointSlice<f32>) {

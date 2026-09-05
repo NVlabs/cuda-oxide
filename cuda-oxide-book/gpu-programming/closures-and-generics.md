@@ -156,9 +156,7 @@ argument, and the GPU does not choose a policy at runtime.
 A policy can also carry metadata-only descriptions:
 
 ```rust
-use cuda_device::config::{
-    Atom, AtomKind, Block, Global, RowMajor, Shape1, Thread, Tile,
-};
+use cuda_device::config::{Atom, AtomKind, Block, Global, RowMajor, Shape1, Thread, Tile};
 
 type BlockTile = Tile<Shape1<1024>, RowMajor, Global, Block>;
 
@@ -362,7 +360,7 @@ Kernels can be defined in a library crate and launched from a binary crate:
 
 ```rust
 // In lib crate `my_kernels`:
-use cuda_device::{cuda_module, kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, cuda_module, kernel, thread};
 
 #[cuda_module]
 pub mod kernels {

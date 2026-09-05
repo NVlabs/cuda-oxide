@@ -54,7 +54,7 @@ at compile time. You declare it as a `static mut` inside the kernel:
 
 ```rust
 use cuda_device::thread::Runtime2DIndex;
-use cuda_device::{kernel, thread, DisjointSlice, SharedArray};
+use cuda_device::{DisjointSlice, SharedArray, kernel, thread};
 
 const TILE: usize = 16;
 
@@ -161,7 +161,7 @@ share a single shared memory pool across multiple logical arrays.
 size is set at launch time via `LaunchConfig::shared_mem_bytes`:
 
 ```rust
-use cuda_device::{kernel, thread, DynamicSharedArray};
+use cuda_device::{DynamicSharedArray, kernel, thread};
 
 #[kernel]
 pub fn reduce_dynamic(input: &[f32], n: u32, mut output: DisjointSlice<f32>) {

@@ -46,7 +46,7 @@ supports up to 8 blocks per cluster.
 In cuda-oxide, you annotate the kernel with `#[cluster_launch]`:
 
 ```rust
-use cuda_device::{kernel, cluster_launch, thread, cluster, SharedArray};
+use cuda_device::{SharedArray, cluster, cluster_launch, kernel, thread};
 
 #[kernel]
 #[cluster_launch(4, 1, 1)]

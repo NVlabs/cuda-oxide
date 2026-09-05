@@ -101,8 +101,8 @@ memory into a shared memory destination. They are available for 1D through
 5D tensors:
 
 ```rust
-use cuda_device::tma::{cp_async_bulk_tensor_2d_g2s, TmaDescriptor};
 use cuda_device::barrier::Barrier;
+use cuda_device::tma::{TmaDescriptor, cp_async_bulk_tensor_2d_g2s};
 
 unsafe fn load_tile(
     smem_dst: *mut u8,
