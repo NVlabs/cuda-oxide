@@ -913,12 +913,17 @@ pub(super) fn render_compat_tma(catalog: &CatalogFile, hash: &str) -> String {
         let is_g2s = matches!(
             operation,
             TmaOperation::G2sTile1d
+                | TmaOperation::G2sCtaTile1d
                 | TmaOperation::G2sTile2d
+                | TmaOperation::G2sCtaTile2d
                 | TmaOperation::G2sTile2dMulticast
                 | TmaOperation::G2sTile2dMulticastCg2
                 | TmaOperation::G2sTile3d
+                | TmaOperation::G2sCtaTile3d
                 | TmaOperation::G2sTile4d
+                | TmaOperation::G2sCtaTile4d
                 | TmaOperation::G2sTile5d
+                | TmaOperation::G2sCtaTile5d
         );
         let is_s2g = matches!(
             operation,
