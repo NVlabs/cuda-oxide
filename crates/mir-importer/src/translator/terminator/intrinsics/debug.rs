@@ -12,7 +12,7 @@
 //! - `__gpu_assertfail()` - Device-side assertion diagnostics
 //! - `__gpu_vprintf()` - Formatted output to host console
 
-use super::super::helpers::emit_store_result_and_goto;
+use super::super::helpers;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
 use dialect_mir::ops::MirConstructTupleOp;
@@ -74,6 +74,16 @@ pub fn emit_assertfail(
         last_op = next_op;
     }
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let assertfail_op = AssertFailOp::build(
         ctx,
         translated_args[0],
@@ -106,9 +116,9 @@ pub fn emit_assertfail(
     unit_op.insert_after(ctx, assertfail_op);
 
     let unit_value = unit_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         unit_value,
         target,
         block_ptr,
@@ -182,6 +192,16 @@ pub fn emit_vprintf(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     // Create the vprintf operation
     let vprintf_op = VprintfOp::build(ctx, format_ptr, args_ptr);
     vprintf_op.deref_mut(ctx).set_loc(loc.clone());
@@ -195,9 +215,9 @@ pub fn emit_vprintf(
 
     // Store the result (i32) in the destination
     let result_value = vprintf_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_value,
         target,
         block_ptr,

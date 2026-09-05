@@ -601,6 +601,16 @@ pub fn emit_rust_layout_intrinsic(
         }
     };
 
+    let (prepared_destination, prev_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
     let (result, result_op) = match intrinsic {
         RustLayoutIntrinsic::SizeOfVal => emit_size_of_val(
             ctx,
@@ -617,10 +627,9 @@ pub fn emit_rust_layout_intrinsic(
         }
     };
 
-    let store_op = helpers::store_result_to_place(
+    let store_op = helpers::finish_destination_write(
         ctx,
-        body,
-        destination,
+        prepared_destination,
         result,
         value_map,
         block_ptr,

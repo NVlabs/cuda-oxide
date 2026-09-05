@@ -5,7 +5,7 @@
 
 //! Translation of `cuda_device::iket` compiler markers.
 
-use super::super::helpers::{emit_goto, emit_store_result_and_goto, insert_op};
+use super::super::helpers::{self, emit_goto, insert_op};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::{rvalue, values::ValueMap};
 use dialect_iket::{
@@ -186,6 +186,22 @@ pub fn try_dispatch(
         None
     };
 
+    let prepared_destination = if matches!(marker, Marker::RangeStart | Marker::RangeStartPayload) {
+        let (prepared_destination, next_op) = helpers::prepare_destination_write(
+            ctx,
+            body,
+            destination,
+            value_map,
+            block_ptr,
+            last_op,
+            loc.clone(),
+        )?;
+        last_op = next_op;
+        Some(prepared_destination)
+    } else {
+        None
+    };
+
     let operation = match marker {
         Marker::Mark | Marker::MarkPayload => IketMarkOp::new(
             ctx,
@@ -224,9 +240,9 @@ pub fn try_dispatch(
 
     if matches!(marker, Marker::RangeStart | Marker::RangeStartPayload) {
         let result: Value = operation.deref(ctx).get_result(0);
-        return emit_store_result_and_goto(
+        return helpers::emit_prepared_result_and_goto(
             ctx,
-            destination,
+            prepared_destination.expect("range_start destination must be prepared"),
             result,
             target,
             block_ptr,

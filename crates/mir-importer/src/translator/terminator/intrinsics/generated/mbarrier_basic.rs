@@ -53,11 +53,20 @@ pub(super) fn try_dispatch(
             let mbarrier = MbarrierArriveSharedOp::build(ctx, barrier);
             mbarrier.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, mbarrier, "v1:i0098");
-            helpers::insert_op(ctx, mbarrier, block_ptr, last_op);
-            let result = mbarrier.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mbarrier, block_ptr, prepared_last_op);
+            let result = mbarrier.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -92,11 +101,20 @@ pub(super) fn try_dispatch(
             let mbarrier = MbarrierArriveNoCompleteSharedOp::build(ctx, barrier, count);
             mbarrier.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, mbarrier, "v1:i1017");
-            helpers::insert_op(ctx, mbarrier, block_ptr, last_op);
-            let result = mbarrier.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mbarrier, block_ptr, prepared_last_op);
+            let result = mbarrier.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,
@@ -206,11 +224,20 @@ pub(super) fn try_dispatch(
             let mbarrier = MbarrierTestWaitSharedOp::build(ctx, barrier, token);
             mbarrier.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, mbarrier, "v1:i0099");
-            helpers::insert_op(ctx, mbarrier, block_ptr, last_op);
-            let result = mbarrier.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
                 ctx,
+                body,
                 destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, mbarrier, block_ptr, prepared_last_op);
+            let result = mbarrier.deref(ctx).get_result(0);
+            Ok(Some(helpers::emit_prepared_result_and_goto(
+                ctx,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

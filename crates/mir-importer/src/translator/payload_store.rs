@@ -72,6 +72,13 @@ pub(crate) struct CanonicalPayloadStore {
     pub(crate) field: usize,
 }
 
+/// A canonical enum-payload destination whose enclosing enum address was
+/// materialized before a call.
+pub(crate) struct PreparedCanonicalPayloadStore {
+    enum_ptr: Value,
+    store: CanonicalPayloadStore,
+}
+
 /// Classify an assignment destination.
 ///
 /// `None` for every destination the ordinary address path still owns: a
@@ -118,6 +125,63 @@ pub(crate) fn classify(
     }))
 }
 
+/// Materialize the enclosing enum address for a canonical payload call
+/// destination.
+///
+/// Keeping the typed payload metadata together with the address lets the
+/// result write happen after the callee without re-evaluating the MIR place.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_call_store(
+    ctx: &mut Context,
+    body: &mir::Body,
+    value_map: &ValueMap,
+    store: CanonicalPayloadStore,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Option<(PreparedCanonicalPayloadStore, Option<Ptr<Operation>>)>> {
+    let Some((enum_ptr, prev)) = rvalue::translate_place_address(
+        ctx,
+        body,
+        value_map,
+        &store.enum_place,
+        /* is_mutable */ true,
+        block_ptr,
+        prev_op,
+        loc,
+    )?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some((
+        PreparedCanonicalPayloadStore { enum_ptr, store },
+        prev,
+    )))
+}
+
+/// Rebuild a canonical enum payload through an address prepared before a call.
+pub(crate) fn rebuild_and_store_prepared(
+    ctx: &mut Context,
+    prepared: &PreparedCanonicalPayloadStore,
+    new_value: Value,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    let enum_ty = types::translate_type(ctx, &prepared.store.enum_rust_ty)?;
+    rebuild_and_store_at_ptr(
+        ctx,
+        &prepared.store,
+        prepared.enum_ptr,
+        enum_ty,
+        new_value,
+        block_ptr,
+        prev_op,
+        loc,
+    )
+}
+
 /// Rebuild the enum around `new_value` and store it back.
 ///
 /// `Ok(None)` when the enum place has no address to load from and store to,
@@ -149,7 +213,23 @@ pub(crate) fn rebuild_and_store(
         return Ok(None);
     };
 
-    let (load_op, enum_value) = emit_load(ctx, enum_ptr, enum_ty, block_ptr, prev, loc.clone());
+    Ok(Some(Some(rebuild_and_store_at_ptr(
+        ctx, store, enum_ptr, enum_ty, new_value, block_ptr, prev, loc,
+    )?)))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rebuild_and_store_at_ptr(
+    ctx: &mut Context,
+    store: &CanonicalPayloadStore,
+    enum_ptr: Value,
+    enum_ty: TypeHandle,
+    new_value: Value,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    let (load_op, enum_value) = emit_load(ctx, enum_ptr, enum_ty, block_ptr, prev_op, loc.clone());
     let mut prev = Some(load_op);
 
     let field_count = {
@@ -171,7 +251,6 @@ pub(crate) fn rebuild_and_store(
         }
     };
 
-    // Every field of the variant, with the assigned one replaced.
     let mut payload_values = Vec::with_capacity(field_count);
     for field in 0..field_count {
         if field == store.field {
@@ -213,8 +292,14 @@ pub(crate) fn rebuild_and_store(
     }
     let rebuilt = construct.deref(ctx).get_result(0);
 
-    let store_op = emit_store(ctx, rebuilt, enum_ptr, block_ptr, Some(construct), loc);
-    Ok(Some(Some(store_op)))
+    Ok(emit_store(
+        ctx,
+        rebuilt,
+        enum_ptr,
+        block_ptr,
+        Some(construct),
+        loc,
+    ))
 }
 
 /// The Rust type of one payload field, read from the enum's own definition.

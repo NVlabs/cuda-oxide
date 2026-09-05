@@ -62,7 +62,7 @@
 //! All `core::sync::atomic` operations are lowered with **system scope** (`.sys`)
 //! for safe host-device coherence, matching CUDA C++ `cuda::atomic<T>` defaults.
 
-use super::super::helpers::emit_store_result_and_goto;
+use super::super::helpers;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::values::ValueMap;
 use crate::translator::{facts, rvalue, types};
@@ -402,6 +402,16 @@ fn emit_atomic_load(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op =
         NvvmAtomicLoadOp::build(ctx, ptr_val, result_ty, ordering, type_info.scope.clone());
     let op_ptr = nvvm_op.get_operation();
@@ -414,9 +424,9 @@ fn emit_atomic_load(
     }
 
     let result_value = op_ptr.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_value,
         target,
         block_ptr,
@@ -479,6 +489,16 @@ fn emit_atomic_store(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op = NvvmAtomicStoreOp::build(ctx, val, ptr_val, ordering, type_info.scope.clone());
     let op_ptr = nvvm_op.get_operation();
     op_ptr.deref_mut(ctx).set_loc(loc.clone());
@@ -502,9 +522,9 @@ fn emit_atomic_store(
     unit_op.deref_mut(ctx).set_loc(loc.clone());
     unit_op.insert_after(ctx, op_ptr);
     let unit_val = unit_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         unit_val,
         target,
         block_ptr,
@@ -593,6 +613,16 @@ fn emit_atomic_rmw(
         (val, last_op)
     };
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op = NvvmAtomicRmwOp::build(
         ctx,
         ptr_val,
@@ -612,9 +642,9 @@ fn emit_atomic_rmw(
     }
 
     let result_value = op_ptr.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_value,
         target,
         block_ptr,
@@ -692,6 +722,16 @@ fn emit_atomic_compare_exchange(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op = NvvmAtomicCmpxchgOp::build(
         ctx,
         ptr_val,
@@ -712,9 +752,9 @@ fn emit_atomic_compare_exchange(
     }
 
     let result_value = op_ptr.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_value,
         target,
         block_ptr,
@@ -967,6 +1007,7 @@ pub fn dispatch_core_intrinsic(
             let orderings = extract_core_intrinsic_orderings(func, &loc, 1)?;
             return emit_core_compiler_fence(
                 ctx,
+                body,
                 args,
                 destination,
                 target,
@@ -982,6 +1023,7 @@ pub fn dispatch_core_intrinsic(
             let orderings = extract_core_intrinsic_orderings(func, &loc, 1)?;
             return emit_core_atomic_fence(
                 ctx,
+                body,
                 args,
                 destination,
                 target,
@@ -1235,6 +1277,7 @@ fn build_compiler_fence_barrier(
 #[allow(clippy::too_many_arguments)]
 fn emit_core_compiler_fence(
     ctx: &mut Context,
+    body: &mir::Body,
     args: &[mir::Operand],
     destination: &mir::Place,
     target: &Option<usize>,
@@ -1254,6 +1297,16 @@ fn emit_core_compiler_fence(
             ))
         );
     }
+
+    let (prepared_destination, prev_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
 
     let barrier = build_compiler_fence_barrier(ctx, &loc, &ordering)?;
     barrier.deref_mut(ctx).set_loc(loc.clone());
@@ -1278,9 +1331,9 @@ fn emit_core_compiler_fence(
     unit_op.insert_after(ctx, barrier);
     let unit_val = unit_op.deref(ctx).get_result(0);
 
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         unit_val,
         target,
         block_ptr,
@@ -1299,6 +1352,7 @@ fn emit_core_compiler_fence(
 #[allow(clippy::too_many_arguments)]
 fn emit_core_atomic_fence(
     ctx: &mut Context,
+    body: &mir::Body,
     args: &[mir::Operand],
     destination: &mir::Place,
     target: &Option<usize>,
@@ -1318,6 +1372,16 @@ fn emit_core_atomic_fence(
             ))
         );
     }
+
+    let (prepared_destination, prev_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
 
     let fence = NvvmAtomicFenceOp::build(ctx, ordering, AtomicScope::System);
     let fence_op = fence.get_operation();
@@ -1343,9 +1407,9 @@ fn emit_core_atomic_fence(
     unit_op.insert_after(ctx, fence_op);
     let unit_val = unit_op.deref(ctx).get_result(0);
 
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         unit_val,
         target,
         block_ptr,
@@ -1387,6 +1451,16 @@ fn emit_core_atomic_load(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op =
         NvvmAtomicLoadOp::build(ctx, ptr_val, result_ty, ordering, type_info.scope.clone());
     let op_ptr = nvvm_op.get_operation();
@@ -1399,9 +1473,9 @@ fn emit_core_atomic_load(
     }
 
     let result_value = op_ptr.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_value,
         target,
         block_ptr,
@@ -1453,6 +1527,16 @@ fn emit_core_atomic_store(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op = NvvmAtomicStoreOp::build(ctx, val, ptr_val, ordering, type_info.scope.clone());
     let op_ptr = nvvm_op.get_operation();
     op_ptr.deref_mut(ctx).set_loc(loc.clone());
@@ -1476,9 +1560,9 @@ fn emit_core_atomic_store(
     unit_op.deref_mut(ctx).set_loc(loc.clone());
     unit_op.insert_after(ctx, op_ptr);
     let unit_val = unit_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         unit_val,
         target,
         block_ptr,
@@ -1533,6 +1617,16 @@ fn emit_core_atomic_rmw(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op = NvvmAtomicRmwOp::build(
         ctx,
         ptr_val,
@@ -1552,9 +1646,9 @@ fn emit_core_atomic_rmw(
     }
 
     let result_value = op_ptr.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_value,
         target,
         block_ptr,
@@ -1621,6 +1715,16 @@ fn emit_core_atomic_cmpxchg(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let nvvm_op = NvvmAtomicCmpxchgOp::build(
         ctx,
         ptr_val,
@@ -1676,9 +1780,9 @@ fn emit_core_atomic_cmpxchg(
     tuple_op.insert_after(ctx, success_op);
 
     let tuple_value = tuple_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         tuple_value,
         target,
         block_ptr,

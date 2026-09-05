@@ -38,6 +38,14 @@ use crate::render::reference::{
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
+fn render_prepare_destination_write(output: &mut String, prev_op: &str) {
+    writeln!(
+        output,
+        "            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(\n                ctx, body, destination, value_map, block_ptr, {prev_op}, loc.clone(),\n            )?;"
+    )
+    .unwrap();
+}
+
 fn render_importer_pure_value_dispatch(
     output: &mut String,
     catalog: &CatalogFile,
@@ -79,12 +87,13 @@ fn render_importer_pure_value_dispatch(
         intrinsic_marker(catalog, record)
     )
     .unwrap();
+    render_prepare_destination_write(output, "last_op");
     output.push_str(
-        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n            let result = intrinsic.deref(ctx).get_result(0);\n",
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);\n            let result = intrinsic.deref(ctx).get_result(0);\n",
     );
     writeln!(
         output,
-        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
     .unwrap();
@@ -121,13 +130,14 @@ fn render_importer_scalar_conversion_dispatch(
         intrinsic_marker(catalog, record)
     )
     .unwrap();
+    render_prepare_destination_write(output, "last_op");
     output.push_str(
-        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n\
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);\n\
                      let result = intrinsic.deref(ctx).get_result(0);\n",
     );
     writeln!(
         output,
-        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
     .unwrap();
@@ -179,13 +189,14 @@ fn render_importer_scalar_arithmetic_dispatch(
         intrinsic_marker(catalog, record)
     )
     .unwrap();
+    render_prepare_destination_write(output, "last_op");
     output.push_str(
-        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n\
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);\n\
                      let result = intrinsic.deref(ctx).get_result(0);\n",
     );
     writeln!(
         output,
-        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
     .unwrap();
@@ -228,13 +239,14 @@ fn render_importer_scalar_math_dispatch(
         intrinsic_marker(catalog, record)
     )
     .unwrap();
+    render_prepare_destination_write(output, "last_op");
     output.push_str(
-        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n\
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);\n\
                      let result = intrinsic.deref(ctx).get_result(0);\n",
     );
     writeln!(
         output,
-        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
     .unwrap();
@@ -277,13 +289,14 @@ fn render_importer_extended_minmax_dispatch(
         intrinsic_marker(catalog, record)
     )
     .unwrap();
+    render_prepare_destination_write(output, "last_op");
     output.push_str(
-        "            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n\
+        "            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);\n\
                      let result = intrinsic.deref(ctx).get_result(0);\n",
     );
     writeln!(
         output,
-        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+        "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
     .unwrap();
@@ -340,8 +353,9 @@ fn render_importer_elect_dispatch(
         intrinsic_marker(catalog, record)
     )
     .unwrap();
+    render_prepare_destination_write(output, "last_op");
     output.push_str(
-        "            helpers::insert_op(ctx, elect, block_ptr, last_op);\n\
+        "            helpers::insert_op(ctx, elect, block_ptr, prepared_last_op);\n\
                      let leader = elect.deref(ctx).get_result(0);\n\
                      let elected = elect.deref(ctx).get_result(1);\n\
                      let tuple = Operation::new(\n\
@@ -355,7 +369,7 @@ fn render_importer_elect_dispatch(
     );
     writeln!(
         output,
-        "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, tuple, value_map, block_map, loc,\n                {:?},\n            )?))",
+        "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, tuple, value_map, block_map, loc,\n                {:?},\n            )?))",
         format!("{} call without target block", record.rust.name)
     )
     .unwrap();
@@ -657,7 +671,10 @@ fn render_importer_tcgen05_non_mma_dispatch(
             intrinsic_marker(catalog, record)
         )
         .unwrap();
-        output.push_str("            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n");
+        render_prepare_destination_write(output, "last_op");
+        output.push_str(
+            "            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);\n",
+        );
         if count == 1 {
             output.push_str(
                         "            let result = intrinsic.deref(ctx).get_result(0);\n            let value = intrinsic;\n",
@@ -679,7 +696,7 @@ fn render_importer_tcgen05_non_mma_dispatch(
         }
         writeln!(
                     output,
-                    "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, value, value_map, block_map, loc,\n                {:?},\n            )?))",
+                    "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, value, value_map, block_map, loc,\n                {:?},\n            )?))",
                     format!("{} call without target block", record.rust.name)
                 )
                 .unwrap();
@@ -774,7 +791,7 @@ fn sreg_arms(catalog: &CatalogFile) -> String {
         writeln!(output, "            Ok(Some(helpers::{helper}(").unwrap();
         writeln!(
             output,
-            "                ctx, {}::get_concrete_op_info(), {:?}, destination, target, block_ptr,",
+            "                ctx, body, {}::get_concrete_op_info(), {:?}, destination, target, block_ptr,",
             record.dialect.op_type,
             intrinsic_marker(catalog, record)
         )
@@ -808,12 +825,13 @@ fn active_mask_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "prev_op");
         output.push_str(
-            "            helpers::insert_op(ctx, active_mask, block_ptr, prev_op);\n            let result = active_mask.deref(ctx).get_result(0);\n",
+            "            helpers::insert_op(ctx, active_mask, block_ptr, prepared_last_op);\n            let result = active_mask.deref(ctx).get_result(0);\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, active_mask, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, active_mask, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -848,7 +866,9 @@ fn ldmatrix_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
-        output.push_str("            helpers::insert_op(ctx, load, block_ptr, last_op);\n");
+        render_prepare_destination_write(&mut output, "last_op");
+        output
+            .push_str("            helpers::insert_op(ctx, load, block_ptr, prepared_last_op);\n");
         if register_count == 1 {
             output.push_str("            let value = load.deref(ctx).get_result(0);\n");
             output.push_str("            let last_op = load;\n");
@@ -861,7 +881,7 @@ fn ldmatrix_arms(catalog: &CatalogFile) -> String {
         }
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, value, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, value, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -992,12 +1012,13 @@ fn register_mma_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "Some(last_op)");
         output.push_str(
-            "            helpers::insert_op(ctx, mma, block_ptr, Some(last_op));\n            let (result, last_op) = bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());\n",
+            "            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);\n            let (result, last_op) = bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1056,12 +1077,13 @@ fn sparse_mma_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "last_op");
         output.push_str(
-            "            helpers::insert_op(ctx, mma, block_ptr, last_op);\n            let (result, last_op) = bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());\n",
+            "            helpers::insert_op(ctx, mma, block_ptr, prepared_last_op);\n            let (result, last_op) = bundle_generated_mma_results(ctx, mma, result_ty, result_count, loc.clone());\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, last_op, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1101,11 +1123,13 @@ fn packed_atomic_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
-        output.push_str("            helpers::insert_op(ctx, atom, block_ptr, last_op);\n");
+        render_prepare_destination_write(&mut output, "last_op");
+        output
+            .push_str("            helpers::insert_op(ctx, atom, block_ptr, prepared_last_op);\n");
         output.push_str("            let value = atom.deref(ctx).get_result(0);\n");
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, value, target, block_ptr, atom, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, value, target, block_ptr, atom, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1146,12 +1170,13 @@ fn redux_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "last_op");
         output.push_str(
-            "            helpers::insert_op(ctx, reduction, block_ptr, last_op);\n            let result = reduction.deref(ctx).get_result(0);\n",
+            "            helpers::insert_op(ctx, reduction, block_ptr, prepared_last_op);\n            let result = reduction.deref(ctx).get_result(0);\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, reduction, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, reduction, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1192,12 +1217,13 @@ fn vote_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "last_op");
         output.push_str(
-            "            helpers::insert_op(ctx, vote, block_ptr, last_op);\n            let result = vote.deref(ctx).get_result(0);\n",
+            "            helpers::insert_op(ctx, vote, block_ptr, prepared_last_op);\n            let result = vote.deref(ctx).get_result(0);\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, vote, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, vote, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1234,12 +1260,13 @@ fn warp_match_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "last_op");
         output.push_str(
-            "            helpers::insert_op(ctx, warp_match, block_ptr, last_op);\n            let result = warp_match.deref(ctx).get_result(0);\n",
+            "            helpers::insert_op(ctx, warp_match, block_ptr, prepared_last_op);\n            let result = warp_match.deref(ctx).get_result(0);\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, warp_match, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, warp_match, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1335,12 +1362,13 @@ fn warp_shuffle_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "last_op");
         output.push_str(
-            "            helpers::insert_op(ctx, shuffle, block_ptr, last_op);\n            let result = shuffle.deref(ctx).get_result(0);\n",
+            "            helpers::insert_op(ctx, shuffle, block_ptr, prepared_last_op);\n            let result = shuffle.deref(ctx).get_result(0);\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, shuffle, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, shuffle, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1380,12 +1408,13 @@ fn dotprod_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "last_op");
         output.push_str(
-            "            helpers::insert_op(ctx, dot, block_ptr, last_op);\n            let result = dot.deref(ctx).get_result(0);\n",
+            "            helpers::insert_op(ctx, dot, block_ptr, prepared_last_op);\n            let result = dot.deref(ctx).get_result(0);\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, dot, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, dot, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1505,12 +1534,13 @@ fn prmt_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "last_op");
         output.push_str(
-            "            helpers::insert_op(ctx, prmt, block_ptr, last_op);\n            let result = prmt.deref(ctx).get_result(0);\n",
+            "            helpers::insert_op(ctx, prmt, block_ptr, prepared_last_op);\n            let result = prmt.deref(ctx).get_result(0);\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, prmt, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, prmt, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1623,13 +1653,14 @@ fn cluster_memory_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
+        render_prepare_destination_write(&mut output, "last_op");
         output.push_str(
-            "            helpers::insert_op(ctx, cluster, block_ptr, last_op);\n\
+            "            helpers::insert_op(ctx, cluster, block_ptr, prepared_last_op);\n\
              let result = cluster.deref(ctx).get_result(0);\n",
         );
         writeln!(
             output,
-            "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, cluster, value_map, block_map, loc,\n                {:?},\n            )?))",
+            "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, cluster, value_map, block_map, loc,\n                {:?},\n            )?))",
             format!("{} call without target block", record.rust.name)
         )
         .unwrap();
@@ -1783,16 +1814,21 @@ fn clc_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
-        output.push_str("            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n");
         if query {
+            render_prepare_destination_write(&mut output, "last_op");
+            output.push_str(
+                "            helpers::insert_op(ctx, intrinsic, block_ptr, prepared_last_op);\n",
+            );
             output.push_str("            let result = intrinsic.deref(ctx).get_result(0);\n");
             writeln!(
                 output,
-                "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
+                "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, intrinsic, value_map, block_map, loc,\n                {:?},\n            )?))",
                 format!("{} call without target block", record.rust.name)
             )
             .unwrap();
         } else {
+            output
+                .push_str("            helpers::insert_op(ctx, intrinsic, block_ptr, last_op);\n");
             output.push_str("            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, intrinsic, block_map, loc)))\n            } else {\n");
             writeln!(
                 output,
@@ -2113,16 +2149,20 @@ fn mbarrier_basic_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
-        output.push_str("            helpers::insert_op(ctx, mbarrier, block_ptr, last_op);\n");
         if returns_value {
+            render_prepare_destination_write(&mut output, "last_op");
+            output.push_str(
+                "            helpers::insert_op(ctx, mbarrier, block_ptr, prepared_last_op);\n",
+            );
             output.push_str("            let result = mbarrier.deref(ctx).get_result(0);\n");
             writeln!(
                 output,
-                "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, mbarrier, value_map, block_map, loc,\n                {:?},\n            )?))",
+                "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, mbarrier, value_map, block_map, loc,\n                {:?},\n            )?))",
                 format!("{} call without target block", record.rust.name)
             )
             .unwrap();
         } else {
+            output.push_str("            helpers::insert_op(ctx, mbarrier, block_ptr, last_op);\n");
             output.push_str(
                 "            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, mbarrier, block_map, loc)))\n            } else {\n",
             );
@@ -2199,16 +2239,20 @@ fn mbarrier_extended_arms(catalog: &CatalogFile) -> String {
             intrinsic_marker(catalog, record)
         )
         .unwrap();
-        output.push_str("            helpers::insert_op(ctx, extended, block_ptr, last_op);\n");
         if returns_value {
+            render_prepare_destination_write(&mut output, "last_op");
+            output.push_str(
+                "            helpers::insert_op(ctx, extended, block_ptr, prepared_last_op);\n",
+            );
             output.push_str("            let result = extended.deref(ctx).get_result(0);\n");
             writeln!(
                 output,
-                "            Ok(Some(helpers::emit_store_result_and_goto(\n                ctx, destination, result, target, block_ptr, extended, value_map, block_map, loc,\n                {:?},\n            )?))",
+                "            Ok(Some(helpers::emit_prepared_result_and_goto(\n                ctx, prepared_destination, result, target, block_ptr, extended, value_map, block_map, loc,\n                {:?},\n            )?))",
                 format!("{} call without target block", record.rust.name)
             )
             .unwrap();
         } else {
+            output.push_str("            helpers::insert_op(ctx, extended, block_ptr, last_op);\n");
             output.push_str(
                 "            if let Some(target_idx) = target {\n                Ok(Some(helpers::emit_goto(ctx, *target_idx, extended, block_map, loc)))\n            } else {\n",
             );

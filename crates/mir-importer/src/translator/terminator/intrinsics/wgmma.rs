@@ -7,7 +7,7 @@
 //!
 //! Handles Hopper `sm_90a` asynchronous warpgroup matrix operations.
 
-use super::super::helpers::{emit_goto, emit_store_result_and_goto};
+use super::super::helpers::{self, emit_goto};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
@@ -78,6 +78,16 @@ pub fn emit_wgmma_make_smem_desc(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
     let desc_op = Operation::new(
         ctx,
@@ -96,9 +106,9 @@ pub fn emit_wgmma_make_smem_desc(
     }
 
     let result_value = desc_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_value,
         target,
         block_ptr,

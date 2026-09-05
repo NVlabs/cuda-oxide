@@ -5,7 +5,7 @@
 
 //! Memory access and conversion intrinsics.
 
-use super::super::helpers::{emit_goto, emit_store_result_and_goto};
+use super::super::helpers::{self, emit_goto};
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::facts;
 use crate::translator::values::ValueMap;
@@ -179,6 +179,16 @@ pub fn emit_volatile_load(
         }
     };
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let load_op = Operation::new(
         ctx,
         MirLoadOp::get_concrete_op_info(),
@@ -197,9 +207,9 @@ pub fn emit_volatile_load(
     }
 
     let result = load_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result,
         target,
         block_ptr,
@@ -360,6 +370,16 @@ pub fn emit_arith_offset(
         op_after_ptr,
         loc.clone(),
     )?;
+    let (prepared_destination, op_after_count) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        op_after_count,
+        loc.clone(),
+    )?;
+
     let offset = Operation::new(
         ctx,
         MirPtrOffsetOp::get_concrete_op_info(),
@@ -377,9 +397,9 @@ pub fn emit_arith_offset(
     }
 
     let result = offset.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result,
         target,
         block_ptr,
@@ -524,29 +544,39 @@ fn emit_ptr_offset_from_with_result(
         prev_op,
         loc.clone(),
     )?;
-    let this_addr = emit_pointer_expose_address(
-        ctx,
-        this_ptr,
-        result_type,
-        op_after_this,
-        block_ptr,
-        loc.clone(),
-    );
-
     let (other_ptr, op_after_other) = rvalue::translate_operand(
         ctx,
         body,
         &args[1],
         value_map,
         block_ptr,
-        Some(this_addr),
+        op_after_this,
         loc.clone(),
     )?;
+
+    let (prepared_destination, op_after_destination) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        op_after_other,
+        loc.clone(),
+    )?;
+
+    let this_addr = emit_pointer_expose_address(
+        ctx,
+        this_ptr,
+        result_type,
+        op_after_destination,
+        block_ptr,
+        loc.clone(),
+    );
     let other_addr = emit_pointer_expose_address(
         ctx,
         other_ptr,
         result_type,
-        op_after_other,
+        Some(this_addr),
         block_ptr,
         loc.clone(),
     );
@@ -580,9 +610,9 @@ fn emit_ptr_offset_from_with_result(
     div_op.insert_after(ctx, size_const);
     let result = div_op.deref(ctx).get_result(0);
 
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result,
         target,
         block_ptr,
@@ -776,7 +806,15 @@ pub fn emit_shared_array_index(
         last_op,
         loc.clone(),
     )?;
-    let mut last_op = last_op_after_index;
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op_after_index,
+        loc.clone(),
+    )?;
 
     // The shared_array_val is a pointer to the shared memory array.
     // We need to compute ptr + index to get a pointer to the element.
@@ -799,14 +837,11 @@ pub fn emit_shared_array_index(
     } else {
         offset_op.insert_at_front(block_ptr, ctx);
     }
-    last_op = Some(offset_op);
-
     let result_ptr = offset_op.deref(ctx).get_result(0);
-
-    let prev = last_op.expect("should have at least offset_op");
-    emit_store_result_and_goto(
+    let prev = offset_op;
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_ptr,
         target,
         block_ptr,
@@ -914,6 +949,16 @@ pub fn emit_shared_array_as_ptr(
         );
     }
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let (result_ptr, cast_op) = establish_shared_array_raw_address(
         ctx,
         shared_ptr,
@@ -922,9 +967,9 @@ pub fn emit_shared_array_as_ptr(
         last_op,
         loc.clone(),
     )?;
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_ptr,
         target,
         block_ptr,
@@ -1002,6 +1047,16 @@ pub fn emit_dynamic_shared_get(
     // We use generic pointer type since MirExternSharedOp result will be cast
     let ptr_ty = MirPtrType::get_shared(ctx, elem_ty, true).into();
 
+    let (prepared_destination, prev_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
+
     // Create MirExternSharedOp
     let op = Operation::new(
         ctx,
@@ -1037,9 +1092,9 @@ pub fn emit_dynamic_shared_get(
         Some(extern_shared.get_operation()),
         loc.clone(),
     )?;
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_ptr,
         target,
         block_ptr,
@@ -1113,6 +1168,16 @@ pub fn emit_dynamic_shared_offset(
     // Create MirExternSharedOp - we'll handle offset in two ways:
     // 1. If offset is a constant, store it as an attribute
     // 2. If offset is dynamic, we need to emit a GEP after the base pointer
+
+    let (prepared_destination, prev_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        prev_op,
+        loc.clone(),
+    )?;
 
     // First create the base extern shared op
     let op = Operation::new(
@@ -1213,9 +1278,9 @@ pub fn emit_dynamic_shared_offset(
     let (final_ptr, raw_mut_cast) =
         establish_dynamic_shared_raw_mut(ctx, final_ptr, block_ptr, Some(last_op), loc.clone())?;
 
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         final_ptr,
         target,
         block_ptr,
@@ -1269,6 +1334,16 @@ pub fn emit_cvta_generic_to_shared_offset(
         loc.clone(),
     )?;
 
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
+
     let u64_ty = IntegerType::get(ctx, 64, Signedness::Unsigned);
     let cvta_op = Operation::new(
         ctx,
@@ -1287,9 +1362,9 @@ pub fn emit_cvta_generic_to_shared_offset(
     }
 
     let result_value = cvta_op.deref(ctx).get_result(0);
-    emit_store_result_and_goto(
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         result_value,
         target,
         block_ptr,

@@ -37,7 +37,7 @@ use rustc_public::mir;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_dispatch(
     ctx: &mut Context,
-    _body: &mir::Body,
+    body: &mir::Body,
     name: &str,
     args: &[mir::Operand],
     destination: &mir::Place,
@@ -55,6 +55,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNtidXOp::get_concrete_op_info(),
                 "v1:i0003",
                 destination,
@@ -72,6 +73,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNtidYOp::get_concrete_op_info(),
                 "v1:i0007",
                 destination,
@@ -89,6 +91,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNtidZOp::get_concrete_op_info(),
                 "v1:i0011",
                 destination,
@@ -106,6 +109,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregCtaidXOp::get_concrete_op_info(),
                 "v1:i0002",
                 destination,
@@ -123,6 +127,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregCtaidYOp::get_concrete_op_info(),
                 "v1:i0006",
                 destination,
@@ -140,6 +145,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregCtaidZOp::get_concrete_op_info(),
                 "v1:i0010",
                 destination,
@@ -155,6 +161,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClockOp::get_concrete_op_info(),
                 "v1:i0283",
                 destination,
@@ -170,6 +177,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic_u64(
                 ctx,
+                body,
                 ReadPtxSregClock64Op::get_concrete_op_info(),
                 "v1:i0284",
                 destination,
@@ -185,6 +193,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterNctarankOp::get_concrete_op_info(),
                 "v1:i0276",
                 destination,
@@ -201,6 +210,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterCtaidXOp::get_concrete_op_info(),
                 "v1:i0263",
                 destination,
@@ -217,6 +227,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterCtaidYOp::get_concrete_op_info(),
                 "v1:i0264",
                 destination,
@@ -233,6 +244,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterCtaidZOp::get_concrete_op_info(),
                 "v1:i0265",
                 destination,
@@ -248,6 +260,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterCtarankOp::get_concrete_op_info(),
                 "v1:i0275",
                 destination,
@@ -264,6 +277,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterNctaidXOp::get_concrete_op_info(),
                 "v1:i0266",
                 destination,
@@ -280,6 +294,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterNctaidYOp::get_concrete_op_info(),
                 "v1:i0267",
                 destination,
@@ -296,6 +311,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterNctaidZOp::get_concrete_op_info(),
                 "v1:i0268",
                 destination,
@@ -312,6 +328,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNclusterIdXOp::get_concrete_op_info(),
                 "v1:i0272",
                 destination,
@@ -328,6 +345,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNclusterIdYOp::get_concrete_op_info(),
                 "v1:i0273",
                 destination,
@@ -344,6 +362,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNclusterIdZOp::get_concrete_op_info(),
                 "v1:i0274",
                 destination,
@@ -360,6 +379,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterIdXOp::get_concrete_op_info(),
                 "v1:i0269",
                 destination,
@@ -376,6 +396,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterIdYOp::get_concrete_op_info(),
                 "v1:i0270",
                 destination,
@@ -392,6 +413,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregClusterIdZOp::get_concrete_op_info(),
                 "v1:i0271",
                 destination,
@@ -408,6 +430,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregDynamicSmemSizeOp::get_concrete_op_info(),
                 "v1:i0293",
                 destination,
@@ -423,6 +446,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregEnvReg1Op::get_concrete_op_info(),
                 "v1:i0286",
                 destination,
@@ -438,6 +462,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregEnvReg2Op::get_concrete_op_info(),
                 "v1:i0287",
                 destination,
@@ -454,6 +479,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic_u64(
                 ctx,
+                body,
                 ReadPtxSregGlobaltimerOp::get_concrete_op_info(),
                 "v1:i0285",
                 destination,
@@ -471,6 +497,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNctaidXOp::get_concrete_op_info(),
                 "v1:i0004",
                 destination,
@@ -488,6 +515,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNctaidYOp::get_concrete_op_info(),
                 "v1:i0008",
                 destination,
@@ -505,6 +533,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNctaidZOp::get_concrete_op_info(),
                 "v1:i0012",
                 destination,
@@ -522,6 +551,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic_u64(
                 ctx,
+                body,
                 ReadPtxSregGridIdOp::get_concrete_op_info(),
                 "v1:i0290",
                 destination,
@@ -537,6 +567,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregLaneIdOp::get_concrete_op_info(),
                 "v1:i0016",
                 destination,
@@ -553,6 +584,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregLanemaskEqOp::get_concrete_op_info(),
                 "v1:i0037",
                 destination,
@@ -569,6 +601,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregLanemaskGeOp::get_concrete_op_info(),
                 "v1:i0038",
                 destination,
@@ -585,6 +618,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregLanemaskGtOp::get_concrete_op_info(),
                 "v1:i0039",
                 destination,
@@ -601,6 +635,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregLanemaskLeOp::get_concrete_op_info(),
                 "v1:i0036",
                 destination,
@@ -617,6 +652,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregLanemaskLtOp::get_concrete_op_info(),
                 "v1:i0035",
                 destination,
@@ -634,6 +670,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNsmIdOp::get_concrete_op_info(),
                 "v1:i0289",
                 destination,
@@ -649,6 +686,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregNwarpIdOp::get_concrete_op_info(),
                 "v1:i0292",
                 destination,
@@ -666,6 +704,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregSmIdOp::get_concrete_op_info(),
                 "v1:i0288",
                 destination,
@@ -683,6 +722,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregTidXOp::get_concrete_op_info(),
                 "v1:i0001",
                 destination,
@@ -700,6 +740,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregTidYOp::get_concrete_op_info(),
                 "v1:i0005",
                 destination,
@@ -717,6 +758,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregTidZOp::get_concrete_op_info(),
                 "v1:i0009",
                 destination,
@@ -733,6 +775,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregTotalSmemSizeOp::get_concrete_op_info(),
                 "v1:i0294",
                 destination,
@@ -748,6 +791,7 @@ pub(super) fn try_dispatch(
             require_arity(name, args.len(), 0, &loc)?;
             Ok(Some(helpers::emit_generated_nvvm_intrinsic(
                 ctx,
+                body,
                 ReadPtxSregWarpIdOp::get_concrete_op_info(),
                 "v1:i0291",
                 destination,

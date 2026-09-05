@@ -79,7 +79,16 @@ pub(super) fn try_dispatch(
             );
             elect.deref_mut(ctx).set_loc(loc.clone());
             helpers::set_generated_intrinsic_marker(ctx, elect, "v1:i0367");
-            helpers::insert_op(ctx, elect, block_ptr, last_op);
+            let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+                ctx,
+                body,
+                destination,
+                value_map,
+                block_ptr,
+                last_op,
+                loc.clone(),
+            )?;
+            helpers::insert_op(ctx, elect, block_ptr, prepared_last_op);
             let leader = elect.deref(ctx).get_result(0);
             let elected = elect.deref(ctx).get_result(1);
             let tuple = Operation::new(
@@ -93,9 +102,9 @@ pub(super) fn try_dispatch(
             tuple.deref_mut(ctx).set_loc(loc.clone());
             tuple.insert_after(ctx, elect);
             let result = tuple.deref(ctx).get_result(0);
-            Ok(Some(helpers::emit_store_result_and_goto(
+            Ok(Some(helpers::emit_prepared_result_and_goto(
                 ctx,
-                destination,
+                prepared_destination,
                 result,
                 target,
                 block_ptr,

@@ -155,6 +155,7 @@ arm checks the FQDN:
     require_arity(name, args.len(), 0, &loc)?;
     Ok(Some(helpers::emit_generated_nvvm_intrinsic(
         ctx,
+        body,
         ReadPtxSregTidXOp::get_concrete_op_info(),
         "v1:i0001",
         destination, target, block_ptr, prev_op,
@@ -170,10 +171,11 @@ The FQDN is used as-is for matching -- no `::` to `__` conversion happens
 before the intrinsic check.
 
 The `emit_generated_nvvm_intrinsic()` helper works for *any* zero-argument,
-single-result NVVM intrinsic. It creates the operation, tags it with its
-catalog ABI marker, stores the result in the value map, and emits a branch to
-the next basic block. You never write this arm yourself: once the reviewed overlay,
-ABI, and evidence inputs resolve into `intrinsics/catalog.json`, `cuda-intrinsics-gen` emits it.
+single-result NVVM intrinsic. It prepares the MIR destination before inserting
+the NVVM operation, tags the operation with its catalog ABI marker, writes the
+result through that prepared destination, and emits a branch to the next basic
+block. You never write this arm yourself: once the reviewed overlay, ABI, and
+evidence inputs resolve into `intrinsics/catalog.json`, `cuda-intrinsics-gen` emits it.
 Hand-written arms in `terminator/mod.rs` exist only for what the catalog
 cannot describe.
 
@@ -364,11 +366,16 @@ building the op. Here is the generated arm for `shuffle_xor_sync`, condensed:
     let (lane_or_delta, last_op) =
         rvalue::translate_operand(ctx, body, &args[2], /* ... */)?;
     let shuffle = ShflSyncBflyI32Op::build(ctx, member_mask, value, lane_or_delta);
+    shuffle.deref_mut(ctx).set_loc(loc.clone());
     helpers::set_generated_intrinsic_marker(ctx, shuffle, "v1:i0051");
-    helpers::insert_op(ctx, shuffle, block_ptr, last_op);
+    let (prepared_destination, prepared_last_op) = helpers::prepare_destination_write(
+        ctx, body, destination, value_map, block_ptr, last_op, loc.clone(),
+    )?;
+    helpers::insert_op(ctx, shuffle, block_ptr, prepared_last_op);
     let result = shuffle.deref(ctx).get_result(0);
-    Ok(Some(helpers::emit_store_result_and_goto(
-        ctx, destination, result, target, /* ... */
+    Ok(Some(helpers::emit_prepared_result_and_goto(
+        ctx, prepared_destination, result, target, block_ptr, shuffle,
+        value_map, block_map, loc,
         "shuffle_xor_sync call without target block",
     )?))
 }
@@ -376,11 +383,13 @@ building the op. Here is the generated arm for `shuffle_xor_sync`, condensed:
 
 The arm translates the user's MIR operands into pliron values -- typically
 the results of `mir.load`s from each operand's alloca slot, or
-`mir.constant`s for literal arguments -- and wires them into the NVVM
-operation. (These are not SSA values yet; `pliron::opts::mem2reg` will
-collapse the load/store chains once translation is complete.) For a catalog
-intrinsic you never write any of this: `cuda-intrinsics-gen` derives it from
-the resolved generated catalog.
+`mir.constant`s for literal arguments -- then prepares the call destination
+before inserting the NVVM operation. The result is written through that
+prepared destination afterward, so dynamic projections are not re-evaluated
+after the intrinsic executes. (These are not SSA values yet;
+`pliron::opts::mem2reg` will collapse the load/store chains once translation
+is complete.) For a catalog intrinsic you never write any of this:
+`cuda-intrinsics-gen` derives it from the resolved generated catalog.
 
 ### Stage 4 -- Lower to the LLVM dialect
 
@@ -563,8 +572,9 @@ describe), every file you need to touch, in order:
 3. **`mir-importer/src/translator/terminator/mod.rs`** -- `match` arm in
    `try_dispatch_intrinsic()`, modelled on the hand-written `typed_swap` arm.
    Zero-operand intrinsics are catalog territory: the generated dispatcher
-   emits them through `helpers::emit_generated_nvvm_intrinsic()`, which also
-   stamps the ABI marker a hand-written arm would have to stamp itself.
+   emits them through `helpers::emit_generated_nvvm_intrinsic()`, which threads
+   the MIR body so the destination is prepared before the generated operation
+   and also stamps the ABI marker a hand-written arm would have to stamp itself.
 
 4. **`mir-lower/src/convert/interface_impls.rs`** -- `MirToLlvmConversion`
    impl for the new op, dispatching to the converter function.

@@ -31,7 +31,7 @@
 //!   the witness packs `(row, col)` and the addressed slice resolves them
 //!   against its own host-bound row width at the access site
 
-use super::super::helpers::emit_store_result_and_goto;
+use super::super::helpers;
 use crate::error::{TranslationErr, TranslationResult};
 use crate::translator::rvalue;
 use crate::translator::types;
@@ -159,7 +159,17 @@ pub fn emit_len(
 
     let (disjoint_slice_val, load_op) =
         load_disjoint_slice_receiver(ctx, disjoint_slice_val, block_ptr, last_op, loc.clone())?;
-    let mut last_op = Some(load_op);
+    let last_op = Some(load_op);
+
+    let (prepared_destination, last_op) = helpers::prepare_destination_write(
+        ctx,
+        body,
+        destination,
+        value_map,
+        block_ptr,
+        last_op,
+        loc.clone(),
+    )?;
 
     // Extract len field (field 1) from DisjointSlice
     // DisjointSlice layout: { ptr: *mut T, len: usize, _marker: PhantomData }
@@ -184,14 +194,11 @@ pub fn emit_len(
     } else {
         extract_len.get_operation().insert_at_front(block_ptr, ctx);
     }
-    last_op = Some(extract_len.get_operation());
-
     let len_val = extract_len.get_operation().deref(ctx).get_result(0);
-
-    let prev = last_op.expect("should have at least extract_len op");
-    emit_store_result_and_goto(
+    let prev = extract_len.get_operation();
+    helpers::emit_prepared_result_and_goto(
         ctx,
-        destination,
+        prepared_destination,
         len_val,
         target,
         block_ptr,
