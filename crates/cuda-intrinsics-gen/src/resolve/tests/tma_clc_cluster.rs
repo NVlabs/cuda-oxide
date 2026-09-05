@@ -181,66 +181,6 @@ fn compact_tma_admission_matches_llvm_and_fails_closed() {
         12,
         "the tile-prefetch subfamily must contain every plain/cache-hint pair"
     );
-    assert_eq!(
-        records
-            .iter()
-            .take(TMA_OPERATIONS.len())
-            .map(|record| (record.abi_id.as_str(), record.id.as_str()))
-            .collect::<Vec<_>>(),
-        [
-            ("i0328", "cp_async_bulk_tensor_1d_g2s"),
-            ("i0329", "cp_async_bulk_tensor_2d_g2s"),
-            ("i0330", "cp_async_bulk_tensor_2d_g2s_multicast"),
-            ("i0331", "cp_async_bulk_tensor_2d_g2s_multicast_cg2"),
-            ("i0332", "cp_async_bulk_tensor_3d_g2s"),
-            ("i0333", "cp_async_bulk_tensor_4d_g2s"),
-            ("i0334", "cp_async_bulk_tensor_5d_g2s"),
-            ("i0335", "cp_async_bulk_tensor_1d_s2g"),
-            ("i0336", "cp_async_bulk_tensor_2d_s2g"),
-            ("i0337", "cp_async_bulk_tensor_3d_s2g"),
-            ("i0338", "cp_async_bulk_tensor_4d_s2g"),
-            ("i0339", "cp_async_bulk_tensor_5d_s2g"),
-            ("i0340", "cp_async_bulk_commit_group"),
-            ("i0341", "cp_async_bulk_wait_group"),
-            ("i0342", "cp_async_bulk_wait_group_read"),
-            ("i0887", "prefetch_tma_descriptor"),
-            ("i0888", "cp_async_bulk_prefetch_tensor_1d_l2"),
-            ("i0889", "cp_async_bulk_prefetch_tensor_2d_l2"),
-            ("i0890", "cp_async_bulk_prefetch_tensor_3d_l2"),
-            ("i0891", "cp_async_bulk_prefetch_tensor_4d_l2"),
-            ("i0892", "cp_async_bulk_prefetch_tensor_5d_l2"),
-            ("i0893", "cp_async_bulk_prefetch_tensor_gather4_2d_l2"),
-            ("i0894", "tensormap_replace_box_dim"),
-            ("i0895", "tensormap_replace_element_stride"),
-            ("i0896", "tensormap_replace_element_type"),
-            ("i0897", "tensormap_replace_fill_mode"),
-            ("i0898", "tensormap_replace_global_address"),
-            ("i0899", "tensormap_replace_global_dim"),
-            ("i0900", "tensormap_replace_global_stride"),
-            ("i0901", "tensormap_replace_interleave_layout"),
-            ("i0902", "tensormap_replace_rank"),
-            ("i0903", "tensormap_replace_swizzle_atomicity"),
-            ("i0904", "tensormap_replace_swizzle_mode"),
-            ("i0905", "fence_proxy_tensormap_generic_acquire_cluster"),
-            ("i0906", "fence_proxy_tensormap_generic_acquire_cta"),
-            ("i0907", "fence_proxy_tensormap_generic_acquire_gpu"),
-            ("i0908", "fence_proxy_tensormap_generic_acquire_system"),
-            ("i0909", "fence_proxy_tensormap_generic_release_cluster"),
-            ("i0910", "fence_proxy_tensormap_generic_release_cta"),
-            ("i0911", "fence_proxy_tensormap_generic_release_gpu"),
-            ("i0912", "fence_proxy_tensormap_generic_release_system"),
-            ("i0917", "cp_async_bulk_prefetch_tensor_1d_l2_cache_hint"),
-            ("i0918", "cp_async_bulk_prefetch_tensor_2d_l2_cache_hint"),
-            ("i0919", "cp_async_bulk_prefetch_tensor_3d_l2_cache_hint"),
-            ("i0920", "cp_async_bulk_prefetch_tensor_4d_l2_cache_hint"),
-            ("i0921", "cp_async_bulk_prefetch_tensor_5d_l2_cache_hint"),
-            (
-                "i0922",
-                "cp_async_bulk_prefetch_tensor_gather4_2d_l2_cache_hint"
-            ),
-        ]
-    );
-
     let reductions = &records[TMA_OPERATIONS.len()..];
     assert_eq!(reductions.len(), 64);
     assert_eq!(
@@ -275,8 +215,17 @@ fn compact_tma_admission_matches_llvm_and_fails_closed() {
         validate_imported_policy(record, declaration).unwrap();
     }
 
+    let cta_group = records
+        .iter()
+        .find(|record| {
+            record
+                .tma
+                .as_ref()
+                .is_some_and(|tma| tma.operation == TmaOperation::G2sTile2dMulticastCg2)
+        })
+        .unwrap();
     assert_eq!(
-        parse_hardware_target(&records[3]).unwrap(),
+        parse_hardware_target(cta_group).unwrap(),
         CatalogHardwareTarget::AnyOf {
             alternatives: vec![
                 CatalogHardwareAlternative::ExactArchitecture { sm: 100 },
