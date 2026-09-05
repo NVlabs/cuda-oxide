@@ -259,7 +259,7 @@ a predicate. `ballot` + `popc` gives you the count and the per-lane write
 offset:
 
 ```rust
-use cuda_device::{kernel, thread, warp, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel, thread, warp};
 
 #[kernel]
 pub fn compact_positive(

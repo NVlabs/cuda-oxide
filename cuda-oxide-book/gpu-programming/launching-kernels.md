@@ -691,7 +691,7 @@ memory via **distributed shared memory** (DSMEM). To launch with clusters, add
 `#[cluster_launch]` to the kernel and include `cluster_dim` in the launch:
 
 ```rust
-use cuda_device::{kernel, cluster, cluster_launch, DisjointSlice};
+use cuda_device::{DisjointSlice, cluster, cluster_launch, kernel};
 
 #[kernel]
 #[cluster_launch(4, 1, 1)]

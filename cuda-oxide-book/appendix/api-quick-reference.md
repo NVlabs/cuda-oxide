@@ -98,10 +98,9 @@ returns `CUDA_ERROR_ASSERT`.
 
 ```rust
 use cuda_device::config::{
-    Atom, AtomKind, AtomSpec, Block, Cluster, ColumnMajor, Global, Layout,
-    MemorySpace, Policy, PolicyId, Register, RowMajor, Scope, Shape, Shape1,
-    Shape2, Shape3, Shared, TensorMemory, Thread, Tile, TileSpec, Warp,
-    WarpGroup,
+    Atom, AtomKind, AtomSpec, Block, Cluster, ColumnMajor, Global, Layout, MemorySpace, Policy,
+    PolicyId, Register, RowMajor, Scope, Shape, Shape1, Shape2, Shape3, Shared, TensorMemory,
+    Thread, Tile, TileSpec, Warp, WarpGroup,
 };
 ```
 

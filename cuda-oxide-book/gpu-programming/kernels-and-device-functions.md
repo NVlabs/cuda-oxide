@@ -18,7 +18,7 @@ entry point. The function must return `()` -- kernels communicate results by
 writing to output buffers, not by returning values.
 
 ```rust
-use cuda_device::{kernel, thread, DisjointSlice};
+use cuda_device::{DisjointSlice, kernel, thread};
 
 #[kernel]
 pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
