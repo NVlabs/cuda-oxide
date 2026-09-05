@@ -76,7 +76,7 @@ IKET_EXAMPLES=(iket_trace)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
 SM100_COMPILE_EXAMPLES=(redux_f32)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance ex2_approx_f16 generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd legacy_atomic_rmw_cas libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
-ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_kernel_shared_param error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
+ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_host_arch_intrinsic error_host_target_feature error_kernel_shared_param error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 # Per-example rustc flags policy: an example that needs a special rustc flag
 # (e.g. disjoint_slice_len needs -Zinline-mir=no to keep its regression
@@ -562,6 +562,26 @@ verdict_error() {
         error_heap_alloc)
             if ! grep -Fq 'heap allocation is not supported in kernels' "${log}"; then
                 echo "FAIL (missing heap-allocation diagnostic)"
+                return 1
+            fi
+            ;;
+        error_host_target_feature)
+            if ! grep -Fq 'requires host CPU target features' "${log}"; then
+                echo "FAIL (missing host-CPU target-feature diagnostic)"
+                return 1
+            fi
+            ;;
+        error_host_arch_intrinsic)
+            # x86_64-only fixture: `_rdtsc` is the common intrinsic with no
+            # `#[target_feature]`. On other hosts it refuses to build through
+            # its own compile_error!, which is the accepted outcome there.
+            if [[ "$(uname -m)" == "x86_64" ]]; then
+                if ! grep -Fq 'intrinsic for the host CPU' "${log}"; then
+                    echo "FAIL (missing host-CPU intrinsic diagnostic)"
+                    return 1
+                fi
+            elif ! grep -Fq 'x86_64-only fixture' "${log}"; then
+                echo "FAIL (missing x86_64-only compile_error marker)"
                 return 1
             fi
             ;;

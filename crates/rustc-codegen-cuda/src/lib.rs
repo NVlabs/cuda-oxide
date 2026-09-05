@@ -543,6 +543,21 @@ impl CodegenBackend for CudaCodegenBackend {
             let crate_name = tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE);
             let owner_selected = self.config.allows_device_codegen_for(crate_name.as_str());
             let contains_device_code = kernel_count > 0 || device_fn_count > 0;
+
+            // Kernel MIR is produced by this session for `--target`, so its
+            // pointer width and endianness flow into device code unchanged.
+            // PTX is 64-bit little-endian; refuse anything else the moment a
+            // crate has kernel code, instead of miscompiling every layout.
+            // Kernel-free crates keep going through the LLVM backend as before.
+            if contains_device_code
+                && let Err(reason) =
+                    host_target_supported(tcx.sess.target.pointer_width, tcx.sess.target.endian)
+            {
+                tcx.dcx().fatal(format!(
+                    "`--target {}` is not supported for crates with kernel code: {reason}",
+                    tcx.sess.opts.target_triple
+                ));
+            }
             let has_device_code = should_codegen_device_crate(
                 &self.config,
                 crate_name.as_str(),
@@ -1171,9 +1186,55 @@ pub fn __rustc_codegen_backend() -> Box<dyn CodegenBackend> {
     })
 }
 
+/// Checks that the host target can stand in for the device's data model.
+///
+/// cuda-oxide runs one rustc session for the host target and diverts
+/// kernel-reachable MIR into the device pipeline, so `usize` width, every
+/// pointer-sized field offset, and byte order in kernel code are the host's.
+/// PTX is 64-bit and little-endian. A 32-bit or big-endian host would
+/// produce kernel layouts that disagree with the GPU on every struct, so it
+/// is refused before any crate is compiled.
+pub(crate) fn host_target_supported(
+    pointer_width: u16,
+    endian: rustc_abi::Endian,
+) -> Result<(), String> {
+    if pointer_width != 64 {
+        return Err(format!(
+            "kernels inherit the target's {pointer_width}-bit pointer width, but PTX is 64-bit; \
+             build for a 64-bit little-endian host"
+        ));
+    }
+    if endian != rustc_abi::Endian::Little {
+        return Err(
+            "kernels inherit the target's big-endian byte order, but PTX is little-endian; \
+             build for a 64-bit little-endian host"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_targets_that_match_the_ptx_data_model_are_accepted() {
+        use rustc_abi::Endian;
+        assert_eq!(host_target_supported(64, Endian::Little), Ok(()));
+    }
+
+    #[test]
+    fn hosts_with_a_different_pointer_width_or_byte_order_are_refused() {
+        use rustc_abi::Endian;
+        let narrow = host_target_supported(32, Endian::Little).unwrap_err();
+        assert!(narrow.contains("32-bit pointer width"), "{narrow}");
+        let big = host_target_supported(64, Endian::Big).unwrap_err();
+        assert!(big.contains("big-endian"), "{big}");
+        // Width is reported first when both are wrong.
+        let both = host_target_supported(32, Endian::Big).unwrap_err();
+        assert!(both.contains("32-bit"), "{both}");
+    }
 
     #[test]
     fn device_codegen_owner_filter_normalizes_and_matches_crate_names() {
