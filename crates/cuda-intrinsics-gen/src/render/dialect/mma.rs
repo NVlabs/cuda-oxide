@@ -188,24 +188,8 @@ impl Verify for LdmatrixOp {
         let op = self.get_operation().deref(ctx);
         let operands: Vec<_> = op.operands().collect();
         if operands.len() != 1 {
-            return verify_err!(op.loc(), "nvvm.ldmatrix requires exactly one pointer operand");
+            return verify_err!(op.loc(), "nvvm.ldmatrix requires exactly one address operand");
         }
-        let pointer = operands[0].get_type(ctx);
-        let pointer_object = pointer.deref(ctx);
-        let Some(pointer) = pointer_object.downcast_ref::<MirPtrType>() else {
-            return verify_err!(op.loc(), "nvvm.ldmatrix operand must be a MIR pointer");
-        };
-        if !matches!(pointer.address_space, address_space::GENERIC | address_space::SHARED) {
-            return verify_err!(
-                op.loc(),
-                "nvvm.ldmatrix pointer must be generic (p0) or shared (p3), not address space {}",
-                pointer.address_space
-            );
-        }
-        let pointee = pointer.pointee.deref(ctx);
-        let Some(pointee) = pointee.downcast_ref::<IntegerType>() else {
-            return verify_err!(op.loc(), "nvvm.ldmatrix pointer must point to an unsigned integer");
-        };
 
         let Some(shape) = self.get_attr_nvvm_ldmatrix_shape(ctx) else {
             return verify_err!(op.loc(), "nvvm.ldmatrix requires a shape attribute");
@@ -220,12 +204,37 @@ impl Verify for LdmatrixOp {
         } else {
             8
         };
-        if pointee.width() != expected_pointee_width
-            || pointee.signedness() != Signedness::Unsigned
+        let address_type = operands[0].get_type(ctx);
+        let address_type = address_type.deref(ctx);
+        if let Some(pointer) = address_type.downcast_ref::<MirPtrType>() {
+            if !matches!(pointer.address_space, address_space::GENERIC | address_space::SHARED) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.ldmatrix pointer must be generic (p0) or shared (p3), not address space {}",
+                    pointer.address_space
+                );
+            }
+            let pointee = pointer.pointee.deref(ctx);
+            let Some(pointee) = pointee.downcast_ref::<IntegerType>() else {
+                return verify_err!(op.loc(), "nvvm.ldmatrix pointer must point to an unsigned integer");
+            };
+            if pointee.width() != expected_pointee_width
+                || pointee.signedness() != Signedness::Unsigned
+            {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.ldmatrix pointer element width does not match its matrix element format"
+                );
+            }
+        } else if !address_type
+            .downcast_ref::<IntegerType>()
+            .is_some_and(|integer| {
+                integer.width() == 32 && integer.signedness() == Signedness::Unsigned
+            })
         {
             return verify_err!(
                 op.loc(),
-                "nvvm.ldmatrix pointer element width does not match its matrix element format"
+                "nvvm.ldmatrix address must be a compatible MIR pointer or u32 shared address"
             );
         }
         let supported = matches!(
@@ -310,15 +319,18 @@ fn verify_compat_ldmatrix(
     let op = op.deref(ctx);
     let operands: Vec<_> = op.operands().collect();
     if operands.len() != 1 {
-        return verify_err!(op.loc(), "{} requires one shared-memory pointer", op_name);
+        return verify_err!(op.loc(), "{} requires one shared-memory address", op_name);
     }
-    if operands[0]
-        .get_type(ctx)
-        .deref(ctx)
-        .downcast_ref::<MirPtrType>()
-        .is_none()
-    {
-        return verify_err!(op.loc(), "{} operand 0 must be a MIR pointer", op_name);
+    let address_type = operands[0].get_type(ctx);
+    let address_type = address_type.deref(ctx);
+    let is_pointer = address_type.downcast_ref::<MirPtrType>().is_some();
+    let is_u32 = address_type
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| {
+            integer.width() == 32 && integer.signedness() == Signedness::Unsigned
+        });
+    if !is_pointer && !is_u32 {
+        return verify_err!(op.loc(), "{} operand 0 must be a MIR pointer or u32", op_name);
     }
     if op.get_num_results() != result_count {
         return verify_err!(

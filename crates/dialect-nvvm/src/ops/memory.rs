@@ -30,10 +30,10 @@ use pliron_derive::pliron_op;
 /// Convert a generic-address pointer into its raw `.shared` window offset.
 ///
 /// The operand is a pointer in the generic (or already shared) address
-/// space; the result is the space-local shared offset as `u64`, the value
-/// hardware SMEM descriptors encode. Lowered as `addrspacecast` to
-/// `addrspace(3)` followed by `ptrtoint`, which `llc` selects as
-/// `cvta.to.shared`.
+/// space; the result is either the native `u32` shared address consumed by
+/// instructions such as `ldmatrix`, or the `u64` offset carrier used to build
+/// hardware SMEM descriptors. Lowered as `addrspacecast` to `addrspace(3)`
+/// followed by `ptrtoint`, which `llc` selects as `cvta.to.shared`.
 #[pliron_op(
     name = "nvvm.cvta_generic_to_shared_offset",
     format,
@@ -48,11 +48,11 @@ impl CvtaGenericToSharedOffsetOp {
     }
 }
 
-fn is_u64(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
+fn is_shared_offset_integer(ctx: &Context, ty: pliron::r#type::TypeHandle) -> bool {
     ty.deref(ctx)
         .downcast_ref::<IntegerType>()
         .is_some_and(|integer| {
-            integer.width() == 64 && integer.signedness() == Signedness::Unsigned
+            matches!(integer.width(), 32 | 64) && integer.signedness() == Signedness::Unsigned
         })
 }
 
@@ -82,10 +82,10 @@ impl Verify for CvtaGenericToSharedOffsetOp {
                 "nvvm.cvta_generic_to_shared_offset operand must point to generic or shared memory"
             );
         }
-        if !is_u64(ctx, op.get_result(0).get_type(ctx)) {
+        if !is_shared_offset_integer(ctx, op.get_result(0).get_type(ctx)) {
             return verify_err!(
                 op.loc(),
-                "nvvm.cvta_generic_to_shared_offset result must be u64"
+                "nvvm.cvta_generic_to_shared_offset result must be u32 or u64"
             );
         }
         Ok(())

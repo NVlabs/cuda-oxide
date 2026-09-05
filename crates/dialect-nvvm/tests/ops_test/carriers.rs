@@ -144,13 +144,26 @@ fn handwritten_ffi_and_wgmma_carriers_verify_exact_shapes() {
         0,
     );
     assert!(CvtaGenericToSharedOffsetOp::new(cvta).verify(&ctx).is_ok());
+    let cvta_u32 = Operation::new(
+        &mut ctx,
+        CvtaGenericToSharedOffsetOp::get_concrete_op_info(),
+        vec![u32_ty.into()],
+        vec![pointer],
+        vec![],
+        0,
+    );
+    assert!(
+        CvtaGenericToSharedOffsetOp::new(cvta_u32)
+            .verify(&ctx)
+            .is_ok()
+    );
     for (operands, results) in [
         // Operand must be a MIR pointer.
         (vec![u32_value], vec![u64_ty.into()]),
         // Operand must point to generic or shared memory.
         (vec![global_pointer], vec![u64_ty.into()]),
-        // Result must be u64.
-        (vec![pointer], vec![u32_ty.into()]),
+        // Result must be an unsigned u32 or u64.
+        (vec![pointer], vec![i32_ty.into()]),
         // Exact arity is required.
         (vec![], vec![u64_ty.into()]),
     ] {

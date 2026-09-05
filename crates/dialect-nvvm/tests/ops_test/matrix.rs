@@ -153,7 +153,7 @@ fn make_ldmatrix_x2(
 }
 
 #[test]
-fn test_ldmatrix_accepts_only_generic_or_shared_u32_pointers() {
+fn test_ldmatrix_accepts_native_u32_or_compatible_shared_pointers() {
     let mut ctx = Context::new();
     dialect_nvvm::register(&mut ctx);
 
@@ -186,6 +186,25 @@ fn test_ldmatrix_accepts_only_generic_or_shared_u32_pointers() {
             assert!(verified.is_err(), "pointer case {index} should be rejected");
         }
     }
+
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let scalar_block = BasicBlock::new(&mut ctx, None, vec![u32_ty.into(), u64_ty.into()]);
+    let native_u32 = scalar_block.deref(&ctx).get_argument(0);
+    let wide_u64 = scalar_block.deref(&ctx).get_argument(1);
+    assert!(
+        verify_op(
+            &make_ldmatrix_x2(&mut ctx, native_u32, vec![u32_ty.into(), u32_ty.into()]),
+            &ctx,
+        )
+        .is_ok()
+    );
+    assert!(
+        verify_op(
+            &make_ldmatrix_x2(&mut ctx, wide_u64, vec![u32_ty.into(), u32_ty.into()]),
+            &ctx,
+        )
+        .is_err()
+    );
 }
 
 #[test]

@@ -829,6 +829,88 @@ fn test_ldmatrix_libnvvm_uses_exact_convergent_shared_ptx() -> Result<(), anyhow
 }
 
 #[test]
+fn native_u32_ldmatrix_stays_narrow_until_backend_boundary() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        let mut ctx = make_test_ctx();
+        let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![u32_ty.into()]);
+        let address = entry.deref(&ctx).get_argument(0);
+        nvvm::LdmatrixOp::build(
+            &mut ctx,
+            address,
+            nvvm::LdmatrixShapeAttr::M8n8,
+            nvvm::LdmatrixMultiplicityAttr::X4,
+            nvvm::LdmatrixLayoutAttr::Normal,
+            nvvm::LdmatrixElementAttr::B16,
+            nvvm::LdmatrixStateSpaceAttr::Shared,
+        )
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+
+        mir_lower::lower_mir_to_llvm_with_options(
+            &mut ctx,
+            module_ptr,
+            mir_lower::LoweringOptions {
+                intrinsic_backend: backend,
+                ..Default::default()
+            },
+        )?;
+
+        let body = lowered_kernel_body(&ctx, module_ptr);
+        let int_to_ptr = body
+            .iter()
+            .filter(|op| Operation::get_op::<llvm::IntToPtrOp>(**op, &ctx).is_some())
+            .count();
+        let ptr_to_int = body
+            .iter()
+            .filter(|op| Operation::get_op::<llvm::PtrToIntOp>(**op, &ctx).is_some())
+            .count();
+        let address_space_cast = body
+            .iter()
+            .filter(|op| Operation::get_op::<llvm::AddrSpaceCastOp>(**op, &ctx).is_some())
+            .count();
+        let inline_asm = body
+            .iter()
+            .filter(|op| Operation::get_op::<llvm::InlineAsmOp>(**op, &ctx).is_some())
+            .count();
+        let calls = body
+            .iter()
+            .filter(|op| Operation::get_op::<llvm::CallOp>(**op, &ctx).is_some())
+            .count();
+
+        assert_eq!(
+            ptr_to_int, 0,
+            "native address must not round-trip through a pointer"
+        );
+        assert_eq!(address_space_cast, 0);
+        match backend {
+            mir_lower::IntrinsicBackend::LlvmNvptx => {
+                assert_eq!(
+                    int_to_ptr, 1,
+                    "typed LLVM intrinsic requires one p3 boundary cast"
+                );
+                assert_eq!(calls, 1);
+                assert_eq!(inline_asm, 0);
+            }
+            mir_lower::IntrinsicBackend::LibNvvm => {
+                assert_eq!(
+                    int_to_ptr, 0,
+                    "inline PTX consumes the u32 address directly"
+                );
+                assert_eq!(calls, 0);
+                assert_eq!(inline_asm, 1);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn test_blackwell_ldmatrix_llvm_uses_all_exact_lossless_p3_intrinsics() -> Result<(), anyhow::Error>
 {
     use llvm_export::types as llvm_types;
@@ -1154,16 +1236,16 @@ fn test_ldmatrix_rejects_non_shared_pointer_spaces() {
 }
 
 #[test]
-fn test_ldmatrix_rejects_non_pointer_operand() {
+fn test_ldmatrix_rejects_non_pointer_non_u32_operand() {
     use pliron::builtin::types::{IntegerType, Signedness};
 
     let mut ctx = make_test_ctx();
-    let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
-    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![i32_ty.into()]);
-    let not_a_pointer = entry.deref(&ctx).get_argument(0);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![u64_ty.into()]);
+    let not_an_address = entry.deref(&ctx).get_argument(0);
     nvvm::LdmatrixOp::build(
         &mut ctx,
-        not_a_pointer,
+        not_an_address,
         nvvm::LdmatrixShapeAttr::M8n8,
         nvvm::LdmatrixMultiplicityAttr::X1,
         nvvm::LdmatrixLayoutAttr::Normal,
@@ -1174,9 +1256,9 @@ fn test_ldmatrix_rejects_non_pointer_operand() {
     append_return(&mut ctx, entry);
 
     let error = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
-        .expect_err("non-pointer ldmatrix input must fail closed")
+        .expect_err("non-pointer non-u32 ldmatrix input must fail closed")
         .to_string();
-    assert!(error.contains("operand must be a MIR pointer"), "{error}");
+    assert!(error.contains("pointer or u32 shared address"), "{error}");
 }
 
 #[test]

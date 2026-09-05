@@ -3273,6 +3273,22 @@ fn try_dispatch_intrinsic(
                 value_map,
                 block_map,
                 loc,
+                64,
+            )?,
+        )),
+        "cuda_device::shared::cvta_generic_to_shared_address" => Ok(Some(
+            intrinsics::memory::emit_cvta_generic_to_shared_offset(
+                ctx,
+                body,
+                args,
+                destination,
+                target,
+                block_ptr,
+                prev_op,
+                value_map,
+                block_map,
+                loc,
+                32,
             )?,
         )),
 

@@ -135,6 +135,77 @@ pub unsafe fn ldmatrix_x4_trans(smem_ptr: *const u32) -> [u32; 4] {
     unreachable!("ldmatrix_x4_trans called outside CUDA kernel context")
 }
 
+/// Load one 8×8 matrix from a native 32-bit CTA-shared address.
+///
+/// This has the same participation, alignment, and ordering requirements as
+/// [`ldmatrix_x1`]. Obtain `shared_address` with
+/// [`crate::shared::cvta_generic_to_shared_address`] and keep subsequent byte
+/// arithmetic in `u32`.
+///
+/// # Safety
+///
+/// Same safety contract as [`ldmatrix_x1`].
+#[inline(never)]
+pub unsafe fn ldmatrix_x1_address(shared_address: u32) -> u32 {
+    let _ = shared_address;
+    unreachable!("ldmatrix_x1_address called outside CUDA kernel context")
+}
+
+/// Load one transposed 8×8 matrix from a native 32-bit CTA-shared address.
+///
+/// # Safety
+///
+/// Same safety contract as [`ldmatrix_x1_trans`].
+#[inline(never)]
+pub unsafe fn ldmatrix_x1_trans_address(shared_address: u32) -> u32 {
+    let _ = shared_address;
+    unreachable!("ldmatrix_x1_trans_address called outside CUDA kernel context")
+}
+
+/// Load two 8×8 matrices from a native 32-bit CTA-shared address.
+///
+/// # Safety
+///
+/// Same safety contract as [`ldmatrix_x2`].
+#[inline(never)]
+pub unsafe fn ldmatrix_x2_address(shared_address: u32) -> [u32; 2] {
+    let _ = shared_address;
+    unreachable!("ldmatrix_x2_address called outside CUDA kernel context")
+}
+
+/// Load two transposed 8×8 matrices from a native 32-bit CTA-shared address.
+///
+/// # Safety
+///
+/// Same safety contract as [`ldmatrix_x2_trans`].
+#[inline(never)]
+pub unsafe fn ldmatrix_x2_trans_address(shared_address: u32) -> [u32; 2] {
+    let _ = shared_address;
+    unreachable!("ldmatrix_x2_trans_address called outside CUDA kernel context")
+}
+
+/// Load four 8×8 matrices from a native 32-bit CTA-shared address.
+///
+/// # Safety
+///
+/// Same safety contract as [`ldmatrix_x4`].
+#[inline(never)]
+pub unsafe fn ldmatrix_x4_address(shared_address: u32) -> [u32; 4] {
+    let _ = shared_address;
+    unreachable!("ldmatrix_x4_address called outside CUDA kernel context")
+}
+
+/// Load four transposed 8×8 matrices from a native 32-bit CTA-shared address.
+///
+/// # Safety
+///
+/// Same safety contract as [`ldmatrix_x4_trans`].
+#[inline(never)]
+pub unsafe fn ldmatrix_x4_trans_address(shared_address: u32) -> [u32; 4] {
+    let _ = shared_address;
+    unreachable!("ldmatrix_x4_trans_address called outside CUDA kernel context")
+}
+
 /// Multiply one warp-distributed BF16 tile and add an f32 accumulator.
 ///
 /// Together, the 32 lanes compute `D = A × B + C` for row-major `A` with
