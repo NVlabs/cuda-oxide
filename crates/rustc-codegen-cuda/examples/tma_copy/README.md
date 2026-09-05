@@ -5,7 +5,7 @@
 Demonstrates TMA for efficient tensor data movement. TMA offloads memory copies
 to a dedicated hardware unit, enabling overlap with computation.
 
-For TMA multicast (sm_100a only), see the [`tma_multicast`](../tma_multicast/) example.
+For TMA multicast (sm_90+ per the ISA; that example ships as sm_100a), see the [`tma_multicast`](../tma_multicast/) example.
 
 ## What This Example Does
 

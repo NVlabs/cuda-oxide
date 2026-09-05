@@ -135,24 +135,37 @@ GPU Compute Capability: sm_120
 === TMA Multicast Test Complete ===
 ```
 
-### On Hopper (sm_90/sm_90a) or Earlier
+### On Hopper (sm_90/sm_90a)
 
-Not supported: the shipped PTX targets sm_100a, which the driver will not
-JIT on sm_90. The host example skips any GPU below compute capability 10:
+Legal per the ISA, hardware run pending. Multicast is sm_90+ in the PTX ISA,
+and `--arch=sm_90a` builds and assembles. What the default build cannot do is
+*JIT* there, because it ships `.target sm_100a`, so the driver declines it and
+the host reports its own clean skip:
+
+Nobody here has run this on Hopper, so the block below is the shape of the
+message the host emits on that path, not a captured transcript:
 
 ```text
 GPU Compute Capability: sm_90
 
-skipping: TMA multicast requires sm_100a (Blackwell datacenter)
-   Your GPU is sm_90. Use: cargo oxide run tma_copy
+skipping: this build targets sm_100a and the driver declined it
+  driver reported: ...
+  The sm_100a build runs on B100/B200/GB200 and on sm_120.
+  Multicast itself is sm_90+; for Hopper, rebuild with --arch=sm_90a.
+  For basic TMA tests, use: cargo oxide run tma_copy
 ```
+
+Whether an `--arch=sm_90a` build passes on real Hopper hardware is untested;
+that run is what closes #966.
 
 ## Hardware Requirements
 
 - **Runs on**: Blackwell, both datacenter sm_100a (B100/B200/GB200) and
   consumer sm_120 (RTX 5090, verified in #668)
-- **Not supported**: Hopper (sm_90/sm_90a) and earlier; the sm_100a PTX
-  won't JIT there
+- **Hopper (sm_90/sm_90a)**: legal per the ISA, hardware run pending. The
+  default sm_100a PTX will not JIT there; an `--arch=sm_90a` build assembles
+  but has not been run on the hardware (#966)
+- **Not supported**: anything below sm_90
 - **CUDA Driver**: 12.0+
 - **Cluster launch**: Required (`cuLaunchKernelEx` with cluster dimensions)
 
@@ -187,9 +200,12 @@ whether the driver JIT accepts that PTX for your GPU:
 ```text
 sm_100a PTX ──JIT──► sm_100a (B100/B200/GB200)  ✓ runs
             ──JIT──► sm_120  (RTX 5090)         ✓ runs (verified in #668)
-            ──JIT──► sm_90   (Hopper)           ✗ rejected; host skips CC < 10
+            ──JIT──► sm_90   (Hopper)           ✗ rejected; host reports a skip
+
+sm_90a PTX  ──JIT──► sm_90   (Hopper)           ? assembles; not yet run (#966)
 ```
 
-The multicast instruction itself has an sm_90+ floor in the intrinsic
-catalog (whether an sm_90-targeted build would run on real Hopper hardware
-is an open question, tracked in #966).
+The multicast instruction itself has an sm_90+ floor in the intrinsic catalog,
+which matches the PTX ISA: `sm_90a` is advised there for performance, not
+required for legality. The host gate is therefore sm_90, not sm_100 — what
+keeps the default build off Hopper is its target, not the instruction.

@@ -7,15 +7,19 @@
 // driver; the implicit `unsafe` is in the launch contract.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-//! TMA Multicast Example (SM100a+ / Blackwell Datacenter)
+//! TMA Multicast Example (sm_90+ per the ISA; ships as sm_100a)
 //!
 //! Demonstrates TMA multicast — a single TMA load broadcasts a tile to
 //! the shared memory of ALL CTAs in a thread block cluster.
 //!
 //! Requirements:
-//! - Blackwell (sm_100a or later): datacenter B100/B200/GB200, and reported to
-//!   load and run on consumer sm_120 as well
-//! - Not supported on Hopper (sm_90) or earlier
+//! - The instruction: `cp.async.bulk.tensor` with `.multicast::cluster` is
+//!   sm_90+ in the PTX ISA. `sm_90a` is advised for performance, not required
+//!   for legality, which is what the sm_90+ catalog row records.
+//! - This build: ships as `.target sm_100a`, so the driver JIT accepts it on
+//!   datacenter B100/B200/GB200 and on consumer sm_120 (measured in #668).
+//!   To run it on Hopper, build with `--arch=sm_90a`; whether that build
+//!   passes on real Hopper hardware is untested and tracked in #966.
 //!
 //! Build and run with:
 //!   cargo oxide run tma_multicast
@@ -153,11 +157,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (major, minor) = ctx.compute_capability()?;
     println!("GPU Compute Capability: sm_{}{}", major, minor);
 
-    if major < 10 {
-        // Same clean-skip contract as the load-failure arm below: the marker
-        // has to be on whichever path actually runs, and on a pre-Blackwell
-        // GPU it is this one.
-        println!("\nskipping: TMA multicast requires sm_100a (Blackwell datacenter)");
+    // The ISA floor for multicast, not this build's target. A Hopper GPU
+    // falls through to `load` below: an `--arch=sm_90a` build will JIT there,
+    // and the default sm_100a build will not, which the load arm reports as
+    // its own clean skip. Same contract as that arm -- the marker has to be on
+    // whichever path actually runs.
+    if major < 9 {
+        println!("\nskipping: TMA multicast requires sm_90 or newer");
         println!(
             "   Your GPU is sm_{}{}. Use: cargo oxide run tma_copy",
             major, minor
@@ -171,15 +177,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_tma_multicast_test(&stream, &module)?;
         }
         Err(e) => {
-            // TMA multicast needs sm_100a (Blackwell datacenter). On every
-            // other GPU the cubin won't JIT and the driver returns 218, which
+            // This build ships `.target sm_100a`, so the driver JIT rejects
+            // it anywhere that target does not apply and returns 218, which
             // `load` surfaces through its `Driver` variant. Treat that as a
             // clean skip so the smoketest's failure-marker scan doesn't flag
-            // this as a regression — the PTX itself was generated, which is
-            // all this example can verify off-hopper datacenter.
-            println!("\nskipping: TMA multicast requires sm_100a");
+            // it as a regression — the PTX itself was generated, which is all
+            // this example can verify off Blackwell.
+            println!("\nskipping: this build targets sm_100a and the driver declined it");
             println!("  driver reported: {}", e);
-            println!("  TMA multicast requires sm_100a or later (B100/B200/GB200, and sm_120).");
+            println!("  The sm_100a build runs on B100/B200/GB200 and on sm_120.");
+            println!("  Multicast itself is sm_90+; for Hopper, rebuild with --arch=sm_90a.");
             println!("  For basic TMA tests, use: cargo oxide run tma_copy");
         }
     }
