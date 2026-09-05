@@ -20,11 +20,11 @@
 
 use cuda_core::simt::LaunchConfig;
 use cuda_core::{CudaContext, DeviceBuffer};
-use cuda_device::shared::cvta_generic_to_shared_address;
+use cuda_device::shared::cvta_generic_to_shared_u32;
 use cuda_device::wmma::{
-    ldmatrix_x1, ldmatrix_x1_address, ldmatrix_x1_trans, ldmatrix_x1_trans_address, ldmatrix_x2,
-    ldmatrix_x2_address, ldmatrix_x2_trans, ldmatrix_x2_trans_address, ldmatrix_x4,
-    ldmatrix_x4_address, ldmatrix_x4_trans, ldmatrix_x4_trans_address,
+    ldmatrix_x1, ldmatrix_x1_shared_u32, ldmatrix_x1_trans, ldmatrix_x1_trans_shared_u32,
+    ldmatrix_x2, ldmatrix_x2_shared_u32, ldmatrix_x2_trans, ldmatrix_x2_trans_shared_u32,
+    ldmatrix_x4, ldmatrix_x4_shared_u32, ldmatrix_x4_trans, ldmatrix_x4_trans_shared_u32,
 };
 use cuda_device::{DisjointSlice, SharedArray, cuda_module, kernel, thread};
 use cuda_intrinsics::matrix::ldmatrix_m8n8_x4_b16;
@@ -109,9 +109,9 @@ mod kernels {
         // - each address points to a live, initialized, 16-byte-aligned row;
         // - the barrier above orders the shared-memory writes before the load.
         let shared_address = unsafe {
-            cvta_generic_to_shared_address(shared.add(row_word).cast_const().cast::<u8>())
+            cvta_generic_to_shared_u32(shared.add(row_word).cast_const().cast::<u8>())
         };
-        let registers = unsafe { ldmatrix_x4_address(shared_address) };
+        let registers = unsafe { ldmatrix_x4_shared_u32(shared_address) };
 
         // Result register m contains matrix m, row lane/4, column pair lane%4.
         // Each lane owns four unique output slots.
@@ -235,13 +235,13 @@ mod kernels {
         let x2_trans = unsafe { ldmatrix_x2_trans(address) };
         let x4 = unsafe { ldmatrix_x4(address) };
         let x4_trans = unsafe { ldmatrix_x4_trans(address) };
-        let shared_address = unsafe { cvta_generic_to_shared_address(address.cast::<u8>()) };
-        let address_x1 = unsafe { ldmatrix_x1_address(shared_address) };
-        let address_x1_trans = unsafe { ldmatrix_x1_trans_address(shared_address) };
-        let address_x2 = unsafe { ldmatrix_x2_address(shared_address) };
-        let address_x2_trans = unsafe { ldmatrix_x2_trans_address(shared_address) };
-        let address_x4 = unsafe { ldmatrix_x4_address(shared_address) };
-        let address_x4_trans = unsafe { ldmatrix_x4_trans_address(shared_address) };
+        let shared_address = unsafe { cvta_generic_to_shared_u32(address.cast::<u8>()) };
+        let address_x1 = unsafe { ldmatrix_x1_shared_u32(shared_address) };
+        let address_x1_trans = unsafe { ldmatrix_x1_trans_shared_u32(shared_address) };
+        let address_x2 = unsafe { ldmatrix_x2_shared_u32(shared_address) };
+        let address_x2_trans = unsafe { ldmatrix_x2_trans_shared_u32(shared_address) };
+        let address_x4 = unsafe { ldmatrix_x4_shared_u32(shared_address) };
+        let address_x4_trans = unsafe { ldmatrix_x4_trans_shared_u32(shared_address) };
 
         let base = lane * LEGACY_REGISTERS;
         unsafe {

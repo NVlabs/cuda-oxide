@@ -3276,7 +3276,7 @@ fn try_dispatch_intrinsic(
                 64,
             )?,
         )),
-        "cuda_device::shared::cvta_generic_to_shared_address" => Ok(Some(
+        "cuda_device::shared::cvta_generic_to_shared_u32" => Ok(Some(
             intrinsics::memory::emit_cvta_generic_to_shared_offset(
                 ctx,
                 body,

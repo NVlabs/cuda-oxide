@@ -11,7 +11,7 @@
   },
   "inputs": {
     "imported_sha256": "3f54245b231a5b6e19f3225710c3865b7e1a106242cce873250ef5fdc32e532e",
-    "overlay_sha256": "a721829102d92f7e8e2763bbaa13ad9ede65bae5325394e865a99461fae5933d",
+    "overlay_sha256": "2f7afdc14c3a5e35de6296aba09fea8156e9edf4635bb01f4c6b6aed93cce193",
     "abi_ledger_sha256": "a34301233f6b8cfda7d876a07377d5478922e85f9ba58bdacd37b676f9f6fba8",
     "evidence_sha256": [
       "cuda-12.0-libnvvm-12.0.140-ex2-f16.json:7102ea7d567ff2d2eb75a0384148d2e5eb6e605c26a5b98c71371fa3c46adef6",
@@ -81414,7 +81414,7 @@
         "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x1_b16",
         "compatibility_paths": [
           "cuda_device::wmma::ldmatrix_x1",
-          "cuda_device::wmma::ldmatrix_x1_address"
+          "cuda_device::wmma::ldmatrix_x1_shared_u32"
         ]
       },
       "dialect": {
@@ -81681,7 +81681,7 @@
         "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x1_trans_b16",
         "compatibility_paths": [
           "cuda_device::wmma::ldmatrix_x1_trans",
-          "cuda_device::wmma::ldmatrix_x1_trans_address"
+          "cuda_device::wmma::ldmatrix_x1_trans_shared_u32"
         ]
       },
       "dialect": {
@@ -81949,7 +81949,7 @@
         "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x2_b16",
         "compatibility_paths": [
           "cuda_device::wmma::ldmatrix_x2",
-          "cuda_device::wmma::ldmatrix_x2_address"
+          "cuda_device::wmma::ldmatrix_x2_shared_u32"
         ]
       },
       "dialect": {
@@ -82218,7 +82218,7 @@
         "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x2_trans_b16",
         "compatibility_paths": [
           "cuda_device::wmma::ldmatrix_x2_trans",
-          "cuda_device::wmma::ldmatrix_x2_trans_address"
+          "cuda_device::wmma::ldmatrix_x2_trans_shared_u32"
         ]
       },
       "dialect": {
@@ -82488,7 +82488,7 @@
         "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x4_b16",
         "compatibility_paths": [
           "cuda_device::wmma::ldmatrix_x4",
-          "cuda_device::wmma::ldmatrix_x4_address"
+          "cuda_device::wmma::ldmatrix_x4_shared_u32"
         ]
       },
       "dialect": {
@@ -82814,7 +82814,7 @@
         "public_path": "cuda_intrinsics::matrix::ldmatrix_m8n8_x4_trans_b16",
         "compatibility_paths": [
           "cuda_device::wmma::ldmatrix_x4_trans",
-          "cuda_device::wmma::ldmatrix_x4_trans_address"
+          "cuda_device::wmma::ldmatrix_x4_trans_shared_u32"
         ]
       },
       "dialect": {

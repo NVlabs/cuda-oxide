@@ -582,7 +582,9 @@ pub(in crate::resolve) fn validate_ldmatrix_policy(
                 let expected_compatibility_paths = if classic {
                     vec![
                         format!("cuda_device::wmma::ldmatrix_{count_name}{trans_record}"),
-                        format!("cuda_device::wmma::ldmatrix_{count_name}{trans_record}_address"),
+                        format!(
+                            "cuda_device::wmma::ldmatrix_{count_name}{trans_record}_shared_u32"
+                        ),
                     ]
                 } else if matches!(
                     policy.id.as_str(),
