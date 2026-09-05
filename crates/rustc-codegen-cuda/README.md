@@ -183,6 +183,9 @@ cargo oxide pipeline <example_name>
 ## Key Design Decisions
 
 - **Device code is `no_std`**. Functions reachable from a `#[kernel]` may only call into `core`, `cuda_device`, or the local crate. Use of `std` or `alloc` is a compile-time error.
+- **Device code sees the host's target**. Kernels are compiled from the MIR of the single host-target rustc session, so `cfg(target_arch = ...)`, `cfg(target_feature = ...)`, and `usize` inside a kernel answer for the host, and struct layouts agree with the host by construction. Two guards keep that honest:
+  - the backend refuses targets that are not 64-bit little-endian, which is what PTX is;
+  - the collector rejects the two host-CPU signals a kernel can reach, `core::arch::<host>` intrinsics and `#[target_feature]` functions, as a compile-time error at the call rather than a translator failure. Raw `asm!` inlined from a helper is the remaining route; it still fails in the translator.
 - **Arguments are scalarized** at the host/device boundary. Aggregates (slices, structs) are flattened to scalars for the CUDA launch ABI and reconstructed inside the kernel. This is transparent to the user.
 - **Struct layout matches rustc exactly**. Device-side structs use explicit padding derived from rustc's layout queries, so `#[repr(C)]` is not required.
 - **Closures work**. Both `move` closures (capture by value) and non-move closures (capture by reference via HMM) can be passed to kernels.

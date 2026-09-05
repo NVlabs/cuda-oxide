@@ -658,6 +658,46 @@ fn is_std_float_inherent_method(fn_path: &str) -> bool {
         .any(|ty| fn_path.starts_with(&format!("std::{ty}::<impl {ty}>::")))
 }
 
+/// True when `def_path` (rustc's definition path without the crate, as
+/// `DefPath::to_string_no_crate_verbose` prints it) names an item under core's
+/// `core_arch::<arch>` module for any `<arch>` other than `nvptx`.
+///
+/// ```text
+/// user wrote        core::arch::x86_64::_rdtsc
+/// defined at        ::core_arch::x86::rdtsc::_rdtsc
+/// inlines into      ::core_arch::x86::rdtsc::rdtsc      (foreign fn)   → true
+/// ::core_arch::nvptx::_syncthreads                      GPU's own module → false
+/// ::core_arch::simd::i32x4::new                         portable SIMD    → false
+/// ::hint::spin_loop                                     not core_arch    → false
+/// ```
+///
+/// - Kernel MIR comes from the host-target session, so the host CPU's
+///   `core::arch` module is fully visible to device code with no PTX lowering.
+/// - Most of its intrinsics carry `#[target_feature]` and are refused by that
+///   attribute first. This covers the ones without one (`_rdtsc`) and the
+///   private foreign declarations they inline into.
+/// - The definition path is used instead of `def_path_str`, whose re-export
+///   spelling varies (`std::arch::x86_64`, `core::arch::x86_64`).
+/// - Intrinsics that are pure `asm!` (`__cpuid`) leave no call to see; they
+///   still fail in the translator, as an unsupported `InlineAsm` terminator.
+fn is_host_cpu_arch_def_path(def_path: &str) -> bool {
+    let Some(rest) = def_path.strip_prefix("::core_arch::") else {
+        return false;
+    };
+    let Some((module, _item)) = rest.split_once("::") else {
+        return false;
+    };
+    !matches!(module, "nvptx" | "simd" | "macros")
+}
+
+/// True for the x86 intrinsic `core::hint::spin_loop` expands to on the host
+/// (`_mm_pause`, and the foreign `pause` it inlines into), so the guard can
+/// name what the user actually wrote.
+fn is_spin_loop_expansion(def_path: &str) -> bool {
+    is_host_cpu_arch_def_path(def_path)
+        && matches!(def_path.rsplit("::").next(), Some("pause" | "_mm_pause"))
+}
+
 /// Returns true for hidden `cuda_device::ptx_asm!` marker functions.
 ///
 /// These markers have host-side `unreachable!()` bodies, but the MIR importer
@@ -859,6 +899,17 @@ struct DiscoveryCtx {
     root_is_kernel: bool,
     /// Nearest enclosing user-code span on the discovery path.
     user_span: Span,
+}
+
+impl DiscoveryCtx {
+    /// "kernel" or "device function", for diagnostics that name the root.
+    fn root_kind(&self) -> &'static str {
+        if self.root_is_kernel {
+            "kernel"
+        } else {
+            "device function"
+        }
+    }
 }
 
 /// Collects all device-reachable functions starting from kernel entry points.
@@ -1110,6 +1161,22 @@ impl<'tcx> DeviceCollector<'tcx> {
                     root_is_kernel: func.is_kernel,
                     user_span: self.tcx.def_span(def_id),
                 });
+
+            // Host-CPU-only functions (`#[target_feature]`, `core::arch::<host>`)
+            // can reach device code because kernel MIR comes from the
+            // host-target session. Refuse them here, the one point every
+            // function with a body passes through (roots, callees, closures,
+            // fn items, trait-dispatched impls). Callees without a body are
+            // checked at the top of `process_call_operand`. Drop glue and
+            // the `FnPtr::addr` shim are the only compiler-built shims that
+            // reach this loop, and neither carries attributes; any other shim
+            // kind (a reified `#[target_feature]` fn, say) must be checked.
+            if !matches!(
+                func.instance.def,
+                InstanceKind::Shim(ShimKind::DropGlue(..) | ShimKind::FnPtrAsPtr(..))
+            ) {
+                self.check_host_cpu_only(def_id, ctx.user_span, &ctx, None);
+            }
 
             // Get MIR body if available. For drop glue shims
             // (InstanceKind::DropGlue), `is_mir_available` may return false
@@ -1472,6 +1539,25 @@ impl<'tcx> DeviceCollector<'tcx> {
             EarlyBinder::bind(self.tcx, args),
         );
 
+        // The call site is the best span while the caller is user code;
+        // afterwards keep the last user-code span recorded on the walk. Used
+        // for the host-CPU guard here and for every callee context below.
+        let user_span = if caller.instance.def_id().is_local() && !call_span.is_dummy() {
+            call_span
+        } else {
+            ctx.user_span
+        };
+
+        // Host-CPU guard, before any skip below can drop the callee silently.
+        // A body-less callee (the foreign `rdtsc` that `_rdtsc` inlines into)
+        // never reaches the worklist check, and the verbose trace shows it
+        // leaves this function through an early return before the "no MIR"
+        // skip, so this is the one place that sees it. The check is cheap
+        // when it does not fire: one cached attribute query and one crate
+        // compare. Name the caller only when it is not the root itself.
+        let via = (caller.export_name != ctx.root_name).then_some(caller.instance.def_id());
+        self.check_host_cpu_only(*def_id, user_span, ctx, via);
+
         // Check if function is from a crate we should compile
         match self.should_collect_from_crate(*def_id) {
             CollectDecision::Collect => {
@@ -1539,11 +1625,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         let callee_ctx = DiscoveryCtx {
             root_name: ctx.root_name.clone(),
             root_is_kernel: ctx.root_is_kernel,
-            user_span: if caller.instance.def_id().is_local() && !call_span.is_dummy() {
-                call_span
-            } else {
-                ctx.user_span
-            },
+            user_span,
         };
 
         // Callable-trait shims do not necessarily have a MIR body of their own.
@@ -1622,11 +1704,7 @@ impl<'tcx> DeviceCollector<'tcx> {
             let callee_ctx = DiscoveryCtx {
                 root_name: ctx.root_name.clone(),
                 root_is_kernel: ctx.root_is_kernel,
-                user_span: if caller.instance.def_id().is_local() && !call_span.is_dummy() {
-                    call_span
-                } else {
-                    ctx.user_span
-                },
+                user_span,
             };
             let export_name = sanitize_ptx_name(&mangled);
             if self.verbose {
@@ -2205,11 +2283,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         ctx: &DiscoveryCtx,
     ) -> ! {
         let caller_path = self.tcx.def_path_str(caller.instance.def_id());
-        let root_kind = if ctx.root_is_kernel {
-            "kernel"
-        } else {
-            "device function"
-        };
+        let root_kind = ctx.root_kind();
         self.tcx
             .dcx()
             .struct_span_fatal(
@@ -2231,6 +2305,142 @@ impl<'tcx> DeviceCollector<'tcx> {
                  `SharedArray` when the scratch space should be shared by the thread block",
             )
             .emit()
+    }
+
+    /// Refuses a device-reachable function that only makes sense on the host
+    /// CPU, at the user-code site that reached it.
+    ///
+    /// ```text
+    /// #[kernel] fn k(..) ─► helper ─► _mm256_add_ps   #[target_feature(enable = "avx2")]  signal 1
+    ///                    ─► _rdtsc ─► rdtsc (foreign) ::core_arch::x86::rdtsc::rdtsc      signal 2
+    /// ```
+    ///
+    /// - Kernel MIR comes from the host-target session, so rustc has already
+    ///   accepted these for the host. None has a PTX lowering; without this
+    ///   guard they fail deep in the translator, or lower to something the
+    ///   author did not mean.
+    /// - Signal 1: `#[target_feature]` on the definition. The MIR inliner never
+    ///   inlines a callee whose feature set differs from the caller's, so the
+    ///   call survives to here as a call.
+    /// - Signal 2: a definition under core's `core_arch::<arch>` for a
+    ///   non-`nvptx` arch, see [`is_host_cpu_arch_def_path`]. Checked only for
+    ///   items in `core`, after the cached attribute query, so the common case
+    ///   costs one query and one crate compare.
+    /// - Called from the worklist pop (every function with a body, including
+    ///   trait-dispatched impls and closures) and at the top of
+    ///   `process_call_operand` (every call edge, before any skip), which is
+    ///   the only place that sees body-less callees such as inlined foreign
+    ///   declarations.
+    ///
+    /// `via` is the collected function whose body contains the call, when it
+    /// is not the root itself.
+    fn check_host_cpu_only(
+        &self,
+        def_id: DefId,
+        span: Span,
+        ctx: &DiscoveryCtx,
+        via: Option<DefId>,
+    ) {
+        use rustc_middle::middle::codegen_fn_attrs::TargetFeatureKind;
+
+        // Report the features the author wrote (`avx2`), not the ones rustc
+        // derives from them (`avx`, `sse4.2`, ...). `Forced` is the unsafe
+        // `force_target_feature` spelling and is just as host-only.
+        //
+        // Closures are exempt: rustc copies the enclosing function's features
+        // onto them so their bodies may call its intrinsics, but the closure
+        // itself is ordinary code. A portable closure launched from an avx2
+        // host function must keep compiling; anything host-only inside its
+        // body is caught when that body is walked.
+        let features: Vec<String> = if self.tcx.is_closure_like(def_id) {
+            Vec::new()
+        } else {
+            self.tcx
+                .codegen_fn_attrs(def_id)
+                .target_features
+                .iter()
+                .filter(|f| {
+                    matches!(
+                        f.kind,
+                        TargetFeatureKind::Enabled | TargetFeatureKind::Forced
+                    )
+                })
+                .map(|f| f.name.to_string())
+                .collect()
+        };
+
+        let in_core = self.tcx.crate_name(def_id.krate).as_str() == "core";
+        let def_path = in_core.then(|| self.tcx.def_path(def_id).to_string_no_crate_verbose());
+        let is_arch_intrinsic = def_path.as_deref().is_some_and(is_host_cpu_arch_def_path);
+
+        if features.is_empty() && !is_arch_intrinsic {
+            return;
+        }
+
+        let fn_path = self.tcx.def_path_str(def_id);
+        let message = if !features.is_empty() {
+            format!(
+                "`{fn_path}` requires host CPU target features (`{}`) and cannot run on the GPU",
+                features.join("`, `")
+            )
+        } else {
+            format!(
+                "`{fn_path}` is a `core::arch` intrinsic for the host CPU (`{}`) and cannot run on the GPU",
+                self.tcx.sess.target.arch
+            )
+        };
+
+        let root_kind = ctx.root_kind();
+        let reach = match via {
+            Some(caller) => format!(
+                "device code starting at {root_kind} `{}` reaches it through `{}`",
+                ctx.root_name,
+                self.tcx.def_path_str(caller)
+            ),
+            None => format!(
+                "device code starting at {root_kind} `{}` reaches it",
+                ctx.root_name
+            ),
+        };
+
+        let mut diag = self
+            .tcx
+            .dcx()
+            .struct_span_fatal(span, message)
+            .with_note(reach)
+            .with_note(
+                "cuda-oxide compiles kernels from the host target's MIR, so code selected by \
+                 `cfg(target_arch = ...)`, `core::arch` intrinsics, and `#[target_feature]` \
+                 functions for the host CPU are visible to device code; none of them has a \
+                 PTX lowering",
+            );
+        // Portable code can land here without the user writing anything
+        // host-specific: `core::hint::spin_loop` expands to `_mm_pause` on
+        // x86, `<[u8]>::is_ascii` picks an SSE2 path, `half` picks its f16c
+        // path under `-C target-cpu=native`. Say so, instead of telling the
+        // user to remove host-CPU code they never wrote.
+        if is_spin_loop_expansion(def_path.as_deref().unwrap_or("")) {
+            diag = diag.with_note(
+                "this is what `core::hint::spin_loop` expands to on the host; it has no GPU \
+                 lowering yet, so wait with `cuda_device::barrier::nanosleep` or a plain loop \
+                 instead",
+            );
+        } else if !def_id.is_local() && via.is_some_and(|caller| !caller.is_local()) {
+            // Reached through a non-local function, so the user did not call
+            // it directly: a dependency or `core` picked the host path.
+            diag = diag.with_note(format!(
+                "the host build selected this code inside crate `{}` through `cfg(target_arch)` \
+                 / `cfg(target_feature)` (widened by `-C target-cpu=native` if set); the portable \
+                 alternative cannot be re-selected from device code",
+                self.tcx.crate_name(def_id.krate)
+            ));
+        }
+        diag.with_help(
+            "keep host-CPU code out of `#[kernel]` and `#[device]` functions and the \
+             helpers they call; when it came from `core` or a dependency, use a `cuda_device` \
+             equivalent or a plain loop instead",
+        )
+        .emit()
     }
 
     /// Diagnoses a callee whose entire body is panic machinery (issue #76).
@@ -2278,11 +2488,7 @@ impl<'tcx> DeviceCollector<'tcx> {
         let caller_path = self.tcx.def_path_str(caller.instance.def_id());
         let callee_path = self.tcx.def_path_str(def_id);
         let user_call_span = call_span;
-        let root_kind = if ctx.root_is_kernel {
-            "kernel"
-        } else {
-            "device function"
-        };
+        let root_kind = ctx.root_kind();
 
         if let Some((_, _, text)) = marker {
             let stub = stub_name_from_marker_message(text);
@@ -2449,11 +2655,7 @@ impl<'tcx> DeviceCollector<'tcx> {
             };
 
             let func_path = self.tcx.def_path_str(func.instance.def_id());
-            let root_kind = if ctx.root_is_kernel {
-                "kernel"
-            } else {
-                "device function"
-            };
+            let root_kind = ctx.root_kind();
             // When the panic sits directly in the root's body, naming the
             // (mangled) containing function adds nothing; name the root once.
             let location_note = if func.export_name == ctx.root_name {
@@ -2542,8 +2744,9 @@ pub fn dump_device_mir_info<'tcx>(tcx: TyCtxt<'tcx>, functions: &[CollectedFunct
 #[cfg(test)]
 mod tests {
     use super::{
-        device_runtime_checks_target, is_kernel_entry_def_path, is_std_float_inherent_method,
-        truncate_path_for_box, unsupported_codegen_protocol_root,
+        device_runtime_checks_target, is_host_cpu_arch_def_path, is_kernel_entry_def_path,
+        is_spin_loop_expansion, is_std_float_inherent_method, truncate_path_for_box,
+        unsupported_codegen_protocol_root,
     };
     use reserved_oxide_symbols::{
         DEVICE_PREFIX, KERNEL_PREFIX, LEGACY_DEVICE_PREFIX, LEGACY_KERNEL_PREFIX,
@@ -2569,6 +2772,49 @@ mod tests {
         assert!(!is_std_float_inherent_method("core::f32::<impl f32>::abs"));
         assert!(!is_std_float_inherent_method("std::f32::consts::PI"));
         assert!(!is_std_float_inherent_method("std::io::stdio::_print"));
+    }
+
+    #[test]
+    fn host_cpu_arch_definition_paths_are_recognised() {
+        // Definition paths as `DefPath::to_string_no_crate_verbose` prints
+        // them: what `_rdtsc` inlines into, an AVX intrinsic, a NEON one.
+        assert!(is_host_cpu_arch_def_path("::core_arch::x86::rdtsc::rdtsc"));
+        assert!(is_host_cpu_arch_def_path(
+            "::core_arch::x86::avx::_mm256_add_ps"
+        ));
+        assert!(is_host_cpu_arch_def_path(
+            "::core_arch::aarch64::neon::generated::vaddq_f32"
+        ));
+        assert!(is_host_cpu_arch_def_path(
+            "::core_arch::riscv_shared::pause"
+        ));
+    }
+
+    #[test]
+    fn gpu_and_non_arch_definition_paths_are_not_host_cpu_intrinsics() {
+        // The GPU's own module, never visible under a host target today but
+        // the right answer if it ever is.
+        assert!(!is_host_cpu_arch_def_path(
+            "::core_arch::nvptx::_syncthreads"
+        ));
+        // stdarch's private SIMD vector types and macro helpers under core_arch.
+        assert!(!is_host_cpu_arch_def_path("::core_arch::simd::i32x4::new"));
+        assert!(!is_host_cpu_arch_def_path("::core_arch::macros::foo"));
+        // Items outside core_arch, including `core::arch::breakpoint`, which
+        // lives in core's `arch` module, not in `core_arch`.
+        assert!(!is_host_cpu_arch_def_path("::arch::breakpoint"));
+        assert!(!is_host_cpu_arch_def_path("::hint::spin_loop"));
+        assert!(!is_host_cpu_arch_def_path("::ptr::read"));
+        // Re-export spellings are never passed in; only definition paths are.
+        assert!(!is_host_cpu_arch_def_path("core::arch::x86_64::_rdtsc"));
+    }
+
+    #[test]
+    fn spin_loop_expansions_get_the_extra_note() {
+        assert!(is_spin_loop_expansion("::core_arch::x86::sse2::pause"));
+        assert!(is_spin_loop_expansion("::core_arch::x86::sse2::_mm_pause"));
+        assert!(!is_spin_loop_expansion("::core_arch::x86::rdtsc::rdtsc"));
+        assert!(!is_spin_loop_expansion("::hint::spin_loop"));
     }
 
     #[test]
