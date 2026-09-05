@@ -526,4 +526,24 @@ pub unsafe fn cvta_generic_to_shared_offset(ptr: *const u8) -> u64 {
     unreachable!("cvta_generic_to_shared_offset called outside CUDA kernel context")
 }
 
+/// Convert a generic address into its 32-bit `.shared::cta` state-space address.
+///
+/// Unlike [`cvta_generic_to_shared_offset`], which returns the `u64` carrier
+/// used to construct WGMMA and tcgen05 descriptors, this form matches the
+/// `u32` address operand consumed by CTA-shared instructions such as `ldmatrix`.
+/// Convert a shared base once, then keep byte-offset and swizzle arithmetic in
+/// `u32` when the complete addressed allocation fits the CTA shared window.
+///
+/// # Safety
+///
+/// `ptr` must be a generic pointer to memory in the current CTA's shared-memory
+/// window. Converting any other pointer produces an unspecified address.
+//
+// Keep this uninlined: mir-importer intercepts the exact rendered def-path.
+#[inline(never)]
+pub unsafe fn cvta_generic_to_shared_u32(ptr: *const u8) -> u32 {
+    let _ = ptr;
+    unreachable!("cvta_generic_to_shared_u32 called outside CUDA kernel context")
+}
+
 include!("generated/shared_sreg.rs");

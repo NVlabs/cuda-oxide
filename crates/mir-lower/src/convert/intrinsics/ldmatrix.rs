@@ -5,10 +5,10 @@
 
 //! Lower `ldmatrix` operations through the selected intrinsic backend.
 //!
-//! Both backends first turn a generic pointer into an LLVM shared-memory
-//! pointer. The LLVM-NVPTX route then calls the exact pointer-specialized
-//! intrinsic. The libNVVM route turns that shared pointer into the 32-bit
-//! address consumed by exact `.shared` inline PTX.
+//! Pointer-form operands first become LLVM shared-memory pointers. Native-u32
+//! operands already carry the address consumed by exact `.shared` PTX. The
+//! LLVM-NVPTX route materializes an address-space-3 pointer at its intrinsic
+//! boundary; the libNVVM route passes the u32 address directly to inline PTX.
 
 use crate::convert::intrinsics::common::{call_intrinsic, inline_asm_convergent};
 use crate::{IntrinsicBackend, context};
@@ -75,14 +75,14 @@ pub(crate) fn convert_generated_ldmatrix<I: LdmatrixInstructionHead>(
         );
     }
 
-    let shared_pointer = normalize_shared_pointer(ctx, rewriter, operands[0], name)?;
+    let shared_address = normalize_shared_address(ctx, rewriter, operands[0], name)?;
     let result_ty = register_result_type(ctx, register_count);
     let producer = match context::lowering_options(ctx).intrinsic_backend {
         IntrinsicBackend::LlvmNvptx => lower_with_llvm_intrinsic(
             ctx,
             rewriter,
             op,
-            shared_pointer,
+            shared_address,
             result_ty,
             typed_intrinsic_name,
         )?,
@@ -90,7 +90,7 @@ pub(crate) fn convert_generated_ldmatrix<I: LdmatrixInstructionHead>(
             ctx,
             rewriter,
             op,
-            shared_pointer,
+            shared_address,
             result_ty,
             register_count,
             &instruction_head,
@@ -100,28 +100,47 @@ pub(crate) fn convert_generated_ldmatrix<I: LdmatrixInstructionHead>(
     replace_with_register_results(ctx, rewriter, op, producer, register_count)
 }
 
-fn normalize_shared_pointer(
+#[derive(Clone, Copy)]
+enum SharedAddress {
+    Pointer(Value),
+    NativeU32(Value),
+}
+
+fn normalize_shared_address(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
-    pointer: Value,
+    address: Value,
     name: &str,
-) -> Result<Value> {
-    let pointer_ty = pointer.get_type(ctx);
+) -> Result<SharedAddress> {
+    let address_ty = address.get_type(ctx);
+    if address_ty
+        .deref(ctx)
+        .downcast_ref::<IntegerType>()
+        .is_some_and(|integer| integer.width() == 32)
+    {
+        return Ok(SharedAddress::NativeU32(address));
+    }
+
     let address_space = {
-        let pointer_ty = pointer_ty.deref(ctx);
-        let Some(pointer_ty) = pointer_ty.downcast_ref::<llvm_types::PointerType>() else {
-            return pliron::input_err_noloc!("{} requires an LLVM pointer operand", name);
+        let address_ty = address_ty.deref(ctx);
+        let Some(pointer_ty) = address_ty.downcast_ref::<llvm_types::PointerType>() else {
+            return pliron::input_err_noloc!(
+                "{} requires an LLVM pointer or u32 shared address operand",
+                name
+            );
         };
         pointer_ty.address_space()
     };
 
     match address_space {
-        llvm_types::address_space::SHARED => Ok(pointer),
+        llvm_types::address_space::SHARED => Ok(SharedAddress::Pointer(address)),
         llvm_types::address_space::GENERIC => {
             let shared_ty = llvm_types::PointerType::get(ctx, llvm_types::address_space::SHARED);
-            let cast = llvm::AddrSpaceCastOp::new(ctx, pointer, shared_ty.into());
+            let cast = llvm::AddrSpaceCastOp::new(ctx, address, shared_ty.into());
             rewriter.insert_operation(ctx, cast.get_operation());
-            Ok(cast.get_operation().deref(ctx).get_result(0))
+            Ok(SharedAddress::Pointer(
+                cast.get_operation().deref(ctx).get_result(0),
+            ))
         }
         address_space => pliron::input_err_noloc!(
             "{} requires a generic (address space 0) or shared (address space 3) pointer, got address space {}",
@@ -151,11 +170,19 @@ fn lower_with_llvm_intrinsic(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    shared_pointer: Value,
+    shared_address: SharedAddress,
     result_ty: TypeHandle,
     typed_intrinsic_name: &str,
 ) -> Result<Ptr<Operation>> {
     let shared_ty = llvm_types::PointerType::get(ctx, llvm_types::address_space::SHARED);
+    let shared_pointer = match shared_address {
+        SharedAddress::Pointer(pointer) => pointer,
+        SharedAddress::NativeU32(address) => {
+            let cast = llvm::IntToPtrOp::new(ctx, address, shared_ty.into());
+            rewriter.insert_operation(ctx, cast.get_operation());
+            cast.get_operation().deref(ctx).get_result(0)
+        }
+    };
     let function_ty = llvm_types::FuncType::get(ctx, result_ty, vec![shared_ty.into()], false);
     call_intrinsic(
         ctx,
@@ -171,15 +198,20 @@ fn lower_with_inline_ptx(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    shared_pointer: Value,
+    shared_address: SharedAddress,
     result_ty: TypeHandle,
     register_count: usize,
     instruction_head: &str,
 ) -> Ptr<Operation> {
-    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
-    let pointer_address = llvm::PtrToIntOp::new(ctx, shared_pointer, i32_ty.into());
-    rewriter.insert_operation(ctx, pointer_address.get_operation());
-    let pointer_address = pointer_address.get_operation().deref(ctx).get_result(0);
+    let address = match shared_address {
+        SharedAddress::NativeU32(address) => address,
+        SharedAddress::Pointer(pointer) => {
+            let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+            let pointer_address = llvm::PtrToIntOp::new(ctx, pointer, i32_ty.into());
+            rewriter.insert_operation(ctx, pointer_address.get_operation());
+            pointer_address.get_operation().deref(ctx).get_result(0)
+        }
+    };
 
     let outputs = (0..register_count)
         .map(|index| format!("${index}"))
@@ -198,7 +230,7 @@ fn lower_with_inline_ptx(
         rewriter,
         op,
         result_ty,
-        vec![pointer_address],
+        vec![address],
         &template,
         &constraints,
     )
