@@ -620,7 +620,7 @@ mod tests {
         let tag_constant = Operation::get_op::<llvm::ConstantOp>(tag_def, &ctx)
             .expect("the inserted enum tag must be defined by llvm.constant");
         let tag_attr = tag_constant.get_value(&ctx);
-        let tag_integer = tag_attr
+        let tag_integer = (&*tag_attr as &dyn pliron::attribute::Attribute)
             .downcast_ref::<IntegerAttr>()
             .expect("the inserted enum tag must be an integer constant");
         assert_eq!(tag_integer.value().bw(), 8, "the enum tag must be 8-bit");
@@ -871,7 +871,7 @@ mod tests {
             .expect("byte offset must be an LLVM constant");
         let offset_attr = offset_constant.get_value(&ctx);
         assert_eq!(
-            offset_attr
+            (&*offset_attr as &dyn pliron::attribute::Attribute)
                 .downcast_ref::<IntegerAttr>()
                 .expect("byte offset must be integer")
                 .value()
@@ -1480,9 +1480,9 @@ mod tests {
         };
         let constant =
             Operation::get_op::<llvm::ConstantOp>(offset.defining_op().unwrap(), &ctx).unwrap();
+        let attr = constant.get_value(&ctx);
         assert_eq!(
-            constant
-                .get_value(&ctx)
+            (&*attr as &dyn pliron::attribute::Attribute)
                 .downcast_ref::<IntegerAttr>()
                 .unwrap()
                 .value()
@@ -1689,8 +1689,8 @@ mod tests {
             let found_bits = find_all::<llvm::ConstantOp>(&ctx, &body)
                 .iter()
                 .any(|constant| {
-                    constant
-                        .get_value(&ctx)
+                    let attr = constant.get_value(&ctx);
+                    (&*attr as &dyn pliron::attribute::Attribute)
                         .downcast_ref::<IntegerAttr>()
                         .is_some_and(|value| value.value().to_u64() == bits)
                 });

@@ -442,7 +442,7 @@ fn test_generated_cp_async_accepts_pointer_shapes_and_both_constant_kinds() {
     assert!(verify_op(&CpAsyncCa4Op::new(wrong_space), &ctx).is_err());
 
     let value = IntegerAttr::new(u32_ty, APInt::from_u32(0, NonZeroUsize::new(32).unwrap()));
-    let builtin = ConstantOp::new(&mut ctx, value.clone().into());
+    let builtin = ConstantOp::new(&mut ctx, Box::new(value.clone()));
     let builtin_value = builtin.get_operation().deref(&ctx).get_result(0);
     let builtin_wait = CpAsyncWaitGroupOp::build(&mut ctx, builtin_value);
     assert!(verify_op(&CpAsyncWaitGroupOp::new(builtin_wait), &ctx).is_ok());
@@ -500,7 +500,7 @@ fn generated_tcgen05_verifies_carriers_and_half_split_constants() {
     let dynamic_offset = block.deref(&ctx).get_argument(4);
 
     let offset_attr = IntegerAttr::new(i64_ty, APInt::from_i64(16, NonZeroUsize::new(64).unwrap()));
-    let builtin_offset = ConstantOp::new(&mut ctx, offset_attr.clone().into())
+    let builtin_offset = ConstantOp::new(&mut ctx, Box::new(offset_attr.clone()))
         .get_operation()
         .deref(&ctx)
         .get_result(0);

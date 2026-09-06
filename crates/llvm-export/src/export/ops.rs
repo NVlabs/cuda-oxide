@@ -11,6 +11,7 @@ use std::fmt::Write;
 
 use pliron::r#type::Typed;
 use pliron::{
+    attribute::Attribute,
     basic_block::BasicBlock,
     builtin::{
         attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr, StringAttr},
@@ -1985,6 +1986,7 @@ impl<'a> ModuleExportState<'a> {
         value_names: &mut FxHashMap<Value, String>,
     ) -> Result<(), String> {
         let val_attr = op.get_value(self.ctx);
+        let val_attr = &*val_attr as &dyn Attribute;
         let const_str = if let Some(int_attr) = val_attr.downcast_ref::<IntegerAttr>() {
             // Use APInt's proper decimal string conversion instead of parsing debug format.
             // The old code parsed debug strings like "APInt { value: 0x4000_0000_0000_u64 }"

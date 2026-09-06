@@ -161,7 +161,7 @@ pub(crate) fn convert_alloca(
     let one_apint =
         pliron::utils::apint::APInt::from_i64(1, std::num::NonZeroUsize::new(32).unwrap());
     let one_attr = pliron::builtin::attributes::IntegerAttr::new(i32_ty, one_apint);
-    let one_const = llvm::ConstantOp::new(ctx, one_attr.into());
+    let one_const = llvm::ConstantOp::new(ctx, Box::new(one_attr));
     rewriter.insert_operation(ctx, one_const.get_operation());
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
@@ -199,7 +199,7 @@ pub(crate) fn convert_ref(
     let one_apint =
         pliron::utils::apint::APInt::from_i64(1, std::num::NonZeroUsize::new(32).unwrap());
     let one_attr = pliron::builtin::attributes::IntegerAttr::new(i32_ty, one_apint);
-    let one_const = llvm::ConstantOp::new(ctx, one_attr.into());
+    let one_const = llvm::ConstantOp::new(ctx, Box::new(one_attr));
     rewriter.insert_operation(ctx, one_const.get_operation());
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 

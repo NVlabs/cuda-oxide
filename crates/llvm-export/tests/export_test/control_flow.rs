@@ -39,7 +39,7 @@ fn exporter_rejects_extra_predecessor_values_before_emitting_phis() {
 
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     let one_value = one.get_operation().deref(&ctx).get_result(0);
     one.get_operation().insert_at_back(entry, &ctx);
     BrOp::new(&mut ctx, destination, vec![one_value])

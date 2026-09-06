@@ -399,7 +399,7 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
     let entry = func.get_or_create_entry_block(&mut ctx);
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     one.get_operation().insert_at_back(entry, &ctx);
     let one_val = one.get_operation().deref(&ctx).get_result(0);
 
@@ -1609,7 +1609,7 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let i64_ty = IntegerType::get(&ctx, 64, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     one.get_operation().insert_at_back(entry, &ctx);
     let one_val = one.get_operation().deref(&ctx).get_result(0);
 
@@ -1699,7 +1699,7 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     let signed_direct_ptr = signed_direct.get_operation().deref(&ctx).get_result(0);
     signed_direct.get_operation().insert_at_back(entry, &ctx);
     let minus_one_attr = IntegerAttr::new(i8_ty, APInt::from_u32(255, NonZero::new(8).unwrap()));
-    let minus_one = ConstantOp::new(&mut ctx, minus_one_attr.into());
+    let minus_one = ConstantOp::new(&mut ctx, Box::new(minus_one_attr));
     let minus_one_val = minus_one.get_operation().deref(&ctx).get_result(0);
     minus_one.get_operation().insert_at_back(entry, &ctx);
     let keep_signed_direct = StoreOp::new(&mut ctx, minus_one_val, signed_direct_ptr);
@@ -1962,7 +1962,7 @@ fn full_debug_metadata_uses_file_scope_for_cross_file_local_variables() {
     let entry = func.get_or_create_entry_block(&mut ctx);
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     one.get_operation().insert_at_back(entry, &ctx);
     let one_val = one.get_operation().deref(&ctx).get_result(0);
 
@@ -2415,7 +2415,7 @@ fn line_table_debug_metadata_ignores_tagged_alloca_variables() {
     let entry = func.get_or_create_entry_block(&mut ctx);
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     one.get_operation().insert_at_back(entry, &ctx);
     let one_val = one.get_operation().deref(&ctx).get_result(0);
 
@@ -2599,7 +2599,7 @@ fn full_debug_metadata_emits_scalarized_fragment_dbg_declares() {
 
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     let one_value = one.get_operation().deref(&ctx).get_result(0);
     one.get_operation().insert_at_back(entry, &ctx);
 
@@ -2727,7 +2727,7 @@ fn full_debug_metadata_emits_projected_dbg_declares() {
 
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     let one_value = one.get_operation().deref(&ctx).get_result(0);
     one.get_operation().insert_at_back(entry, &ctx);
 

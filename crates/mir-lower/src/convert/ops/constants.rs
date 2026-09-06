@@ -70,7 +70,7 @@ pub(crate) fn convert_integer(
     let llvm_int_ty = IntegerType::get(ctx, width, Signedness::Signless);
     let llvm_int_attr = IntegerAttr::new(llvm_int_ty, ap_int_value);
 
-    let llvm_const = llvm::ConstantOp::new(ctx, llvm_int_attr.into());
+    let llvm_const = llvm::ConstantOp::new(ctx, Box::new(llvm_int_attr));
     rewriter.insert_operation(ctx, llvm_const.get_operation());
     rewriter.replace_operation(ctx, op, llvm_const.get_operation());
 
@@ -85,17 +85,19 @@ pub(crate) fn convert_builtin_constant(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
     op: Ptr<Operation>,
-    value: pliron::attribute::AttrObj,
+    value: Box<dyn pliron::builtin::attr_interfaces::TypedAttrInterface>,
 ) -> Result<()> {
     use pliron::builtin::attributes::IntegerAttr;
 
     let (apint_value, width) = {
-        let int_attr = value.downcast_ref::<IntegerAttr>().ok_or_else(|| {
-            pliron::input_error!(
-                op.deref(ctx).loc(),
-                "builtin.constant routed to lowering must hold an IntegerAttr"
-            )
-        })?;
+        let int_attr = (&*value as &dyn pliron::attribute::Attribute)
+            .downcast_ref::<IntegerAttr>()
+            .ok_or_else(|| {
+                pliron::input_error!(
+                    op.deref(ctx).loc(),
+                    "builtin.constant routed to lowering must hold an IntegerAttr"
+                )
+            })?;
         (
             int_attr.value().clone(),
             int_attr.get_type().deref(ctx).width(),
@@ -105,7 +107,7 @@ pub(crate) fn convert_builtin_constant(
     let llvm_int_ty = IntegerType::get(ctx, width, Signedness::Signless);
     let llvm_int_attr = IntegerAttr::new(llvm_int_ty, apint_value);
 
-    let llvm_const = llvm::ConstantOp::new(ctx, llvm_int_attr.into());
+    let llvm_const = llvm::ConstantOp::new(ctx, Box::new(llvm_int_attr));
     rewriter.insert_operation(ctx, llvm_const.get_operation());
     rewriter.replace_operation(ctx, op, llvm_const.get_operation());
 
@@ -144,11 +146,12 @@ pub(crate) fn convert_float(
     };
 
     let llvm_const = match float_attr {
-        FloatAttr::F16(attr) => {
-            llvm::ConstantOp::new(ctx, llvm_export::fp16_attr_from_bits(attr.to_bits()).into())
-        }
-        FloatAttr::F32(attr) => llvm::ConstantOp::new(ctx, attr.into()),
-        FloatAttr::F64(attr) => llvm::ConstantOp::new(ctx, attr.into()),
+        FloatAttr::F16(attr) => llvm::ConstantOp::new(
+            ctx,
+            Box::new(llvm_export::fp16_attr_from_bits(attr.to_bits())),
+        ),
+        FloatAttr::F32(attr) => llvm::ConstantOp::new(ctx, Box::new(attr)),
+        FloatAttr::F64(attr) => llvm::ConstantOp::new(ctx, Box::new(attr)),
     };
 
     rewriter.insert_operation(ctx, llvm_const.get_operation());
@@ -228,7 +231,7 @@ mod tests {
         assert_eq!(constants.len(), 1, "expected exactly one lowered constant");
 
         let attr = constants[0].get_value(&ctx);
-        let int_attr = attr
+        let int_attr = (&*attr as &dyn pliron::attribute::Attribute)
             .downcast_ref::<IntegerAttr>()
             .expect("expected lowered integer attribute");
         let int_ty = int_attr.get_type();
@@ -273,7 +276,7 @@ mod tests {
         assert_eq!(constants.len(), 1, "expected exactly one lowered constant");
 
         let attr = constants[0].get_value(&ctx);
-        let attr = attr
+        let attr = (&*attr as &dyn pliron::attribute::Attribute)
             .downcast_ref::<FPSingleAttr>()
             .expect("expected lowered f32 attribute");
         assert_eq!(f32::from(attr.clone()).to_bits(), f32_value.to_bits());
@@ -302,7 +305,7 @@ mod tests {
         assert_eq!(constants.len(), 1, "expected exactly one lowered constant");
 
         let attr = constants[0].get_value(&ctx);
-        let attr = attr
+        let attr = (&*attr as &dyn pliron::attribute::Attribute)
             .downcast_ref::<FPDoubleAttr>()
             .expect("expected lowered f64 attribute");
         assert_eq!(f64::from(attr.clone()).to_bits(), f64_value.to_bits());
@@ -331,6 +334,7 @@ mod tests {
         assert_eq!(constants.len(), 1, "expected exactly one lowered constant");
 
         let attr = constants[0].get_value(&ctx);
+        let attr = &*attr as &dyn pliron::attribute::Attribute;
         assert!(
             attr.downcast_ref::<MirFP16Attr>().is_none(),
             "lowering must not keep the MIR-specific f16 attribute"

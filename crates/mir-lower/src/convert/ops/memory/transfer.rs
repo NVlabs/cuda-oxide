@@ -12,7 +12,6 @@ use llvm_export::attributes::IntegerOverflowFlagsAttr;
 use llvm_export::op_interfaces::IntBinArithOpWithOverflowFlag;
 use llvm_export::ops as llvm;
 use llvm_export::types::{FuncType, VoidType};
-use pliron::attribute::AttrObj;
 use pliron::builtin::attributes::IntegerAttr;
 use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -146,15 +145,14 @@ fn convert_mem_transfer(
             .map(|ty| ty.width())
             .unwrap_or(64);
         let count_int_ty = IntegerType::get(ctx, bits, Signedness::Signless);
-        let size_attr: AttrObj = IntegerAttr::new(
+        let size_attr = IntegerAttr::new(
             count_int_ty,
             APInt::from_u64(
                 elem_size,
                 std::num::NonZeroUsize::new(bits as usize).unwrap(),
             ),
-        )
-        .into();
-        let size_const = llvm::ConstantOp::new(ctx, size_attr);
+        );
+        let size_const = llvm::ConstantOp::new(ctx, Box::new(size_attr));
         let size_val = size_const.get_operation().deref(ctx).get_result(0);
         rewriter.insert_operation(ctx, size_const.get_operation());
 
@@ -165,12 +163,11 @@ fn convert_mem_transfer(
     };
 
     let i1_ty = IntegerType::get(ctx, 1, Signedness::Signless);
-    let false_attr: AttrObj = IntegerAttr::new(
+    let false_attr = IntegerAttr::new(
         i1_ty,
         APInt::from_u64(0, std::num::NonZeroUsize::new(1).unwrap()),
-    )
-    .into();
-    let volatile = llvm::ConstantOp::new(ctx, false_attr);
+    );
+    let volatile = llvm::ConstantOp::new(ctx, Box::new(false_attr));
     rewriter.insert_operation(ctx, volatile.get_operation());
     let volatile_val = volatile.get_operation().deref(ctx).get_result(0);
 

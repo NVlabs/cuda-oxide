@@ -546,7 +546,7 @@ fn mask_shift_amount(
             NonZeroUsize::new(lhs_width as usize).unwrap(),
         ),
     );
-    let mask_op = llvm::ConstantOp::new(ctx, mask_attr.into());
+    let mask_op = llvm::ConstantOp::new(ctx, Box::new(mask_attr));
     rewriter.insert_operation(ctx, mask_op.get_operation());
     let mask_value = mask_op.get_operation().deref(ctx).get_result(0);
 
@@ -639,7 +639,7 @@ pub(crate) fn convert_neg(
             zero_ty,
             APInt::from_u128(0, NonZeroUsize::new(width as usize).unwrap()),
         );
-        let zero_op = llvm::ConstantOp::new(ctx, zero_attr.into()).get_operation();
+        let zero_op = llvm::ConstantOp::new(ctx, Box::new(zero_attr)).get_operation();
         rewriter.insert_operation(ctx, zero_op);
         let zero = zero_op.deref(ctx).get_result(0);
 
@@ -681,7 +681,7 @@ pub(crate) fn convert_not(
     let llvm_ty = IntegerType::get(ctx, width, Signedness::Signless);
     let apint = APInt::from_i64(-1, NonZeroUsize::new(width as usize).unwrap());
     let attr = pliron::builtin::attributes::IntegerAttr::new(llvm_ty, apint);
-    let ones_const = llvm::ConstantOp::new(ctx, attr.into()).get_operation();
+    let ones_const = llvm::ConstantOp::new(ctx, Box::new(attr)).get_operation();
     rewriter.insert_operation(ctx, ones_const);
     let ones_val = ones_const.deref(ctx).get_result(0);
 
@@ -858,7 +858,7 @@ fn emit_discriminant_const(
         signless_ty,
         APInt::from_u64(value, NonZeroUsize::new(width as usize).unwrap()),
     );
-    let const_op = llvm::ConstantOp::new(ctx, attr.into()).get_operation();
+    let const_op = llvm::ConstantOp::new(ctx, Box::new(attr)).get_operation();
     rewriter.insert_operation(ctx, const_op);
     Ok(const_op.deref(ctx).get_result(0))
 }

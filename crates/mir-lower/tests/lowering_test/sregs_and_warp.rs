@@ -45,7 +45,7 @@ fn test_standalone_lowering_rejects_builtin_pointer_constant() {
     let pointer_ty =
         MirPtrType::get_generic_with_kind(&mut ctx, u32_ty.into(), true, MirPointerKind::UniqueRef);
     let value = APInt::from_u64(0, NonZeroUsize::new(32).unwrap());
-    let constant = ConstantOp::new(&mut ctx, IntegerAttr::new(u32_ty, value).into());
+    let constant = ConstantOp::new(&mut ctx, Box::new(IntegerAttr::new(u32_ty, value)));
     let result = constant.get_operation().deref(&ctx).get_result(0);
     result.set_type(&ctx, pointer_ty.into());
     constant.get_operation().insert_at_back(block, &ctx);

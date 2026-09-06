@@ -46,7 +46,8 @@ pub(crate) fn convert_extract_array_element(
         let defining_op = value.defining_op()?;
         let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
         let attribute = constant.get_value(ctx);
-        let integer = attribute.downcast_ref::<pliron::builtin::attributes::IntegerAttr>()?;
+        let integer = (&*attribute as &dyn pliron::attribute::Attribute)
+            .downcast_ref::<pliron::builtin::attributes::IntegerAttr>()?;
         let integer_value = integer.value();
         // `APInt::to_u64` truncates wider values, so a >64-bit constant could
         // be misread as a small in-range divisor. Fail closed on such widths.
@@ -90,7 +91,7 @@ pub(crate) fn convert_extract_array_element(
                 NonZeroUsize::new(width as usize).expect("integer width is nonzero"),
             ),
         );
-        let constant = llvm::ConstantOp::new(ctx, attribute.into());
+        let constant = llvm::ConstantOp::new(ctx, Box::new(attribute));
         rewriter.insert_operation(ctx, constant.get_operation());
         Ok(constant.get_operation().deref(ctx).get_result(0))
     }
@@ -141,7 +142,7 @@ pub(crate) fn convert_extract_array_element(
     let one_val = {
         let one_apint = APInt::from_i64(1, NonZeroUsize::new(64).unwrap());
         let one_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, one_apint);
-        let const_op = llvm::ConstantOp::new(ctx, one_attr.into());
+        let const_op = llvm::ConstantOp::new(ctx, Box::new(one_attr));
         rewriter.insert_operation(ctx, const_op.get_operation());
         const_op.get_operation().deref(ctx).get_result(0)
     };

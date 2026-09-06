@@ -168,7 +168,7 @@ fn legacy_alloca_rejects_a_non_default_result_address_space() {
     let entry = func.get_or_create_entry_block(&mut ctx);
 
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     let one_value = one.get_operation().deref(&ctx).get_result(0);
     one.get_operation().insert_at_back(entry, &ctx);
     let alloca = AllocaOp::new(&mut ctx, i32_ty.into(), one_value);
@@ -433,7 +433,7 @@ fn legacy_pointer_slot_is_recursively_canonical() {
 
     let i32_ty = IntegerType::get(&ctx, 32, Signedness::Signless);
     let one_attr = IntegerAttr::new(i32_ty, APInt::from_u32(1, NonZero::new(32).unwrap()));
-    let one = ConstantOp::new(&mut ctx, one_attr.into());
+    let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     let one_value = one.get_operation().deref(&ctx).get_result(0);
     one.get_operation().insert_at_back(entry, &ctx);
 

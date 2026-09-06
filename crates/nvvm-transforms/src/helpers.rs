@@ -69,7 +69,7 @@ pub(super) fn create_i1_constant(
     let ty = IntegerType::get(ctx, 1, Signedness::Signless);
     let width = NonZeroUsize::new(1).expect("one is non-zero");
     let attr = IntegerAttr::new(ty, APInt::from_i64(i64::from(value), width));
-    let constant = llvm::ConstantOp::new(ctx, attr.into());
+    let constant = llvm::ConstantOp::new(ctx, Box::new(attr));
     constant.get_operation().insert_at_back(llvm_block, ctx);
     Ok(constant.get_operation().deref(ctx).get_result(0))
 }

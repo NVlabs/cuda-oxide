@@ -25,6 +25,7 @@ use llvm_export::{
     types as llvm_types,
 };
 use pliron::{
+    attribute::Attribute,
     builtin::{
         attributes::{BoolAttr, FPDoubleAttr, FPSingleAttr, IntegerAttr, TypeAttr},
         op_interfaces::{CallOpCallable, CallOpInterface, SymbolOpInterface},
@@ -1028,7 +1029,7 @@ fn integer_const(ctx: &mut Context, anchor: Ptr<Operation>, width: u32, bits: u1
             NonZeroUsize::new(width as usize).expect("integer width is non-zero"),
         ),
     );
-    let op = llvm::ConstantOp::new(ctx, attr.into()).get_operation();
+    let op = llvm::ConstantOp::new(ctx, Box::new(attr)).get_operation();
     insert_before(ctx, anchor, op)
 }
 
@@ -1307,7 +1308,7 @@ fn literal_i1_constant(ctx: &Context, value: Value) -> Option<bool> {
     let defining_op = value.defining_op()?;
     let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
     let attr = constant.get_value(ctx);
-    let integer = attr.downcast_ref::<IntegerAttr>()?;
+    let integer = (&*attr as &dyn Attribute).downcast_ref::<IntegerAttr>()?;
     match integer.value().to_u64() {
         0 => Some(false),
         1 => Some(true),
@@ -1579,9 +1580,9 @@ fn rewrite_float_to_int_sat(ctx: &mut Context, op: Ptr<Operation>, name: &str) -
 }
 
 fn float_const(ctx: &mut Context, anchor: Ptr<Operation>, width: u32, value: f64) -> Result<Value> {
-    let attr = match width {
-        32 => FPSingleAttr::from(value as f32).into(),
-        64 => FPDoubleAttr::from(value).into(),
+    let attr: Box<dyn pliron::builtin::attr_interfaces::TypedAttrInterface> = match width {
+        32 => Box::new(FPSingleAttr::from(value as f32)),
+        64 => Box::new(FPDoubleAttr::from(value)),
         _ => {
             return pliron::input_err!(
                 anchor.deref(ctx).loc(),

@@ -670,7 +670,7 @@ fn test_generated_sparse_mma_variants_lower_to_exact_convergent_inline_ptx()
                 let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                     .expect("sparse MMA selector remains an LLVM integer constant");
                 let attribute = constant.get_value(&ctx);
-                let integer = attribute
+                let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                     .downcast_ref::<IntegerAttr>()
                     .expect("sparse MMA selector is an integer");
                 assert_eq!(integer.value().bw(), 32);
@@ -828,7 +828,7 @@ fn test_generated_sparse_mma_m16n8k64_lowers_to_exact_convergent_inline_ptx()
                 let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                     .expect("sparse MMA selector remains an LLVM integer constant");
                 let attribute = constant.get_value(&ctx);
-                let integer = attribute
+                let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                     .downcast_ref::<IntegerAttr>()
                     .expect("sparse MMA selector is an integer");
                 assert_eq!(integer.value().bw(), 32);
@@ -1039,7 +1039,7 @@ fn test_generated_sparse_mma_m16n8k64_int4_lowers_both_metadata_modes() -> Resul
                 let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                     .expect("sparse MMA selector remains an LLVM integer constant");
                 let attribute = constant.get_value(&ctx);
-                let integer = attribute
+                let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                     .downcast_ref::<IntegerAttr>()
                     .expect("sparse MMA selector is an integer");
                 assert_eq!(integer.value().to_u64(), selector_value as u64);
@@ -1235,7 +1235,7 @@ fn test_generated_sparse_mma_m16n8k128_int4_lowers_both_metadata_modes() -> Resu
                 let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                     .expect("sparse MMA selector remains an LLVM integer constant");
                 let attribute = constant.get_value(&ctx);
-                let integer = attribute
+                let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                     .downcast_ref::<IntegerAttr>()
                     .expect("sparse MMA selector is an integer");
                 assert_eq!(integer.value().to_u64(), 0);

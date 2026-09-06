@@ -1230,7 +1230,7 @@ fn convert_rust_carrying_mul_add(
             IntegerType::get(ctx, width * 2, Signedness::Signless),
             APInt::from_u64(u64::from(width), wide_width),
         );
-        let const_op = llvm::ConstantOp::new(ctx, attr.into());
+        let const_op = llvm::ConstantOp::new(ctx, Box::new(attr));
         rewriter.insert_operation(ctx, const_op.get_operation());
         const_op.get_operation().deref(ctx).get_result(0)
     };
@@ -1540,7 +1540,7 @@ fn create_i1_constant(
     let width = NonZeroUsize::new(1).expect("1 is non-zero");
     let apint = APInt::from_u64(u64::from(value), width);
     let attr = IntegerAttr::new(i1_ty, apint);
-    let const_op = llvm::ConstantOp::new(ctx, attr.into());
+    let const_op = llvm::ConstantOp::new(ctx, Box::new(attr));
     rewriter.insert_operation(ctx, const_op.get_operation());
     const_op.get_operation().deref(ctx).get_result(0)
 }

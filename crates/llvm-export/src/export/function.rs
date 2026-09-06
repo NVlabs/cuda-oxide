@@ -13,6 +13,7 @@ use rustc_hash::FxHashMap;
 use std::fmt::Write;
 
 use pliron::{
+    attribute::Attribute,
     basic_block::BasicBlock,
     builtin::{
         attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr},
@@ -954,6 +955,7 @@ impl<'a> ModuleExportState<'a> {
                     // Value is not in value_names when bb6's PHI is emitted.
                     if let Some(const_op) = op_dyn.downcast_ref::<ops::ConstantOp>() {
                         let val_attr = const_op.get_value(self.ctx);
+                        let val_attr = &*val_attr as &dyn Attribute;
 
                         let const_str = if let Some(int_attr) =
                             val_attr.downcast_ref::<IntegerAttr>()

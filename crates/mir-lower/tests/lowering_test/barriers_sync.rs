@@ -615,7 +615,7 @@ fn test_sync_threads_llvm_nvptx_uses_typed_intrinsic_with_fixed_zero() -> Result
         let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
             .expect("barrier ID is an LLVM constant");
         let value = constant.get_value(&ctx);
-        let integer = value
+        let integer = (&*value as &dyn pliron::attribute::Attribute)
             .downcast_ref::<IntegerAttr>()
             .expect("barrier ID is an integer");
         assert_eq!(integer.value().bw(), 32);

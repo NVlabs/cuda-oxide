@@ -861,8 +861,8 @@ fn constant_u32(ctx: &Context, value: Value) -> Option<u64> {
         return constant.get_attr_value(ctx).map(|value| value.value().to_u64());
     }
     let constant = Operation::get_op::<ConstantOp>(defining_op, ctx)?;
-    constant
-        .get_value(ctx)
+    let value = constant.get_value(ctx);
+    (&*value as &dyn Attribute)
         .downcast_ref::<IntegerAttr>()
         .map(|value| value.value().to_u64())
 }

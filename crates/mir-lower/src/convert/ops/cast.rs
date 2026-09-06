@@ -472,7 +472,7 @@ fn emit_unsize_cast(
                 std::num::NonZeroUsize::new(64).unwrap(),
             );
             let len_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, len_apint);
-            let len_const = llvm::ConstantOp::new(ctx, len_attr.into());
+            let len_const = llvm::ConstantOp::new(ctx, Box::new(len_attr));
             rewriter.insert_operation(ctx, len_const.get_operation());
             let len_val = len_const.get_operation().deref(ctx).get_result(0);
 
@@ -932,7 +932,7 @@ fn const_i64(
     let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
     let apint = pliron::utils::apint::APInt::from_i64(n, std::num::NonZeroUsize::new(64).unwrap());
     let attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
-    let c = llvm::ConstantOp::new(ctx, attr.into());
+    let c = llvm::ConstantOp::new(ctx, Box::new(attr));
     rewriter.insert_operation(ctx, c.get_operation());
     c.get_operation().deref(ctx).get_result(0)
 }

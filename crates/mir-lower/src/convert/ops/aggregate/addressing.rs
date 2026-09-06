@@ -514,7 +514,8 @@ fn constant_index_value(ctx: &Context, index: Value) -> Option<u64> {
     }
     let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
     let attribute = constant.get_value(ctx);
-    let integer = attribute.downcast_ref::<pliron::builtin::attributes::IntegerAttr>()?;
+    let integer = (&*attribute as &dyn pliron::attribute::Attribute)
+        .downcast_ref::<pliron::builtin::attributes::IntegerAttr>()?;
     let value = integer.value();
     (value.bw() <= 64).then(|| value.to_u64())
 }
@@ -547,7 +548,7 @@ mod tests {
         let defining_op = offset.defining_op()?;
         let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, ctx)?;
         let attribute = constant.get_value(ctx);
-        attribute
+        (&*attribute as &dyn pliron::attribute::Attribute)
             .downcast_ref::<IntegerAttr>()
             .map(|integer| integer.value().to_u64())
     }

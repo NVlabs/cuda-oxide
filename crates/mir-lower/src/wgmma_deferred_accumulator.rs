@@ -932,7 +932,7 @@ fn integer_constant_u64(ctx: &Context, value: Value) -> Option<u64> {
 
     let constant = Operation::get_op::<ConstantOp>(defining_op, ctx)?;
     let attribute = constant.get_value(ctx);
-    attribute
+    (&*attribute as &dyn pliron::attribute::Attribute)
         .downcast_ref::<IntegerAttr>()
         .map(|integer| integer.value().to_u64())
 }

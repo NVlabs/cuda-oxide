@@ -443,7 +443,7 @@ fn test_dot_product_llvm_nvptx_uses_typed_intrinsics_and_low_selector() -> Resul
             let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                 .expect("selector is an LLVM constant");
             let attribute = constant.get_value(&ctx);
-            let integer = attribute
+            let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                 .downcast_ref::<IntegerAttr>()
                 .expect("selector constant is an integer");
             assert_eq!(integer.value().bw(), 1);
