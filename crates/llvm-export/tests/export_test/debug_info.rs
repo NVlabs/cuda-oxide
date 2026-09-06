@@ -8,6 +8,7 @@ use llvm_export::{
         DebugKind, FunctionLocalStaticPlacement, NvvmExportConfig, NvvmIrDialect, PtxExportConfig,
         export_module_to_string_with_config,
     },
+    op_interfaces::VolatilityOpInterface,
     ops::{
         AllocaOp, CallOp, ConstantOp, DebugEnumDiscriminant, DebugEnumVariant, DebugFragment,
         DebugFragmentVariableInfo, DebugGlobalVariableInfo, DebugLocalTypeKind,
@@ -1703,7 +1704,7 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     let minus_one_val = minus_one.get_operation().deref(&ctx).get_result(0);
     minus_one.get_operation().insert_at_back(entry, &ctx);
     let keep_signed_direct = StoreOp::new(&mut ctx, minus_one_val, signed_direct_ptr);
-    llvm_export::ops::set_op_volatile(&mut ctx, keep_signed_direct.get_operation(), true);
+    keep_signed_direct.set_volatile(&ctx, true);
     let keep_signed_direct_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 12, 9);
     keep_signed_direct
         .get_operation()

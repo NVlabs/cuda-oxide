@@ -53,9 +53,9 @@ repository = "https://github.com/NVlabs/cuda-oxide.git"
 # cuda-oxide consumes the dialect modeling only, not the FFI bridge.
 # `crates/rustc-codegen-cuda/Cargo.toml` MUST stay on this same rev, or pliron
 # resolves to two distinct crates and types stop unifying.
-pliron = { git = "https://github.com/pliron-org/pliron", rev = "06c586b2ecff074e181177c57ccd6624b28a7c29" }
-pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "06c586b2ecff074e181177c57ccd6624b28a7c29" }
-pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "06c586b2ecff074e181177c57ccd6624b28a7c29", default-features = false, features = [
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "0442fb079f476b191a91f6c418a87f20ec43d653" }
+pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "0442fb079f476b191a91f6c418a87f20ec43d653" }
+pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "0442fb079f476b191a91f6c418a87f20ec43d653", default-features = false, features = [
     "std",
 ] }
 

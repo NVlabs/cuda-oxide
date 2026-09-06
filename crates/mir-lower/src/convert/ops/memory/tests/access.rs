@@ -7,6 +7,7 @@
 
 use super::*;
 use llvm_export::attributes::GepNoWrapFlags;
+use llvm_export::op_interfaces::VolatilityOpInterface;
 
 #[test]
 fn convert_alloca_lowers_to_llvm_alloca() {
@@ -189,7 +190,7 @@ fn convert_store_preserves_volatile() {
     let body = kernel_blocks(&ctx, module_ptr);
     let store = find_first::<llvm::StoreOp>(&ctx, &body).unwrap();
     assert!(
-        llvm_export::ops::op_volatile(&ctx, store.get_operation()),
+        store.is_volatile(&ctx),
         "volatile mir.store must lower to a volatile llvm.store"
     );
 }
@@ -247,7 +248,7 @@ fn convert_load_preserves_volatile() {
     let body = kernel_blocks(&ctx, module_ptr);
     let load = find_first::<llvm::LoadOp>(&ctx, &body).unwrap();
     assert!(
-        llvm_export::ops::op_volatile(&ctx, load.get_operation()),
+        load.is_volatile(&ctx),
         "volatile mir.load must lower to a volatile llvm.load"
     );
 }

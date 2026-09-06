@@ -13,6 +13,7 @@ use super::debug::copy_debug_local_variable;
 use crate::convert::types::{convert_type, mir_type_abi_align};
 use dialect_mir::types::MirPtrType;
 use llvm_export::attributes::GepNoWrapFlags;
+use llvm_export::op_interfaces::VolatilityOpInterface;
 use llvm_export::ops as llvm;
 use pliron::builtin::types::{IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -55,7 +56,7 @@ pub(crate) fn convert_store(
 
     let llvm_store = llvm::StoreOp::new(ctx, val, ptr);
     if dialect_mir::ops::MirStoreOp::new(op).is_volatile(ctx) {
-        llvm_export::ops::set_op_volatile(ctx, llvm_store.get_operation(), true);
+        llvm_store.set_volatile(ctx, true);
     }
     // The stored value's own type answers first, as it did before. A scalar
     // records none, though, so fall back to whatever the address itself proved
@@ -103,7 +104,7 @@ pub(crate) fn convert_load(
 
     let llvm_load = llvm::LoadOp::new(ctx, ptr, llvm_ty);
     if dialect_mir::ops::MirLoadOp::new(op).is_volatile(ctx) {
-        llvm_export::ops::set_op_volatile(ctx, llvm_load.get_operation(), true);
+        llvm_load.set_volatile(ctx, true);
     }
     // The loaded value's ABI alignment comes from this op's own result type,
     // which is still the MIR type: result types are only converted by the

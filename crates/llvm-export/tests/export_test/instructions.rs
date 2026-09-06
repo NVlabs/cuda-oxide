@@ -9,7 +9,7 @@ use llvm_export::{
         NvvmExportConfig, NvvmIrDialect, export_module_to_string,
         export_module_to_string_with_config,
     },
-    op_interfaces::CastOpInterface,
+    op_interfaces::{CastOpInterface, VolatilityOpInterface},
     ops::{
         AddrSpaceCastOp, AllocaOp, BitcastOp, ConstantOp, FuncOp, GepIndex, GetElementPtrOp,
         InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
@@ -48,7 +48,7 @@ fn export_volatile_load_prints_keyword() {
     let ptr = entry.deref(&ctx).get_argument(0);
 
     let load = LoadOp::new(&mut ctx, ptr, i32_ty.to_handle());
-    llvm_export::ops::set_op_volatile(&mut ctx, load.get_operation(), true);
+    load.set_volatile(&ctx, true);
     load.get_operation().insert_at_back(entry, &ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()
@@ -89,7 +89,7 @@ fn export_volatile_store_prints_keyword() {
     let val = entry.deref(&ctx).get_argument(1);
 
     let store = StoreOp::new(&mut ctx, val, ptr);
-    llvm_export::ops::set_op_volatile(&mut ctx, store.get_operation(), true);
+    store.set_volatile(&ctx, true);
     store.get_operation().insert_at_back(entry, &ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()

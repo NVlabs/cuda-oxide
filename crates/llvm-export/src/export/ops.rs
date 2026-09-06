@@ -30,7 +30,9 @@ use crate::{
         AtomicOrderingAttr, AtomicRmwKindAttr, FCmpPredicateAttr, FPHalfAttr, FastmathFlags,
         FastmathFlagsAttr, GepIndexAttr, GepNoWrapFlags, ICmpPredicateAttr, SyncScopeAttr,
     },
-    op_interfaces::{ATTR_KEY_FAST_MATH_FLAGS, PointerTypeResult, SyncScopeInterface},
+    op_interfaces::{
+        ATTR_KEY_FAST_MATH_FLAGS, PointerTypeResult, SyncScopeInterface, VolatilityOpInterface,
+    },
     ops,
     types::{ArrayType, FuncType, HalfType, PointerType, VoidType},
 };
@@ -713,7 +715,7 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
         let ty = res.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
-        let volatile_kw = if crate::ops::op_volatile(self.ctx, op.get_operation()) {
+        let volatile_kw = if op.is_volatile(self.ctx) {
             "volatile "
         } else {
             ""
@@ -754,7 +756,7 @@ impl<'a> ModuleExportState<'a> {
         let ptr = op_ref.get_operand(1);
         let val_ty = val.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
-        let volatile_kw = if crate::ops::op_volatile(self.ctx, op.get_operation()) {
+        let volatile_kw = if op.is_volatile(self.ctx) {
             "volatile "
         } else {
             ""

@@ -1353,8 +1353,6 @@ pub mod ops {
     /// static. The exporter resolves this to the one real `DISubprogram` used
     /// by that definition; it never creates a scope-only duplicate.
     const DEBUG_GLOBAL_OWNER_FUNCTION_KEY: &str = "cuda_oxide_debug_global_owner_function";
-    /// Op-attribute key for ordinary volatile `load` / `store` operations.
-    const OP_VOLATILE_KEY: &str = "cuda_oxide_op_volatile";
     /// Op-attribute key for the alignment an address computation guarantees.
     /// Lowering-internal: never exported.
     const ADDRESS_ALIGNMENT_KEY: &str = "cuda_oxide_address_alignment";
@@ -2477,23 +2475,6 @@ pub mod ops {
         fn verify(&self, _ctx: &Context) -> Result<(), Error> {
             Ok(())
         }
-    }
-
-    /// Stamp volatile memory semantics onto an ordinary LLVM load/store op.
-    pub fn set_op_volatile(ctx: &mut Context, op: Ptr<Operation>, volatile: bool) {
-        let key = Identifier::try_new(OP_VOLATILE_KEY.to_string()).expect("valid identifier");
-        op.deref_mut(ctx)
-            .attributes
-            .set(key, BoolAttr::new(volatile));
-    }
-
-    /// Read the volatile flag stamped on an ordinary LLVM load/store op.
-    pub fn op_volatile(ctx: &Context, op: Ptr<Operation>) -> bool {
-        let key = Identifier::try_new(OP_VOLATILE_KEY.to_string()).expect("valid identifier");
-        op.deref(ctx)
-            .attributes
-            .get::<BoolAttr>(&key)
-            .is_some_and(|attr| bool::from(attr.clone()))
     }
 
     /// Alignment helpers re-homed from the pre-migration local `GlobalOp`.
