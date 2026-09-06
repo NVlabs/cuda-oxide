@@ -99,6 +99,34 @@ mod kernels {
         }
     }
 
+    /// Generic grid-constant parameters keep their by-value entry ABI without
+    /// leaking that ABI into the callable generic helper.
+    #[kernel]
+    #[launch_bounds(32)]
+    #[launch_contract(domain = 1, block = (32, 1, 1))]
+    pub fn generic_grid_constant<T: Copy>(
+        #[grid_constant] constants: &GridConstants,
+        output: *mut u32,
+        _tag: T,
+    ) {
+        unsafe {
+            *output = constants.values[3];
+        }
+    }
+
+    /// Calls the generic helper without opting this entry into grid-constant
+    /// ABI. Its first parameter must remain one ordinary device pointer.
+    ///
+    /// # Safety
+    /// `constants` and `output` must be valid for one grid-constant read and
+    /// one `u32` write respectively.
+    #[kernel]
+    #[launch_bounds(32)]
+    #[launch_contract(domain = 1, block = (32, 1, 1))]
+    pub unsafe fn ordinary_calls_generic(constants: *const GridConstants, output: *mut u32) {
+        generic_grid_constant::<u8>(unsafe { &*constants }, output, 0);
+    }
+
     /// Size requirements: the generated checked launchers prove every
     /// `requires` relation on the CPU before marshalling, so an undersized
     /// buffer becomes a typed `LaunchContractError` instead of a device
@@ -252,6 +280,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     module.grid_constant_read(&stream, &constants_launch, &mut constants_output, constants)?;
     assert_eq!(constants_output.to_host_vec(&stream)?, constants.values);
 
+    let generic_constant_output = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
+    let tag = 0_u8;
+    let generic_constant_launch =
+        module.prepare_generic_grid_constant_for(&tag, LaunchConfig1D::new(1, 32, 0))?;
+    module.generic_grid_constant(
+        &stream,
+        &generic_constant_launch,
+        constants,
+        generic_constant_output.cu_deviceptr() as *mut u32,
+        tag,
+    )?;
+    assert_eq!(
+        generic_constant_output.to_host_vec(&stream)?,
+        [constants.values[3]]
+    );
+
     let mut generic_output = DeviceBuffer::<u32>::zeroed(&stream, N)?;
     let add_three = |value: u32| value + 3;
     let generic_launch = module.prepare_generic_aligned_for(
@@ -403,6 +447,7 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
         ("aligned_dynamic_shared", ".reqntid 256, 1, 1"),
         ("mixed_abi", ".reqntid 256, 1, 1"),
         ("grid_constant_read", ".reqntid 32, 1, 1"),
+        ("ordinary_calls_generic", ".reqntid 32, 1, 1"),
         ("strided_scale", ".reqntid 128, 1, 1"),
         ("helper_contract_32", ".reqntid 32, 1, 1"),
         ("helper_contract_256", ".reqntid 32, 1, 1"),
@@ -418,6 +463,41 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
         "generic_aligned specialization",
         ".reqntid 64, 1, 1",
     )?;
+    verify_entry_geometry(
+        &document,
+        "generic_grid_constant_TID_",
+        true,
+        "generic grid-constant specialization",
+        ".reqntid 32, 1, 1",
+    )?;
+
+    let generic = document
+        .callables()
+        .iter()
+        .find(|callable| {
+            callable.body_text().is_some()
+                && callable.kind() == ptx_parse::CallableKind::Entry
+                && callable.name().starts_with("generic_grid_constant_TID_")
+        })
+        .ok_or("missing generic grid-constant specialization")?
+        .text();
+    if !generic.contains(".param .align 64 .b8") || !generic.contains("[128]") {
+        return Err("generic grid-constant specialization lost its by-value parameter ABI".into());
+    }
+
+    let ordinary = document
+        .callables()
+        .iter()
+        .find(|callable| {
+            callable.body_text().is_some()
+                && callable.kind() == ptx_parse::CallableKind::Entry
+                && callable.name() == "ordinary_calls_generic"
+        })
+        .ok_or("missing ordinary generic-helper caller")?
+        .text();
+    if ordinary.contains("[128]") || !ordinary.contains(".param .u64") {
+        return Err("grid-constant ABI leaked into an ordinary helper caller".into());
+    }
 
     println!("SUCCESS: prepared-launch PTX contract verified");
     Ok(())

@@ -604,9 +604,7 @@ pub(crate) fn is_kernel_configuration_marker(statement: &Stmt) -> bool {
     }
 }
 
-/// True when `statement` is exactly the `__unchecked_indexing_config` marker
-/// call that `#[kernel(unchecked_indexing)]` injects.
-pub(crate) fn is_unchecked_indexing_config_marker(statement: &Stmt) -> bool {
+fn is_named_kernel_configuration_marker(statement: &Stmt, expected: &str) -> bool {
     if !is_kernel_configuration_marker(statement) {
         return false;
     }
@@ -618,7 +616,18 @@ pub(crate) fn is_unchecked_indexing_config_marker(statement: &Stmt) -> bool {
     };
     path.segments
         .last()
-        .is_some_and(|segment| segment.ident == "__unchecked_indexing_config")
+        .is_some_and(|segment| segment.ident == expected)
+}
+
+/// True when `statement` is exactly the `__unchecked_indexing_config` marker
+/// call that `#[kernel(unchecked_indexing)]` injects.
+pub(crate) fn is_unchecked_indexing_config_marker(statement: &Stmt) -> bool {
+    is_named_kernel_configuration_marker(statement, "__unchecked_indexing_config")
+}
+
+/// True when `statement` is one parameter-local `#[grid_constant]` marker.
+pub(crate) fn is_grid_constant_config_marker(statement: &Stmt) -> bool {
+    is_named_kernel_configuration_marker(statement, "__grid_constant_config")
 }
 
 /// Remove the `__unchecked_indexing_config` marker from a function body that
@@ -639,6 +648,20 @@ pub(super) fn strip_unchecked_indexing_config_marker(input: &mut ItemFn) {
         .block
         .stmts
         .retain(|statement| !is_unchecked_indexing_config_marker(statement));
+}
+
+/// Remove grid-constant ABI markers from a generic kernel's callable helper.
+///
+/// The generated entry wrapper receives the markers through
+/// [`top_level_kernel_configuration_markers`]. Keeping them in the helper
+/// would both duplicate the marker when rustc inlines that helper back into
+/// its entry and leak the by-value entry ABI into unrelated kernels that call
+/// the same helper.
+pub(super) fn strip_grid_constant_config_markers(input: &mut ItemFn) {
+    input
+        .block
+        .stmts
+        .retain(|statement| !is_grid_constant_config_marker(statement));
 }
 
 /// Build the hidden unchecked twin of an opted-in generic kernel's
