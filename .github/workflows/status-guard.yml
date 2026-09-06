@@ -134,6 +134,23 @@ jobs:
       - name: Verify the book's Rust blocks use rustfmt's import order
         run: bash scripts/check-book-import-order.sh
 
+  # #1190 split large files into module directories and left three prose
+  # references pointing at paths it had removed; #1197 repointed those and 14
+  # more. A path in prose is compiled by nothing, so the reference just goes
+  # quiet and a reader follows it into nothing. This checks the one spelling
+  # that is unambiguous on its own -- repo-root-anchored, with an extension --
+  # in markdown and in `///` / `//!` doc comments. Git only, no toolchain.
+  source-references:
+    name: source references
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Verify prose references point at files that exist
+        run: bash scripts/check-source-references.sh
+
   # The dialect-nvvm book page prints the catalog SHA-256 and states its own
   # freshness rule: if the stamp no longer matches, every count on the page
   # predates the catalog being read. Nothing enforced that rule, so the page
