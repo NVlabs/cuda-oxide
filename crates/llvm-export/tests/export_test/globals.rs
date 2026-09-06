@@ -182,7 +182,7 @@ fn immutable_globals_export_the_constant_keyword() {
     let table_ty = ArrayType::get(&ctx, i8_ty.into(), 4);
 
     // The compiler's own promoted table: marked never-written, so it must
-    // export as `constant`. That keyword is the whole point of the marker:
+    // export as `constant`. That keyword is the whole point of the property:
     // it is what lets `opt` treat reads as invariant (deleting a copy into a
     // stack slot) and what makes `llc` select `ld.global.nc`.
     let promoted = GlobalOp::new_with_alignment(
@@ -193,12 +193,13 @@ fn immutable_globals_export_the_constant_keyword() {
     );
     promoted.set_address_space(&mut ctx, 1);
     promoted.set_initializer_hex(&mut ctx, "01020304");
-    promoted.mark_immutable(&mut ctx);
+    promoted.set_constant(&mut ctx, true);
     promoted.get_operation().insert_at_back(module_block, &ctx);
 
-    // An identically shaped global without the marker: the host may still
-    // write such storage by symbol, so it must keep `global`. Immutability is
-    // opt-in per global, never inferred from the shape of the initializer.
+    // An identically shaped global without the constant property: the host may
+    // still write such storage by symbol, so it must keep `global`. The
+    // constant property is opt-in per global, never inferred from the shape of
+    // the initializer.
     let plain = GlobalOp::new_with_alignment(
         &mut ctx,
         "plain_static".try_into().unwrap(),

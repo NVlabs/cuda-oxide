@@ -320,11 +320,11 @@ fn immutable_marking_survives_lowering_and_is_not_assumed() {
     };
 
     assert!(
-        by_key("promoted_table").is_immutable(&ctx),
+        by_key("promoted_table").is_constant(&ctx),
         "a global marked immutable in MIR must stay immutable through lowering"
     );
     assert!(
-        !by_key("plain_static").is_immutable(&ctx),
+        !by_key("plain_static").is_constant(&ctx),
         "lowering must not infer immutability; only the promoted-constant \
              sites may claim it"
     );

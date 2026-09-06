@@ -269,7 +269,7 @@ fn create_device_global(
         global_op.set_initializer_relocations(ctx, initializer_relocations);
     }
     if spec.immutable {
-        global_op.mark_immutable(ctx);
+        global_op.set_constant(ctx, true);
     }
 
     let parent_block = op
