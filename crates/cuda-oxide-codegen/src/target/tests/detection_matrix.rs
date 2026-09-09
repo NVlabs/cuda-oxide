@@ -1318,7 +1318,7 @@ fn m8n8k32_int4_mma_requirements_compose_and_are_forward_compatible() {
         resolve_ptx_target(
             None,
             "CUDA_OXIDE_TARGET",
-            Some(&crate::options::DeviceArchHint::parse("sm_120".to_string())),
+            Some(&"sm_120".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             features
         )
         .unwrap(),

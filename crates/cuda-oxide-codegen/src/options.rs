@@ -49,11 +49,11 @@ impl DeviceArchHint {
         }
     }
 
-    pub(crate) fn validate(
+    pub(crate) fn as_device_arch(
         &self,
-    ) -> Result<&cuda_target_spec::CudaArch, crate::error::PipelineError> {
+    ) -> Result<&cuda_target_spec::DeviceArch, crate::error::PipelineError> {
         match self {
-            Self::Valid(arch) => Ok(arch.as_ref()),
+            Self::Valid(arch) => Ok(arch),
             Self::Invalid(value) => Err(crate::error::PipelineError::TargetSelection {
                 target: value.clone(),
                 reason: format!(
@@ -193,6 +193,6 @@ mod tests {
         let hint =
             DeviceArchHint::from_env_value(Err(std::env::VarError::NotUnicode(raw))).unwrap();
         assert!(matches!(hint, DeviceArchHint::Invalid(_)));
-        assert!(hint.validate().is_err());
+        assert!(hint.as_device_arch().is_err());
     }
 }

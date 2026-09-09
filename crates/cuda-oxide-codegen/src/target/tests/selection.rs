@@ -446,36 +446,8 @@ fn resolve_ptx_target_threads_a_caller_supplied_source_label() {
 }
 
 #[test]
-fn device_hints_have_identical_errors_on_both_paths() {
-    for raw in [
-        "compute_120",
-        "compute_80",
-        "sm_",
-        "foo",
-        "sm_05",
-        "sm_120f",
-    ] {
-        let hint = crate::options::DeviceArchHint::parse(raw.to_string());
-        let ptx = resolve_ptx_target(None, "test override", Some(&hint), DetectedFeatures::Basic)
-            .unwrap_err();
-        let nvvm =
-            crate::export::resolve_nvvm_target(None, Some(&hint), Some(DetectedFeatures::Basic))
-                .unwrap_err();
-        for error in [ptx, nvvm] {
-            assert!(matches!(error, PipelineError::TargetSelection { .. }));
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "invalid CUDA_OXIDE_DEVICE_ARCH `{raw}`: expected sm_<capability> with an optional `a` suffix"
-                )
-            );
-        }
-    }
-}
-
-#[test]
 fn valid_device_hints_and_explicit_compute_targets_preserve_selection() {
-    let hint = crate::options::DeviceArchHint::parse("sm_120".to_string());
+    let hint = "sm_120".parse::<cuda_target_spec::DeviceArch>().unwrap();
     for (explicit, hint, expected, source) in [
         (None, Some(&hint), "sm_120", "detected GPU"),
         (None, None, "sm_80", "feature requirement"),
@@ -524,7 +496,7 @@ fn resolve_ptx_target_failure_does_not_assume_an_env_var_source() {
 }
 
 #[test]
-fn malformed_low_width_targets_keep_override_errors_and_reject_device_hints() {
+fn malformed_low_width_targets_keep_override_errors() {
     for (spelling, expected_reason) in [
         (
             "sm_05",
@@ -544,16 +516,5 @@ fn malformed_low_width_targets_keep_override_errors_and_reject_device_hints() {
         .unwrap_err();
         assert!(matches!(explicit, PipelineError::TargetSelection { .. }));
         assert_eq!(explicit.to_string(), expected_reason);
-
-        let hint = crate::options::DeviceArchHint::parse(spelling.to_string());
-        let error = resolve_ptx_target(None, "test override", Some(&hint), DetectedFeatures::Basic)
-            .unwrap_err();
-        assert!(matches!(error, PipelineError::TargetSelection { .. }));
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "invalid CUDA_OXIDE_DEVICE_ARCH `{spelling}`: expected sm_<capability> with an optional `a` suffix"
-            )
-        );
     }
 }

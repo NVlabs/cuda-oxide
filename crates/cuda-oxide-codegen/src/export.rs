@@ -87,7 +87,7 @@ impl llvm_export::export::AsDeviceExtern for DeviceExternDecl {
 #[cfg(test)]
 pub fn resolve_nvvm_target(
     explicit_target: Option<&str>,
-    device_arch_hint: Option<&crate::options::DeviceArchHint>,
+    device_arch_hint: Option<&cuda_target_spec::DeviceArch>,
     automatic_features: Option<DetectedFeatures>,
 ) -> Result<CudaArch, PipelineError> {
     resolve_nvvm_target_with_generated(
@@ -100,13 +100,11 @@ pub fn resolve_nvvm_target(
 
 pub(crate) fn resolve_nvvm_target_with_generated(
     explicit_target: Option<&str>,
-    device_arch_hint: Option<&crate::options::DeviceArchHint>,
+    device_arch_hint: Option<&cuda_target_spec::DeviceArch>,
     automatic_features: Option<DetectedFeatures>,
     generated: &GeneratedModuleRequirements,
 ) -> Result<CudaArch, PipelineError> {
-    let device_arch_hint = device_arch_hint
-        .map(crate::options::DeviceArchHint::validate)
-        .transpose()?;
+    let device_arch_hint = device_arch_hint.map(AsRef::as_ref);
     // A target the caller requested, or one detected from the device, is an
     // input to compilation, so its rejection is classified as
     // `TargetSelection` and reported at `CompilationStage::Input`. Only the
@@ -527,7 +525,7 @@ mod tests {
     fn nvvm_target_resolution_is_concrete_and_strict() {
         let legacy = resolve_nvvm_target(
             Some("compute_90a"),
-            Some(&crate::options::DeviceArchHint::parse("sm_120".to_string())),
+            Some(&"sm_120".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             None,
         )
         .unwrap();
@@ -568,7 +566,7 @@ mod tests {
     fn automatic_nvvm_target_uses_only_a_compatible_device_hint() {
         let turing = resolve_nvvm_target(
             None,
-            Some(&crate::options::DeviceArchHint::parse("sm_75".to_string())),
+            Some(&"sm_75".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Basic),
         )
         .unwrap();
@@ -576,7 +574,7 @@ mod tests {
 
         let sm80_on_turing = resolve_nvvm_target(
             None,
-            Some(&crate::options::DeviceArchHint::parse("sm_75".to_string())),
+            Some(&"sm_75".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Sm80),
         )
         .unwrap();
@@ -584,9 +582,7 @@ mod tests {
 
         let blackwell = resolve_nvvm_target(
             None,
-            Some(&crate::options::DeviceArchHint::parse(
-                "sm_120a".to_string(),
-            )),
+            Some(&"sm_120a".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Basic),
         )
         .unwrap();
@@ -594,9 +590,7 @@ mod tests {
 
         let sm80_on_blackwell = resolve_nvvm_target(
             None,
-            Some(&crate::options::DeviceArchHint::parse(
-                "sm_120a".to_string(),
-            )),
+            Some(&"sm_120a".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Sm80),
         )
         .unwrap();
@@ -604,7 +598,7 @@ mod tests {
 
         let ampere = resolve_nvvm_target(
             None,
-            Some(&crate::options::DeviceArchHint::parse("sm_80".to_string())),
+            Some(&"sm_80".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Sm80),
         )
         .unwrap();
@@ -612,7 +606,7 @@ mod tests {
 
         let hopper_floor = resolve_nvvm_target(
             None,
-            Some(&crate::options::DeviceArchHint::parse("sm_80".to_string())),
+            Some(&"sm_80".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Sm90),
         )
         .unwrap();
@@ -620,7 +614,7 @@ mod tests {
 
         let forward_compatible = resolve_nvvm_target(
             None,
-            Some(&crate::options::DeviceArchHint::parse("sm_120".to_string())),
+            Some(&"sm_120".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Sm90),
         )
         .unwrap();
@@ -628,24 +622,11 @@ mod tests {
 
         let hopper = resolve_nvvm_target(
             None,
-            Some(&crate::options::DeviceArchHint::parse(
-                "sm_120a".to_string(),
-            )),
+            Some(&"sm_120a".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Wgmma),
         )
         .unwrap();
         assert_eq!(hopper.sm(), "sm_90a");
-
-        assert!(
-            resolve_nvvm_target(
-                None,
-                Some(&crate::options::DeviceArchHint::parse(
-                    "not-an-arch".to_string()
-                )),
-                Some(DetectedFeatures::Basic)
-            )
-            .is_err()
-        );
     }
 
     /// Every rejection the NVVM IR resolver attributes to a target is decided
@@ -661,18 +642,6 @@ mod tests {
             (
                 "unparsable explicit target",
                 resolve_nvvm_target_with_generated(Some("sm_9x"), None, None, &none).unwrap_err(),
-            ),
-            (
-                "unparsable device hint",
-                resolve_nvvm_target_with_generated(
-                    None,
-                    Some(&crate::options::DeviceArchHint::parse(
-                        "not-an-arch".to_string(),
-                    )),
-                    Some(DetectedFeatures::Basic),
-                    &none,
-                )
-                .unwrap_err(),
             ),
             (
                 "target below a detected feature floor",
@@ -726,9 +695,7 @@ mod tests {
     fn compatible_explicit_nvvm_target_wins_over_automatic_selection() {
         let target = resolve_nvvm_target(
             Some("sm_86"),
-            Some(&crate::options::DeviceArchHint::parse(
-                "sm_120a".to_string(),
-            )),
+            Some(&"sm_120a".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             Some(DetectedFeatures::Sm80),
         )
         .unwrap();

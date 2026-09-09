@@ -333,9 +333,7 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
         resolve_ptx_target_with_generated(
             None,
             "CUDA_OXIDE_TARGET",
-            Some(&crate::options::DeviceArchHint::parse(
-                "sm_101a".to_string()
-            )),
+            Some(&"sm_101a".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             DetectedFeatures::Basic,
             &llvm,
         )
@@ -346,9 +344,7 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
         resolve_ptx_target_with_generated(
             None,
             "CUDA_OXIDE_TARGET",
-            Some(&crate::options::DeviceArchHint::parse(
-                "sm_101a".to_string()
-            )),
+            Some(&"sm_101a".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             DetectedFeatures::Basic,
             &libnvvm,
         )
@@ -398,9 +394,7 @@ fn paired_target_matrix_flows_through_backend_target_resolution() {
     assert_eq!(
         crate::export::resolve_nvvm_target_with_generated(
             None,
-            Some(&crate::options::DeviceArchHint::parse(
-                "sm_103a".to_string()
-            )),
+            Some(&"sm_103a".parse::<cuda_target_spec::DeviceArch>().unwrap()),
             None,
             &libnvvm,
         )

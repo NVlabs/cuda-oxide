@@ -7,6 +7,7 @@ use crate::error::PipelineError;
 use crate::generated::GeneratedModuleRequirements;
 use crate::llvm_tools::LlvmToolchain;
 use crate::options::BackendOptions;
+use crate::pipeline::ValidatedBackendOptions;
 use crate::target::{
     ModuleRequirements, PtxIsaRequirement, detect_module_requirements_in_llvm_file,
     merge_generated_module_requirements, merge_generated_module_requirements_for_target,
@@ -409,7 +410,7 @@ pub struct GeneratedPtx {
 }
 
 struct PtxBackend<'a> {
-    options: &'a BackendOptions,
+    options: &'a ValidatedBackendOptions<'a>,
     toolchain: &'a LlvmToolchain,
     generated: &'a GeneratedModuleRequirements,
 }
@@ -449,16 +450,16 @@ pub struct PtxModule<'a> {
 pub(crate) fn generate_ptx(
     module: PtxModule<'_>,
     debug_kind: DebugKind,
-    opts: &BackendOptions,
+    validated: &ValidatedBackendOptions<'_>,
     diagnostic_sink: Option<fn(&str)>,
     generated: &GeneratedModuleRequirements,
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
-    let toolchain = discover_llvm_toolchain(opts)?;
+    let toolchain = discover_llvm_toolchain(validated.options())?;
     generate_ptx_discovered(
         module,
         debug_kind,
-        opts,
+        validated,
         &toolchain,
         diagnostic_sink,
         generated,
@@ -494,12 +495,13 @@ pub(crate) fn discover_llvm_toolchain(
 pub(crate) fn generate_ptx_discovered(
     module: PtxModule<'_>,
     debug_kind: DebugKind,
-    opts: &BackendOptions,
+    validated: &ValidatedBackendOptions<'_>,
     toolchain: &LlvmToolchain,
     diagnostic_sink: Option<fn(&str)>,
     generated: &GeneratedModuleRequirements,
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
+    let opts = validated.options();
     let mut diagnostics = toolchain.diagnostics.clone();
     if !opts.no_opt && toolchain.opt.is_none() {
         diagnostics.push(
@@ -525,7 +527,7 @@ pub(crate) fn generate_ptx_discovered(
         module,
         debug_kind,
         PtxBackend {
-            options: opts,
+            options: validated,
             toolchain,
             generated,
         },
@@ -545,7 +547,7 @@ pub(crate) fn generate_ptx_discovered(
 pub(crate) fn generate_ptx_with_toolchain(
     module: PtxModule<'_>,
     debug_kind: DebugKind,
-    opts: &BackendOptions,
+    validated: &ValidatedBackendOptions<'_>,
     toolchain: &LlvmToolchain,
     generated: &GeneratedModuleRequirements,
     libdevice_path: Option<&Path>,
@@ -554,7 +556,7 @@ pub(crate) fn generate_ptx_with_toolchain(
         module,
         debug_kind,
         PtxBackend {
-            options: opts,
+            options: validated,
             toolchain,
             generated,
         },
@@ -573,15 +575,16 @@ fn generate_ptx_impl(
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
     let PtxBackend {
-        options: opts,
+        options: validated,
         toolchain,
         generated,
     } = backend;
+    let opts = validated.options();
     // Explicit, hard override: `--arch` or a caller-set `opts.target_arch`.
     let explicit_override = opts.target_arch.clone();
     // Advisory hint: the arch of the GPU in this machine, forwarded by
     // `cargo oxide run`. Used only when that GPU can actually run the kernel.
-    let device_hint = opts.device_arch_hint.clone();
+    let device_hint = validated.device_arch();
 
     let requirements = merge_generated_module_requirements(
         detect_module_requirements_in_llvm_file(module.llvm_ir)?,
@@ -601,7 +604,7 @@ fn generate_ptx_impl(
     let (target, target_source) = resolve_ptx_target_with_generated(
         explicit_override.as_deref(),
         opts.target_arch_source,
-        device_hint.as_ref(),
+        device_hint,
         detected,
         generated,
     )?;
@@ -1374,7 +1377,7 @@ mod tests {
                 public_symbols: &[],
             },
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             Some(collect_legacy_diagnostic),
             &GeneratedModuleRequirements::default(),
             None,
@@ -1458,7 +1461,7 @@ mod tests {
             let error = generate_ptx(
                 module(),
                 debug_kind,
-                &opts,
+                &ValidatedBackendOptions::for_test(&opts).unwrap(),
                 None,
                 &GeneratedModuleRequirements::default(),
                 None,
@@ -1477,7 +1480,7 @@ mod tests {
         generate_ptx(
             module(),
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             None,
             &GeneratedModuleRequirements::default(),
             None,
@@ -1723,7 +1726,7 @@ mod tests {
                 public_symbols: &["kernel".to_string()],
             },
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             &toolchain,
             &GeneratedModuleRequirements::default(),
             Some(&libdevice),
@@ -1848,7 +1851,7 @@ mod tests {
                 ],
             },
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             &toolchain,
             &GeneratedModuleRequirements::default(),
             None,
@@ -1933,7 +1936,7 @@ mod tests {
                 public_symbols: &["kernel".to_string()],
             },
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             &toolchain,
             &GeneratedModuleRequirements::default(),
             Some(&libdevice),
