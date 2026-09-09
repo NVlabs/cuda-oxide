@@ -90,6 +90,48 @@ impl CudaArch {
     }
 }
 
+/// A device architecture spelled `sm_<capability>` with an optional `a` suffix.
+///
+/// Unlike [`CudaArch`], this type cannot be constructed from a virtual
+/// `compute_` architecture or an `f` family target, which names a compilation
+/// compatibility set rather than the detected GPU. Grammar validation stays
+/// in `CudaArch`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DeviceArch(CudaArch);
+
+impl FromStr for DeviceArch {
+    type Err = CudaArchParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if !value.starts_with("sm_") {
+            return Err(CudaArchParseError::new(
+                value,
+                "device architecture must use the `sm_` prefix",
+            ));
+        }
+        let arch: CudaArch = value.parse()?;
+        if arch.suffix() == Some('f') {
+            return Err(CudaArchParseError::new(
+                value,
+                "a device architecture cannot name an `f` compilation family",
+            ));
+        }
+        Ok(Self(arch))
+    }
+}
+
+impl From<DeviceArch> for CudaArch {
+    fn from(value: DeviceArch) -> Self {
+        value.0
+    }
+}
+
+impl AsRef<CudaArch> for DeviceArch {
+    fn as_ref(&self) -> &CudaArch {
+        &self.0
+    }
+}
+
 fn render_parts(prefix: &str, capability: u32, suffix: Option<char>) -> String {
     match suffix {
         Some(suffix) => format!("{prefix}{capability}{suffix}"),
@@ -421,6 +463,32 @@ pub fn spelling_at_least(floor: u16) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn device_arch_requires_sm_spelling_and_reuses_cuda_grammar() {
+        for entry in RECORDED_PTX_FLOORS {
+            let arch = CudaArch::new(entry.capability, entry.suffix).unwrap();
+            let device = arch.sm().parse::<DeviceArch>();
+            if entry.suffix == Some('f') {
+                assert!(device.is_err());
+            } else {
+                assert_eq!(CudaArch::from(device.unwrap()), arch);
+            }
+            assert!(arch.compute().parse::<DeviceArch>().is_err());
+        }
+        for raw in [
+            "compute_120",
+            "sm_",
+            "foo",
+            "sm_05",
+            "sm_9",
+            "sm_90x",
+            "sm_90aa",
+            "sm_4294967296",
+        ] {
+            assert!(raw.parse::<DeviceArch>().is_err(), "{raw}");
+        }
+    }
+
     #[test]
     fn cuda_arch_parses_and_renders_api_specific_spellings() {
         for (input, capability, suffix, sm, compute, legacy) in [
