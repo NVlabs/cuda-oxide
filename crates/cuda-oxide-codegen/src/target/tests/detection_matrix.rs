@@ -1315,7 +1315,13 @@ fn m8n8k32_int4_mma_requirements_compose_and_are_forward_compatible() {
     }
     assert!(!arch_satisfies(&"sm_72".parse().unwrap(), features));
     assert_eq!(
-        resolve_ptx_target(None, "CUDA_OXIDE_TARGET", Some("sm_120"), features).unwrap(),
+        resolve_ptx_target(
+            None,
+            "CUDA_OXIDE_TARGET",
+            Some(&crate::options::DeviceArchHint::parse("sm_120".to_string())),
+            features
+        )
+        .unwrap(),
         ("sm_120".parse().unwrap(), "detected GPU")
     );
 

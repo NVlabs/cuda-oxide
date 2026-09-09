@@ -173,6 +173,13 @@ pub fn compile_translated_module(
     module: Ptr<Operation>,
     request: &ModulePipelineRequest<'_>,
 ) -> Result<ModulePipelineOutput, PipelineError> {
+    let device_arch = request
+        .backend
+        .device_arch_hint
+        .as_ref()
+        .map(crate::options::DeviceArchHint::validate)
+        .transpose()?;
+
     if request.trace.dump_mir {
         request
             .trace
@@ -211,7 +218,7 @@ pub fn compile_translated_module(
         && has_iket_operations(ctx, module)
     {
         pinned_backend = BackendOptions {
-            target_arch: request.backend.device_arch_hint.clone(),
+            target_arch: device_arch.map(cuda_target_spec::CudaArch::sm),
             target_arch_source: "the detected GPU, pinned by IKET materialization",
             ..request.backend.clone()
         };
@@ -384,7 +391,7 @@ pub fn compile_translated_module(
     let (nvvm_target, nvvm_dialect) = if emit_nvvm_ir {
         let target = resolve_nvvm_target_with_generated(
             backend.target_arch.as_deref(),
-            backend.device_arch_hint.as_deref(),
+            backend.device_arch_hint.as_ref(),
             automatic_features,
             &generated_requirements,
         )?;

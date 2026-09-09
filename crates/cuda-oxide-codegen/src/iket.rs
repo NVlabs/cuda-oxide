@@ -697,6 +697,48 @@ mod tests {
         attributes::TypeAttr, op_interfaces::SymbolOpInterface, ops::ModuleOp, types::FunctionType,
     };
 
+    #[test]
+    fn invalid_device_hint_fails_before_iket_promotion_on_both_paths() {
+        use crate::options::{BackendOptions, DeviceArchHint};
+        use crate::pipeline::{
+            ModulePipelineRequest, OutputFiles, PipelineTrace, compile_translated_module,
+        };
+        for nvvm in [false, true] {
+            let mut ctx = Context::new();
+            let module = test_module(&mut ctx, 1);
+            assert!(has_iket_operations(&ctx, module));
+            let backend = BackendOptions {
+                device_arch_hint: Some(DeviceArchHint::parse("compute_120".to_string())),
+                ..BackendOptions::default()
+            };
+            let files = OutputFiles {
+                llvm_ir: std::path::Path::new("unused.ll"),
+                ptx: std::path::Path::new("unused.ptx"),
+                stale_before_export: &[],
+            };
+            let request = ModulePipelineRequest::for_rust_pipeline(
+                &[],
+                nvvm,
+                &backend,
+                llvm_export::export::DebugKind::Off,
+                files,
+                PipelineTrace::default(),
+            );
+            let Err(error) = compile_translated_module(&mut ctx, module, &request) else {
+                panic!("invalid hint must fail before IKET promotion");
+            };
+            assert!(matches!(error, PipelineError::TargetSelection { .. }));
+            assert_eq!(
+                error.to_string(),
+                "invalid CUDA_OXIDE_DEVICE_ARCH `compute_120`: expected sm_<capability> with an optional `a` suffix"
+            );
+            assert!(
+                has_iket_operations(&ctx, module),
+                "error must precede materialization"
+            );
+        }
+    }
+
     fn test_module(ctx: &mut Context, event_count: usize) -> Ptr<Operation> {
         dialect_mir::register(ctx);
         dialect_iket::register(ctx);
