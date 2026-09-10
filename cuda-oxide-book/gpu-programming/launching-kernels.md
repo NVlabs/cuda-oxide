@@ -135,13 +135,15 @@ mod contracted {
     #[launch_contract(domain = 1, block = (256, 1, 1))]
     pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
         let idx = thread::index_1d();
+        let i = idx.get();
+
         if let Some(c_elem) = c.get_mut(idx) {
-            *c_elem = a[idx.get()] + b[idx.get()];
+            *c_elem = a[i] + b[i];
         }
     }
 }
 
-let module = contracted::load(&ctx)?;
+let module = unsafe { contracted::load(&ctx)? };
 let config = LaunchConfig1D::new(4, 256, 0);
 let prepared = module.prepare_vecadd(config)?;
 module.vecadd(&stream, &prepared, &a, &b, &mut c)?;
