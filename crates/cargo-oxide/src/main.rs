@@ -196,6 +196,10 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_DEBUG=full.
         #[arg(long)]
         device_debug: bool,
+        /// Compile `debug_assert!` and `cfg(debug_assertions)` device paths
+        /// while keeping release-like optimization and overflow checks disabled.
+        #[arg(long)]
+        debug_assertions: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -746,6 +750,7 @@ fn main() {
             unchecked_indexing,
             lineinfo,
             device_debug,
+            debug_assertions,
             cargo_target_dir,
             device_codegen_crate,
             device_cfgs,
@@ -779,6 +784,7 @@ fn main() {
                     no_fmad,
                     unchecked_indexing,
                     commands::DeviceDebug::from_flags(lineinfo, device_debug),
+                    debug_assertions,
                     materialize_cubin,
                 );
             } else {
@@ -818,6 +824,7 @@ fn main() {
                         unchecked_indexing,
                         materialize_cubin,
                         device_debug: commands::DeviceDebug::from_flags(lineinfo, device_debug),
+                        debug_assertions,
                     },
                     &cargo_args,
                 );
@@ -928,6 +935,7 @@ fn main() {
                     unchecked_indexing,
                     materialize_cubin,
                     device_debug: commands::DeviceDebug::from_flags(lineinfo, device_debug),
+                    debug_assertions: false,
                 },
                 &cargo_args,
             );
@@ -1349,10 +1357,29 @@ mod tests {
         let build_args = strings(&["cargo-oxide", "build", "--"]);
         assert!(has_passthrough_separator(&build_args));
         let build_cli = Cli::try_parse_from(build_args).expect("empty passthrough should parse");
-        let Commands::Build { cargo_args, .. } = build_cli.command else {
+        let Commands::Build {
+            cargo_args,
+            debug_assertions,
+            ..
+        } = build_cli.command
+        else {
             panic!("expected build command");
         };
         assert!(cargo_args.is_empty());
+        assert!(!debug_assertions, "--debug-assertions must default off");
+    }
+
+    #[test]
+    fn build_parser_accepts_debug_assertions() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "build", "debug", "--debug-assertions"])
+            .expect("build --debug-assertions should parse");
+        let Commands::Build {
+            debug_assertions, ..
+        } = cli.command
+        else {
+            panic!("expected build command");
+        };
+        assert!(debug_assertions);
     }
 
     #[test]

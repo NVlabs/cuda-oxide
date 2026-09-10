@@ -72,6 +72,7 @@ pub fn emit_ltoir(
         unchecked_indexing,
         device_debug,
         false,
+        false,
     );
 
     // Step 2: compile that NVVM IR to LTOIR via libNVVM -gen-lto.

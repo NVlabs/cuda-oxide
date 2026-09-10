@@ -72,6 +72,7 @@ pub struct CargoPassthroughOptions<'a> {
     pub unchecked_indexing: bool,
     pub materialize_cubin: bool,
     pub device_debug: DeviceDebug,
+    pub debug_assertions: bool,
 }
 
 /// Cargo operations supported by the passthrough path.
@@ -93,9 +94,9 @@ impl CargoPassthroughSubcommand {
         }
     }
 
-    pub(super) fn codegen_profile(self) -> CodegenProfilePolicy {
+    pub(super) fn codegen_profile(self, debug_assertions: bool) -> CodegenProfilePolicy {
         match self {
-            Self::Build => CodegenProfilePolicy::ReleaseLike,
+            Self::Build => CodegenProfilePolicy::release_like(debug_assertions),
             Self::Test => CodegenProfilePolicy::CargoSelected,
         }
     }
@@ -244,7 +245,7 @@ pub(super) fn cargo_passthrough_command_with_env(
     apply_codegen_configuration(
         &mut cmd,
         ctx,
-        cargo_subcommand.codegen_profile(),
+        cargo_subcommand.codegen_profile(opts.debug_assertions),
         opts.device_cfgs,
         &fingerprint,
     )?;

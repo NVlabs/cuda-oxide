@@ -29,7 +29,18 @@ pub(super) const FULL_DEBUG_GET_MUT_OUTLINE_CFG: &str =
 pub(super) enum CodegenProfilePolicy {
     CargoSelected,
     ReleaseLike,
+    ReleaseLikeWithDebugAssertions,
     ReleaseLikeWithDebugInfo,
+}
+
+impl CodegenProfilePolicy {
+    pub(super) fn release_like(debug_assertions: bool) -> Self {
+        if debug_assertions {
+            Self::ReleaseLikeWithDebugAssertions
+        } else {
+            Self::ReleaseLike
+        }
+    }
 }
 
 /// Construct boundary-preserving rustc flags for Cargo.
@@ -89,12 +100,22 @@ pub(super) fn build_encoded_rustflags_with_existing(
     flags.push(format!("-Zcodegen-backend={}", backend_so.display()));
     if matches!(
         profile,
-        CodegenProfilePolicy::ReleaseLike | CodegenProfilePolicy::ReleaseLikeWithDebugInfo
+        CodegenProfilePolicy::ReleaseLike
+            | CodegenProfilePolicy::ReleaseLikeWithDebugAssertions
+            | CodegenProfilePolicy::ReleaseLikeWithDebugInfo
     ) {
-        flags.extend([
-            "-Copt-level=3".to_string(),
-            "-Cdebug-assertions=off".to_string(),
-        ]);
+        flags.push("-Copt-level=3".to_string());
+        if profile == CodegenProfilePolicy::ReleaseLikeWithDebugAssertions {
+            // rustc normally enables overflow checks together with debug
+            // assertions. Keep them independent: overflow-check MIR changes
+            // code shape enough to break pattern-sensitive device lowerings.
+            flags.extend([
+                "-Cdebug-assertions=on".to_string(),
+                "-Coverflow-checks=off".to_string(),
+            ]);
+        } else {
+            flags.push("-Cdebug-assertions=off".to_string());
+        }
     }
     flags.extend([
         "-Zmir-enable-passes=-JumpThreading".to_string(),

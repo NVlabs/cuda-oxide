@@ -66,6 +66,7 @@ pub(super) struct InteropDeviceBuildOptions {
     pub(super) unchecked_indexing: bool,
     pub(super) device_debug: DeviceDebug,
     pub(super) sanitizer_line_tables: bool,
+    pub(super) debug_assertions: bool,
 }
 
 impl InteropDeviceBuildOptions {
@@ -74,13 +75,19 @@ impl InteropDeviceBuildOptions {
         no_fmad: bool,
         unchecked_indexing: bool,
         device_debug: DeviceDebug,
+        debug_assertions: bool,
     ) -> Self {
         Self {
             no_fmad,
             unchecked_indexing,
             device_debug,
             sanitizer_line_tables: route == InteropDeviceBuildRoute::Sanitize,
+            debug_assertions,
         }
+    }
+
+    pub(super) fn codegen_profile(self) -> CodegenProfilePolicy {
+        CodegenProfilePolicy::release_like(self.debug_assertions)
     }
 }
 
@@ -129,6 +136,7 @@ pub(super) fn codegen_run_interop(
             no_fmad,
             unchecked_indexing,
             device_debug,
+            false,
         ),
         materialization,
     );
@@ -158,6 +166,7 @@ pub(super) fn codegen_build_interop(
     no_fmad: bool,
     unchecked_indexing: bool,
     device_debug: DeviceDebug,
+    debug_assertions: bool,
     materialization: &MaterializationMode,
 ) {
     reject_interop_output_mode(emit_nvvm_ir, materialization);
@@ -185,6 +194,7 @@ pub(super) fn codegen_build_interop(
             no_fmad,
             unchecked_indexing,
             device_debug,
+            debug_assertions,
         ),
         materialization,
     );
@@ -598,7 +608,7 @@ fn build_interop_device_crate(
     apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
-        CodegenProfilePolicy::ReleaseLike,
+        options.codegen_profile(),
         &[],
         &fingerprint,
     );

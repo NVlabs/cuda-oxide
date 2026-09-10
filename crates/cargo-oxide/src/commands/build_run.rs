@@ -238,6 +238,7 @@ pub fn codegen_sanitize(
                 no_fmad,
                 unchecked_indexing,
                 device_debug,
+                false,
             ),
             &materialization,
         );
@@ -310,6 +311,7 @@ pub fn codegen_build(
     no_fmad: bool,
     unchecked_indexing: bool,
     device_debug: DeviceDebug,
+    debug_assertions: bool,
     materialize_cubin: bool,
 ) {
     let target_arch = configured_arch(ctx, arch);
@@ -336,6 +338,7 @@ pub fn codegen_build(
             no_fmad,
             unchecked_indexing,
             device_debug,
+            debug_assertions,
             &materialization,
         );
         return;
@@ -383,7 +386,7 @@ pub fn codegen_build(
     apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
-        CodegenProfilePolicy::ReleaseLike,
+        CodegenProfilePolicy::release_like(debug_assertions),
         &[],
         &fingerprint,
     );
@@ -463,6 +466,7 @@ pub fn codegen_inspect_ptx(
         no_fmad,
         unchecked_indexing,
         device_debug,
+        false,
         false,
     );
 

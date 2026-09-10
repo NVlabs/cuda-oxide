@@ -1113,6 +1113,32 @@ fn sanitizer_detects_options_that_weaken_success_status() {
 }
 
 #[test]
+fn interop_device_build_debug_assertions_select_the_release_like_assertion_profile() {
+    assert_eq!(
+        InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Build,
+            false,
+            false,
+            DeviceDebug::Off,
+            false
+        )
+        .codegen_profile(),
+        CodegenProfilePolicy::ReleaseLike
+    );
+    assert_eq!(
+        InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Build,
+            false,
+            false,
+            DeviceDebug::Off,
+            true
+        )
+        .codegen_profile(),
+        CodegenProfilePolicy::ReleaseLikeWithDebugAssertions
+    );
+}
+
+#[test]
 fn sanitize_interop_codegen_defaults_to_line_tables_and_forwards_no_fmad() {
     let ctx = test_context(OxideConfig::default());
     let mut cmd = Command::new("cargo");
@@ -1121,6 +1147,7 @@ fn sanitize_interop_codegen_defaults_to_line_tables_and_forwards_no_fmad() {
         true,
         false,
         DeviceDebug::Off,
+        false,
     );
 
     apply_interop_device_codegen_options_with_env(&mut cmd, &ctx, false, options, None);
@@ -1191,6 +1218,7 @@ fn standard_interop_codegen_forwards_no_fmad_without_debug_override() {
             true,
             false,
             DeviceDebug::Off,
+            false,
         ),
         None,
     );
@@ -1223,7 +1251,7 @@ fn interop_build_run_and_sanitize_routes_forward_device_debug() {
             true,
         ),
     ] {
-        let options = InteropDeviceBuildOptions::for_route(route, false, false, requested);
+        let options = InteropDeviceBuildOptions::for_route(route, false, false, requested, false);
         assert_eq!(options.device_debug, requested);
         assert_eq!(options.sanitizer_line_tables, sanitizer_line_tables);
 
@@ -1313,6 +1341,7 @@ fn sanitize_interop_debug_precedence_is_cli_then_ambient_then_project_then_defau
             false,
             false,
             case.cli,
+            false,
         );
         let mut cmd = Command::new("cargo");
         apply_interop_device_codegen_options_with_env(
@@ -1345,7 +1374,8 @@ fn interop_fingerprint_tracks_effective_device_debug_policy() {
     inherited_full.insert("CUDA_OXIDE_DEBUG".to_string(), b"full".to_vec());
     let mut inherited_off = BTreeMap::new();
     inherited_off.insert("CUDA_OXIDE_DEBUG".to_string(), b"off".to_vec());
-    let options = |route, debug| InteropDeviceBuildOptions::for_route(route, false, false, debug);
+    let options =
+        |route, debug| InteropDeviceBuildOptions::for_route(route, false, false, debug, false);
     let fingerprint = |ctx: &Context, options, inherited_env: &BTreeMap<String, Vec<u8>>| {
         interop_codegen_fingerprint_with_env(
             ctx,
@@ -1434,6 +1464,7 @@ fn interop_fingerprint_tracks_artifact_mode_and_device_features() {
         false,
         false,
         DeviceDebug::Off,
+        false,
     );
     let fingerprint = |emit_nvvm_ir: bool, device_features: Option<&str>| {
         interop_codegen_fingerprint(
@@ -1470,6 +1501,7 @@ fn interop_codegen_forwards_unchecked_indexing() {
             false,
             true,
             DeviceDebug::Off,
+            false,
         ),
         None,
     );
@@ -1797,7 +1829,7 @@ fn ambient_cuda_toolkit_path_shadows_the_project_configured_root() {
 fn test_passthrough_defers_profile_flags_to_cargo_and_keeps_invariants() {
     let rustflags = build_encoded_rustflags_with_existing(
         Path::new("/tmp/librustc_codegen_cuda.so"),
-        CargoPassthroughSubcommand::Test.codegen_profile(),
+        CargoPassthroughSubcommand::Test.codegen_profile(false),
         &[],
         &["--cfg".to_string(), "device_test".to_string()],
         None,
@@ -1837,6 +1869,7 @@ fn test_passthrough_defers_profile_flags_to_cargo_and_keeps_invariants() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     for cargo_args in [
         vec!["--release".to_string()],
@@ -1864,7 +1897,7 @@ fn test_passthrough_defers_profile_flags_to_cargo_and_keeps_invariants() {
 fn build_passthrough_retains_release_profile_and_required_flags() {
     let rustflags = build_encoded_rustflags_with_existing(
         Path::new("/tmp/librustc_codegen_cuda.so"),
-        CargoPassthroughSubcommand::Build.codegen_profile(),
+        CargoPassthroughSubcommand::Build.codegen_profile(false),
         &[],
         &[],
         Some("-Lnative=/nix/store/cuda-cudart/lib\u{1f}-Copt-level=0\u{1f}-Zcodegen-backend=llvm"),
@@ -1887,6 +1920,40 @@ fn build_passthrough_retains_release_profile_and_required_flags() {
         ]
     );
     assert!(!flags.contains(&"native=/nix/store/cuda-cudart/lib"));
+}
+
+#[test]
+fn build_debug_assertions_keep_release_optimization_without_overflow_checks() {
+    let rustflags = build_encoded_rustflags_with_existing(
+        Path::new("/tmp/librustc_codegen_cuda.so"),
+        CargoPassthroughSubcommand::Build.codegen_profile(true),
+        &[],
+        &[],
+        Some("-Cdebug-assertions=off\u{1f}-Coverflow-checks=on\u{1f}-Copt-level=0"),
+        None,
+    );
+    let flags = decoded_rustflags(&rustflags);
+
+    assert_eq!(
+        &flags[flags.len() - 7..],
+        [
+            "-Zcodegen-backend=/tmp/librustc_codegen_cuda.so",
+            "-Copt-level=3",
+            "-Cdebug-assertions=on",
+            "-Coverflow-checks=off",
+            "-Zmir-enable-passes=-JumpThreading",
+            "-Zalways-encode-mir",
+            "-Csymbol-mangling-version=v0",
+        ]
+    );
+}
+
+#[test]
+fn test_profile_ignores_the_build_only_debug_assertions_toggle() {
+    assert_eq!(
+        CargoPassthroughSubcommand::Test.codegen_profile(true),
+        CodegenProfilePolicy::CargoSelected
+    );
 }
 
 #[test]
@@ -2315,6 +2382,7 @@ fn passthrough_command_preserves_argv_and_cli_overrides_config_defaults() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let cargo_args = vec![
         "-p".to_string(),
@@ -2384,6 +2452,42 @@ fn passthrough_command_preserves_argv_and_cli_overrides_config_defaults() {
 }
 
 #[test]
+fn build_passthrough_debug_assertions_select_the_wrapper_profile() {
+    let ctx = test_context(OxideConfig::default());
+    let opts = CargoPassthroughOptions {
+        verbose: false,
+        emit_nvvm_ir: false,
+        arch: None,
+        features: None,
+        cargo_target_dir: None,
+        device_codegen_crate: None,
+        device_cfgs: &[],
+        no_fmad: false,
+        unchecked_indexing: false,
+        materialize_cubin: false,
+        device_debug: DeviceDebug::Off,
+        debug_assertions: true,
+    };
+
+    let cmd =
+        passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Build, &opts, &[]).unwrap();
+    let encoded = command_env(&cmd, "CARGO_ENCODED_RUSTFLAGS").unwrap();
+    let flags = decoded_rustflags(&encoded);
+
+    assert_eq!(
+        &flags[flags.len() - 6..],
+        [
+            "-Copt-level=3",
+            "-Cdebug-assertions=on",
+            "-Coverflow-checks=off",
+            "-Zmir-enable-passes=-JumpThreading",
+            "-Zalways-encode-mir",
+            "-Csymbol-mangling-version=v0",
+        ]
+    );
+}
+
+#[test]
 fn passthrough_command_accepts_empty_cargo_args() {
     let ctx = test_context(OxideConfig::default());
     let opts = CargoPassthroughOptions {
@@ -2398,6 +2502,7 @@ fn passthrough_command_accepts_empty_cargo_args() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
 
     let cmd =
@@ -2425,6 +2530,7 @@ fn architecture_and_output_mode_do_not_change_global_rustflags() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let base_cmd =
         passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Build, &base, &[]).unwrap();
@@ -2572,6 +2678,7 @@ device-owner = { path = "../device-owner" }
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
 
     let cold = cargo_artifact_freshness(&ctx, &base, None);
@@ -2670,6 +2777,7 @@ fn passthrough_fingerprint_tracks_output_affecting_settings() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let inherited_env = BTreeMap::new();
     let base_hash = passthrough_codegen_fingerprint_with_env(
@@ -2806,6 +2914,7 @@ fn passthrough_fingerprint_tracks_non_unicode_presence_switch_bytes() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let fingerprint = |inherited_env: &BTreeMap<String, Vec<u8>>| {
         passthrough_codegen_fingerprint_with_env(
@@ -4488,6 +4597,7 @@ fn passthrough_fingerprint_separates_the_device_debug_policies() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let line_tables = CargoPassthroughOptions {
         device_debug: DeviceDebug::LineTables,

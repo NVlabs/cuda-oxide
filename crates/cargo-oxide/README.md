@@ -25,6 +25,7 @@ cargo oxide new my_project          # scaffold a new cuda-oxide project
 cargo oxide new my_project --async  # scaffold with async template (tokio + cuda-async)
 cargo oxide run vecadd              # build + run an example
 cargo oxide build vecadd            # compile only (no run)
+cargo oxide build vecadd --debug-assertions  # keep release optimization, compile debug assertions
 cargo oxide build vecadd --materialize-cubin --arch sm_120  # embed native cubin
 cargo oxide emit-ltoir vecadd --arch sm_100  # device code -> .ltoir (Tile/SIMT interop)
 cargo oxide build -- -p my_app      # arbitrary cargo build through cuda-oxide
@@ -66,6 +67,7 @@ cargo oxide update --force          # inside the workspace, run setup via update
 | `--unchecked-indexing`       | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Elide device slice/array bounds checks (UB on OOB) |
 | `--lineinfo`                 | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Emit device line-number info for profilers (nvcc `-lineinfo`) |
 | `--device-debug`             | run, sanitize, build, test, emit-ltoir, pipeline, inspect | Emit full device debug info; disables libNVVM optimization (nvcc `-G`) |
+| `--debug-assertions`         | build                            | Compile `debug_assert!` / `cfg(debug_assertions)` with release-like optimization and overflow checks disabled |
 | `--force`                    | update                           | Inside the workspace, run `setup` instead of advising it |
 | `--async`                    | new                              | Use the async template                          |
 | `--cgdb`                     | debug                            | Use cgdb instead of cuda-gdb                    |
@@ -249,7 +251,16 @@ Same as `run` but stops after compilation. Useful for examples that require hard
 ```bash
 cargo oxide build htens          # compiles PTX, doesn't try to run on GPU
 cargo oxide build tcgen05        # sm_100a only, but PTX generation works anywhere
+cargo oxide build debug --debug-assertions
 ```
+
+`--debug-assertions` keeps the normal release-like `-Copt-level=3` policy but
+switches to `-Cdebug-assertions=on`. It also explicitly sets
+`-Coverflow-checks=off`: rustc otherwise enables overflow checks with debug
+assertions, which adds distinct MIR checks and trap paths. The option applies
+to regular builds, passthrough builds, and metadata-declared interop device
+crates. It is independent of `--device-debug`, which controls emitted device
+debug information and CUDA finalization optimization.
 
 `build` also has a passthrough mode for normal Cargo workspaces. Put the Cargo
 arguments after `--`; cargo-oxide supplies the backend, target architecture,
@@ -257,6 +268,7 @@ configured environment, and optional device owner filters.
 
 ```bash
 cargo oxide build --                           # plain `cargo build`
+cargo oxide build --debug-assertions -- -p my_app
 cargo oxide build --arch sm_86 -- -p my_app --bin app --release
 cargo oxide build --cargo-target-dir target/cuda -- -p my_app --release
 cargo oxide build --device-codegen-crate gpu-kernels,math_gpu -- -p my_app
