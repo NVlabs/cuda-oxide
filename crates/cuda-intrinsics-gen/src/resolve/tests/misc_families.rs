@@ -692,7 +692,11 @@ fn cp_async_mbarrier_recipes_fail_closed() {
 
     let mut wrong_floor = arrive.clone();
     wrong_floor.minimum_sm = Some("sm_90".into());
-    reject(&wrong_floor, declaration, "effects or target floor");
+    reject(
+        &wrong_floor,
+        declaration,
+        "minimum_ptx 7.0 is below PTX 7.8",
+    );
 
     let mut wrong_llvm_route = arrive.clone();
     wrong_llvm_route
@@ -821,7 +825,11 @@ fn mbarrier_basic_recipes_fail_closed() {
 
     let mut wrong_sm_floor = init.clone();
     wrong_sm_floor.minimum_sm = Some("sm_90".into());
-    reject(&wrong_sm_floor, init_declaration, "effects or target floor");
+    reject(
+        &wrong_sm_floor,
+        init_declaration,
+        "minimum_ptx 7.0 is below PTX 7.8",
+    );
 
     let mut wrong_llvm_route = init.clone();
     wrong_llvm_route

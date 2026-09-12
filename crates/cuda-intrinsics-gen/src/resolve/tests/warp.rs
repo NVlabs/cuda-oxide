@@ -848,7 +848,7 @@ fn sync_threads_recipe_rejects_unreviewed_selection_effect_and_floor_changes() {
         validate_imported_policy(&native_floor, &declaration)
             .unwrap_err()
             .to_string()
-            .contains("native target floor")
+            .contains("which first named hardware floor sm_75")
     );
 
     let mut missing_profile_floor = valid;
