@@ -165,6 +165,64 @@ pub struct TargetPtxFloor {
     pub floor: u16,
 }
 
+/// PTX ISA version that first introduced each target spelling.
+///
+/// CUDA 13.2 `ptxas` measured the entries from `sm_75` onward by assembling
+/// an empty kernel at successive `.version` spellings. Earlier entries are
+/// pinned from the PTX ISA release notes. For example, the specification says
+/// exactly: "Support for sm_30 target architectures." under "Changes in PTX
+/// ISA Version 3.0", and "Support for sm_60, sm_61, sm_62 target architecture."
+/// under "Changes in PTX ISA Version 5.0".
+pub const ARCH_INTRODUCTION_PTX: &[TargetPtxFloor] = &[
+    TargetPtxFloor { capability: 10, suffix: None, floor: 10 },
+    TargetPtxFloor { capability: 11, suffix: None, floor: 10 },
+    TargetPtxFloor { capability: 20, suffix: None, floor: 20 },
+    TargetPtxFloor { capability: 30, suffix: None, floor: 30 },
+    TargetPtxFloor { capability: 35, suffix: None, floor: 31 },
+    TargetPtxFloor { capability: 50, suffix: None, floor: 40 },
+    TargetPtxFloor { capability: 52, suffix: None, floor: 41 },
+    TargetPtxFloor { capability: 53, suffix: None, floor: 42 },
+    TargetPtxFloor { capability: 60, suffix: None, floor: 50 },
+    TargetPtxFloor { capability: 61, suffix: None, floor: 50 },
+    TargetPtxFloor { capability: 62, suffix: None, floor: 50 },
+    TargetPtxFloor { capability: 70, suffix: None, floor: 60 },
+    TargetPtxFloor { capability: 72, suffix: None, floor: 61 },
+    TargetPtxFloor { capability: 75, suffix: None, floor: 63 },
+    TargetPtxFloor { capability: 80, suffix: None, floor: 70 },
+    TargetPtxFloor { capability: 86, suffix: None, floor: 71 },
+    TargetPtxFloor { capability: 87, suffix: None, floor: 74 },
+    TargetPtxFloor { capability: 89, suffix: None, floor: 78 },
+    TargetPtxFloor { capability: 90, suffix: None, floor: 78 },
+    TargetPtxFloor { capability: 90, suffix: Some('a'), floor: 80 },
+    TargetPtxFloor { capability: 100, suffix: None, floor: 86 },
+    TargetPtxFloor { capability: 100, suffix: Some('a'), floor: 86 },
+    TargetPtxFloor { capability: 100, suffix: Some('f'), floor: 88 },
+    TargetPtxFloor { capability: 101, suffix: None, floor: 86 },
+    TargetPtxFloor { capability: 101, suffix: Some('a'), floor: 86 },
+    TargetPtxFloor { capability: 101, suffix: Some('f'), floor: 88 },
+    TargetPtxFloor { capability: 103, suffix: None, floor: 88 },
+    TargetPtxFloor { capability: 103, suffix: Some('a'), floor: 88 },
+    TargetPtxFloor { capability: 103, suffix: Some('f'), floor: 88 },
+    TargetPtxFloor { capability: 110, suffix: None, floor: 90 },
+    TargetPtxFloor { capability: 110, suffix: Some('a'), floor: 90 },
+    TargetPtxFloor { capability: 110, suffix: Some('f'), floor: 90 },
+    TargetPtxFloor { capability: 120, suffix: None, floor: 87 },
+    TargetPtxFloor { capability: 120, suffix: Some('a'), floor: 87 },
+    TargetPtxFloor { capability: 120, suffix: Some('f'), floor: 88 },
+    TargetPtxFloor { capability: 121, suffix: None, floor: 88 },
+    TargetPtxFloor { capability: 121, suffix: Some('a'), floor: 88 },
+    TargetPtxFloor { capability: 121, suffix: Some('f'), floor: 88 },
+];
+
+/// Return the PTX ISA version that introduced an exact target spelling.
+pub fn arch_introduced_ptx(arch: &CudaArch) -> Result<u16, UnsupportedTargetError> {
+    ARCH_INTRODUCTION_PTX
+        .iter()
+        .find(|entry| entry.capability == arch.capability && entry.suffix == arch.suffix)
+        .map(|entry| entry.floor)
+        .ok_or_else(|| UnsupportedTargetError { target: arch.to_string() })
+}
+
 /// Exact target floors recorded from the pinned LLVM 23 NVPTX backend.
 ///
 /// These entries describe backend defaults, not backend-independent CUDA
