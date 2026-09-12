@@ -4,16 +4,16 @@
  */
 
 use crate::common::attr_path_ends_with;
-use crate::kernel::KernelArgs;
 use crate::kernel::codegen::{
     generate_cuda_kernel_impl, generic_kernel_instantiation_tokens,
     generic_kernel_no_instantiation_tokens, route_generic_kernel_attrs,
 };
 use crate::kernel::scope::{
     explicit_kernel_scope, explicit_kernel_scope_bindings, forwarding_inputs,
-    inject_thread_index_scope, is_kernel_configuration_marker, is_unchecked_indexing_config_marker,
-    top_level_kernel_configuration_markers,
+    inject_thread_index_scope, is_grid_constant_config_marker, is_kernel_configuration_marker,
+    is_unchecked_indexing_config_marker, top_level_kernel_configuration_markers,
 };
+use crate::kernel::{KernelArgs, inject_grid_constant_markers};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use reserved_oxide_symbols::{KERNEL_PREFIX, KERNEL_SCOPE_LOCAL};
@@ -60,6 +60,43 @@ fn forwarding_inputs_name_every_irrefutable_parameter_pattern() {
     assert!(forwarded.contains("__cuda_oxide_arg_1:(u16,u16)"));
     assert!(forwarded.contains("__cuda_oxide_arg_2:u8"));
     assert!(forwarded.contains("target(__cuda_oxide_arg_0,__cuda_oxide_arg_1,__cuda_oxide_arg_2)"));
+}
+
+#[test]
+fn grid_constant_parameter_becomes_one_source_index_marker() {
+    let mut function: ItemFn = parse_quote! {
+        fn copy(prefix: u32, #[grid_constant] descriptor: &TensorMap, out: *mut u32) {
+            use_descriptor(descriptor, out);
+        }
+    };
+
+    inject_grid_constant_markers(&mut function).unwrap();
+    let expanded = quote!(#function).to_string().replace(' ', "");
+
+    assert!(!expanded.contains("#[grid_constant]"));
+    assert!(
+        expanded
+            .contains("::cuda_device::thread::__grid_constant_config::<1usize>();use_descriptor")
+    );
+}
+
+#[test]
+fn grid_constant_marker_is_a_forwardable_configuration_marker() {
+    let marker: Stmt = parse_quote! {
+        ::cuda_device::thread::__grid_constant_config::<0usize>();
+    };
+    assert!(is_kernel_configuration_marker(&marker));
+    assert!(is_grid_constant_config_marker(&marker));
+}
+
+#[test]
+fn grid_constant_rejects_mutable_reference() {
+    let mut function: ItemFn = parse_quote! {
+        fn copy(#[grid_constant] descriptor: &mut TensorMap) {}
+    };
+
+    let error = inject_grid_constant_markers(&mut function).unwrap_err();
+    assert!(error.to_string().contains("read-only"));
 }
 
 #[test]
@@ -376,6 +413,22 @@ fn generic_expansion_confines_unchecked_marker_to_entry_and_hidden_twin() {
 }
 
 #[test]
+fn generic_expansion_confines_grid_constant_marker_to_entry() {
+    let kernel: ItemFn = parse_quote! {
+        pub fn read<T: Copy>(descriptor: &Descriptor, out: *mut u32, tag: T) {
+            ::cuda_device::thread::__grid_constant_config::<0usize>();
+            work(descriptor, out, tag);
+        }
+    };
+    let expanded = generic_kernel_no_instantiation_tokens(kernel, None);
+
+    let helper = expansion_fn_source(&expanded, "read");
+    assert!(!helper.contains("__grid_constant_config"));
+    let entry = expansion_fn_source(&expanded, &format!("{KERNEL_PREFIX}read"));
+    assert!(entry.contains("__grid_constant_config"));
+}
+
+#[test]
 fn legacy_instantiation_confines_unchecked_marker_to_entry_and_hidden_twin() {
     // Legacy `#[kernel(Type, ...)]` instantiation supports by-value
     // parameters of the single type parameter (see
@@ -406,6 +459,22 @@ fn legacy_instantiation_confines_unchecked_marker_to_entry_and_hidden_twin() {
 
     let twin = expansion_fn_source(&expanded, "__cuda_oxide_unchecked_impl_scaled_gather");
     assert!(twin.contains("__unchecked_indexing_config"));
+}
+
+#[test]
+fn legacy_instantiation_confines_grid_constant_marker_to_entry() {
+    let kernel: ItemFn = parse_quote! {
+        pub fn read<T: Copy>(descriptor: &Descriptor, tag: T) {
+            ::cuda_device::thread::__grid_constant_config::<0usize>();
+            work(descriptor, tag);
+        }
+    };
+    let expanded = generic_kernel_instantiation_tokens(kernel, vec![parse_quote! { u32 }], None);
+
+    let helper = expansion_fn_source(&expanded, "read");
+    assert!(!helper.contains("__grid_constant_config"));
+    let entry = expansion_fn_source(&expanded, &format!("{KERNEL_PREFIX}read_u32"));
+    assert!(entry.contains("__grid_constant_config"));
 }
 
 #[test]

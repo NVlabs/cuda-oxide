@@ -14,8 +14,8 @@ use crate::kernel::scope::{
     append_kernel_scope_parameter, explicit_kernel_scope, explicit_kernel_scope_bindings,
     find_closure_generic, find_closure_param, forwarding_inputs, inject_thread_index_scope,
     is_unchecked_indexing_config_marker, kernel_scope_binding, rewrite_thread_index_calls,
-    strip_unchecked_indexing_config_marker, top_level_kernel_configuration_markers,
-    unchecked_indexing_impl_clone,
+    strip_grid_constant_config_markers, strip_unchecked_indexing_config_marker,
+    top_level_kernel_configuration_markers, unchecked_indexing_impl_clone,
 };
 use crate::launch_attrs::validate_routed_launch_contract_requires;
 use proc_macro::TokenStream;
@@ -63,6 +63,7 @@ pub(crate) fn generic_kernel_no_instantiation_tokens(
     // implementation, and copy cfg gates to every generated item.
     let (implementation_attrs, entry_attrs, cfg_attrs) = route_generic_kernel_attrs(&input.attrs);
     let entry_config_markers = top_level_kernel_configuration_markers(&input);
+    strip_grid_constant_config_markers(&mut input);
     // The unchecked-indexing marker may only live in generated kernel entry
     // functions and their hidden unchecked twin, never in the user-named
     // implementation helper: a marker left in the helper would extend
@@ -512,6 +513,7 @@ pub(crate) fn generic_kernel_instantiation_tokens(
 
     let (implementation_attrs, entry_attrs, _cfg_attrs) = route_generic_kernel_attrs(&input.attrs);
     let entry_config_markers = top_level_kernel_configuration_markers(&input);
+    strip_grid_constant_config_markers(&mut input);
     input.attrs.clear();
     // Same containment rule as the no-instantiation path: the marker never
     // stays in the re-emitted user-named helper; opted entries call a hidden

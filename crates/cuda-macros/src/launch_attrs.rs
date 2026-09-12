@@ -108,6 +108,8 @@ fn requires_params_from_inputs(
         let ty = &pat_type.ty;
         let param = cuda_module_param_from_typed(pat_type).unwrap_or_else(|_| CudaModuleParam {
             name: pat_ident.ident.clone(),
+            device_ty: (**ty).clone(),
+            grid_constant_ty: None,
             sync_host_ty: quote! { #ty },
             async_host_ty: quote! { #ty },
             marshal: CudaModuleParamMarshal::Scalar,

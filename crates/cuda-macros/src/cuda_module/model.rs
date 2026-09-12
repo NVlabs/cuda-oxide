@@ -6,7 +6,7 @@
 //! Kernel and parameter models for `#[cuda_module]`: marshalling
 //! classification and host-side type mapping.
 
-use crate::common::{cuda_module_async_lifetime, internal_ident};
+use crate::common::{cuda_module_async_lifetime, grid_constant_pointee, internal_ident};
 use crate::cuda_module::contract::CudaModuleLaunchContract;
 use crate::cuda_module::launchers::{cuda_kernel_marker_name, generic_arguments};
 use proc_macro2::TokenStream as TokenStream2;
@@ -37,6 +37,10 @@ pub(crate) struct CudaModuleKernel {
 
 pub(crate) struct CudaModuleParam {
     pub(crate) name: Ident,
+    /// Type as written in the device entry declaration.
+    pub(crate) device_ty: Type,
+    /// Pointee carried by `#[grid_constant]`, when present.
+    pub(crate) grid_constant_ty: Option<Type>,
     pub(crate) sync_host_ty: TokenStream2,
     pub(crate) async_host_ty: TokenStream2,
     pub(crate) marshal: CudaModuleParamMarshal,
@@ -47,7 +51,7 @@ pub(crate) struct CudaModuleParam {
     /// bound the generated impl by the sealed proof trait so a local type also
     /// named `Uniform` cannot borrow the scalar host ABI.
     pub(crate) uniform_ty: Option<Type>,
-    pub(crate) uniform_scalar: Option<TokenStream2>,
+    pub(crate) uniform_scalar: Option<Type>,
     /// Integer classification of a scalar parameter's declared type, used to
     /// decide which scalars may appear in `requires` relations. Always
     /// `Other` for non-scalar parameters.
@@ -88,10 +92,8 @@ pub(crate) fn scalar_int_class(ty: &Type) -> ScalarIntClass {
     // A `Uniform<T>` parameter is marshalled as `T` and is evaluated as `T` on
     // the host, so a relation over it has the same widening behaviour as one
     // over the bare scalar.
-    if let Some(scalar) = cuda_module_uniform_scalar(ty)
-        && let Ok(scalar) = syn::parse2::<Type>(scalar)
-    {
-        return scalar_int_class(&scalar);
+    if let Some(scalar) = cuda_module_uniform_scalar(ty) {
+        return scalar_int_class(scalar);
     }
 
     let Type::Path(type_path) = ty else {
@@ -135,18 +137,22 @@ pub(crate) fn cuda_module_param_from_typed(
         ));
     };
     let name = pat_ident.ident.clone();
-    let (sync_host_ty, async_host_ty, marshal) = cuda_module_host_type(&pat_type.ty)?;
+    let grid_constant_pointee = grid_constant_pointee(pat_type)?;
+    let (sync_host_ty, async_host_ty, marshal) =
+        cuda_module_host_type(&pat_type.ty, grid_constant_pointee.as_ref())?;
     let mutable_slice = cuda_module_slice_elem(&pat_type.ty).is_some_and(|(_, mutable)| mutable);
     let disjoint_slice_elem = cuda_module_disjoint_slice_elem(&pat_type.ty);
     let disjoint_slice_ty = disjoint_slice_elem
         .as_ref()
         .map(|_| pat_type.ty.as_ref().clone());
-    let uniform_scalar = cuda_module_uniform_scalar(&pat_type.ty);
+    let uniform_scalar = cuda_module_uniform_scalar(&pat_type.ty).cloned();
     let uniform_ty = uniform_scalar
         .as_ref()
         .map(|_| pat_type.ty.as_ref().clone());
     Ok(CudaModuleParam {
         name,
+        device_ty: pat_type.ty.as_ref().clone(),
+        grid_constant_ty: grid_constant_pointee,
         sync_host_ty,
         async_host_ty,
         marshal,
@@ -161,8 +167,16 @@ pub(crate) fn cuda_module_param_from_typed(
 
 fn cuda_module_host_type(
     ty: &Type,
+    grid_constant_pointee: Option<&Type>,
 ) -> syn::Result<(TokenStream2, TokenStream2, CudaModuleParamMarshal)> {
     let async_lifetime = cuda_module_async_lifetime();
+    if let Some(pointee) = grid_constant_pointee {
+        return Ok((
+            quote! { #pointee },
+            quote! { #pointee },
+            CudaModuleParamMarshal::Scalar,
+        ));
+    }
     if let Some((elem_ty, mutable)) = cuda_module_slice_elem(ty) {
         let sync_host_ty = if mutable {
             quote! { &mut ::cuda_core::DeviceBuffer<#elem_ty> }
@@ -249,7 +263,7 @@ fn cuda_module_slice_elem(ty: &Type) -> Option<(TokenStream2, bool)> {
 /// uniformity proof, since it marshals one value into the launch packet for
 /// the whole grid. `Uniform<T>` is `#[repr(transparent)]`, so the launch packet
 /// is byte-identical either way.
-fn cuda_module_uniform_scalar(ty: &Type) -> Option<TokenStream2> {
+pub(crate) fn cuda_module_uniform_scalar(ty: &Type) -> Option<&Type> {
     let Type::Path(type_path) = ty else {
         return None;
     };
@@ -264,7 +278,7 @@ fn cuda_module_uniform_scalar(ty: &Type) -> Option<TokenStream2> {
         GenericArgument::Type(ty) => Some(ty),
         _ => None,
     })?;
-    Some(quote! { #scalar })
+    Some(scalar)
 }
 
 /// True when a `DisjointSlice`'s index space carries a runtime row width.

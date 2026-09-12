@@ -41,6 +41,66 @@ fn one_kernel_module() -> ItemMod {
     }
 }
 
+#[test]
+fn grid_constant_uses_one_by_value_host_argument() {
+    let module: ItemMod = parse_quote! {
+        mod kernels {
+            struct TensorMap([u8; 128]);
+
+            #[kernel]
+            fn copy(#[grid_constant] descriptor: &TensorMap, out: *mut u32) {}
+        }
+    };
+    let expanded = expand_to_compact_string(module);
+
+    assert!(
+        expanded.contains("descriptor:TensorMap,out:*mutu32"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains("letmut__cuda_oxide_arg_0=descriptor;::cuda_host::push_kernel_scalar"),
+        "{expanded}"
+    );
+    assert!(
+        expanded.contains(
+            "constCOPY_CUDA_SIGNATURE:::cuda_host::CudaKernelSignature="
+        ) && expanded.contains(
+            "kind:::cuda_host::CudaKernelArgumentKind::GridConstant{size:::core::mem::size_of::<TensorMap>(),alignment:::core::mem::align_of::<TensorMap>()"
+        ) && expanded.contains(
+            "name:\"out\",kind:::cuda_host::CudaKernelArgumentKind::DevicePointer"
+        ),
+        "{expanded}"
+    );
+}
+
+#[test]
+fn concrete_kernel_signature_is_generated_from_launcher_arguments() {
+    let module: ItemMod = parse_quote! {
+        mod kernels {
+            #[kernel]
+            pub fn classify(flag: bool, count: u32, data: &[f32], out: *mut f32) {}
+        }
+    };
+    let expanded = expand_to_compact_string(module);
+
+    assert!(
+        expanded.contains("pubconstCLASSIFY_CUDA_SIGNATURE:::cuda_host::CudaKernelSignature")
+            && expanded.contains(
+                "name:\"flag\",kind:::cuda_host::CudaKernelArgumentKind::Scalar(::cuda_host::CudaKernelScalarKind::Bool)"
+            )
+            && expanded.contains(
+                "name:\"count\",kind:::cuda_host::CudaKernelArgumentKind::Scalar(::cuda_host::CudaKernelScalarKind::U32)"
+            )
+            && expanded.contains(
+                "name:\"data\",kind:::cuda_host::CudaKernelArgumentKind::DeviceSlice{writable:false,row_width:false"
+            )
+            && expanded.contains(
+                "name:\"out\",kind:::cuda_host::CudaKernelArgumentKind::DevicePointer"
+            ),
+        "{expanded}"
+    );
+}
+
 /// With the host surface off, nothing in the expansion may name the
 /// `cuda-host` -> `cuda-core` -> `cuda-bindings` -> `cuda.h` stack. That is
 /// the whole point of the feature: a crate that only compiles kernels

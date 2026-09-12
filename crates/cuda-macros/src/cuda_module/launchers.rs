@@ -12,10 +12,124 @@ use crate::cuda_module::contract::{
 };
 use crate::cuda_module::model::{
     CudaModuleKernel, CudaModuleParam, CudaModuleParamMarshal, cuda_module_kernel_marker_type,
+    cuda_module_uniform_scalar,
 };
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{GenericParam, Ident};
+
+pub(super) fn generate_cuda_module_kernel_signature(
+    kernel: &CudaModuleKernel,
+) -> Option<TokenStream2> {
+    if kernel.is_generic {
+        return None;
+    }
+
+    let vis = &kernel.vis;
+    let cfg_attrs = &kernel.cfg_attrs;
+    let signature_name = cuda_kernel_signature_name(&kernel.fn_name);
+    let marker = cuda_module_kernel_marker_type(kernel);
+    let arguments = kernel.params.iter().map(|param| {
+        let name = param.name.to_string();
+        let kind = cuda_module_argument_kind(param);
+        quote! {
+            ::cuda_host::CudaKernelArgument {
+                name: #name,
+                kind: #kind,
+            }
+        }
+    });
+
+    Some(quote! {
+        #(#cfg_attrs)*
+        #[allow(
+            dead_code,
+            reason = "generated kernel signatures may be consumed outside their declaring module"
+        )]
+        #vis const #signature_name: ::cuda_host::CudaKernelSignature =
+            ::cuda_host::CudaKernelSignature {
+                entry: <#marker as ::cuda_host::CudaKernel>::PTX_NAME,
+                arguments: &[#(#arguments),*],
+            };
+    })
+}
+
+fn cuda_module_argument_kind(param: &CudaModuleParam) -> TokenStream2 {
+    if let Some(ty) = &param.grid_constant_ty {
+        return quote! {
+            ::cuda_host::CudaKernelArgumentKind::GridConstant {
+                size: ::core::mem::size_of::<#ty>(),
+                alignment: ::core::mem::align_of::<#ty>(),
+            }
+        };
+    }
+
+    match &param.marshal {
+        CudaModuleParamMarshal::ReadOnlyDeviceBuffer { .. } => quote! {
+            ::cuda_host::CudaKernelArgumentKind::DeviceSlice {
+                writable: false,
+                row_width: false,
+            }
+        },
+        CudaModuleParamMarshal::WritableDeviceBuffer { .. } => quote! {
+            ::cuda_host::CudaKernelArgumentKind::DeviceSlice {
+                writable: true,
+                row_width: false,
+            }
+        },
+        CudaModuleParamMarshal::RowWidthDeviceBuffer { .. } => quote! {
+            ::cuda_host::CudaKernelArgumentKind::DeviceSlice {
+                writable: true,
+                row_width: true,
+            }
+        },
+        CudaModuleParamMarshal::Scalar => {
+            if matches!(param.device_ty, syn::Type::Ptr(_)) {
+                quote! { ::cuda_host::CudaKernelArgumentKind::DevicePointer }
+            } else {
+                let scalar = cuda_module_scalar_kind(&param.device_ty);
+                quote! { ::cuda_host::CudaKernelArgumentKind::Scalar(#scalar) }
+            }
+        }
+    }
+}
+
+fn cuda_module_scalar_kind(ty: &syn::Type) -> TokenStream2 {
+    let scalar_ty = cuda_module_uniform_scalar(ty).unwrap_or(ty);
+    if let syn::Type::Path(type_path) = scalar_ty
+        && type_path.qself.is_none()
+        && let Some(ident) = type_path.path.get_ident()
+    {
+        let kind = match ident.to_string().as_str() {
+            "bool" => Some(quote! { ::cuda_host::CudaKernelScalarKind::Bool }),
+            "u8" => Some(quote! { ::cuda_host::CudaKernelScalarKind::U8 }),
+            "u16" => Some(quote! { ::cuda_host::CudaKernelScalarKind::U16 }),
+            "u32" => Some(quote! { ::cuda_host::CudaKernelScalarKind::U32 }),
+            "u64" => Some(quote! { ::cuda_host::CudaKernelScalarKind::U64 }),
+            "u128" => Some(quote! { ::cuda_host::CudaKernelScalarKind::U128 }),
+            "usize" => Some(quote! { ::cuda_host::CudaKernelScalarKind::Usize }),
+            "i8" => Some(quote! { ::cuda_host::CudaKernelScalarKind::I8 }),
+            "i16" => Some(quote! { ::cuda_host::CudaKernelScalarKind::I16 }),
+            "i32" => Some(quote! { ::cuda_host::CudaKernelScalarKind::I32 }),
+            "i64" => Some(quote! { ::cuda_host::CudaKernelScalarKind::I64 }),
+            "i128" => Some(quote! { ::cuda_host::CudaKernelScalarKind::I128 }),
+            "isize" => Some(quote! { ::cuda_host::CudaKernelScalarKind::Isize }),
+            "f32" => Some(quote! { ::cuda_host::CudaKernelScalarKind::F32 }),
+            "f64" => Some(quote! { ::cuda_host::CudaKernelScalarKind::F64 }),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            return kind;
+        }
+    }
+
+    quote! {
+        ::cuda_host::CudaKernelScalarKind::Opaque {
+            size: ::core::mem::size_of::<#scalar_ty>(),
+            alignment: ::core::mem::align_of::<#scalar_ty>(),
+        }
+    }
+}
 
 pub(super) fn generate_cuda_module_launch_contract_impl(
     kernel: &CudaModuleKernel,
@@ -1219,4 +1333,10 @@ pub(super) fn cuda_module_function_field(fn_name: &Ident) -> Ident {
 
 pub(super) fn cuda_kernel_marker_name(fn_name: &Ident) -> Ident {
     format_ident!("__{}_CudaKernel", fn_name)
+}
+
+pub(super) fn cuda_kernel_signature_name(fn_name: &Ident) -> Ident {
+    let name = fn_name.to_string();
+    let name = name.strip_prefix("r#").unwrap_or(&name);
+    format_ident!("{}_CUDA_SIGNATURE", name.to_uppercase())
 }

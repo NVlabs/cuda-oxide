@@ -19,6 +19,7 @@ dialect-nvvm = { workspace = true }
 mir-lower = { workspace = true }
 oxide-artifacts = { workspace = true }
 cuda-oxide-codegen = { workspace = true }
+reserved-oxide-symbols = { workspace = true }
 thiserror = { workspace = true }
 linkme = { workspace = true }
 once_cell = { workspace = true }

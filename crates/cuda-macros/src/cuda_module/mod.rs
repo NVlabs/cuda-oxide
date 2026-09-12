@@ -24,9 +24,9 @@ use crate::cuda_module::contract::{
 };
 use crate::cuda_module::launchers::{
     cuda_kernel_marker_name, cuda_module_function_field, generate_cuda_module_async_launch_method,
-    generate_cuda_module_launch_contract_impl, generate_cuda_module_launch_method,
-    generate_cuda_module_owned_async_launch_method, generate_cuda_module_prepare_launch_methods,
-    has_codegen_generics,
+    generate_cuda_module_kernel_signature, generate_cuda_module_launch_contract_impl,
+    generate_cuda_module_launch_method, generate_cuda_module_owned_async_launch_method,
+    generate_cuda_module_prepare_launch_methods, has_codegen_generics,
 };
 use crate::cuda_module::model::{
     CudaModuleKernel, add_cuda_module_disjoint_abi_bounds,
@@ -187,6 +187,9 @@ pub(crate) fn expand_cuda_module_inner(
     let launch_contract_impls = direct_kernels
         .iter()
         .filter_map(generate_cuda_module_launch_contract_impl);
+    let kernel_signatures = direct_kernels
+        .iter()
+        .filter_map(generate_cuda_module_kernel_signature);
     let prepare_launch_methods = direct_kernels
         .iter()
         .filter_map(generate_cuda_module_prepare_launch_methods);
@@ -369,6 +372,7 @@ pub(crate) fn expand_cuda_module_inner(
     // `default-features = false` and stop depending on the host stack.
     let host_items = if emit_host {
         quote! {
+            #(#kernel_signatures)*
             #(#launch_contract_impls)*
 
             #[derive(Clone, Debug)]
@@ -650,6 +654,9 @@ fn generate_nested_cuda_module_support(
     let launch_contract_impls = kernels
         .iter()
         .filter_map(generate_cuda_module_launch_contract_impl);
+    let kernel_signatures = kernels
+        .iter()
+        .filter_map(generate_cuda_module_kernel_signature);
     let prepare_launch_methods = kernels
         .iter()
         .filter_map(generate_cuda_module_prepare_launch_methods);
@@ -691,6 +698,7 @@ fn generate_nested_cuda_module_support(
     }
 
     quote! {
+        #(#kernel_signatures)*
         #(#launch_contract_impls)*
 
         #[derive(Clone, Debug)]

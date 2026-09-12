@@ -1123,6 +1123,19 @@ pub unsafe fn __launch_contract_config<const DOMAIN: u8, const U32_COORDINATES: 
     // Compiler marker: deliberately empty and removed during MIR import.
 }
 
+/// Compiler marker for a `#[grid_constant]` kernel parameter.
+///
+/// The parameter attribute is consumed by `#[kernel]`, which inserts this
+/// zero-cost marker with the source parameter index. MIR import records the
+/// referenced immutable pointee and its ABI alignment; LLVM export then emits
+/// the pointer `byval` attribute and NVVM `grid_constant` property. The marker
+/// itself never reaches device code.
+#[doc(hidden)]
+#[inline(never)]
+pub fn __grid_constant_config<const PARAMETER: usize>() {
+    // Detected at compile time and removed. No runtime code is generated.
+}
+
 /// Marker function for compile-time launch bounds configuration.
 ///
 /// This is a compile-time configuration marker that tells the compiler to emit
