@@ -25,6 +25,7 @@ use crate::resolve::families::*;
 use crate::resolve::guards::*;
 use crate::resolve::overlay::*;
 use crate::resolve::policy::*;
+use crate::resolve::targets::validate_arch_introduction_floor;
 
 #[test]
 fn compact_prmt_admission_requires_every_mode_and_reserved_abi_id() {
@@ -364,8 +365,10 @@ fn packed_alu_recipes_accept_only_the_reviewed_source_shape_and_floor() {
         .packed_alu
         .as_mut()
         .unwrap()
-        .native_minimum_sm = 70;
-    reject_f16(&wrong_native_floor, "minimum_ptx 4.2 is below PTX 6.0");
+        .native_minimum_sm = 30;
+    // PTX 4.2 can name sm_30; the recipe must still enforce native sm_53.
+    validate_arch_introduction_floor(&wrong_native_floor).unwrap();
+    reject_f16(&wrong_native_floor, "target floor");
 
     let mut wrong_backend_floor = f16;
     wrong_backend_floor.backend_lowerings[0].minimum_ptx = Some("4.2".into());
