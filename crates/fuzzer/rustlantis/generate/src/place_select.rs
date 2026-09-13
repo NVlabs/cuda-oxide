@@ -2,7 +2,7 @@ use std::{rc::Rc, vec};
 
 use abi::size::Size;
 use mir::{
-    syntax::{Literal, Place, TyId},
+    syntax::{Literal, LocalDecls, Place, TyId},
     tyctxt::TyCtxt,
 };
 use rand_distr::weighted::WeightedIndex;
@@ -357,8 +357,13 @@ impl PlaceSelector {
         }
     }
 
-    pub fn into_iter_place(self, pt: &PlaceGraph) -> impl Iterator<Item = Place> + Clone + '_ {
-        self.into_iter_path(pt).map(|ppath| ppath.to_place(pt))
+    pub fn into_iter_place<'a>(
+        self,
+        pt: &'a PlaceGraph,
+        local_decls: &'a LocalDecls,
+    ) -> impl Iterator<Item = Place> + Clone + 'a {
+        self.into_iter_path(pt)
+            .map(move |ppath| ppath.to_place(pt, local_decls))
     }
 }
 
@@ -369,7 +374,7 @@ mod tests {
 
     use config::TyConfig;
     use mir::{
-        syntax::{Local, Place},
+        syntax::{Local, LocalDecl, LocalDecls, Place},
         tyctxt::TyCtxt,
     };
     use rand::{
@@ -386,30 +391,33 @@ mod tests {
 
     use super::PlaceSelector;
 
-    fn build_pt(rng: &mut impl Rng) -> (PlaceGraph, Rc<TyCtxt>) {
+    fn build_pt(rng: &mut impl Rng) -> (PlaceGraph, Rc<TyCtxt>, LocalDecls) {
         let mut tcx = TyCtxt::from_primitives(TyConfig::default());
         seed_tys(&mut tcx, rng);
         let tcx = Rc::new(tcx);
         let mut pt = PlaceGraph::new(tcx.clone());
         let ty_weights = TySelect::new(&tcx);
+        let mut decls = LocalDecls::new();
         for i in 0..=32 {
-            let pidx = pt.allocate_local(Local::new(i), ty_weights.choose_ty(rng, &tcx));
+            let ty = ty_weights.choose_ty(rng, &tcx);
+            decls.push(LocalDecl::new_mut(ty));
+            let pidx = pt.allocate_local(Local::new(i), ty);
             if i % 2 == 0 {
                 pt.mark_place_init(pidx);
             }
         }
-        (pt, tcx)
+        (pt, tcx, decls)
     }
 
     #[bench]
     fn bench_select(b: &mut Bencher) {
         let mut rng = SmallRng::seed_from_u64(0);
-        let (pt, tcx) = build_pt(&mut rng);
+        let (pt, tcx, decls) = build_pt(&mut rng);
 
         b.iter(|| {
             PlaceSelector::for_lhs(tcx.clone())
                 .except(&Place::RETURN_SLOT)
-                .into_iter_place(&pt)
+                .into_iter_place(&pt, &decls)
                 .choose(&mut rng)
                 .expect("places not empty");
         })
@@ -418,12 +426,12 @@ mod tests {
     #[bench]
     fn bench_materialise_into_vec(b: &mut Bencher) {
         let mut rng = SmallRng::seed_from_u64(0);
-        let (pt, tcx) = build_pt(&mut rng);
+        let (pt, tcx, decls) = build_pt(&mut rng);
 
         b.iter(|| {
             let places: Vec<Place> = PlaceSelector::for_lhs(tcx.clone())
                 .except(&Place::RETURN_SLOT)
-                .into_iter_place(&pt)
+                .into_iter_place(&pt, &decls)
                 .collect();
 
             // places.choose(&mut rng).expect("not empty");
