@@ -1616,3 +1616,146 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
 
     Ok(())
 }
+
+type ReduxBuild =
+    fn(&mut Context, pliron::value::Value, pliron::value::Value) -> pliron::context::Ptr<Operation>;
+
+/// A device function returning a `redux.sync` result directly:
+/// `fn reduce(mask: u32, value: T) -> T { redux(mask, value) }`, where `T` is
+/// `u32`/`i32` for `Some(signedness)` and `f32` for `None`. Returns the
+/// lowered module after LLVM-dialect verification.
+fn lower_returned_redux(
+    build: ReduxBuild,
+    signedness: Option<pliron::builtin::types::Signedness>,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::attributes::TypeAttr;
+    use pliron::builtin::types::{FP32Type, FunctionType, IntegerType, Signedness};
+    use pliron::common_traits::Verify;
+
+    let mut ctx = make_test_ctx();
+    let mask_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+    let value_ty = match signedness {
+        Some(signedness) => IntegerType::get(&ctx, 32, signedness).into(),
+        None => FP32Type::get(&ctx).into(),
+    };
+    let module = ModuleOp::new(&mut ctx, "returned_redux".try_into().unwrap());
+    let module_ptr = module.get_operation();
+    let module_block = module_ptr
+        .deref(&ctx)
+        .get_region(0)
+        .deref(&ctx)
+        .iter(&ctx)
+        .next()
+        .unwrap();
+
+    let func_ty = FunctionType::get(&ctx, vec![mask_ty, value_ty], vec![value_ty]);
+    let func_ptr = Operation::new(
+        &mut ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let func = mir::MirFuncOp::new(&mut ctx, func_ptr, TypeAttr::new(func_ty.into()));
+    func.set_symbol_name(&mut ctx, "reduce".try_into().unwrap());
+    let entry = BasicBlock::new(&mut ctx, None, vec![mask_ty, value_ty]);
+    entry.insert_at_back(func.get_operation().deref(&ctx).get_region(0), &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let mask = entry.deref(&ctx).get_argument(0);
+    let value = entry.deref(&ctx).get_argument(1);
+    let redux = build(&mut ctx, mask, value);
+    redux.insert_at_back(entry, &ctx);
+    let reduced = redux.deref(&ctx).get_result(0);
+    Operation::new(
+        &mut ctx,
+        mir::MirReturnOp::get_concrete_op_info(),
+        vec![],
+        vec![reduced],
+        vec![],
+        0,
+    )
+    .insert_at_back(entry, &ctx);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{e}"))?;
+    module_ptr
+        .deref(&ctx)
+        .verify(&ctx)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok((ctx, module_ptr))
+}
+
+/// #811: a redux result returned straight out of a device function must
+/// lower with a signless integer type. The dialect op's `ui32`/`si32` result
+/// used to leak into the intrinsic declaration, so the lowered `llvm.return`
+/// failed verification against the function's `i32` result. The `f32`
+/// variants lower to the same type and are controls.
+#[test]
+fn test_redux_result_returned_from_device_function_verifies() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::IntegerType;
+    use pliron::builtin::types::Signedness::{self, Signed, Unsigned};
+    use pliron::r#type::Typed;
+
+    let cases: [(&str, ReduxBuild, Option<Signedness>); 12] = [
+        ("add", nvvm::ReduxSyncAddOp::build, Some(Unsigned)),
+        ("and", nvvm::ReduxSyncAndOp::build, Some(Unsigned)),
+        ("or", nvvm::ReduxSyncOrOp::build, Some(Unsigned)),
+        ("xor", nvvm::ReduxSyncXorOp::build, Some(Unsigned)),
+        ("umin", nvvm::ReduxSyncUminOp::build, Some(Unsigned)),
+        ("umax", nvvm::ReduxSyncUmaxOp::build, Some(Unsigned)),
+        ("min", nvvm::ReduxSyncMinOp::build, Some(Signed)),
+        ("max", nvvm::ReduxSyncMaxOp::build, Some(Signed)),
+        ("fmin", nvvm::ReduxSyncFminOp::build, None),
+        ("fmax", nvvm::ReduxSyncFmaxOp::build, None),
+        ("fmin_abs_nan", nvvm::ReduxSyncFminAbsNanOp::build, None),
+        ("fmax_abs_nan", nvvm::ReduxSyncFmaxAbsNanOp::build, None),
+    ];
+
+    for (name, build, signedness) in cases {
+        let (ctx, module_ptr) = lower_returned_redux(build, signedness)
+            .map_err(|e| anyhow::anyhow!("redux_sync_{name}: {e}"))?;
+
+        let module_block = module_ptr
+            .deref(&ctx)
+            .get_region(0)
+            .deref(&ctx)
+            .iter(&ctx)
+            .next()
+            .unwrap();
+        let func = module_block
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::FuncOp>(op, &ctx))
+            .find(|func| func.get_symbol_name(&ctx).to_string() == "reduce")
+            .expect("lowered reduce function");
+        let calls: Vec<_> = func
+            .get_operation()
+            .deref(&ctx)
+            .get_region(0)
+            .deref(&ctx)
+            .iter(&ctx)
+            .flat_map(|block| block.deref(&ctx).iter(&ctx).collect::<Vec<_>>())
+            .filter_map(|op| Operation::get_op::<llvm::CallOp>(op, &ctx))
+            .collect();
+        assert_eq!(calls.len(), 1, "redux_sync_{name}");
+        if signedness.is_some() {
+            let result_ty = calls[0]
+                .get_operation()
+                .deref(&ctx)
+                .get_result(0)
+                .get_type(&ctx);
+            let integer = result_ty
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .map(|integer| (integer.width(), integer.signedness()));
+            assert_eq!(
+                integer,
+                Some((32, Signedness::Signless)),
+                "redux_sync_{name} call result"
+            );
+        }
+    }
+    Ok(())
+}
