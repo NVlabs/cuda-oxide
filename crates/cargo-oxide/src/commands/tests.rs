@@ -3576,6 +3576,27 @@ fn detect_run_target_arch_skips_when_env_target_set() {
     assert_eq!(detect_run_target_arch_with_env(None, false, true), None);
 }
 
+#[test]
+fn build_arch_warning_is_emitted_when_arch_is_unconfigured_and_local_gpu_exists() {
+    let warning = build_arch_warning(false, Some("sm_121a"))
+        .expect("an unconfigured build with a local GPU should warn");
+
+    assert!(warning.contains("backend default"));
+    assert!(warning.contains("first GPU reported by `nvidia-smi`"));
+    assert!(warning.contains("sm_121a"));
+    assert!(warning.contains("--arch <sm_XX>"));
+}
+
+#[test]
+fn build_arch_warning_is_suppressed_when_arch_is_configured() {
+    assert_eq!(build_arch_warning(true, Some("sm_121a")), None);
+}
+
+#[test]
+fn build_arch_warning_is_suppressed_when_no_local_gpu_is_detected() {
+    assert_eq!(build_arch_warning(false, None), None);
+}
+
 fn write_list_example(
     examples_dir: &Path,
     name: &str,

@@ -569,6 +569,10 @@ pub(super) fn detect_run_target_arch_with_env(
         return None;
     }
 
+    detect_local_device_arch()
+}
+
+pub(super) fn detect_local_device_arch() -> Option<String> {
     query_device_compute_cap().map(format_sm_arch)
 }
 
@@ -665,9 +669,10 @@ pub(super) fn parse_gpu_name_cap_and_driver(stdout: &str) -> Option<(String, (u3
 /// every chip that reports cc ≥ 9.0 *is* the `a`-variant chip in NVIDIA's
 /// lineup (there is no consumer Hopper, no non-`a` sm_100, and so on).
 ///
-/// This helper is only used by [`detect_run_target_arch`] in `cargo oxide
-/// run`, where the local GPU is known exactly and no cross-compile is in
-/// flight. Emitting the `a` form there:
+/// For GPU auto-detection, this formats the compute capability of the first GPU
+/// reported by `nvidia-smi`. `cargo oxide run` uses the result as an advisory
+/// target hint, while `cargo oxide build` may display it for diagnostics without
+/// changing the build target. Emitting the `a` form for a detected GPU:
 ///
 /// - **No false negatives:** kernels that need `tcgen05` / WGMMA compile and
 ///   load on that GPU (was: silent fallback to `sm_100` / `sm_90` and a
