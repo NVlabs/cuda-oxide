@@ -63,7 +63,7 @@ require sm_90+` skip line and exits before launching anything.
 |:---------------------------|:------------------------------------------------------------------------|
 | `typed_warp32_ballot`      | `WarpTile<32>::ballot` byte-identical to `warp::ballot_sync`            |
 | `typed_warp16_ballot`      | sub-warp ballot is **tile-relative** (16-bit mask, not 32-bit)          |
-| `typed_warp16_shfl`        | tile-relative broadcast plus i32/f32 XOR/down/up boundaries and sparse even-lane coalesced sources |
+| `typed_warp16_shfl`        | tile-relative broadcast/shuffle boundaries plus sparse even-lane coalesced ballot packing and shuffle sources |
 | `typed_grid_sync`          | `this_grid().sync()` matches the raw `grid::sync()` semantics           |
 | `typed_grid_rank`          | `this_grid().thread_rank()` is the identity permutation `0..total`      |
 

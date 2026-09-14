@@ -595,6 +595,31 @@ impl CoalescedThreads {
         self.mask
     }
 
+    /// Pack an absolute warp-lane mask into group-relative rank positions.
+    #[inline(always)]
+    fn pack_lanes(&self, lane_mask: u32) -> u32 {
+        if self.mask == u32::MAX {
+            return lane_mask;
+        }
+
+        let mut members = self.mask;
+        let mut member_rank = 0u32;
+        let mut packed = 0u32;
+
+        while members != 0 {
+            let member_lane = members.trailing_zeros();
+
+            if lane_mask & (1u32 << member_lane) != 0 {
+                packed |= 1u32 << member_rank;
+            }
+
+            members &= members - 1;
+            member_rank += 1;
+        }
+
+        packed
+    }
+
     #[inline(always)]
     fn xor_operand_or_self(&self, lane_mask: u32) -> u32 {
         let source = warp::lane_id() ^ (lane_mask & 31);
@@ -650,7 +675,8 @@ impl ThreadGroup for CoalescedThreads {
 impl WarpCollective for CoalescedThreads {
     #[inline(always)]
     fn ballot(&self, predicate: bool) -> u32 {
-        warp::ballot_sync(self.mask, predicate) & self.mask
+        let raw = warp::ballot_sync(self.mask, predicate);
+        self.pack_lanes(raw)
     }
 
     #[inline(always)]
@@ -1287,4 +1313,30 @@ where
 
     let prefix: T = smem[warp_id as usize];
     Op::combine(prefix, warp_inclusive)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CoalescedThreads;
+
+    #[test]
+    fn pack_lanes_uses_group_relative_bit_positions() {
+        let cases = [
+            (0x5555_5555, 0x5555_5555, 0x0000_FFFF),
+            (0x5555_5555, 0x4444_4444, 0x0000_AAAA),
+            (0x8010_0089, 0x8010_0008, 0x0000_001A),
+            (0x8000_0001, 0x8000_0000, 0x0000_0002),
+            (u32::MAX, 0xA5A5_5A5A, 0xA5A5_5A5A),
+        ];
+
+        for (group_mask, lane_mask, expected) in cases {
+            let group = CoalescedThreads { mask: group_mask };
+
+            assert_eq!(
+                group.pack_lanes(lane_mask),
+                expected,
+                "group mask {group_mask:#010X}, lane mask {lane_mask:#010X}",
+            );
+        }
+    }
 }

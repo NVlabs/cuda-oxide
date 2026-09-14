@@ -228,8 +228,8 @@ pub fn test_typed_warp16_ballot(mut out: DisjointSlice<u32>) {
     }
 }
 
-/// Check tile-relative and sparse-group shuffle source handling. The stored
-/// value remains each 16-lane tile's lane-0 broadcast.
+/// Check tile-relative shuffles plus sparse-group ballot packing and shuffle
+/// source handling. The stored value remains each 16-lane tile's lane-0 broadcast.
 #[kernel]
 pub fn test_typed_warp16_shfl(mut out: DisjointSlice<u32>) {
     let gid = thread::index_1d();
@@ -257,7 +257,8 @@ pub fn test_typed_warp16_shfl(mut out: DisjointSlice<u32>) {
             });
     let coalesced_ok = if lane & 1 == 0 {
         let group = coalesced_threads();
-        (group.shfl(lane, group.size()) == lane)
+        (group.ballot((lane & 2) != 0) == 0xAAAA)
+            & (group.shfl(lane, group.size()) == lane)
             & (group.shfl_xor(lane, 1) == lane)
             & (group.shfl_down(lane, 1) == lane)
             & (group.shfl_up(lane, 1) == lane)
