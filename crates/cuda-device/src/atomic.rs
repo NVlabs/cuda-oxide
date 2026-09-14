@@ -488,8 +488,11 @@ define_float_atomic! {
 define_float_atomic! {
     /// 32-bit float atomic, **device scope** (`.gpu`).
     ///
-    /// Supports `fetch_add` via hardware `atom.add.f32` and `swap` via
-    /// `atom.exch.b32`. No compare_exchange (PTX limitation).
+    /// `swap` lowers to hardware `atom.exch.b32`. No compare_exchange (PTX
+    /// limitation). `fetch_add` lowered to hardware `atom.add.f32` through
+    /// LLVM 22; on LLVM 23 the NVPTX backend regressed it to a
+    /// compare-and-swap loop for global-address-space `f32` (tracked in
+    /// <https://github.com/NVlabs/cuda-oxide/issues/1234>).
     pub struct DeviceAtomicF32(f32);
 }
 
