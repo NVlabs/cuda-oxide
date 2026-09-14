@@ -79,7 +79,7 @@ CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 | 11 | `atomic_bitwise_test`            | fetch_and, fetch_or, fetch_xor (`.b32` PTX types)                          |
 | 12 | `atomic_swap_test`               | swap (`atom.exch`) with sentinel 0xDEADBEEF                                |
 | 13 | `atomic_minmax_test`             | AtomicI32 fetch_min/fetch_max (signed `.s32`, range -128..+127)            |
-| 14 | `atomic_f32_fetch_add_test`      | AtomicF32 -- hardware `atom.add.f32` via `atomicrmw fadd`                  |
+| 14 | `atomic_f32_fetch_add_test`      | AtomicF32 fetch_add via `atomicrmw fadd` -- native on LLVM 22, a CAS loop on LLVM 23 (see #1234) |
 
 ### Phase 3: Remaining types, scopes, and coverage
 
@@ -190,7 +190,7 @@ All types are defined in `cuda_device::atomic`:
 |--------------------|------------------------------------------------------|------------------------------|
 | `load`             | Yes                                                  | Yes                          |
 | `store`            | Yes                                                  | Yes                          |
-| `fetch_add`        | Yes                                                  | Yes (`atom.add.f32/f64`)     |
+| `fetch_add`        | Yes                                                  | Yes (native `atom.add.f64`; `f32` is a CAS loop on LLVM 23, see #1234) |
 | `fetch_sub`        | Yes                                                  | --                           |
 | `fetch_and`        | Yes                                                  | --                           |
 | `fetch_or`         | Yes                                                  | --                           |
