@@ -153,3 +153,25 @@ fn reference_validity_rejects_non_kernel_non_pointer_and_out_of_range() {
         .expect_err("out-of-range validity must fail");
     assert!(error.contains("index 3 is out of range"), "{error}");
 }
+
+#[test]
+fn reference_validity_rejects_malformed_marker_indices() {
+    use reserved_oxide_symbols::KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX;
+
+    for suffix in ["", "invalid", "0_extra", "18446744073709551616"] {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "malformed_marker".try_into().unwrap());
+        let module_block = module_top_block(&mut ctx, &module);
+        let ptr = PointerType::get(&ctx, 0);
+        let func = kernel_with_params(&mut ctx, "malformed_marker", vec![ptr.into()], true);
+        let key = format!("{KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX}{suffix}");
+        func.get_operation()
+            .deref_mut(&ctx)
+            .attributes
+            .set(key.try_into().unwrap(), KernelReferenceParamValidityAttr(4));
+        func.get_operation().insert_at_back(module_block, &ctx);
+        let error = export_module_to_string_with_config(&ctx, &module, &PtxExportConfig)
+            .expect_err("malformed reference-validity marker must fail");
+        assert!(error.contains("invalid parameter index"), "{error}");
+    }
+}

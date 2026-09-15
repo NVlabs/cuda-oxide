@@ -221,13 +221,9 @@ pub mod ops {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct KernelReferenceParamValidityAttr(pub u64);
 
-    /// Indexed op-attribute key used on lowered `llvm.func` operations.
-    const KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX: &str =
-        "cuda_oxide_kernel_reference_param_validity_";
-
     fn kernel_reference_param_validity_key(index: usize) -> Identifier {
-        Identifier::try_new(format!(
-            "{KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX}{index}"
+        Identifier::try_new(reserved_oxide_symbols::kernel_reference_param_validity_key(
+            index,
         ))
         .expect("valid kernel reference parameter validity attribute key")
     }
@@ -257,7 +253,7 @@ pub mod ops {
         for (key, _) in &operation.attributes.0 {
             let key_text = key.to_string();
             let Some(index_text) =
-                key_text.strip_prefix(KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX)
+                reserved_oxide_symbols::kernel_reference_param_validity_index_text(&key_text)
             else {
                 continue;
             };
