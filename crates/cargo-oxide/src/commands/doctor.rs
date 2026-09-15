@@ -432,25 +432,55 @@ pub fn doctor(ctx: &Context) {
     // this check reachable on a toolkit-less machine instead of dying inside
     // cuda-bindings' build script (issue #87).
     print!("CUDA headers (cuda.h)... ");
-    let toolkit = cuda_toolkit_root(|var| std::env::var(var).ok());
     let target_dir_override = std::env::var("CUDA_TOOLKIT_TARGET_DIR").ok();
+    let toolkit_choice = resolve_cuda_toolkit(
+        |var| std::env::var(var).ok(),
+        |root| validate_cuda_toolkit(root, target_dir_override.as_deref()),
+    );
     let header_candidates = cuda_header_candidates(
-        &toolkit,
+        &toolkit_choice.root,
         target_dir_override.as_deref(),
         std::env::consts::ARCH,
         std::env::consts::OS,
     );
-    match header_candidates.iter().find(|path| path.is_file()) {
-        Some(found) => println!("✓ {}", found.display()),
-        None => {
-            println!("✗ not found in the CUDA toolkit at `{}`", toolkit);
-            eprintln!("  Probed:");
+    match (
+        &toolkit_choice.source,
+        header_candidates.iter().find(|path| path.is_file()),
+    ) {
+        (ToolkitSource::Explicit(var), Some(found)) => {
+            println!("✓ {} (via {var})", found.display());
+        }
+        (ToolkitSource::Discovered, Some(found)) => {
+            println!(
+                "✓ {} (discovered; neither CUDA_TOOLKIT_PATH nor CUDA_HOME is set)",
+                found.display()
+            );
+        }
+        _ => {
+            println!(
+                "✗ no usable CUDA toolkit; nearest root probed was `{}`",
+                toolkit_choice.root
+            );
+            eprintln!("  Probed for cuda.h:");
             for candidate in &header_candidates {
                 eprintln!("    {}", candidate.display());
             }
+            // The rejections are the point when more than one toolkit is
+            // installed: a root can be turned down for a missing header or
+            // for its version, and without saying which, the later failure
+            // inside cuda-bindings names a header and not the choice.
+            if !toolkit_choice.rejected.is_empty() {
+                eprintln!("  Turned down, in order:");
+                for reason in &toolkit_choice.rejected {
+                    eprintln!("    {reason}");
+                }
+            }
             eprintln!("  Host crates (cuda-bindings) cannot build without cuda.h. Set");
-            eprintln!("  CUDA_TOOLKIT_PATH or CUDA_HOME to a CUDA Toolkit install root;");
-            eprintln!("  when neither is set, /usr/local/cuda is used.");
+            eprintln!("  CUDA_TOOLKIT_PATH or CUDA_HOME to a CUDA 13.0+ toolkit install");
+            eprintln!("  root; when neither is set, these roots are tried in order:");
+            for candidate in DEFAULT_TOOLKIT_CANDIDATES {
+                eprintln!("    {candidate}");
+            }
             ok = false;
         }
     }
@@ -481,8 +511,11 @@ pub fn doctor(ctx: &Context) {
             });
             println!("✗ nvcc not found");
             eprintln!("  Probed PATH, {toolkit}/bin/nvcc, and the standard install roots.");
-            eprintln!("  Set CUDA_TOOLKIT_PATH or CUDA_HOME to a CUDA Toolkit install root;");
-            eprintln!("  when neither is set, /usr/local/cuda is used.");
+            eprintln!("  Set CUDA_TOOLKIT_PATH or CUDA_HOME to a CUDA 13.0+ toolkit install");
+            eprintln!("  root; when neither is set, these roots are tried in order:");
+            for candidate in DEFAULT_TOOLKIT_CANDIDATES {
+                eprintln!("    {candidate}");
+            }
             ok = false;
         }
     }
@@ -757,18 +790,199 @@ pub fn doctor(ctx: &Context) {
     }
 }
 
-/// CUDA toolkit install root for doctor's `cuda.h` probe: the first set
-/// variable among `CUDA_TOOLKIT_PATH`, `CUDA_HOME`, else `/usr/local/cuda`.
+/// The environment variables `cuda-bindings` consults, in its order
+/// (`build.rs`, `TOOLKIT_ENV_VARS`).
+const TOOLKIT_ENV_VARS: [&str; 2] = ["CUDA_TOOLKIT_PATH", "CUDA_HOME"];
+
+/// The roots `cuda-bindings` probes when neither variable is set, in its
+/// order (`build.rs`, `default_cuda_toolkit_candidates`). This is a fixed
+/// preference list, not a version sort, and `/usr/local/cuda` is its *last*
+/// entry rather than the default.
+#[cfg(not(windows))]
+pub(super) const DEFAULT_TOOLKIT_CANDIDATES: [&str; 4] = [
+    "/usr/local/cuda-13.3",
+    "/usr/local/cuda-13.2",
+    "/usr/local/cuda-13",
+    "/usr/local/cuda",
+];
+#[cfg(windows)]
+pub(super) const DEFAULT_TOOLKIT_CANDIDATES: [&str; 2] = [
+    r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3",
+    r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.2",
+];
+
+/// The floor `cuda-bindings` enforces (`build.rs`, `MIN_CUDA_VERSION`):
+/// `CUDA_VERSION` as `cuda.h` spells it, so 13.0 is 13000.
+const MIN_CUDA_VERSION: u32 = 13_000;
+
+/// How a toolkit root was arrived at, so doctor can report the same thing the
+/// build script would have decided rather than a plausible-looking guess.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ToolkitSource {
+    /// A variable was set and its toolkit validated.
+    Explicit(&'static str),
+    /// No variable was set; this candidate was the first to validate.
+    Discovered,
+    /// Nothing validated. `root` is only somewhere to point the message.
+    Unresolved,
+}
+
+/// A toolkit root together with how it was chosen and what was turned down on
+/// the way, which is the part a user needs when two toolkits are installed.
+#[derive(Debug)]
+pub(super) struct ToolkitChoice {
+    pub(super) root: String,
+    pub(super) source: ToolkitSource,
+    /// `<root or variable>: <reason>`, in probe order.
+    pub(super) rejected: Vec<String>,
+}
+
+/// Resolve the CUDA toolkit the way the host `cuda-bindings` build script
+/// does: each variable in turn, then the fixed candidate list, accepting the
+/// first root that carries a `cuda.h` at or above the version floor.
 ///
-/// Mirrors BY HAND the toolkit probe in the shared `cuda-bindings` build
-/// script, which lives in NVlabs/cutile-rs (`cuda-bindings/build.rs`): doctor
-/// cannot import it because build-script logic is not a library. If that
-/// discovery changes, mirror it here.
-pub(super) fn cuda_toolkit_root(mut get_env: impl FnMut(&str) -> Option<String>) -> String {
-    ["CUDA_TOOLKIT_PATH", "CUDA_HOME"]
-        .iter()
-        .find_map(|var| get_env(var).filter(|value| !value.trim().is_empty()))
-        .unwrap_or_else(|| "/usr/local/cuda".to_string())
+/// Mirrors BY HAND `resolve_cuda_toolkit`, `find_default_cuda_toolkit` and
+/// `validate_cuda_toolkit` in the shared `cuda-bindings` build script, which
+/// lives in NVlabs/cutile-rs (`cuda-bindings/build.rs`) and is pinned at
+/// `cuda-bindings = "0.3.1"` in the root manifest: doctor cannot import it
+/// because build-script logic is not a library. If that discovery changes,
+/// mirror it here.
+///
+/// The previous mirror had drifted to "first set variable, else
+/// `/usr/local/cuda`", which is wrong in three ways that matter on a machine
+/// with more than one toolkit installed (#1265): there is a candidate list
+/// before that last entry, each candidate must actually contain a `cuda.h`
+/// new enough to clear the floor, and a variable set to an empty string is an
+/// error rather than a reason to look elsewhere. Doctor reported a healthy
+/// toolkit while the build resolved a different one and then failed on a
+/// header, which is precisely the case doctor exists to explain.
+///
+/// `validate` answers "is this root a usable toolkit", returning its
+/// `CUDA_VERSION` or why not; it is injected so the ordering can be tested
+/// without a filesystem.
+pub(super) fn resolve_cuda_toolkit(
+    mut get_env: impl FnMut(&str) -> Option<String>,
+    mut validate: impl FnMut(&str) -> Result<u32, String>,
+) -> ToolkitChoice {
+    for var in TOOLKIT_ENV_VARS {
+        let Some(value) = get_env(var) else {
+            continue;
+        };
+        // An explicitly set variable is answered, not stepped over: the build
+        // script fails on it rather than falling through to discovery, so a
+        // typo in CUDA_HOME must not read here as a healthy default install.
+        if value.is_empty() {
+            return ToolkitChoice {
+                root: last_resort_toolkit_root(),
+                source: ToolkitSource::Unresolved,
+                rejected: vec![format!("{var} is set to an empty string")],
+            };
+        }
+        return match validate(&value) {
+            Ok(_) => ToolkitChoice {
+                root: value,
+                source: ToolkitSource::Explicit(var),
+                rejected: Vec::new(),
+            },
+            Err(reason) => ToolkitChoice {
+                rejected: vec![format!("{var}={value} is invalid: {reason}")],
+                root: value,
+                source: ToolkitSource::Unresolved,
+            },
+        };
+    }
+
+    let mut rejected = Vec::new();
+    for candidate in DEFAULT_TOOLKIT_CANDIDATES {
+        match validate(candidate) {
+            Ok(_) => {
+                return ToolkitChoice {
+                    root: candidate.to_string(),
+                    source: ToolkitSource::Discovered,
+                    rejected,
+                };
+            }
+            Err(reason) => rejected.push(format!("{candidate}: {reason}")),
+        }
+    }
+
+    ToolkitChoice {
+        root: last_resort_toolkit_root(),
+        source: ToolkitSource::Unresolved,
+        rejected,
+    }
+}
+
+/// Where to point a message when nothing resolved. Not a discovery result:
+/// the build script errors in this situation, and the callers that only want
+/// a path to probe still need one.
+fn last_resort_toolkit_root() -> String {
+    DEFAULT_TOOLKIT_CANDIDATES
+        .last()
+        .expect("candidate list is never empty")
+        .to_string()
+}
+
+/// `resolve_cuda_toolkit` against the real filesystem, for callers that want
+/// only the root.
+pub(super) fn cuda_toolkit_root(get_env: impl FnMut(&str) -> Option<String>) -> String {
+    resolve_cuda_toolkit(get_env, |root| {
+        validate_cuda_toolkit(
+            root,
+            std::env::var("CUDA_TOOLKIT_TARGET_DIR").ok().as_deref(),
+        )
+    })
+    .root
+}
+
+/// Accept `root` as a toolkit exactly as `validate_cuda_toolkit` does: it
+/// must be a directory holding a `cuda.h` in one of the layouts
+/// [`cuda_header_candidates`] lists, and that header's `CUDA_VERSION` must
+/// clear [`MIN_CUDA_VERSION`].
+pub(super) fn validate_cuda_toolkit(
+    root: &str,
+    target_dir_override: Option<&str>,
+) -> Result<u32, String> {
+    if !Path::new(root).is_dir() {
+        return Err(format!("{root} is not a directory"));
+    }
+    let candidates = cuda_header_candidates(
+        root,
+        target_dir_override,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+    );
+    let Some(header) = candidates.iter().find(|path| path.is_file()) else {
+        return Err(format!("{root} does not contain cuda.h"));
+    };
+    let contents = std::fs::read_to_string(header)
+        .map_err(|error| format!("{} could not be read: {error}", header.display()))?;
+    let version = cuda_version_from_header(&contents)
+        .ok_or_else(|| format!("could not find CUDA_VERSION in {}", header.display()))?;
+    if version < MIN_CUDA_VERSION {
+        return Err(format!(
+            "CUDA toolkit {} is too old; the host crates require CUDA 13.0+",
+            format_cuda_version(version)
+        ));
+    }
+    Ok(version)
+}
+
+/// `#define CUDA_VERSION <number>` out of a `cuda.h`, as the build script
+/// reads it: the first such line, by whitespace-separated tokens.
+pub(super) fn cuda_version_from_header(contents: &str) -> Option<u32> {
+    contents.lines().find_map(|line| {
+        let mut tokens = line.split_whitespace();
+        match (tokens.next(), tokens.next(), tokens.next()) {
+            (Some("#define"), Some("CUDA_VERSION"), Some(version)) => version.parse().ok(),
+            _ => None,
+        }
+    })
+}
+
+/// `13000` as `13.0`, matching the build script's `format_cuda_version`.
+pub(super) fn format_cuda_version(version: u32) -> String {
+    format!("{}.{}", version / 1000, (version % 1000) / 10)
 }
 
 /// Candidate `cuda.h` paths under `toolkit`, in probe order: the standard

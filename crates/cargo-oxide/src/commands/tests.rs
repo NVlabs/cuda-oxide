@@ -3315,25 +3315,140 @@ fn parse_gpu_name_cap_and_driver_splits_on_last_two_commas() {
 }
 
 #[test]
-fn cuda_toolkit_root_prefers_toolkit_path_then_home_then_default() {
-    let toolkit_and_home = cuda_toolkit_root(|var| match var {
-        "CUDA_TOOLKIT_PATH" => Some("/cuda/toolkit".to_string()),
-        "CUDA_HOME" => Some("/cuda/home".to_string()),
-        _ => None,
-    });
-    assert_eq!(toolkit_and_home, "/cuda/toolkit");
+fn cuda_toolkit_resolution_prefers_toolkit_path_then_home() {
+    let accept_all = |_: &str| Ok(13_030);
 
-    let home_only = cuda_toolkit_root(|var| (var == "CUDA_HOME").then(|| "/cuda/home".to_string()));
-    assert_eq!(home_only, "/cuda/home");
+    let both = resolve_cuda_toolkit(
+        |var| match var {
+            "CUDA_TOOLKIT_PATH" => Some("/cuda/toolkit".to_string()),
+            "CUDA_HOME" => Some("/cuda/home".to_string()),
+            _ => None,
+        },
+        accept_all,
+    );
+    assert_eq!(both.root, "/cuda/toolkit");
+    assert_eq!(both.source, ToolkitSource::Explicit("CUDA_TOOLKIT_PATH"));
+    assert!(both.rejected.is_empty());
 
-    let empty_toolkit_path = cuda_toolkit_root(|var| match var {
-        "CUDA_TOOLKIT_PATH" => Some("  ".to_string()),
-        "CUDA_HOME" => Some("/cuda/home".to_string()),
-        _ => None,
-    });
-    assert_eq!(empty_toolkit_path, "/cuda/home");
+    let home_only = resolve_cuda_toolkit(
+        |var| (var == "CUDA_HOME").then(|| "/cuda/home".to_string()),
+        accept_all,
+    );
+    assert_eq!(home_only.root, "/cuda/home");
+    assert_eq!(home_only.source, ToolkitSource::Explicit("CUDA_HOME"));
+}
 
-    assert_eq!(cuda_toolkit_root(|_| None), "/usr/local/cuda");
+#[test]
+fn an_explicit_toolkit_that_does_not_validate_is_answered_not_stepped_over() {
+    // The build script fails on a variable that is set but does not validate,
+    // rather than falling through to discovery. A typo in CUDA_HOME must not
+    // read here as a healthy default install (#1265).
+    let typo = resolve_cuda_toolkit(
+        |var| (var == "CUDA_HOME").then(|| "/cuda/typo".to_string()),
+        |root| Err(format!("{root} does not contain cuda.h")),
+    );
+    assert_eq!(typo.source, ToolkitSource::Unresolved);
+    assert_eq!(typo.root, "/cuda/typo");
+    assert_eq!(
+        typo.rejected,
+        vec!["CUDA_HOME=/cuda/typo is invalid: /cuda/typo does not contain cuda.h"]
+    );
+
+    // An empty value is its own error there, not an unset variable.
+    let empty = resolve_cuda_toolkit(
+        |var| (var == "CUDA_TOOLKIT_PATH").then(String::new),
+        |_| Ok(13_030),
+    );
+    assert_eq!(empty.source, ToolkitSource::Unresolved);
+    assert_eq!(
+        empty.rejected,
+        vec!["CUDA_TOOLKIT_PATH is set to an empty string"]
+    );
+}
+
+#[test]
+fn discovery_takes_the_first_candidate_that_validates() {
+    // The drift this fixes: the old mirror answered `/usr/local/cuda` for an
+    // unset environment, while the build script walks a fixed list and stops
+    // at the first root carrying a new-enough cuda.h. Indices rather than
+    // literals, so the assertion is about the order and not about the paths.
+    let chosen = DEFAULT_TOOLKIT_CANDIDATES[1];
+    let skipped = DEFAULT_TOOLKIT_CANDIDATES[0];
+    let choice = resolve_cuda_toolkit(
+        |_| None,
+        |root| {
+            if root == chosen {
+                Ok(13_020)
+            } else {
+                Err(format!("{root} does not contain cuda.h"))
+            }
+        },
+    );
+    assert_eq!(choice.source, ToolkitSource::Discovered);
+    assert_eq!(choice.root, chosen);
+    assert_eq!(
+        choice.rejected,
+        vec![format!("{skipped}: {skipped} does not contain cuda.h")]
+    );
+
+    // Nothing validates: every candidate is reported, and the root is only
+    // somewhere to point the message.
+    let nothing = resolve_cuda_toolkit(|_| None, |root| Err(format!("{root} is not a directory")));
+    assert_eq!(nothing.source, ToolkitSource::Unresolved);
+    assert_eq!(nothing.root, *DEFAULT_TOOLKIT_CANDIDATES.last().unwrap());
+    assert_eq!(nothing.rejected.len(), DEFAULT_TOOLKIT_CANDIDATES.len());
+}
+
+#[test]
+fn validate_cuda_toolkit_applies_the_build_scripts_acceptance() {
+    let root = unique_temp_dir("cargo_oxide_toolkit_validate");
+    fs::create_dir_all(root.join("include")).unwrap();
+    let cuda_h = root.join("include/cuda.h");
+    let root_str = root.to_str().unwrap().to_string();
+
+    fs::write(&cuda_h, "#define CUDA_VERSION 13030\n").unwrap();
+    assert_eq!(validate_cuda_toolkit(&root_str, None), Ok(13_030));
+
+    // The floor is the build script's 13.0, not a guess: a toolkit below it
+    // is rejected even though cuda.h is right there.
+    fs::write(&cuda_h, "#define CUDA_VERSION 12080\n").unwrap();
+    let too_old = validate_cuda_toolkit(&root_str, None).unwrap_err();
+    assert!(too_old.contains("too old"), "{too_old}");
+    assert!(too_old.contains("12.8"), "{too_old}");
+
+    fs::remove_file(&cuda_h).unwrap();
+    let headerless = validate_cuda_toolkit(&root_str, None).unwrap_err();
+    assert!(
+        headerless.contains("does not contain cuda.h"),
+        "{headerless}"
+    );
+
+    let absent = validate_cuda_toolkit(&format!("{root_str}/nope"), None).unwrap_err();
+    assert!(absent.contains("is not a directory"), "{absent}");
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn cuda_version_from_header_reads_the_define_the_build_script_reads() {
+    assert_eq!(
+        cuda_version_from_header("#define CUDA_VERSION 13030"),
+        Some(13_030)
+    );
+    assert_eq!(
+        cuda_version_from_header("/* preamble */\n#define CUDA_VERSION   13000  \n"),
+        Some(13_000)
+    );
+    // A neighbouring define is not the one, and neither is prose.
+    assert_eq!(
+        cuda_version_from_header("#define CUDA_VERSION_MAJOR 13"),
+        None
+    );
+    assert_eq!(cuda_version_from_header("no defines here"), None);
+
+    assert_eq!(format_cuda_version(13_030), "13.3");
+    assert_eq!(format_cuda_version(13_000), "13.0");
+    assert_eq!(format_cuda_version(12_080), "12.8");
 }
 
 #[test]

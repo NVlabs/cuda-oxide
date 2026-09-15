@@ -272,9 +272,11 @@ fn build_unused_helper(module: &mut CodegenModule) {
     });
 }
 
-/// Locate `ptxas`. Discovery order, mirroring the toolkit contract that
-/// `cargo oxide doctor`'s `cuda_toolkit_root` implements (the shared
-/// `cuda-bindings` build script in NVlabs/cutile-rs probes the same way):
+/// Locate `ptxas`. This is a deliberately simpler probe than the toolkit
+/// contract in `cargo oxide doctor` (`resolve_cuda_toolkit`, which mirrors the
+/// shared `cuda-bindings` build script): finding a binary under `bin/` needs
+/// no `cuda.h` and no version floor, so this does not claim to implement that
+/// contract. Order:
 ///
 /// 1. `CUDA_TOOLKIT_PATH`, then `CUDA_HOME` — first non-empty one wins
 /// 2. `/usr/local/cuda`, the conventional default prefix
