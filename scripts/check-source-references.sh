@@ -7,7 +7,7 @@
 # references pointing at paths it had removed -- a test's module doc at
 # `crates/mir-lower/src/convert/types.rs`, two example READMEs at
 # `crates/mir-importer/src/translator/rvalue.rs`. #1197 repointed those, and 14
-# more in other spellings. Nothing had noticed: a path in prose is compiled by
+# more in other forms. Nothing had noticed: a path in prose is compiled by
 # nothing, `check-host-api-paths.sh` checks Rust *API* paths rather than files,
 # and the book gate only builds. The reference just goes quiet, and a reader
 # follows it into nothing.
@@ -23,7 +23,7 @@
 #
 #   * A path is only checked when it is anchored at a repo root -- crates/,
 #     cuda-oxide-book/, scripts/ -- and carries a file extension. That
-#     is the spelling a new reference normally takes, and the only one that is
+#     is the form a new reference normally takes, and the only one that is
 #     unambiguous on its own. Each root is verified to be a real tracked
 #     directory before the sweep, so a renamed root fails here rather than
 #     silently matching nothing.
@@ -38,7 +38,7 @@
 # Generated outputs are declared, never inferred. An earlier revision skipped a
 # path whose parent directory held no tracked file, reasoning that such a
 # directory must be an output location. That is exactly backwards: deleting or
-# misspelling a directory produces the same signal as generating into one, so
+# mistyping a directory produces the same signal as generating into one, so
 # the broken reference this guard exists to catch was the case it let through.
 # The list below is the whole accommodation, and it is verified rather than
 # trusted -- an entry nothing refers to any more is an error, so it cannot rot
@@ -52,172 +52,204 @@
 #     `mir-importer/src/translator/terminator/intrinsics/atomic.rs`, which is
 #     correct as shorthand. Rooting there would fail that line.
 #   * Crate-relative (`mir-lower/src/convert/types.rs`) and bare-basename
-#     ("the walker in `rvalue.rs`") spellings are not checked. #1197's
+#     ("the walker in `rvalue.rs`") forms are not checked. #1197's
 #     follow-up fixed 14 references written that way, so this is a real gap and
 #     is stated rather than papered over -- telling `rvalue.rs` in prose from
 #     any other mention of it is guesswork, and a guard that guesses is worse
 #     than one that is narrow.
 set -euo pipefail
-
 export LC_ALL=C
-
 cd "$(dirname "$0")/.."
 
-ROOTS='crates|cuda-oxide-book|scripts'
-EXTS='rs|md|sh|toml|jsonl|json|ll|py|yaml|yml'
-# The trailing \b matters: without it `.json` matches inside `.jsonl` and the
-# guard reports a path nobody wrote. Longer alternatives lead for the same
-# reason.
-PATTERN="(${ROOTS})/[A-Za-z0-9._/-]+\.(${EXTS})\b"
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "error: python3 is required to check source references" >&2
+    exit 1
+fi
 
-# Paths that prose may name even though the repository does not contain them,
-# because something writes them at run time. Each one is an explicit decision,
-# not a shape the guard infers.
-#
-#   crates/fuzzer/artifacts/summary.jsonl -- run_seed.py writes it and clears
-#   the directory on every invocation; crates/fuzzer/README.md documents it.
-GENERATED_OUTPUT_PATHS=(
-    crates/fuzzer/artifacts/summary.jsonl
+python3 - <<'PY'
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+ROOTS = ("crates", "cuda-oxide-book", "scripts")
+EXTS = ("rs", "md", "sh", "toml", "jsonl", "json", "ll", "py", "yaml", "yml")
+# run_seed.py writes and clears this output; the fuzzer README names it.
+GENERATED_OUTPUT_PATHS = {"crates/fuzzer/artifacts/summary.jsonl"}
+
+# Read complete tokens first, then classify them. Whitespace and ordinary
+# Markdown/prose wrappers delimit tokens. Scheme-prefixed and network-path
+# URI spans are consumed first, including their internal prose punctuation;
+# `https://host/x;crates/foo.rs` is one external reference. Balanced square
+# brackets stay within a URI (e.g. an IPv6 host); an unmatched closing bracket
+# can still end a Markdown link label. A slash, dot, hyphen, backslash or
+# colon stays inside other tokens, so longer paths never donate suffixes.
+# This is lexical classification, not a URL resolver or a scheme allowlist.
+TOKEN = re.compile(
+    r'''(?P<uri>[*_]*(?:[A-Za-z][A-Za-z0-9+.-]*:|//)(?:\[[^\]\s`'"<>]*\]|[^\s`'"<>\[\]])+)'''
+    r'''|[^\s`'"<>()\[\],;|]+'''
 )
+PATH = re.compile(
+    r"(?:" + "|".join(map(re.escape, ROOTS)) + r")/[A-Za-z0-9._/-]+\."
+    r"(?:" + "|".join(map(re.escape, EXTS)) + r")"
+)
+DOC_LINE = re.compile(r"^\s*(?:///(?!/)|//!)")
+LINE_SUFFIX = re.compile(r":[0-9]+(?:[-:][0-9]+)*$")
 
-tracked_list="$(mktemp)"
-trap 'rm -f "${tracked_list}"' EXIT
-git ls-files >"${tracked_list}"
 
-is_tracked() { grep -qxF -- "$1" "${tracked_list}"; }
+def paths_in_line(line):
+    cursor = 0
+    while match := TOKEN.search(line, cursor):
+        cursor = match.end()
+        if match.lastgroup == "uri":
+            # A parenthesized URI ends at its matching closing delimiter,
+            # not at the end of the next adjacent Markdown link. Balance
+            # nested parentheses in the URI and preserve escaped delimiters.
+            # Bare/angle-quoted URIs retain their entire punctuation span.
+            if match.start() > 0 and line[match.start() - 1] == "(":
+                depth = 0
+                escaped = False
+                for index in range(match.start(), match.end()):
+                    char = line[index]
+                    if escaped:
+                        escaped = False
+                    elif char == "\\":
+                        escaped = True
+                    elif char == "(":
+                        depth += 1
+                    elif char == ")":
+                        if depth == 0:
+                            cursor = index + 1
+                            break
+                        depth -= 1
+            continue
+        token = match.group().rstrip(".!?:")
+        # Paired, possibly nested Markdown emphasis is a wrapper, not a glob
+        # suffix. Punctuation can sit inside or outside the closing marker.
+        while len(token) > 1 and token[0] in "*_" and token[-1] == token[0]:
+            token = token[1:-1]
+        token = token.rstrip(".!?:")
+        # A link fragment and a numeric source-line/range citation are not
+        # part of a filename. Other suffixes stay intact: `.rs.backup` must
+        # not be checked as `.rs`, and `:word` is not a line citation.
+        token = token.partition("#")[0]
+        token = LINE_SUFFIX.sub("", token)
+        # The tree also writes shell commands as ./scripts/foo.sh. Accept
+        # that explicit current-root form, without resolving parents,
+        # absolute paths or another project's leading directory.
+        if token.startswith("./"):
+            token = token[2:]
+        if PATH.fullmatch(token):
+            yield token
 
-is_generated_output() {
-    local declared
-    for declared in "${GENERATED_OUTPUT_PATHS[@]}"; do
-        [[ "$1" == "${declared}" ]] && return 0
-    done
-    return 1
-}
 
-# Roots are verified rather than assumed: if one is renamed, the pattern would
-# quietly stop matching anything under it and the guard would report a clean
-# tree for the wrong reason.
-for root in crates cuda-oxide-book scripts; do
-    if ! grep -qE "^${root}/" "${tracked_list}"; then
-        echo "error: source-reference guard: '${root}/' holds no tracked file," >&2
-        echo "       so the pattern anchored there can no longer match; update" >&2
-        echo "       ROOTS in $0" >&2
-        exit 1
-    fi
-done
+def references(filename, text):
+    suffix = pathlib.PurePosixPath(filename).suffix
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if suffix == ".rs":
+            marker = DOC_LINE.match(line)
+            if marker is None:
+                continue
+            line = line[marker.end():]
+        if suffix in (".md", ".rs"):
+            for path in sorted(set(paths_in_line(line))):
+                yield lineno, path
 
-# `grep -n` keeps the line number; the *.rs arm narrows to doc comments first
-# so a path mentioned in code is never read as a claim about the tree.
-prose_lines() {
-    case "$1" in
-    *.md) grep -nE "${PATTERN}" -- "$1" 2>/dev/null || true ;;
-    *.rs) grep -nE '^[[:space:]]*(///|//!)' -- "$1" 2>/dev/null |
-        grep -E "${PATTERN}" || true ;;
-    esac
-}
 
-# The one scanner. The self-test below runs *this*, not a paraphrase of it, so
-# disabling any step -- the pattern, the tracked test, the generated-output
-# accommodation -- fails the self-test instead of quietly reporting a clean
-# tree.
-broken_in_file() {
-    local file="$1" hit lineno path
-    while IFS= read -r hit; do
-        [ -n "${hit}" ] || continue
-        lineno="${hit%%:*}"
-        while IFS= read -r path; do
-            [ -n "${path}" ] || continue
-            # A traversal segment cannot be resolved against the repository
-            # root, so it is never a valid claim about a tracked file.
-            case "${path}" in
-            */../* | ../* | */..) printf '%s:%s: names %s, which escapes the repository root\n' \
-                "${file}" "${lineno}" "${path}"; continue ;;
-            esac
-            is_generated_output "${path}" && continue
-            if ! is_tracked "${path}"; then
-                printf '%s:%s: names %s, which is not tracked in this repository\n' \
-                    "${file}" "${lineno}" "${path}"
-            fi
-        done < <(printf '%s\n' "${hit#*:}" | grep -oE "${PATTERN}" | sort -u)
-    done < <(prose_lines "${file}")
-}
+def broken_references(refs, tracked, generated):
+    for lineno, path in refs:
+        if ".." in path.split("/"):
+            yield lineno, path, "contains an unsupported traversal segment"
+        elif path not in generated and path not in tracked:
+            yield lineno, path, "is not tracked in this repository"
 
-# Declared accommodations are verified, not trusted: an entry nothing names any
-# more is a silent exemption waiting to hide a real break.
-for declared in "${GENERATED_OUTPUT_PATHS[@]}"; do
-    if is_tracked "${declared}"; then
-        echo "error: source-reference guard: '${declared}' is listed as a" >&2
-        echo "       generated output but is tracked; drop it from" >&2
-        echo "       GENERATED_OUTPUT_PATHS in $0" >&2
-        exit 1
-    fi
-    if ! git grep -qF -- "${declared}" -- '*.md' '*.rs' 2>/dev/null; then
-        echo "error: source-reference guard: nothing refers to '${declared}'" >&2
-        echo "       any more; drop it from GENERATED_OUTPUT_PATHS in $0" >&2
-        exit 1
-    fi
-done
 
-# Self-test. The failure mode this guard has to survive is "silently stops
-# reporting", so run the real scanner over prose naming, in turn: a missing
-# file whose directory the repo does track, a missing file whose directory it
-# does *not* (the case an earlier revision let through), an untracked file that
-# exists on disk right now, and a tracked file. The first three must be
-# reported and the fourth must not.
-canary="$(mktemp -d)"
-canary_untracked="crates/zz-source-reference-canary-$$.rs"
-trap 'rm -f "${tracked_list}" "${canary_untracked}"; rm -rf "${canary}"' EXIT
-printf 'prose naming crates/cuda-device/src/no-such-file-%s.rs inline\n' "$$" >"${canary}/dead_in_live_dir.md"
-printf 'prose naming crates/no-such-crate-%s/src/lib.rs inline\n' "$$" >"${canary}/dead_dir.md"
-printf 'prose naming %s inline\n' "${canary_untracked}" >"${canary}/untracked.md"
-# Any tracked path the pattern matches, chosen from the index rather than
-# named: hard-coding this script's own path made the self-test depend on the
-# guard already being committed, which is false on the branch that adds it and
-# in any historical worktree.
-canary_live="$(grep -m1 -E "^(${ROOTS})/[A-Za-z0-9._/-]+\.(${EXTS})$" "${tracked_list}")"
-if [ -z "${canary_live}" ]; then
-    echo "error: source-reference guard: the index holds no path the pattern" >&2
-    echo "       matches, so the self-test cannot prove the tracked case" >&2
-    exit 1
-fi
-printf 'prose naming %s inline\n' "${canary_live}" >"${canary}/live.md"
-: >"${canary_untracked}"
+def declaration_errors(generated, tracked, referenced):
+    for path in sorted(generated):
+        if path in tracked:
+            yield f"'{path}' is declared generated but is tracked"
+        elif path not in referenced:
+            yield f"no scanned prose reference names generated output '{path}'"
 
-canary_hits() { broken_in_file "${canary}/$1" | wc -l; }
-if [ "$(canary_hits dead_in_live_dir.md)" -ne 1 ] ||
-    [ "$(canary_hits dead_dir.md)" -ne 1 ] ||
-    [ "$(canary_hits untracked.md)" -ne 1 ] ||
-    [ "$(canary_hits live.md)" -ne 0 ]; then
-    echo "error: source-reference guard self-test failed: the scanner no longer" >&2
-    echo "       separates a tracked path from a missing one, a missing" >&2
-    echo "       directory, or a file that exists only in this checkout, so a" >&2
-    echo "       clean result on the tree means nothing" >&2
-    exit 1
-fi
-rm -f "${canary_untracked}"
 
-checked=0
-broken=0
-while IFS= read -r file; do
-    while IFS= read -r problem; do
-        [ -n "${problem}" ] || continue
-        printf '%s\n' "${problem}" >&2
-        broken=$((broken + 1))
-    done < <(broken_in_file "${file}")
-    while IFS= read -r _path; do
-        [ -n "${_path}" ] || continue
-        checked=$((checked + 1))
-    done < <(prose_lines "${file}" | grep -oE "${PATTERN}" | sort -u)
-done < <(git ls-files -- '*.md' '*.rs')
+tracked = set(subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0"))
+tracked.discard("")
+for root in ROOTS:
+    if not any(path.startswith(root + "/") for path in tracked):
+        sys.exit(f"error: source-reference guard: '{root}/' holds no tracked file; update ROOTS")
 
-if [ "${broken}" -ne 0 ]; then
-    echo "" >&2
-    echo "error: ${broken} prose reference(s) name a path this repository does" >&2
-    echo "       not track. Repoint each one at where the code lives now; if" >&2
-    echo "       the surrounding sentence describes the old shape, it needs" >&2
-    echo "       rewriting too, not just a new path. A path written at run" >&2
-    echo "       time belongs in GENERATED_OUTPUT_PATHS in $0, with the reason." >&2
-    exit 1
-fi
+# Exercise the actual extractor, prose filter, and membership decision. The
+# untracked control really exists on disk, so replacing index membership with
+# filesystem existence fails here. The tracked example comes from this index,
+# which also permits running the guard in historical worktrees.
+live = next((path for path in sorted(tracked) if PATH.fullmatch(path)), None)
+if live is None:
+    sys.exit("error: source-reference guard: no tracked path matches the declared roots/extensions")
+with tempfile.NamedTemporaryFile(prefix="zz-source-reference-", suffix=".rs", dir="crates") as canary:
+    untracked = pathlib.Path(canary.name).relative_to(pathlib.Path.cwd()).as_posix()
+    missing = "crates/no-such-source-reference-crate/src/lib.rs"
+    # Synthetic policy inputs exercise the same decision functions even when
+    # the repository no longer needs any generated-output declarations.
+    output = "crates/source-reference-canary/generated.jsonl"
+    generated = {output}
+    controls = [
+        ("case.md", "crates/cuda-device/src/no-such-source-reference-file.rs", 1),
+        ("case.md", missing, 1),
+        ("case.md", untracked, 1),
+        ("case.md", f"`{live}`, [{live}]({live}#L1); **{live}**; {live}:1-2.", 0),
+        ("case.md", output, 0),
+        ("case.md", f"https://example.invalid/{missing}", 0),
+        ("case.md", f"https://example.invalid/x;{missing} https://example.invalid/x,({missing})", 0),
+        ("case.md", f"//example.invalid/x;{missing} https://[::1]/x;{missing}", 0),
+        ("case.md", f"**https://example.invalid/({missing})** *_//example.invalid/x;{missing}_*", 0),
+        ("case.md", f"old-{missing} vendor/{missing} /opt/{missing}", 0),
+        ("case.md", f"{missing}.backup {missing}-backup", 0),
+        ("case.md", f"{missing}.md", 1),
+        ("case.md", f"./{missing}", 1),
+        ("case.md", f"`{missing}`,\n[source]({missing}#L1)\n**{missing}**\n{missing}:1-2.", 4),
+        ("case.md", f"***{missing}***\n**_{missing}_**\n**{missing}:1-2.**", 3),
+        ("case.md", f"[https://example.invalid]({missing})", 1),
+        ("case.md", f"[external](https://example.invalid/a)[source]({missing})", 1),
+        ("case.md", f"[external](https://[::1]/a_(b(c)))[source]({missing})", 1),
+        ("case.md", "crates/../scripts/no-such-source-reference-file.sh", 1),
+        ("case.rs", f"/// {missing}\n//! {missing}", 2),
+        ("case.rs", f"///{missing}\n//!{missing}", 2),
+        ("case.rs", f'// {missing}\n//// {missing}\nconst P: &str = "{missing}";', 0),
+    ]
+    for filename, text, expected in controls:
+        actual = list(broken_references(references(filename, text), tracked, generated))
+        if len(actual) != expected:
+            sys.exit(f"error: source-reference guard self-test failed for {text!r}: {actual}")
+    if list(paths_in_line(f"`{live}` {output}")) != [live, output]:
+        sys.exit("error: source-reference guard self-test failed to extract live/output paths")
+    for text in (f'const P: &str = "{output}";', f"/// https://example.invalid/{output}"):
+        seen = {path for _, path in references("case.rs", text)}
+        if not list(declaration_errors({output}, tracked, seen)):
+            sys.exit("error: generated-output self-test accepted a reference outside prose scope")
+    if not list(declaration_errors({output}, tracked | {output}, {output})):
+        sys.exit("error: generated-output self-test accepted an already tracked output")
 
-echo "source references ok: ${checked} repo-anchored paths in prose, all tracked"
+checked = 0
+broken = []
+referenced = set()
+for filename in sorted(tracked):
+    if pathlib.PurePosixPath(filename).suffix not in (".md", ".rs"):
+        continue
+    refs = list(references(filename, pathlib.Path(filename).read_text(encoding="utf-8")))
+    referenced.update(path for _, path in refs)
+    checked += len({path for _, path in refs})
+    broken.extend(
+        f"{filename}:{lineno}: names {path}, which {reason}"
+        for lineno, path, reason in broken_references(refs, tracked, GENERATED_OUTPUT_PATHS)
+    )
+
+errors = list(declaration_errors(GENERATED_OUTPUT_PATHS, tracked, referenced))
+for error in errors:
+    print(f"error: source-reference guard: {error}; update GENERATED_OUTPUT_PATHS", file=sys.stderr)
+for problem in broken:
+    print(problem, file=sys.stderr)
+if errors or broken:
+    sys.exit("error: source references failed; repoint stale prose and declare generated outputs explicitly")
+print(f"source references ok: {checked} repo-anchored paths in prose, all tracked or declared generated outputs")
+PY
