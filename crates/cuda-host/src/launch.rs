@@ -153,21 +153,40 @@ pub fn push_kernel_scalar<T: KernelScalar>(args: &mut Vec<*mut c_void>, value: &
 /// and aligned even when its byte extent is zero. Normalize only the launch
 /// packet in that case; the owning buffer keeps its original pointer and no
 /// backing allocation is implied by this sentinel.
+///
+/// CUDA allocation does not guarantee arbitrary Rust over-alignment. Check the
+/// actual address for nonzero byte extents before exposing the slice to a
+/// kernel whose reference parameters promise `nonnull` and `align` to LLVM.
 #[inline]
+#[track_caller]
 fn kernel_slice_device_ptr<T>(
     ptr: cuda_core::sys::CUdeviceptr,
     len: usize,
 ) -> cuda_core::sys::CUdeviceptr {
+    let alignment = std::mem::align_of::<T>() as cuda_core::sys::CUdeviceptr;
     if len == 0 || std::mem::size_of::<T>() == 0 {
-        std::mem::align_of::<T>() as cuda_core::sys::CUdeviceptr
-    } else {
-        ptr
+        return alignment;
     }
+    assert_ne!(ptr, 0, "nonempty kernel slice has a null device pointer");
+    assert_eq!(
+        ptr % alignment,
+        0,
+        "kernel slice device pointer {ptr:#x} does not satisfy the {alignment}-byte alignment of {}",
+        std::any::type_name::<T>(),
+    );
+    ptr
 }
 
 /// Returns the `(device pointer, element count)` pair used for read-only slice
 /// parameters such as `&[T]`.
+///
+/// # Panics
+///
+/// Panics before launch if a nonzero byte extent has a null device pointer or
+/// its address is not aligned for `T`. In particular, CUDA allocation alone
+/// does not establish arbitrary `#[repr(align(N))]` requirements.
 #[inline]
+#[track_caller]
 #[doc(hidden)]
 pub fn read_only_device_buffer_arg<T>(
     buffer: &cuda_core::DeviceBuffer<T>,
@@ -185,7 +204,13 @@ pub fn read_only_device_buffer_arg<T>(
 /// `DisjointSlice` shares this host packet helper, so its zero-byte packet gets
 /// the same harmless canonical pointer spelling. That does not derive or imply
 /// any LLVM reference-validity attribute for `DisjointSlice`.
+///
+/// # Panics
+///
+/// Panics before launch if a nonzero byte extent has a null device pointer or
+/// its address is not aligned for `T`.
 #[inline]
+#[track_caller]
 #[doc(hidden)]
 pub fn writable_device_buffer_arg<T>(
     buffer: &mut cuda_core::DeviceBuffer<T>,
@@ -310,14 +335,21 @@ impl<B> RowWidthOwned<B> {
 
 /// Returns the `(device pointer, element count, row width)` triple used for
 /// writable slice parameters whose index space carries a runtime row width.
+///
+/// # Panics
+///
+/// Panics before launch if a nonzero byte extent has a null device pointer or
+/// its address is not aligned for `T`.
 #[inline]
+#[track_caller]
 #[doc(hidden)]
 pub fn row_width_device_buffer_arg<T>(
     bound: RowWidth<'_, T>,
 ) -> (cuda_core::sys::CUdeviceptr, u64, u32) {
+    let len = bound.buffer.len();
     (
-        bound.buffer.cu_deviceptr(),
-        bound.buffer.len() as u64,
+        kernel_slice_device_ptr::<T>(bound.buffer.cu_deviceptr(), len),
+        len as u64,
         bound.width,
     )
 }
@@ -352,13 +384,16 @@ pub fn push_kernel_row_width_device_slice(
 /// # Safety
 ///
 /// For a nonzero byte extent, every value returned by
-/// [`cu_deviceptr`](Self::cu_deviceptr) must identify a live, correctly aligned
-/// device allocation covering at least `len()` consecutive `Elem` values. The
+/// [`cu_deviceptr`](Self::cu_deviceptr) must identify a live device allocation
+/// covering at least `len() * size_of::<Elem>()` bytes. The
 /// allocation must remain valid for the full borrow or owned operation in
 /// which this value is used. Zero-byte views do not require backing allocation;
 /// the launch adapter replaces their packet pointer with a non-null value
 /// aligned for `Elem` so the device-side Rust slice keeps its validity
-/// invariant. When used as a read-only `KernelSliceArg`, the reported range
+/// invariant. For nonzero byte extents, the adapter checks nullness and actual
+/// element alignment before enqueueing; a raw accessor alone does not prove
+/// that a reference to `Elem` may be formed. When used as a read-only
+/// `KernelSliceArg`, the reported range
 /// must obey Rust's shared-reference rules: it cannot be mutated except through
 /// `UnsafeCell`-based or atomic element types under their synchronization
 /// contract.
@@ -399,7 +434,7 @@ pub unsafe trait KernelSliceArg {
 ///
 /// # Safety
 ///
-/// The pointer, extent, alignment, and lifetime requirements from
+/// The pointer, extent, and lifetime requirements from
 /// [`KernelSliceArg`] still apply. Its shared-read restriction is replaced by
 /// this rule: the implementor must own exclusive device-write authority for
 /// the entire reported element range for the lifetime of the mutable borrow or
@@ -683,8 +718,15 @@ pub fn push_async_kernel_scalar<'a, T: KernelScalar + 'a>(
     }
 }
 
+/// Add a read-only slice packet after checking its actual device alignment.
+///
+/// # Panics
+///
+/// Panics before adding the packet if a nonzero byte extent has a null device
+/// pointer or is not aligned for `B::Elem`. The lazy launch is not enqueued.
 #[doc(hidden)]
 #[cfg(feature = "async")]
+#[track_caller]
 pub fn push_async_read_only_device_slice<B>(
     launch: &mut cuda_async::simt::launch::AsyncKernelLaunchBuilder<'_>,
     buffer: &B,
@@ -699,8 +741,15 @@ pub fn push_async_read_only_device_slice<B>(
     launch.push_scalar_arg(len as u64);
 }
 
+/// Add a writable slice packet after checking its actual device alignment.
+///
+/// # Panics
+///
+/// Panics before adding the packet if a nonzero byte extent has a null device
+/// pointer or is not aligned for `B::Elem`. The lazy launch is not enqueued.
 #[doc(hidden)]
 #[cfg(feature = "async")]
+#[track_caller]
 pub fn push_async_writable_device_slice<B>(
     launch: &mut cuda_async::simt::launch::AsyncKernelLaunchBuilder<'_>,
     buffer: &mut B,
@@ -719,8 +768,14 @@ pub fn push_async_writable_device_slice<B>(
 ///
 /// Matches the `{ ptr, len, space }` layout of a device-side `DisjointSlice`
 /// whose index space carries a runtime row width.
+///
+/// # Panics
+///
+/// Panics before adding the packet if its address fails
+/// [`row_width_device_buffer_arg`]'s alignment or nullness check.
 #[doc(hidden)]
 #[cfg(feature = "async")]
+#[track_caller]
 pub fn push_async_row_width_device_slice<T>(
     launch: &mut cuda_async::simt::launch::AsyncKernelLaunchBuilder<'_>,
     bound: RowWidth<'_, T>,
@@ -732,16 +787,26 @@ pub fn push_async_row_width_device_slice<T>(
 }
 
 /// Pushes an owned row-width device slice as three async kernel arguments.
+///
+/// # Panics
+///
+/// Panics before adding the packet if a nonzero byte extent has a null device
+/// pointer or is not aligned for `B::Elem`. The lazy launch is not enqueued.
 #[doc(hidden)]
 #[cfg(feature = "async")]
+#[track_caller]
 pub fn push_async_owned_row_width_device_slice<B>(
     launch: &mut cuda_async::simt::launch::AsyncKernelLaunchBuilder<'_>,
     bound: &mut RowWidthOwned<B>,
 ) where
     B: KernelSliceArgMut,
 {
-    launch.push_scalar_arg(bound.buffer.cu_deviceptr());
-    launch.push_scalar_arg(bound.buffer.len() as u64);
+    let len = bound.buffer.len();
+    launch.push_scalar_arg(kernel_slice_device_ptr::<B::Elem>(
+        bound.buffer.cu_deviceptr(),
+        len,
+    ));
+    launch.push_scalar_arg(len as u64);
     launch.push_scalar_arg(bound.width);
 }
 
@@ -943,11 +1008,43 @@ mod tests {
     #[repr(align(32))]
     struct AlignedZst;
 
+    #[repr(align(8192))]
+    struct AlignedValue {
+        _value: u8,
+    }
+
     #[test]
     fn test_kernel_slice_device_ptr_preserves_nonzero_extent_pointer() {
         let ptr: cuda_core::sys::CUdeviceptr = 0x1000;
 
         assert_eq!(kernel_slice_device_ptr::<u32>(ptr, 4), ptr);
+    }
+
+    #[test]
+    fn test_kernel_slice_device_ptr_preserves_proven_overalignment() {
+        // These are packet metadata only: no address is dereferenced and no
+        // device allocation or Rust reference is constructed.
+        let ptr = 0x1_0000;
+        assert_eq!(kernel_slice_device_ptr::<AlignedValue>(ptr, 2), ptr);
+    }
+
+    #[test]
+    #[should_panic(expected = "nonempty kernel slice has a null device pointer")]
+    fn test_kernel_slice_device_ptr_rejects_nonempty_null() {
+        kernel_slice_device_ptr::<u32>(0, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "does not satisfy the 8192-byte alignment")]
+    fn test_kernel_slice_device_ptr_rejects_insufficient_allocation_alignment() {
+        // This address satisfies CUDA's minimum alignment, but not the Rust
+        // element type's stronger requirement. Reject before making a packet.
+        kernel_slice_device_ptr::<AlignedValue>(0x1000, 1);
+    }
+
+    #[test]
+    fn test_kernel_slice_device_ptr_empty_overaligned_value_needs_no_allocation() {
+        assert_eq!(kernel_slice_device_ptr::<AlignedValue>(0, 0), 8192);
     }
 
     #[test]

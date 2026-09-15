@@ -93,6 +93,13 @@ kernel names, show argument names, and type-check arguments before the program
 runs. By-value arguments are copied into the CUDA launch packet through the
 `KernelScalar` boundary; device slices are encoded as pointer-plus-length pairs.
 
+Generated slice adapters check the actual device address before enqueueing a
+launch, including borrowed and owned async launches. A nonempty allocation must
+be non-null and aligned for `T`; an incompatible address panics before launch.
+CUDA allocation alone does not guarantee arbitrary `#[repr(align(N))]` Rust
+types. Empty slices and slices of zero-sized types use a non-null, aligned
+sentinel in the launch packet, without changing or allocating their buffer.
+
 `LaunchConfig` is safe to create because it is only data. Launching with one is
 unsafe because its dimensions and resource values are not tied to the kernel:
 
