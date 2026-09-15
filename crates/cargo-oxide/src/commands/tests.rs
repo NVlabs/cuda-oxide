@@ -4474,6 +4474,46 @@ fn nvvm_ir_requested_env_disable_overrides_enabled_project_configuration() {
 }
 
 #[test]
+fn debug_policy_token_reports_what_the_shared_parser_decides() {
+    // `scripts/smoketest.sh` asks for this token to decide whether its
+    // optimized code-shape gates apply. The spellings below are the ones a
+    // second implementation gets wrong: `2` is an alias, the comparison is
+    // case-insensitive, and the value is trimmed with `str::trim`, which
+    // takes the Unicode White_Space set rather than the POSIX class.
+    for full in [
+        "full",
+        "2",
+        "FULL",
+        "Full",
+        "  full  ",
+        "\u{a0}full",
+        "\tfull\n",
+    ] {
+        assert_eq!(debug_policy_token(Some(full)), "full", "{full:?}");
+    }
+    for lines in [
+        "1",
+        "line",
+        "lines",
+        "line-tables",
+        "line-tables-only",
+        " Line ",
+    ] {
+        assert_eq!(debug_policy_token(Some(lines)), "line-tables", "{lines:?}");
+    }
+    for none in ["0", "off", "none", "OFF"] {
+        assert_eq!(debug_policy_token(Some(none)), "none", "{none:?}");
+    }
+    // An unrecognized value is distinct from an unset one: the first is
+    // someone writing a value that means nothing, the second leaves the
+    // caller's own default in place. Neither is full debug.
+    for other in ["", "   ", "fullx", "full full", "3", "yes", "debug"] {
+        assert_eq!(debug_policy_token(Some(other)), "unrecognized", "{other:?}");
+    }
+    assert_eq!(debug_policy_token(None), "unset");
+}
+
+#[test]
 fn scaffold_sync_template_uses_launch_contract_and_docs() {
     let files = scaffold_files("demo_kernel", false);
     assert!(files.cargo_toml.contains("name = \"demo_kernel\""));

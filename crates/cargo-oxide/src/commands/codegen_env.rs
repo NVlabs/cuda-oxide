@@ -180,6 +180,38 @@ fn strip_wrapper_owned_codegen_cfgs(flags: &mut Vec<String>) {
     *flags = retained;
 }
 
+/// Report the debug policy `CUDA_OXIDE_DEBUG` selects in this environment,
+/// as one lowercase token on stdout.
+///
+/// Tooling that has to know whether a build will be a full-debug build --
+/// `scripts/smoketest.sh` decides that way whether its optimized code-shape
+/// gates apply at all -- would otherwise restate `parse_env_override`'s
+/// alias, case and whitespace rules in another language. A second
+/// implementation of a policy is a second answer waiting to disagree with the
+/// first, and this one is easy to get wrong: `2` is full debug, so is `FULL`,
+/// and so is a value padded with a non-breaking space.
+pub fn print_debug_policy() {
+    println!(
+        "{}",
+        debug_policy_token(std::env::var("CUDA_OXIDE_DEBUG").ok().as_deref())
+    );
+}
+
+/// `None` means the variable is unset, which is not the same as a value the
+/// parser does not recognize: the first leaves the caller's own default in
+/// place, the second is a value someone wrote expecting it to mean something.
+pub(super) fn debug_policy_token(value: Option<&str>) -> &'static str {
+    let Some(value) = value else {
+        return "unset";
+    };
+    match cuda_artifact_finalizer::DebugPolicy::parse_env_override(value) {
+        Some(cuda_artifact_finalizer::DebugPolicy::None) => "none",
+        Some(cuda_artifact_finalizer::DebugPolicy::LineTables) => "line-tables",
+        Some(cuda_artifact_finalizer::DebugPolicy::Full) => "full",
+        None => "unrecognized",
+    }
+}
+
 fn command_requests_full_device_debug_with_env(
     cmd: &Command,
     inherited_debug: Option<&str>,

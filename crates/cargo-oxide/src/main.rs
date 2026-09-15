@@ -67,6 +67,11 @@ enum Commands {
     /// startup environment that will be given to Cargo/rustc.
     #[command(name = "__materializer-handshake", hide = true)]
     MaterializerHandshake,
+    /// Internal helper: report the debug policy `CUDA_OXIDE_DEBUG` selects in
+    /// this environment, so tooling asks the shared parser instead of
+    /// restating its alias, case and whitespace rules.
+    #[command(name = "__debug-policy", hide = true)]
+    DebugPolicy,
     /// Build and run an example or project
     Run {
         /// Example name (required in workspace, optional for standalone projects)
@@ -612,6 +617,9 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
             "--materialize-cubin cannot be passed to the internal materializer discovery helper"
                 .to_string(),
         ),
+        Commands::DebugPolicy => Err(
+            "--materialize-cubin cannot be passed to the internal debug-policy helper".to_string(),
+        ),
     }
 }
 
@@ -665,6 +673,9 @@ fn main() {
     match cli.command {
         Commands::MaterializerHandshake => {
             commands::print_materializer_handshake();
+        }
+        Commands::DebugPolicy => {
+            commands::print_debug_policy();
         }
         Commands::Run {
             example,

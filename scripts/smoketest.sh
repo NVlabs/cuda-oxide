@@ -311,6 +311,54 @@ if ! cargo oxide --help >/dev/null 2>&1; then
     exit 2
 fi
 
+# `CUDA_OXIDE_DEBUG` in the environment reaches every `cargo oxide` this script
+# runs, so a sweep started with a full-debug value is neither a normal run nor
+# the --full-debug census: mem2reg is skipped for every example, and the
+# optimized code-shape gates in the normal lane then assert on output that no
+# longer has the shapes they describe. #1217 measured 11 examples failing that
+# way, none of them a compiler bug.
+#
+# --full-debug is the supported spelling of that intent -- it drives the build
+# with `--device-debug`, runs the permanent verify-debug-info.sh contracts, and
+# keeps the optimized shape gates out of the lane instead of failing them. So
+# refuse the ambient variable rather than silently reinterpreting the sweep as
+# a census the caller did not ask for: a run that quietly stopped executing
+# kernels is the worse outcome of the two. Passing --full-debug as well is the
+# caller asking for the mode explicitly, and stays allowed.
+#
+# Which values mean full debug is not decided here. `cargo oxide
+# __debug-policy` reports what `DebugPolicy::parse_env_override` -- the one
+# parser behind the backend and the wrapper -- makes of CUDA_OXIDE_DEBUG in
+# this very environment, aliases, case and whitespace included. Any model of
+# that written here would be a second implementation of the policy, and every
+# shell form of it is wrong in some environment: `${v,,}` and `[[:space:]]`
+# both answer to the locale, so under LC_ALL=C a plain `2` or `FULL` reads as
+# an ordinary value while the compiler builds full debug; reading the parser's
+# source instead trades that for a dependency on its formatting.
+debug_policy="$(cargo oxide __debug-policy 2>/dev/null | tail -n 1)"
+case "${debug_policy}" in
+unset | none | line-tables | full | unrecognized) ;;
+*)
+    echo "error: 'cargo oxide __debug-policy' reported no usable debug policy" >&2
+    echo "       (got '${debug_policy}'). This sweep asks the compiler which" >&2
+    echo "       values of CUDA_OXIDE_DEBUG mean full debug rather than" >&2
+    echo "       deciding for itself; rebuild cargo-oxide with:" >&2
+    echo "         cargo build -p cargo-oxide --release" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "${debug_policy}" == "full" && ${FULL_DEBUG} -eq 0 ]]; then
+    echo "error: CUDA_OXIDE_DEBUG=${CUDA_OXIDE_DEBUG-} selects full device debug;" >&2
+    echo "       use --full-debug instead." >&2
+    echo "       The variable reaches every build this sweep runs, which skips" >&2
+    echo "       dialect-mir mem2reg while the optimized code-shape gates still" >&2
+    echo "       assert on optimized output (#1217). --full-debug is the mode" >&2
+    echo "       that takes those gates out of the lane and checks the" >&2
+    echo "       full-debug contracts instead." >&2
+    exit 2
+fi
+
 # ---- Colors --------------------------------------------------------------
 
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]] && [[ ${FORCE_NO_COLOR} -eq 0 ]]; then
