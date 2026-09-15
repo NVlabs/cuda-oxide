@@ -1139,6 +1139,48 @@ fn interop_device_build_debug_assertions_select_the_release_like_assertion_profi
 }
 
 #[test]
+fn interop_build_keeps_debug_assertions_and_device_debug_independent() {
+    let ctx = test_context(OxideConfig::default());
+    for debug in [DeviceDebug::Off, DeviceDebug::LineTables, DeviceDebug::Full] {
+        for assertions in [false, true] {
+            let options = InteropDeviceBuildOptions::for_route(
+                InteropDeviceBuildRoute::Build,
+                false,
+                false,
+                debug,
+                assertions,
+            );
+            let mut cmd = Command::new("cargo");
+            apply_interop_device_codegen_options_with_env(&mut cmd, &ctx, false, options, None);
+            let mut encoded = build_encoded_rustflags_with_existing(
+                Path::new("/tmp/librustc_codegen_cuda.so"),
+                options.codegen_profile(),
+                &[],
+                &[],
+                None,
+                None,
+            );
+            append_full_debug_rustflags(&mut encoded, &cmd, None);
+            let flags = decoded_rustflags(&encoded);
+
+            assert!(flags.contains(&"-Copt-level=3"));
+            assert!(flags.contains(&if assertions {
+                "-Cdebug-assertions=on"
+            } else {
+                "-Cdebug-assertions=off"
+            }));
+            if assertions {
+                assert!(flags.contains(&"-Coverflow-checks=off"));
+            }
+            assert_eq!(has_full_debug_cfg(&flags), debug == DeviceDebug::Full);
+            for required in FULL_DEBUG_MIR_RUSTFLAGS {
+                assert_eq!(flags.contains(required), debug == DeviceDebug::Full);
+            }
+        }
+    }
+}
+
+#[test]
 fn sanitize_interop_codegen_defaults_to_line_tables_and_forwards_no_fmad() {
     let ctx = test_context(OxideConfig::default());
     let mut cmd = Command::new("cargo");
