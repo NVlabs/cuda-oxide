@@ -45,7 +45,7 @@ pub(crate) fn lowering_options(ctx: &Context) -> LoweringOptions {
     ctx.aux_data_map
         .get(&*options_storage::LOWERING_OPTIONS_KEY)
         .and_then(|index| ctx.aux_data[*index].downcast_ref::<LoweringOptions>())
-        .copied()
+        .cloned()
         .unwrap_or_default()
 }
 

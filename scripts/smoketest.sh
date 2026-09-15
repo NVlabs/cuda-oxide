@@ -80,7 +80,7 @@ LTOIR_EXAMPLES=(addressof_sharedarray cpp_consumes_rust_device device_ffi_test l
 LTOIR_MODERN_EXAMPLES=(small_type_ffi_test)
 AUTO_NVVM_EXAMPLES=(libdevice_math)
 IKET_EXAMPLES=(iket_trace)
-BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
+BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell tma_setmaxnreg_repro)
 SM100_COMPILE_EXAMPLES=(redux_f32)
 NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance ex2_approx_f16 generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix kernel_reference_validity legacy_atomic_fadd legacy_atomic_rmw_cas libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
 ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_host_arch_intrinsic error_host_target_feature error_kernel_shared_param error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
@@ -1267,6 +1267,25 @@ run_cargo() {
         fi
         if [[ ${llvm_ec} -ne 0 ]]; then
             CARGO_EC=${llvm_ec}
+            return
+        fi
+        if [[ "${ex}" == "tma_setmaxnreg_repro" ]]; then
+            local shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
+            if ! bash "${shape_check}" ptx >>"${log}" 2>&1; then
+                CARGO_EC=1
+                return
+            fi
+            if [[ ${VERBOSE} -eq 1 ]]; then
+                cargo oxide "${nvvm_args[@]}" 2>&1 | tee -a "${log}"
+                CARGO_EC=${PIPESTATUS[0]}
+            else
+                cargo oxide "${nvvm_args[@]}" >>"${log}" 2>&1
+                CARGO_EC=$?
+            fi
+            if [[ ${CARGO_EC} -eq 0 ]] \
+                && ! bash "${shape_check}" nvvm >>"${log}" 2>&1; then
+                CARGO_EC=1
+            fi
             return
         fi
         local llvm_ptx="crates/rustc-codegen-cuda/examples/${ex}/${ex}.ptx"

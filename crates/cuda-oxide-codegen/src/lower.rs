@@ -35,6 +35,7 @@ pub fn lower_to_llvm(
     module_op_ptr: Ptr<Operation>,
     allow_fma_contraction: bool,
     intrinsic_backend: mir_lower::IntrinsicBackend,
+    target_arch: Option<cuda_target_spec::CudaArch>,
 ) -> Result<(), PipelineError> {
     mir_lower::register(ctx);
 
@@ -44,6 +45,7 @@ pub fn lower_to_llvm(
         mir_lower::LoweringOptions {
             allow_fma_contraction,
             intrinsic_backend,
+            target_arch,
         },
     ) {
         Ok(()) => Ok(()),

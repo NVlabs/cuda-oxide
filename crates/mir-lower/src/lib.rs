@@ -175,7 +175,7 @@ pub enum IntrinsicBackend {
 }
 
 /// Options controlling the `dialect-mir` to LLVM dialect lowering pass.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoweringOptions {
     /// Whether ordinary floating-point multiply/add or multiply/subtract
     /// expressions may contract into fused operations.
@@ -184,6 +184,9 @@ pub struct LoweringOptions {
     pub allow_fma_contraction: bool,
     /// Intrinsic ABI expected by the selected LLVM-to-device backend.
     pub intrinsic_backend: IntrinsicBackend,
+    /// Concrete CUDA target when lowering depends on an architecture-specific
+    /// PTX form. `None` keeps target-independent historical lowering.
+    pub target_arch: Option<cuda_target_spec::CudaArch>,
 }
 
 impl Default for LoweringOptions {
@@ -191,6 +194,7 @@ impl Default for LoweringOptions {
         Self {
             allow_fma_contraction: true,
             intrinsic_backend: IntrinsicBackend::LlvmNvptx,
+            target_arch: None,
         }
     }
 }

@@ -8,6 +8,9 @@
 use crate::convert::intrinsics::common::*;
 use crate::helpers;
 use crate::{IntrinsicBackend, context};
+use cuda_target_spec::CudaArch;
+use dialect_mir::types::address_space;
+use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::ops as llvm;
 use llvm_export::types as llvm_types;
 use pliron::builtin::op_interfaces::CallOpCallable;
@@ -19,6 +22,7 @@ use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
+use pliron::r#type::Typed;
 
 /// Convert TMA G2S (global to shared) operations using LLVM intrinsics.
 pub(crate) fn convert_g2s(
@@ -56,6 +60,68 @@ fn g2s_inline_asm(dims: usize, multicast: bool, cta_group: i32) -> (String, Stri
     (template, constraints.join(","))
 }
 
+fn g2s_cta_inline_asm(dims: usize) -> (String, String) {
+    let coordinates = (0..dims)
+        .map(|index| format!("${}", 3 + index))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let template = format!(
+        "cp.async.bulk.tensor.{dims}d.shared::cta.global.tile.mbarrier::complete_tx::bytes [$0], [$2, {{{coordinates}}}], [$1];"
+    );
+    let mut constraints = vec!["r", "r", "l"];
+    constraints.extend(std::iter::repeat_n("r", dims));
+    constraints.push("~{memory}");
+    (template, constraints.join(","))
+}
+
+fn target_requires_cta_local_g2s(target: Option<&CudaArch>) -> bool {
+    target.is_some_and(|target| matches!(target.capability(), 120 | 121))
+}
+
+fn pointer_address_space(ctx: &Context, value: pliron::value::Value) -> Result<u32> {
+    value
+        .get_type(ctx)
+        .deref(ctx)
+        .downcast_ref::<llvm_types::PointerType>()
+        .map(llvm_types::PointerType::address_space)
+        .ok_or_else(|| pliron::input_error_noloc!("TMA G2S destination must be a pointer"))
+}
+
+fn lower_cta_local_g2s(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    operands: &[pliron::value::Value],
+    dims: usize,
+) {
+    let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
+    let dst = cast_to_shared_addrspace(ctx, rewriter, operands[0]);
+    let dst_address = llvm::PtrToIntOp::new(ctx, dst, i32_ty.into());
+    rewriter.insert_operation(ctx, dst_address.get_operation());
+    let barrier = cast_to_shared_addrspace(ctx, rewriter, operands[1]);
+    let barrier_address = llvm::PtrToIntOp::new(ctx, barrier, i32_ty.into());
+    rewriter.insert_operation(ctx, barrier_address.get_operation());
+
+    let mut inputs = vec![
+        dst_address.get_operation().deref(ctx).get_result(0),
+        barrier_address.get_operation().deref(ctx).get_result(0),
+        operands[2],
+    ];
+    inputs.extend(operands[3..3 + dims].iter().copied());
+    let (template, constraints) = g2s_cta_inline_asm(dims);
+    let void_ty = llvm_types::VoidType::get(ctx);
+    inline_asm_convergent(
+        ctx,
+        rewriter,
+        op,
+        void_ty.into(),
+        inputs,
+        &template,
+        &constraints,
+    );
+    rewriter.erase_operation(ctx, op);
+}
+
 fn convert_g2s_impl(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -85,10 +151,22 @@ fn convert_g2s_impl(
         );
     }
 
+    let options = context::lowering_options(ctx);
+    if !multicast && target_requires_cta_local_g2s(options.target_arch.as_ref()) {
+        if pointer_address_space(ctx, operands[0])? == address_space::CLUSTER_SHARED {
+            return pliron::input_err_noloc!(
+                "TMA G2S on {} cannot target cluster-shared address space 7",
+                options.target_arch.as_ref().unwrap()
+            );
+        }
+        lower_cta_local_g2s(ctx, rewriter, op, &operands, dims);
+        return Ok(());
+    }
+
     let dst_casted = cast_to_cluster_shared_addrspace(ctx, rewriter, operands[0]);
     let barrier_casted = cast_to_shared_addrspace(ctx, rewriter, operands[1]);
 
-    if context::lowering_options(ctx).intrinsic_backend == IntrinsicBackend::LibNvvm {
+    if options.intrinsic_backend == IntrinsicBackend::LibNvvm {
         let mut inputs = vec![dst_casted, barrier_casted, operands[2]];
         inputs.extend(operands[3..3 + dims].iter().copied());
         if multicast {
@@ -722,7 +800,7 @@ pub(crate) fn convert_control(
 
 #[cfg(test)]
 mod tests {
-    use super::{g2s_inline_asm, reduce_inline_asm, s2g_inline_asm};
+    use super::{g2s_cta_inline_asm, g2s_inline_asm, reduce_inline_asm, s2g_inline_asm};
 
     #[test]
     fn inline_tma_templates_keep_exact_ptx_shapes() {
@@ -738,6 +816,13 @@ mod tests {
             (
                 "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.cta_group::2 [$0], [$2, {$3, $4}], [$1], $5;".into(),
                 "l,l,l,r,r,h,~{memory}".into(),
+            )
+        );
+        assert_eq!(
+            g2s_cta_inline_asm(5),
+            (
+                "cp.async.bulk.tensor.5d.shared::cta.global.tile.mbarrier::complete_tx::bytes [$0], [$2, {$3, $4, $5, $6, $7}], [$1];".into(),
+                "r,r,l,r,r,r,r,r,~{memory}".into(),
             )
         );
         assert_eq!(

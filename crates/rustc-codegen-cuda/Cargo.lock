@@ -517,6 +517,7 @@ name = "mir-lower"
 version = "0.2.1"
 dependencies = [
  "anyhow",
+ "cuda-target-spec",
  "dialect-mir",
  "dialect-nvvm",
  "llvm-export",

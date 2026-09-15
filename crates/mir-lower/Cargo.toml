@@ -9,6 +9,7 @@ description = "dialect-mir to LLVM dialect lowering pass"
 readme = "README.md"
 
 [dependencies]
+cuda-target-spec = { workspace = true }
 rustc-hash = { workspace = true }
 pliron = { workspace = true }
 llvm-export = { workspace = true }

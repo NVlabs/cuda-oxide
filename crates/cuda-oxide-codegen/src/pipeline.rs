@@ -30,9 +30,11 @@ use crate::ptx::{
 };
 use crate::target::detect_features_in_llvm_text;
 use crate::verify::verify_operation;
+use cuda_target_spec::CudaArch;
 use llvm_export::export::{DebugKind, FunctionLocalStaticPlacement, NvvmIrDialect};
 use pliron::context::{Context, Ptr};
 use pliron::linked_list::ContainsLinkedList;
+use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::printable::Printable;
 use std::path::{Path, PathBuf};
@@ -194,25 +196,28 @@ pub fn compile_translated_module(
         strip_iket(ctx, module)?;
     }
 
-    // IKET's placeholder ABI is keyed by the concrete sm_* family, but the
-    // definitive target is normally resolved only after LLVM lowering
+    // IKET's placeholder ABI and the SM120/SM121 local TMA G2S spelling are
+    // keyed by the concrete sm_* family, but the definitive target is normally
+    // resolved only after LLVM lowering
     // (`generate_ptx_discovered` on the PTX path, `resolve_nvvm_target_with_generated`
     // on the NVVM path), where a device hint that cannot lower a detected
     // feature is silently raised to the feature floor. Materializing from
     // the pre-resolution hint could then bake a placeholder shape for a
-    // family the module is never compiled for. So when IKET operations are
-    // present, promote the hint to the pipeline's explicit target: both
-    // resolvers honor an explicit target exactly (they validate it and fail
+    // family the module is never compiled for. So when target-dependent
+    // lowering is present, promote the hint to the pipeline's explicit target:
+    // both resolvers honor an explicit target exactly (they validate it and fail
     // loudly instead of raising it), so the placeholder shape and the
     // compiled target can no longer diverge.
+    let lowering_needs_concrete_target =
+        has_iket_operations(ctx, module) || has_unicast_tma_g2s(ctx, module);
     let pinned_backend: BackendOptions;
     let backend: &BackendOptions = if request.backend.target_arch.is_none()
         && request.backend.device_arch_hint.is_some()
-        && has_iket_operations(ctx, module)
+        && lowering_needs_concrete_target
     {
         pinned_backend = BackendOptions {
             target_arch: request.backend.device_arch_hint.clone(),
-            target_arch_source: "the detected GPU, pinned by IKET materialization",
+            target_arch_source: "the detected GPU, pinned before target-dependent MIR lowering",
             ..request.backend.clone()
         };
         &pinned_backend
@@ -318,11 +323,24 @@ pub fn compile_translated_module(
             .trace
             .emit("\n=== Lowering dialect-mir → LLVM dialect ===");
     }
+    let lowering_target = backend
+        .target_arch
+        .as_deref()
+        .map(|target| {
+            target
+                .parse::<CudaArch>()
+                .map_err(|error| PipelineError::TargetSelection {
+                    target: target.to_owned(),
+                    reason: format!("{error} (target from {})", backend.target_arch_source),
+                })
+        })
+        .transpose()?;
     lower_to_llvm(
         ctx,
         module,
         !backend.no_fma,
         backend_selection.intrinsic_backend,
+        lowering_target,
     )?;
 
     let lowered_module_uses_libdevice = module_uses_libdevice(ctx, module);
@@ -587,6 +605,31 @@ pub fn compile_translated_module(
         artifact_kind: ModuleArtifactKind::Ptx,
         target: generated.target,
         diagnostics: generated.diagnostics,
+    })
+}
+
+fn has_unicast_tma_g2s(ctx: &Context, operation: Ptr<Operation>) -> bool {
+    use dialect_nvvm::ops::{
+        CpAsyncBulkTensorG2sTile1dOp, CpAsyncBulkTensorG2sTile2dOp, CpAsyncBulkTensorG2sTile3dOp,
+        CpAsyncBulkTensorG2sTile4dOp, CpAsyncBulkTensorG2sTile5dOp,
+    };
+
+    let opid = Operation::get_opid(operation, ctx);
+    if opid == CpAsyncBulkTensorG2sTile1dOp::get_opid_static()
+        || opid == CpAsyncBulkTensorG2sTile2dOp::get_opid_static()
+        || opid == CpAsyncBulkTensorG2sTile3dOp::get_opid_static()
+        || opid == CpAsyncBulkTensorG2sTile4dOp::get_opid_static()
+        || opid == CpAsyncBulkTensorG2sTile5dOp::get_opid_static()
+    {
+        return true;
+    }
+    operation.deref(ctx).regions().any(|region| {
+        region.deref(ctx).iter(ctx).any(|block| {
+            block
+                .deref(ctx)
+                .iter(ctx)
+                .any(|child| has_unicast_tma_g2s(ctx, child))
+        })
     })
 }
 
