@@ -265,6 +265,7 @@ compiles a Rust kernel to PTX, launches it on the GPU, and prints
 | Example              | Description                                                              |
 |----------------------|--------------------------------------------------------------------------|
 | `vecadd`             | Vector addition -- canonical first example                               |
+| `cudarc_slice`       | Memory owned by cudarc passed straight to a generated launcher            |
 | `host_closure`       | Generic kernels with closures passed from host                           |
 | `generic`            | Generic kernels with monomorphization (`scale<T>`)                       |
 | `ord_cmp`            | Device-side `Ord::cmp` lowering for signed and unsigned integers         |

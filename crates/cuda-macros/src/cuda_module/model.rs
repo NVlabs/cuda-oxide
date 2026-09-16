@@ -164,45 +164,40 @@ fn cuda_module_host_type(
 ) -> syn::Result<(TokenStream2, TokenStream2, CudaModuleParamMarshal)> {
     let async_lifetime = cuda_module_async_lifetime();
     if let Some((elem_ty, mutable)) = cuda_module_slice_elem(ty) {
-        let sync_host_ty = if mutable {
-            quote! { &mut ::cuda_core::DeviceBuffer<#elem_ty> }
-        } else {
-            quote! { &::cuda_core::DeviceBuffer<#elem_ty> }
-        };
-        let (async_host_ty, marshal) = if mutable {
+        let elem_ty = quote! { #elem_ty };
+        let (view, marshal) = if mutable {
             (
-                quote! { &#async_lifetime mut impl ::cuda_host::KernelSliceArgMut<Elem = #elem_ty> },
-                CudaModuleParamMarshal::WritableDeviceBuffer {
-                    elem_ty: quote! { #elem_ty },
-                },
+                quote! { impl ::cuda_host::KernelSliceArgMut<Elem = #elem_ty> },
+                CudaModuleParamMarshal::WritableDeviceBuffer { elem_ty },
             )
         } else {
             (
-                quote! { &#async_lifetime impl ::cuda_host::KernelSliceArg<Elem = #elem_ty> },
-                CudaModuleParamMarshal::ReadOnlyDeviceBuffer {
-                    elem_ty: quote! { #elem_ty },
-                },
+                quote! { impl ::cuda_host::KernelSliceArg<Elem = #elem_ty> },
+                CudaModuleParamMarshal::ReadOnlyDeviceBuffer { elem_ty },
             )
         };
-        return Ok((sync_host_ty, async_host_ty, marshal));
+        let mutability = mutable.then(|| quote! { mut });
+        return Ok((
+            quote! { &#mutability #view },
+            quote! { &#async_lifetime #mutability #view },
+            marshal,
+        ));
     }
 
     if let Some(elem_ty) = cuda_module_disjoint_slice_elem(ty) {
+        let elem_ty = quote! { #elem_ty };
+        let view = quote! { impl ::cuda_host::KernelSliceArgMut<Elem = #elem_ty> };
         if cuda_module_disjoint_slice_has_row_width(ty) {
             return Ok((
-                quote! { ::cuda_host::RowWidth<'_, #elem_ty> },
-                quote! { ::cuda_host::RowWidth<#async_lifetime, #elem_ty> },
-                CudaModuleParamMarshal::RowWidthDeviceBuffer {
-                    elem_ty: quote! { #elem_ty },
-                },
+                quote! { ::cuda_host::RowWidth<'_, #view> },
+                quote! { ::cuda_host::RowWidth<#async_lifetime, #view + Send> },
+                CudaModuleParamMarshal::RowWidthDeviceBuffer { elem_ty },
             ));
         }
         return Ok((
-            quote! { &mut ::cuda_core::DeviceBuffer<#elem_ty> },
-            quote! { &#async_lifetime mut impl ::cuda_host::KernelSliceArgMut<Elem = #elem_ty> },
-            CudaModuleParamMarshal::WritableDeviceBuffer {
-                elem_ty: quote! { #elem_ty },
-            },
+            quote! { &mut #view },
+            quote! { &#async_lifetime mut #view },
+            CudaModuleParamMarshal::WritableDeviceBuffer { elem_ty },
         ));
     }
 

@@ -71,9 +71,9 @@ Kernel parameters are mapped into host launch parameters:
 
 | Kernel parameter | Host method parameter |
 |------------------|-----------------------|
-| `&[T]` | `&DeviceBuffer<T>` |
-| `&mut [T]` | `&mut DeviceBuffer<T>` |
-| `DisjointSlice<T>` | `&mut DeviceBuffer<T>` |
+| `&[T]` | `&impl KernelSliceArg<Elem = T>` |
+| `&mut [T]` | `&mut impl KernelSliceArgMut<Elem = T>` |
+| `DisjointSlice<T>` | `&mut impl KernelSliceArgMut<Elem = T>` |
 | `Uniform<T>` | `T` |
 | `Copy` scalar, struct, closure, or raw pointer | unchanged |
 
@@ -82,8 +82,8 @@ what makes the value uniform: one marshalled value reaches every thread of the
 launch. The device side receives the witness, which is what device APIs needing
 a launch-uniform scalar require in place of an `unsafe` assertion.
 
-A slice whose index space carries a runtime row width takes `RowWidth<T>`, which
-binds the width to that slice for the launch. The same reasoning applies and for
+A slice whose index space carries a runtime row width takes `RowWidth`, which
+binds the width to any writable slice view for the launch. The same reasoning applies and for
 the same reason, one step earlier: the row width reaches the device as one word the
 host wrote, so `DisjointSlice::tile_2d32_rt` needs neither a stride argument nor
 an `unsafe` assertion. The owned async launches take `RowWidthOwned<B>`.
@@ -214,8 +214,9 @@ let launch = unsafe {
 launch.sync()?;
 ```
 
-For async launches, device-slice parameters accept either `DeviceBuffer<T>` or
-`cuda_async::simt::device_box::DeviceBox<[T]>`. The mutable
+Device-slice parameters accept any `KernelSliceArg` / `KernelSliceArgMut`
+implementor: `DeviceBuffer<T>`, `cuda_async::simt::device_box::DeviceBox<[T]>`,
+or a caller-defined view. The mutable
 `AsyncKernelLaunchBuilder` collects arguments and options. Finalizing it with a
 raw configuration is unsafe and produces an immutable `AsyncKernelLaunch<'_>`;
 geometry cannot be changed after that point. Rust keeps referenced buffers and

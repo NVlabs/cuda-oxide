@@ -1,0 +1,13 @@
+error[E0597]: `local` does not live long enough
+  --> tests/compile_fail/launch_contract_view_cannot_outlive_buffer.rs:51:24
+   |
+47 |     let mut view = {
+   |         -------- borrow later stored here
+48 |         // SAFETY: never executed; this fixture only has to fail to compile.
+49 |         let mut local =
+   |             --------- binding `local` declared here
+50 |             unsafe { cuda_core::DeviceBuffer::<f32>::from_raw_parts(0, 0, ctx.clone()) };
+51 |         View { buffer: &mut local }
+   |                        ^^^^^^^^^^ borrowed value does not live long enough
+52 |     };
+   |     - `local` dropped here while still borrowed

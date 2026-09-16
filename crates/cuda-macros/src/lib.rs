@@ -174,9 +174,10 @@ pub fn ptx_asm(input: TokenStream) -> TokenStream {
 /// built with its `async` feature, the macro also emits borrowed async and owned
 /// async methods. Kernel parameter types are mapped to host-side launch types:
 ///
-/// - `&[T]` -> `&cuda_core::DeviceBuffer<T>`
-/// - `&mut [T]` -> `&mut cuda_core::DeviceBuffer<T>`
-/// - `DisjointSlice<T>` -> `&mut cuda_core::DeviceBuffer<T>`
+/// - `&[T]` -> `&impl cuda_host::KernelSliceArg<Elem = T>`
+/// - `&mut [T]` -> `&mut impl cuda_host::KernelSliceArgMut<Elem = T>`
+/// - `DisjointSlice<T>` -> `&mut impl cuda_host::KernelSliceArgMut<Elem = T>`
+/// - row-width index spaces -> `cuda_host::RowWidth<'_, impl cuda_host::KernelSliceArgMut<Elem = T>>`
 /// - `Copy` scalar/struct/closure/raw-pointer arguments keep their original
 ///   type and pass through `cuda_host::KernelScalar`
 ///

@@ -16,6 +16,8 @@ fn launch_contract_types_are_resolved_semantically() {
     t.compile_fail("tests/compile_fail/launch_contract_fake_uniform.rs");
     t.compile_fail("tests/compile_fail/launch_contract_alias_hides_row_width.rs");
     t.compile_fail("tests/compile_fail/launch_contract_alias_fakes_row_width.rs");
+    t.compile_fail("tests/compile_fail/launch_contract_row_width_is_not_a_slice.rs");
+    t.compile_fail("tests/compile_fail/launch_contract_view_cannot_outlive_buffer.rs");
     t.compile_fail("tests/compile_fail/launch_contract_untrusted_loaders.rs");
     t.compile_fail("tests/compile_fail/launch_contract_wrong_const_brand.rs");
     t.compile_fail("tests/compile_fail/launch_contract_reordered_disjoint_alias.rs");

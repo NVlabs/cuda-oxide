@@ -1,0 +1,25 @@
+error[E0277]: the trait bound `RowWidth<'_, cuda_core::DeviceBuffer<f32>>: KernelSliceArgMut` is not satisfied
+  --> tests/compile_fail/launch_contract_row_width_is_not_a_slice.rs:32:47
+   |
+32 |     let _ = unsafe { module.flat(stream, cfg, &mut bound) };
+   |                             ----              ^^^^^^^^^^ the trait `KernelSliceArgMut` is not implemented for `RowWidth<'_, cuda_core::DeviceBuffer<f32>>`
+   |                             |
+   |                             required by a bound introduced by this call
+   |
+help: the following other types implement trait `KernelSliceArgMut`
+  --> $WORKSPACE/crates/cuda-host/src/launch.rs
+   |
+   | unsafe impl<T> KernelSliceArgMut for cuda_core::DeviceBuffer<T> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `cuda_core::DeviceBuffer<T>`
+...
+   | unsafe impl<T: Send> KernelSliceArgMut for cuda_async::simt::device_box::DeviceBox<[T]> {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DeviceBox<[T]>`
+note: required by a bound in `LoadedModule::flat`
+  --> tests/compile_fail/launch_contract_row_width_is_not_a_slice.rs:11:1
+   |
+11 | #[cuda_module]
+   | ^^^^^^^^^^^^^^ required by this bound in `LoadedModule::flat`
+...
+16 |     pub fn flat(out: &mut [f32]) {
+   |            ---- required by a bound in this associated function
+   = note: this error originates in the attribute macro `cuda_module` (in Nightly builds, run with -Z macro-backtrace for more info)

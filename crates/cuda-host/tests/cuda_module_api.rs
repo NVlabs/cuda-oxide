@@ -171,6 +171,14 @@ mod kernels {
     pub fn contracted_sizes(n: u32, input: &[u32]) {
         let _ = (n, input);
     }
+
+    /// A runtime row width binds through `RowWidth` on the host.
+    #[kernel]
+    pub fn row_width_bound(
+        output: cuda_device::DisjointSlice<u32, cuda_device::thread::Runtime2DIndex>,
+    ) {
+        let _ = output;
+    }
 }
 
 #[cfg(feature = "async")]
@@ -434,9 +442,59 @@ fn generated_prepared_owned_async_methods_are_immutable_operations(
     Ok(())
 }
 
+/// A caller-defined view that upholds the slice contracts. Sync launchers
+/// now take slice parameters as `impl KernelSliceArg(Mut)`, as the async ones
+/// already did, so such a type is accepted wherever a `DeviceBuffer` is.
+struct CallerView<'a, T> {
+    buffer: &'a mut DeviceBuffer<T>,
+}
+
+// SAFETY: the view forwards the pointer and element count of a live
+// `DeviceBuffer` that it borrows exclusively for its whole lifetime.
+unsafe impl<T> cuda_host::KernelSliceArg for CallerView<'_, T> {
+    type Elem = T;
+
+    fn cu_deviceptr(&self) -> cuda_core::sys::CUdeviceptr {
+        self.buffer.cu_deviceptr()
+    }
+
+    fn len(&self) -> usize {
+        self.buffer.len()
+    }
+}
+
+// SAFETY: the exclusive borrow of the buffer is the device-write authority.
+unsafe impl<T> cuda_host::KernelSliceArgMut for CallerView<'_, T> {}
+
+/// Every sync slice shape: read-only, writable, row-width bound, and a
+/// checked launcher whose `requires` clause reads `.len()` through the trait.
+unsafe fn generated_sync_methods_accept_caller_defined_views(
+    module: &kernels::LoadedModule,
+    stream: &CudaStream,
+    config: LaunchConfig,
+    input: &CallerView<'_, f32>,
+    output: &mut CallerView<'_, f32>,
+    input_u32: &CallerView<'_, u32>,
+    output_u32: &mut CallerView<'_, u32>,
+) -> Result<(), cuda_core::LaunchContractError> {
+    let params = AffineParams {
+        scale: 2.0,
+        bias: 1.0,
+    };
+    let raw = core::ptr::null::<f32>();
+    unsafe {
+        module.scalar_args(stream, config, 2.0, params, raw, input, output)?;
+        module.row_width_bound(stream, config, cuda_host::RowWidth::new(output_u32, 8))?;
+    }
+    let sizes = module.prepare_contracted_sizes(LaunchConfig1D::new(1, 64, 0))?;
+    module.contracted_sizes(stream, &sizes, 4, input_u32)?;
+    Ok(())
+}
+
 #[test]
 fn generated_cuda_module_api_typechecks() {
     let _ = generated_methods_accept_kernel_scalar_types;
+    let _ = generated_sync_methods_accept_caller_defined_views;
     let _ = generated_prepared_methods_bind_the_exact_kernel_and_specialization;
     #[cfg(feature = "async")]
     let _ = generated_async_methods_accept_borrowed_buffers;

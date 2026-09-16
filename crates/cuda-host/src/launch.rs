@@ -21,7 +21,6 @@
 use std::ffi::c_void;
 #[cfg(feature = "async")]
 use std::future::IntoFuture;
-#[cfg(feature = "async")]
 use std::sync::Arc;
 
 // =============================================================================
@@ -150,8 +149,8 @@ pub fn push_kernel_scalar<T: KernelScalar>(args: &mut Vec<*mut c_void>, value: &
 /// parameters such as `&[T]`.
 #[inline]
 #[doc(hidden)]
-pub fn read_only_device_buffer_arg<T>(
-    buffer: &cuda_core::DeviceBuffer<T>,
+pub fn read_only_device_buffer_arg<B: KernelSliceArg + ?Sized>(
+    buffer: &B,
 ) -> (cuda_core::sys::CUdeviceptr, u64) {
     (buffer.cu_deviceptr(), buffer.len() as u64)
 }
@@ -160,10 +159,10 @@ pub fn read_only_device_buffer_arg<T>(
 /// parameters such as `&mut [T]` and `DisjointSlice<T>`.
 #[inline]
 #[doc(hidden)]
-pub fn writable_device_buffer_arg<T>(
-    buffer: &mut cuda_core::DeviceBuffer<T>,
+pub fn writable_device_buffer_arg<B: KernelSliceArgMut + ?Sized>(
+    buffer: &mut B,
 ) -> (cuda_core::sys::CUdeviceptr, u64) {
-    (buffer.cu_deviceptr(), buffer.len() as u64)
+    read_only_device_buffer_arg(buffer)
 }
 
 /// Pushes a device slice argument pair into a CUDA driver argument list.
@@ -183,7 +182,8 @@ pub fn push_kernel_device_slice(
     args.push(len as *mut u64 as *mut c_void);
 }
 
-/// A device buffer together with the row width the kernel will index it by.
+/// A writable slice view (a `DeviceBuffer` unless another [`KernelSliceArgMut`]
+/// is given) together with the row width the kernel will index it by.
 ///
 /// Kernels whose index space fixes the row width in the type need nothing
 /// here. A kernel taking `DisjointSlice<T, RuntimeRowMajorTiles<R, C>>` or
@@ -200,17 +200,17 @@ pub fn push_kernel_device_slice(
 /// ```rust,ignore
 /// kernels::sgemm(&stream, cfg, m, k, alpha, &a, &b, RowWidth::new(&mut c, n))?;
 /// ```
-pub struct RowWidth<'a, T> {
-    buffer: &'a mut cuda_core::DeviceBuffer<T>,
+pub struct RowWidth<'a, B: KernelSliceArgMut + ?Sized> {
+    buffer: &'a mut B,
     width: u32,
 }
 
-impl<'a, T> RowWidth<'a, T> {
+impl<'a, B: KernelSliceArgMut + ?Sized> RowWidth<'a, B> {
     /// Bind `width` as the row width for this launch's view of `buffer`.
     ///
     /// `width` is a count of elements, not bytes.
     #[inline]
-    pub fn new(buffer: &'a mut cuda_core::DeviceBuffer<T>, width: u32) -> Self {
+    pub fn new(buffer: &'a mut B, width: u32) -> Self {
         RowWidth { buffer, width }
     }
 
@@ -281,14 +281,11 @@ impl<B> RowWidthOwned<B> {
 /// writable slice parameters whose index space carries a runtime row width.
 #[inline]
 #[doc(hidden)]
-pub fn row_width_device_buffer_arg<T>(
-    bound: RowWidth<'_, T>,
+pub fn row_width_device_buffer_arg<B: KernelSliceArgMut + ?Sized>(
+    bound: RowWidth<'_, B>,
 ) -> (cuda_core::sys::CUdeviceptr, u64, u32) {
-    (
-        bound.buffer.cu_deviceptr(),
-        bound.buffer.len() as u64,
-        bound.width,
-    )
+    let (ptr, len) = read_only_device_buffer_arg(bound.buffer);
+    (ptr, len, bound.width)
 }
 
 /// Pushes a row-width device slice argument triple into a driver argument
@@ -312,10 +309,10 @@ pub fn push_kernel_row_width_device_slice(
 }
 
 // =============================================================================
-// Typed Async Kernel Arguments
+// Typed Kernel Slice Arguments
 // =============================================================================
 
-/// A typed device allocation that can be passed to an async kernel launch as a
+/// A typed device allocation that can be passed to a kernel launch as a
 /// read-only device slice.
 ///
 /// # Safety
@@ -343,7 +340,6 @@ pub fn push_kernel_row_width_device_slice(
 ///     fn len(&self) -> usize { 1_000_000 }
 /// }
 /// ```
-#[cfg(feature = "async")]
 pub unsafe trait KernelSliceArg {
     /// Element type stored in the allocation.
     type Elem;
@@ -360,7 +356,7 @@ pub unsafe trait KernelSliceArg {
     }
 }
 
-/// A typed device allocation that can be passed to an async kernel launch as a
+/// A typed device allocation that can be passed to a kernel launch as a
 /// writable device slice.
 ///
 /// # Safety
@@ -370,10 +366,8 @@ pub unsafe trait KernelSliceArg {
 /// this rule: the implementor must own exclusive device-write authority for
 /// the entire reported element range for the lifetime of the mutable borrow or
 /// owned operation.
-#[cfg(feature = "async")]
 pub unsafe trait KernelSliceArgMut: KernelSliceArg {}
 
-#[cfg(feature = "async")]
 // SAFETY: DeviceBuffer owns the reported allocation and keeps its CUDA context
 // alive; its pointer and length accessors describe that allocation exactly.
 unsafe impl<T> KernelSliceArg for cuda_core::DeviceBuffer<T> {
@@ -388,14 +382,13 @@ unsafe impl<T> KernelSliceArg for cuda_core::DeviceBuffer<T> {
     }
 }
 
-#[cfg(feature = "async")]
 // SAFETY: &mut DeviceBuffer provides exclusive host authority to launch device
 // writes through this adapter for the duration of the operation.
 unsafe impl<T> KernelSliceArgMut for cuda_core::DeviceBuffer<T> {}
 
-#[cfg(feature = "async")]
 // SAFETY: DeviceBox owns the reported allocation and its raw constructor
 // requires the pointer, element count, and device ordinal to be truthful.
+#[cfg(feature = "async")]
 unsafe impl<T: Send> KernelSliceArg for cuda_async::simt::device_box::DeviceBox<[T]> {
     type Elem = T;
 
@@ -408,12 +401,11 @@ unsafe impl<T: Send> KernelSliceArg for cuda_async::simt::device_box::DeviceBox<
     }
 }
 
-#[cfg(feature = "async")]
 // SAFETY: &mut DeviceBox provides exclusive host authority to launch device
 // writes through this adapter for the duration of the operation.
+#[cfg(feature = "async")]
 unsafe impl<T: Send> KernelSliceArgMut for cuda_async::simt::device_box::DeviceBox<[T]> {}
 
-#[cfg(feature = "async")]
 // SAFETY: Arc only extends the lifetime of B and delegates both truthful
 // accessors unchanged to B's unsafe implementation.
 unsafe impl<B> KernelSliceArg for Arc<B>
@@ -679,9 +671,9 @@ pub fn push_async_writable_device_slice<B>(
 /// whose index space carries a runtime row width.
 #[doc(hidden)]
 #[cfg(feature = "async")]
-pub fn push_async_row_width_device_slice<T>(
+pub fn push_async_row_width_device_slice<B: KernelSliceArgMut + ?Sized>(
     launch: &mut cuda_async::simt::launch::AsyncKernelLaunchBuilder<'_>,
-    bound: RowWidth<'_, T>,
+    bound: RowWidth<'_, B>,
 ) {
     let (ptr, len, width) = row_width_device_buffer_arg(bound);
     launch.push_scalar_arg(ptr);

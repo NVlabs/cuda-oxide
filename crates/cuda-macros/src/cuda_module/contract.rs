@@ -627,8 +627,9 @@ fn validate_requires_operand(expr: &Expr, params: &[CudaModuleParam]) -> syn::Re
 /// different host type.
 #[derive(Clone, Copy)]
 pub(super) enum RequiresLenAccess {
-    /// Sync prepared launcher: slice parameters are `&DeviceBuffer<T>` or
-    /// `&mut DeviceBuffer<T>`, so `.len()` resolves to the inherent method.
+    /// Sync prepared launcher: slice parameters are `&impl KernelSliceArg` or
+    /// `&mut impl KernelSliceArgMut` (or `RowWidth`, which has an inherent
+    /// `.len()`), so `.len()` resolves without a `use`.
     SyncBuffer,
     /// Async prepared launcher: slice parameters are `&impl KernelSliceArg`
     /// or `&mut impl KernelSliceArgMut`.
