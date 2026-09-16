@@ -341,71 +341,70 @@ pub(super) fn backend_source_check(
     }
 }
 
-/// Reports whether `cargo oxide build` would target the GPU doctor just
-/// detected.
+/// Reports whether `cargo oxide build` would target the detected GPU.
 ///
-/// `build` and `pipeline` deliberately skip the auto-detection `run` does,
-/// since cross-compiling for other hardware is a supported workflow (see
-/// [`detect_run_target_arch`]), which leaves the divergence invisible: the
-/// build succeeds and the binary loads, just not on the device's own ISA
-/// (issue #1266). Doctor already resolves both halves, so it is the one
-/// place that can reconcile them. Informational, never fatal: a configured
-/// arch that names other hardware is the workflow, not a fault.
+/// `build` skips the auto-detection `run` does so cross-compiling keeps
+/// working (see [`detect_run_target_arch`]), which leaves the divergence
+/// invisible (issue #1266). Doctor resolves both facts, so it can compare
+/// them. Informational, never fatal.
 fn doctor_report_build_arch(ctx: &Context, detected: &str) {
-    // Doctor has no `--arch` flag, so the CLI slot is always empty; the rest
-    // of the precedence is the env and config slots `build` itself reads.
+    // Doctor has no `--arch`, so only the env and config slots can apply.
     let configured = configured_arch_label(ctx, None);
     let Some(check) = build_arch_check(configured.as_deref(), detected) else {
         return;
     };
-    println!("{}", check.headline);
+    // Continuation of the driver / GPU check, not a check of its own.
+    println!("  {}", check.headline);
     for line in check.details {
         println!("  {line}");
     }
 }
 
-/// The build-arch verdict, from the arch `build` would resolve and the
-/// compute capability doctor detected. `None` when the two agree and there
-/// is nothing to report. Reuses the config check's struct so doctor prints
-/// it the same way; pure, so every branch is testable.
+/// The build-arch verdict, or `None` when `build` already targets the GPU.
+/// Reuses the config check's struct so doctor prints it the same way.
 ///
-/// `configured` comes from [`configured_arch_label`] rather than
-/// [`configured_arch`]: the latter answers what to set on the child process
-/// and yields `None` once `CUDA_OXIDE_TARGET` is exported, because the child
-/// inherits it — which would read here as nothing configured at all.
-///
-/// A configured `sm_121` against a detected `sm_121a` counts as a mismatch.
-/// The plain target compiles and loads, but drops the arch-specific
-/// intrinsics `run` would have had, which is the surprise this exists for.
+/// `configured` must come from [`configured_arch_label`]: [`configured_arch`]
+/// returns `None` once `CUDA_OXIDE_TARGET` is exported, which would read here
+/// as nothing configured.
 pub(super) fn build_arch_check(
     configured: Option<&str>,
     detected: &str,
 ) -> Option<OxideConfigCheck> {
-    let check = |headline: String, details: Vec<String>| {
-        Some(OxideConfigCheck {
-            headline,
-            details,
-            failed: false,
-        })
+    let check = |headline: String, details: Vec<String>| OxideConfigCheck {
+        headline,
+        details,
+        failed: false,
     };
     match configured {
-        None => check(
+        None => Some(check(
             "warning: `cargo oxide build` has no configured arch".to_string(),
             vec![
-                "Falls back to an arch derived from each kernel's features (sm_80".to_string(),
-                format!("when none apply), not this GPU's {detected}. Set default-arch ="),
-                format!("\"{detected}\" in `.cargo/cuda-oxide.toml`, or pass --arch={detected}."),
+                "Falls back to an arch derived from each kernel's features".to_string(),
+                format!("(sm_80 when none apply), not the {detected} of the first GPU"),
+                format!("nvidia-smi reports. Set default-arch = \"{detected}\" in"),
+                format!("`.cargo/cuda-oxide.toml`, or pass --arch={detected}."),
             ],
-        ),
-        Some(arch) if arch != detected => check(
+        )),
+        Some(arch) if arch == detected => None,
+        // Same chip, plain form: `format_sm_arch` only detects `a` above
+        // cc 9.0, so this is not other hardware and must not say so.
+        Some(arch) if detected.strip_suffix('a') == Some(arch) => Some(check(
+            format!("warning: `cargo oxide build` targets {arch}, not {detected}"),
+            vec![
+                format!("Same chip: {detected} is the arch-specific form of {arch}, and"),
+                format!("is what `cargo oxide run` targets. {arch} builds and loads"),
+                "here, but without the arch-specific intrinsics (WGMMA,".to_string(),
+                "tcgen05) that form unlocks.".to_string(),
+            ],
+        )),
+        Some(arch) => Some(check(
             format!("warning: `cargo oxide build` targets {arch}, but this GPU is {detected}"),
             vec![
-                "From --arch, CUDA_OXIDE_TARGET, or `default-arch`; `cargo oxide".to_string(),
-                format!("run` would target {detected} here instead. Ignore this if {arch}"),
-                "is meant for other hardware.".to_string(),
+                "From --arch, CUDA_OXIDE_TARGET, or `default-arch`. `cargo oxide".to_string(),
+                format!("run` would target {detected}, the first GPU nvidia-smi"),
+                format!("reports. Ignore this if {arch} is meant for other hardware."),
             ],
-        ),
-        Some(_) => None,
+        )),
     }
 }
 

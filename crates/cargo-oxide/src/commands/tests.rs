@@ -3147,23 +3147,19 @@ fn parse_compute_cap_takes_first_gpu_on_multi_gpu_machines() {
 
 #[test]
 fn build_arch_check_stays_silent_when_build_already_targets_this_gpu() {
-    // Nothing to warn about, and doctor must not print a scary line for the
-    // configuration that is already correct.
     assert!(build_arch_check(Some("sm_80"), "sm_80").is_none());
     assert!(build_arch_check(Some("sm_121a"), "sm_121a").is_none());
 }
 
 #[test]
 fn build_arch_check_reports_the_unconfigured_fallback() {
-    // The issue #1266 repro: a Blackwell box with no arch configured, where
-    // `build` silently emits sm_80 PTX and only `run` targets the GPU.
+    // The issue #1266 repro: no arch configured, so `build` emits sm_80 PTX.
     let check = build_arch_check(None, "sm_121a").expect("unconfigured arch must warn");
     assert_eq!(
         check.headline,
         "warning: `cargo oxide build` has no configured arch"
     );
-    // The remedy must name both places a user can set the arch, since the
-    // whole point is that they have set neither.
+    // Must name both places the arch can be set; the user has set neither.
     let details = check.details.join(" ");
     assert!(details.contains("default-arch = \"sm_121a\""), "{details}");
     assert!(details.contains("--arch=sm_121a"), "{details}");
@@ -3173,19 +3169,32 @@ fn build_arch_check_reports_the_unconfigured_fallback() {
 #[test]
 fn build_arch_check_reports_a_configured_arch_naming_other_hardware() {
     let check = build_arch_check(Some("sm_90a"), "sm_121a").expect("diverging arch must warn");
-    // Configured arch first, detected GPU second: swapped, the user would
-    // go change the setting that is already what they asked for.
+    // Configured arch first, detected GPU second; swapped misdirects the fix.
     assert_eq!(
         check.headline,
         "warning: `cargo oxide build` targets sm_90a, but this GPU is sm_121a"
     );
     assert!(!check.failed);
+}
 
-    // Exact comparison: the plain target loads on the `a` chip but drops the
-    // arch-specific intrinsics `run` would have compiled, so it still warns.
-    let check = build_arch_check(Some("sm_121"), "sm_121a").expect("plain vs `a` must warn");
+#[test]
+fn build_arch_check_separates_the_plain_form_of_the_same_chip() {
+    // Same chip, so it must not repeat the other case's "other hardware".
+    let check = build_arch_check(Some("sm_121"), "sm_121a").expect("plain vs `a` must report");
+    assert_eq!(
+        check.headline,
+        "warning: `cargo oxide build` targets sm_121, not sm_121a"
+    );
+    let details = check.details.join(" ");
+    assert!(details.contains("Same chip"), "{details}");
+    assert!(!details.contains("other hardware"), "{details}");
+    assert!(!check.failed);
+
+    // Not symmetric: no cc < 9.0 chip has an `a` variant, so this is wrong
+    // hardware, not the same chip.
+    let check = build_arch_check(Some("sm_86a"), "sm_86").expect("reverse must warn");
     assert!(
-        check.headline.contains("targets sm_121, but"),
+        check.headline.contains("but this GPU is sm_86"),
         "{}",
         check.headline
     );
