@@ -341,6 +341,74 @@ pub(super) fn backend_source_check(
     }
 }
 
+/// Reports whether `cargo oxide build` would target the GPU doctor just
+/// detected.
+///
+/// `build` and `pipeline` deliberately skip the auto-detection `run` does,
+/// since cross-compiling for other hardware is a supported workflow (see
+/// [`detect_run_target_arch`]), which leaves the divergence invisible: the
+/// build succeeds and the binary loads, just not on the device's own ISA
+/// (issue #1266). Doctor already resolves both halves, so it is the one
+/// place that can reconcile them. Informational, never fatal: a configured
+/// arch that names other hardware is the workflow, not a fault.
+fn doctor_report_build_arch(ctx: &Context, detected: &str) {
+    // Doctor has no `--arch` flag, so the CLI slot is always empty; the rest
+    // of the precedence is the env and config slots `build` itself reads.
+    let configured = configured_arch_label(ctx, None);
+    let Some(check) = build_arch_check(configured.as_deref(), detected) else {
+        return;
+    };
+    println!("{}", check.headline);
+    for line in check.details {
+        println!("  {line}");
+    }
+}
+
+/// The build-arch verdict, from the arch `build` would resolve and the
+/// compute capability doctor detected. `None` when the two agree and there
+/// is nothing to report. Reuses the config check's struct so doctor prints
+/// it the same way; pure, so every branch is testable.
+///
+/// `configured` comes from [`configured_arch_label`] rather than
+/// [`configured_arch`]: the latter answers what to set on the child process
+/// and yields `None` once `CUDA_OXIDE_TARGET` is exported, because the child
+/// inherits it — which would read here as nothing configured at all.
+///
+/// A configured `sm_121` against a detected `sm_121a` counts as a mismatch.
+/// The plain target compiles and loads, but drops the arch-specific
+/// intrinsics `run` would have had, which is the surprise this exists for.
+pub(super) fn build_arch_check(
+    configured: Option<&str>,
+    detected: &str,
+) -> Option<OxideConfigCheck> {
+    let check = |headline: String, details: Vec<String>| {
+        Some(OxideConfigCheck {
+            headline,
+            details,
+            failed: false,
+        })
+    };
+    match configured {
+        None => check(
+            "warning: `cargo oxide build` has no configured arch".to_string(),
+            vec![
+                "Falls back to an arch derived from each kernel's features (sm_80".to_string(),
+                format!("when none apply), not this GPU's {detected}. Set default-arch ="),
+                format!("\"{detected}\" in `.cargo/cuda-oxide.toml`, or pass --arch={detected}."),
+            ],
+        ),
+        Some(arch) if arch != detected => check(
+            format!("warning: `cargo oxide build` targets {arch}, but this GPU is {detected}"),
+            vec![
+                "From --arch, CUDA_OXIDE_TARGET, or `default-arch`; `cargo oxide".to_string(),
+                format!("run` would target {detected} here instead. Ignore this if {arch}"),
+                "is meant for other hardware.".to_string(),
+            ],
+        ),
+        Some(_) => None,
+    }
+}
+
 /// Validate the development environment.
 ///
 /// Checks for: Rust nightly toolchain, `rust-toolchain.toml`, the codegen
@@ -684,6 +752,7 @@ pub fn doctor(ctx: &Context) {
                 "✓ {} (compute capability {}.{}, driver {})",
                 name, major, minor, driver
             );
+            doctor_report_build_arch(ctx, &format_sm_arch((major, minor)));
         }
         None => {
             // Some containers mount the kernel driver without shipping

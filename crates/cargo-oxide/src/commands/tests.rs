@@ -3146,6 +3146,52 @@ fn parse_compute_cap_takes_first_gpu_on_multi_gpu_machines() {
 }
 
 #[test]
+fn build_arch_check_stays_silent_when_build_already_targets_this_gpu() {
+    // Nothing to warn about, and doctor must not print a scary line for the
+    // configuration that is already correct.
+    assert!(build_arch_check(Some("sm_80"), "sm_80").is_none());
+    assert!(build_arch_check(Some("sm_121a"), "sm_121a").is_none());
+}
+
+#[test]
+fn build_arch_check_reports_the_unconfigured_fallback() {
+    // The issue #1266 repro: a Blackwell box with no arch configured, where
+    // `build` silently emits sm_80 PTX and only `run` targets the GPU.
+    let check = build_arch_check(None, "sm_121a").expect("unconfigured arch must warn");
+    assert_eq!(
+        check.headline,
+        "warning: `cargo oxide build` has no configured arch"
+    );
+    // The remedy must name both places a user can set the arch, since the
+    // whole point is that they have set neither.
+    let details = check.details.join(" ");
+    assert!(details.contains("default-arch = \"sm_121a\""), "{details}");
+    assert!(details.contains("--arch=sm_121a"), "{details}");
+    assert!(!check.failed);
+}
+
+#[test]
+fn build_arch_check_reports_a_configured_arch_naming_other_hardware() {
+    let check = build_arch_check(Some("sm_90a"), "sm_121a").expect("diverging arch must warn");
+    // Configured arch first, detected GPU second: swapped, the user would
+    // go change the setting that is already what they asked for.
+    assert_eq!(
+        check.headline,
+        "warning: `cargo oxide build` targets sm_90a, but this GPU is sm_121a"
+    );
+    assert!(!check.failed);
+
+    // Exact comparison: the plain target loads on the `a` chip but drops the
+    // arch-specific intrinsics `run` would have compiled, so it still warns.
+    let check = build_arch_check(Some("sm_121"), "sm_121a").expect("plain vs `a` must warn");
+    assert!(
+        check.headline.contains("targets sm_121, but"),
+        "{}",
+        check.headline
+    );
+}
+
+#[test]
 fn parse_gpu_name_cap_and_driver_splits_on_last_two_commas() {
     assert_eq!(
         parse_gpu_name_cap_and_driver("NVIDIA GeForce RTX 5090, 12.0, 580.65.06\n"),
