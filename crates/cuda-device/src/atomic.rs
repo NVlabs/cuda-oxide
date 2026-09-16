@@ -491,8 +491,10 @@ define_float_atomic! {
     /// `swap` lowers to hardware `atom.exch.b32`. No compare_exchange (PTX
     /// limitation). `fetch_add` lowered to hardware `atom.add.f32` through
     /// LLVM 22; on LLVM 23 the NVPTX backend regressed it to a
-    /// compare-and-swap loop for global-address-space `f32` (tracked in
-    /// <https://github.com/NVlabs/cuda-oxide/issues/1234>).
+    /// compare-and-swap loop in the global and generic address spaces
+    /// (tracked in <https://github.com/NVlabs/cuda-oxide/issues/1234>).
+    /// Shared `f32` still lowers to `atom.relaxed.gpu.shared.add.f32`, and
+    /// `f64` stays native in both address spaces.
     pub struct DeviceAtomicF32(f32);
 }
 
