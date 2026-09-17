@@ -626,13 +626,24 @@ fn cuda_module_kernel(
     let cfg_attrs = cuda_module_cfg_attrs(&item_fn.attrs)?;
     let mut effective_cfg_attrs = ancestor_cfg_attrs.to_vec();
     effective_cfg_attrs.extend(cfg_attrs.clone());
+    // PreparedLaunch proves launch geometry and declared resources, while
+    // Copy/Freeze only describe the copied parameter storage. None proves
+    // device accessibility or synchronization of values reached through its
+    // fields. Keep that proof at the host launch boundary for every grid
+    // parameter, including generic and otherwise safe source kernels.
+    let launch_unsafety = item_fn.sig.unsafety.or_else(|| {
+        params
+            .iter()
+            .any(|parameter| parameter.grid_constant)
+            .then(|| parse_quote!(unsafe))
+    });
     Ok(Some(CudaModuleKernel {
         module_path: module_path.to_vec(),
         vis: item_fn.vis.clone(),
         cfg_attrs,
         effective_cfg_attrs,
         method_attrs: cuda_module_method_attrs(&item_fn.attrs),
-        unsafety: item_fn.sig.unsafety,
+        launch_unsafety,
         fn_name: item_fn.sig.ident.clone(),
         generics,
         params,

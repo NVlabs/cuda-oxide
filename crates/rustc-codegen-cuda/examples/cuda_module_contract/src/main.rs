@@ -328,14 +328,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut constants_output = DeviceBuffer::<u32>::zeroed(&stream, constants.values.len())?;
     let constants_launch = module.prepare_grid_constant_read(LaunchConfig1D::new(1, 32, 0))?;
-    module.grid_constant_read(&stream, &constants_launch, &mut constants_output, constants)?;
+    // SAFETY: GridConstants contains only initialized u32 values, with no
+    // nested pointers or references. The output covers all 32 threads and
+    // stays alive until this synchronous launcher completes.
+    unsafe {
+        module.grid_constant_read(&stream, &constants_launch, &mut constants_output, constants)?;
+    }
     assert_eq!(constants_output.to_host_vec(&stream)?, constants.values);
 
     let generic_constant_output = DeviceBuffer::<u32>::zeroed(&stream, 32)?;
     let tag = 0_u8;
     let generic_constant_launch =
         module.prepare_generic_grid_constant_for(&tag, LaunchConfig1D::new(1, 32, 0))?;
-    // SAFETY: exactly one block writes its 32 distinct output elements.
+    // SAFETY: the copied constants and tag contain only initialized integers.
+    // Exactly one block writes its 32 distinct output elements; the device
+    // allocation remains alive until the synchronous launcher completes.
     unsafe {
         module.generic_grid_constant(
             &stream,
@@ -382,18 +389,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut first_addresses = DeviceBuffer::<u64>::zeroed(&stream, 64)?;
     let mut second_addresses = DeviceBuffer::<u64>::zeroed(&stream, 64)?;
     let mixed_launch = module.prepare_mixed_grid_constants(LaunchConfig1D::new(2, 32, 0))?;
-    module.mixed_grid_constants(
-        &stream,
-        &mixed_launch,
-        (),
-        &mixed_device_input,
-        constants,
-        (),
-        second,
-        &mut mixed_output,
-        &mut first_addresses,
-        &mut second_addresses,
-    )?;
+    // SAFETY: both copied descriptors contain only initialized integers.
+    // The input and disjoint output allocations each cover all 64 threads
+    // and remain alive until this synchronous launcher completes.
+    unsafe {
+        module.mixed_grid_constants(
+            &stream,
+            &mixed_launch,
+            (),
+            &mixed_device_input,
+            constants,
+            (),
+            second,
+            &mut mixed_output,
+            &mut first_addresses,
+            &mut second_addresses,
+        )?;
+    }
     let expected: Vec<u32> = mixed_input
         .iter()
         .enumerate()

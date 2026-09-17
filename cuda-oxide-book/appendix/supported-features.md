@@ -32,7 +32,7 @@ roadmap, **N/A** = not applicable or no identified need.
 | Array Types (`[T; N]`) | **Full** | Static construction, constant- and runtime-index access. Array value constants (bare and nested) materialized. Mutable arrays auto-promoted to memory-backed. |
 | `CuSimd<T, N>` SIMD Type | **Full** | Generic SIMD register type with named accessors (`x`/`y`/`z`/`w`), runtime and compile-time indexing, `to_array` conversion. |
 | ABI Scalarization | **Full** | Slices are scalarized at kernel boundaries (`&[T]` -> `(ptr, len)`, reconstructed inside the function). Structs and closures pass by value as one byval `.param`; field flattening still applies on internal device-to-device calls. |
-| Grid-constant parameters | **Full** | `#[grid_constant] value: &T` passes `T` by value and retains a grid-wide read-only address. Nonzero sized pointees without interior mutability, launch-scoped references, and Volta+ targets are required. |
+| Grid-constant parameters | **Full** | `#[grid_constant] value: &T` passes `T` by value and retains a grid-wide read-only address. Host launches are unsafe. Nonzero sized pointees without interior mutability, launch-scoped references, and Volta+ targets are required. |
 
 Array value constants support primitive leaves (integers, `f16`, `f32`,
 `f64`), nested arrays, and tuples recursively composed of supported scalar,

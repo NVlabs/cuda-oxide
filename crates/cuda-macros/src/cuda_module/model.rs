@@ -25,7 +25,9 @@ pub(crate) struct CudaModuleKernel {
     /// complete chain because they live outside those child modules.
     pub(crate) effective_cfg_attrs: Vec<syn::Attribute>,
     pub(super) method_attrs: Vec<syn::Attribute>,
-    pub(super) unsafety: Option<Token![unsafe]>,
+    /// Host launch safety is independent of the source function's Rust safety:
+    /// copying a grid parameter does not prove its nested values device-valid.
+    pub(super) launch_unsafety: Option<Token![unsafe]>,
     pub(crate) fn_name: Ident,
     pub(super) generics: syn::Generics,
     pub(super) params: Vec<CudaModuleParam>,
@@ -40,6 +42,7 @@ pub(crate) struct CudaModuleParam {
     pub(crate) sync_host_ty: TokenStream2,
     pub(crate) async_host_ty: TokenStream2,
     pub(crate) marshal: CudaModuleParamMarshal,
+    pub(crate) grid_constant: bool,
     pub(crate) mutable_slice: bool,
     pub(crate) disjoint_slice_ty: Option<Type>,
     pub(crate) disjoint_slice_elem: Option<TokenStream2>,
@@ -152,6 +155,7 @@ pub(crate) fn cuda_module_param_from_typed(
         sync_host_ty,
         async_host_ty,
         marshal,
+        grid_constant: grid_constant_pointee.is_some(),
         mutable_slice,
         disjoint_slice_ty,
         disjoint_slice_elem,

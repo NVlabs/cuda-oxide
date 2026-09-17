@@ -63,6 +63,98 @@ fn grid_constant_uses_one_by_value_host_argument() {
     );
 }
 
+#[test]
+fn grid_constant_launch_safety_is_independent_of_source_safety_and_geometry() {
+    let module: ItemMod = parse_quote! {
+        mod kernels {
+            #[kernel]
+            #[launch_contract(domain = 1, block = (1, 1, 1))]
+            pub fn grid(#[grid_constant] value: &Payload) {}
+
+            #[kernel]
+            #[launch_contract(domain = 1, block = (1, 1, 1))]
+            pub fn generic<T: Copy>(#[grid_constant] value: &T) {}
+
+            #[kernel]
+            #[launch_contract(domain = 1, block = (1, 1, 1))]
+            pub fn ordinary(value: Payload) {}
+        }
+    };
+    let expanded: ItemMod = syn::parse2(expand_cuda_module(module).unwrap()).unwrap();
+    let items = &expanded.content.as_ref().unwrap().1;
+    // The device Rust signatures and their fingerprint inputs remain safe.
+    for name in ["grid", "generic", "ordinary"] {
+        let source = items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == name => Some(function),
+                _ => None,
+            })
+            .expect("source kernel is preserved");
+        assert!(source.sig.unsafety.is_none(), "{name}");
+    }
+    let mut checked = 0;
+    for item in items {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        for item in &implementation.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            let name = method.sig.ident.to_string();
+            if ["grid", "generic"]
+                .iter()
+                .any(|prefix| name == *prefix || name.starts_with(&format!("{prefix}_")))
+            {
+                assert!(
+                    method.sig.unsafety.is_some(),
+                    "{name} must require a host proof"
+                );
+                let docs = method
+                    .attrs
+                    .iter()
+                    .filter_map(|attribute| {
+                        let syn::Meta::NameValue(value) = &attribute.meta else {
+                            return None;
+                        };
+                        if !value.path.is_ident("doc") {
+                            return None;
+                        }
+                        let syn::Expr::Lit(value) = &value.value else {
+                            return None;
+                        };
+                        let syn::Lit::Str(value) = &value.lit else {
+                            return None;
+                        };
+                        Some(value.value())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(docs.contains("# Safety"), "{name}: {docs}");
+                assert!(
+                    docs.contains("until the device work completes"),
+                    "{name}: {docs}"
+                );
+                assert!(
+                    docs.contains("allocations referenced by their fields"),
+                    "{name}: {docs}"
+                );
+                checked += 1;
+            } else if matches!(
+                name.as_str(),
+                "ordinary" | "ordinary_async" | "ordinary_async_owned"
+            ) {
+                assert!(
+                    method.sig.unsafety.is_none(),
+                    "ordinary scalar policy is unchanged"
+                );
+            }
+        }
+    }
+    assert_eq!(checked, if cfg!(feature = "async") { 12 } else { 4 });
+}
+
 /// With the host surface off, nothing in the expansion may name the
 /// `cuda-host` -> `cuda-core` -> `cuda-bindings` -> `cuda.h` stack. That is
 /// the whole point of the feature: a crate that only compiles kernels

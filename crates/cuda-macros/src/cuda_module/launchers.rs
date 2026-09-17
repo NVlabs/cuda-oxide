@@ -17,6 +17,28 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{GenericParam, Ident};
 
+/// Attach the same nested-allocation obligations to every host launch family.
+/// Raw launchers already have a Safety section; prepared grid launchers gain
+/// one because their additional unsafe contract is independent of geometry.
+fn grid_constant_launch_safety_docs(
+    kernel: &CudaModuleKernel,
+    include_heading: bool,
+) -> Option<TokenStream2> {
+    if !kernel
+        .params
+        .iter()
+        .any(|parameter| parameter.grid_constant)
+    {
+        return None;
+    }
+    let heading = include_heading.then(|| quote! { #[doc = "# Safety"] });
+    Some(quote! {
+        #[doc = ""]
+        #heading
+        #[doc = "Grid-constant values are copied into launch storage, but allocations referenced by their fields are neither copied nor kept alive by that copy. Any references carried in the value must be valid on the device. All memory reached through the value must remain accessible and satisfy Rust aliasing and cross-thread synchronization requirements throughout device execution, including any deferred execution of an async operation. The caller must prevent incompatible host/device accesses and keep referenced allocations alive until the device work completes. `Copy`, storage immutability, and prepared launch checks do not prove these obligations. The caller must also uphold any safety requirements documented on the source kernel."]
+    })
+}
+
 pub(super) fn generate_cuda_module_launch_contract_impl(
     kernel: &CudaModuleKernel,
 ) -> Option<TokenStream2> {
@@ -206,6 +228,7 @@ fn generate_cuda_module_legacy_launch_method(kernel: &CudaModuleKernel) -> Token
     let vis = &kernel.vis;
     let cfg_attrs = &kernel.cfg_attrs;
     let method_attrs = &kernel.method_attrs;
+    let grid_safety_docs = grid_constant_launch_safety_docs(kernel, false);
     let fn_name = &kernel.fn_name;
     let generics = cuda_module_launch_generics(kernel);
     let (impl_generics, _ty_generics, where_clause) = generics.split_for_impl();
@@ -232,6 +255,7 @@ fn generate_cuda_module_legacy_launch_method(kernel: &CudaModuleKernel) -> Token
         #[doc = ""]
         #[doc = "# Safety"]
         #[doc = "The launch dimensions and resources must satisfy every indexing, memory-access, launch-bounds, and dynamic-shared-memory assumption made by the kernel. Dimensions not represented by the kernel's index model must not introduce overlapping or out-of-bounds accesses. The caller must also uphold any safety requirements documented on the kernel itself."]
+        #grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis unsafe fn #fn_name #impl_generics (
             &self,
@@ -253,7 +277,9 @@ fn generate_cuda_module_prepared_launch_method(kernel: &CudaModuleKernel) -> Tok
     let vis = &kernel.vis;
     let cfg_attrs = &kernel.cfg_attrs;
     let method_attrs = &kernel.method_attrs;
-    let unsafety = &kernel.unsafety;
+    let unsafety = &kernel.launch_unsafety;
+    let grid_safety_docs = grid_constant_launch_safety_docs(kernel, true);
+    let unchecked_grid_safety_docs = grid_constant_launch_safety_docs(kernel, false);
     let fn_name = &kernel.fn_name;
     let unchecked_name = format_ident!("{}_unchecked", fn_name);
     let marker_ty = cuda_module_kernel_marker_type(kernel);
@@ -291,6 +317,7 @@ fn generate_cuda_module_prepared_launch_method(kernel: &CudaModuleKernel) -> Tok
     quote! {
         #(#cfg_attrs)*
         #(#method_attrs)*
+        #grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis #unsafety fn #fn_name #impl_generics (
             &self,
@@ -314,6 +341,7 @@ fn generate_cuda_module_prepared_launch_method(kernel: &CudaModuleKernel) -> Tok
         #[doc = ""]
         #[doc = "# Safety"]
         #[doc = "The caller must uphold the kernel's declared geometry, resource, capability, and context contract, including any `requires` size requirements. This escape hatch intentionally skips the contract's checks, so an undersized buffer is not caught before the kernel runs."]
+        #unchecked_grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis unsafe fn #unchecked_name #impl_generics (
             &self,
@@ -343,6 +371,7 @@ fn generate_cuda_module_legacy_async_launch_method(kernel: &CudaModuleKernel) ->
     let vis = &kernel.vis;
     let cfg_attrs = &kernel.cfg_attrs;
     let method_attrs = &kernel.method_attrs;
+    let grid_safety_docs = grid_constant_launch_safety_docs(kernel, false);
     let fn_name = format_ident!("{}_async", kernel.fn_name);
     let generics = cuda_module_async_launch_generics(kernel);
     let (impl_generics, _ty_generics, where_clause) = generics.split_for_impl();
@@ -376,6 +405,7 @@ fn generate_cuda_module_legacy_async_launch_method(kernel: &CudaModuleKernel) ->
         #[doc = ""]
         #[doc = "# Safety"]
         #[doc = "Before scheduling the returned operation, the launch dimensions and resources must satisfy every indexing, memory-access, launch-bounds, and dynamic-shared-memory assumption made by the kernel. Dimensions not represented by the kernel's index model must not introduce overlapping or out-of-bounds accesses. The caller must also uphold any safety requirements documented on the kernel itself."]
+        #grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis unsafe fn #fn_name #impl_generics (
             &self,
@@ -400,7 +430,9 @@ fn generate_cuda_module_prepared_async_launch_method(kernel: &CudaModuleKernel) 
     let vis = &kernel.vis;
     let cfg_attrs = &kernel.cfg_attrs;
     let method_attrs = &kernel.method_attrs;
-    let unsafety = &kernel.unsafety;
+    let unsafety = &kernel.launch_unsafety;
+    let grid_safety_docs = grid_constant_launch_safety_docs(kernel, true);
+    let unchecked_grid_safety_docs = grid_constant_launch_safety_docs(kernel, false);
     let fn_name = format_ident!("{}_async", kernel.fn_name);
     let unchecked_name = format_ident!("{}_async_unchecked", kernel.fn_name);
     let marker_ty = cuda_module_kernel_marker_type(kernel);
@@ -470,6 +502,7 @@ fn generate_cuda_module_prepared_async_launch_method(kernel: &CudaModuleKernel) 
         #(#cfg_attrs)*
         #(#method_attrs)*
         #requires_doc
+        #grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis #unsafety fn #fn_name #impl_generics (
             &self,
@@ -497,6 +530,7 @@ fn generate_cuda_module_prepared_async_launch_method(kernel: &CudaModuleKernel) 
         #[doc = ""]
         #[doc = "# Safety"]
         #[doc = "The caller must uphold the kernel's declared geometry, resource, capability, and context contract when the returned operation is scheduled, including any `requires` size requirements. This escape hatch intentionally skips the contract's checks, so an undersized buffer is not caught before the kernel runs."]
+        #unchecked_grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis unsafe fn #unchecked_name #impl_generics (
             &self,
@@ -537,6 +571,7 @@ fn generate_cuda_module_legacy_owned_async_launch_method(
     let vis = &kernel.vis;
     let cfg_attrs = &kernel.cfg_attrs;
     let method_attrs = &kernel.method_attrs;
+    let grid_safety_docs = grid_constant_launch_safety_docs(kernel, false);
     let fn_name = format_ident!("{}_async_owned", kernel.fn_name);
     let resources = cuda_module_owned_resource_params(kernel);
     let generics = cuda_module_owned_async_launch_generics(kernel, &resources);
@@ -598,6 +633,7 @@ fn generate_cuda_module_legacy_owned_async_launch_method(
         #[doc = ""]
         #[doc = "# Safety"]
         #[doc = "Before scheduling the returned operation, the launch dimensions and resources must satisfy every indexing, memory-access, launch-bounds, and dynamic-shared-memory assumption made by the kernel. Dimensions not represented by the kernel's index model must not introduce overlapping or out-of-bounds accesses. The caller must also uphold any safety requirements documented on the kernel itself."]
+        #grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis unsafe fn #fn_name #impl_generics (
             &self,
@@ -627,7 +663,9 @@ fn generate_cuda_module_prepared_owned_async_launch_method(
     let vis = &kernel.vis;
     let cfg_attrs = &kernel.cfg_attrs;
     let method_attrs = &kernel.method_attrs;
-    let unsafety = &kernel.unsafety;
+    let unsafety = &kernel.launch_unsafety;
+    let grid_safety_docs = grid_constant_launch_safety_docs(kernel, true);
+    let unchecked_grid_safety_docs = grid_constant_launch_safety_docs(kernel, false);
     let fn_name = format_ident!("{}_async_owned", kernel.fn_name);
     let unchecked_name = format_ident!("{}_async_owned_unchecked", kernel.fn_name);
     let marker_ty = cuda_module_kernel_marker_type(kernel);
@@ -736,6 +774,7 @@ fn generate_cuda_module_prepared_owned_async_launch_method(
         #(#cfg_attrs)*
         #(#method_attrs)*
         #requires_doc
+        #grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis #unsafety fn #fn_name #impl_generics (
             &self,
@@ -765,6 +804,7 @@ fn generate_cuda_module_prepared_owned_async_launch_method(
         #[doc = ""]
         #[doc = "# Safety"]
         #[doc = "The caller must uphold the kernel's declared geometry, resource, capability, and context contract when the returned operation is scheduled, including any `requires` size requirements. This escape hatch intentionally skips the contract's checks, so an undersized buffer is not caught before the kernel runs."]
+        #unchecked_grid_safety_docs
         #[allow(clippy::multiple_bound_locations, clippy::too_many_arguments)]
         #vis unsafe fn #unchecked_name #impl_generics (
             &self,

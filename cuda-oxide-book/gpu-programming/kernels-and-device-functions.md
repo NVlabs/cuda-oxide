@@ -113,6 +113,17 @@ apply. Values containing device shared-memory pointers are rejected because
 those pointers have different storage widths across the supported backends;
 ordinary generic or global pointers do not have that restriction.
 
+Generated host launch methods for grid-constant parameters are always
+`unsafe`, including prepared and async methods, even when the device kernel
+is a safe function. `Copy` and read-only parameter storage do not prove that
+references or pointers stored inside the value are valid on the GPU. At
+launch, the caller must ensure that any allocations the kernel accesses are
+device-accessible, correctly aligned and initialized, live until GPU work
+completes, and satisfy Rust's aliasing and synchronization rules. A prepared
+launch checks geometry and resources; it does not prove these memory
+properties. This requirement also applies to payloads containing only data;
+the current type bound does not distinguish them from pointer-bearing values.
+
 When using a manual unsafe launch, supply the entire pointee value as one
 argument, with its Rust size and alignment. Passing an eight-byte device
 pointer to this parameter does not match its ABI. An ordinary unannotated

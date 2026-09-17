@@ -1,0 +1,31 @@
+error[E0133]: call to unsafe function `LoadedModule::consume_async` is unsafe and requires unsafe block
+  --> tests/compile_fail/grid_constant_prepared_async_requires_unsafe.rs:39:13
+   |
+39 |     let _ = module.consume_async(prepared, payload);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+error[E0133]: call to unsafe function `LoadedModule::consume_async_owned` is unsafe and requires unsafe block
+  --> tests/compile_fail/grid_constant_prepared_async_requires_unsafe.rs:40:13
+   |
+40 |     let _ = module.consume_async_owned(prepared, payload);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+error[E0133]: call to unsafe function `LoadedModule::generic_async` is unsafe and requires unsafe block
+  --> tests/compile_fail/grid_constant_prepared_async_requires_unsafe.rs:41:13
+   |
+41 |     let _ = module.generic_async(generic, payload);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid undefined behavior
+
+error[E0133]: call to unsafe function `LoadedModule::generic_async_owned` is unsafe and requires unsafe block
+  --> tests/compile_fail/grid_constant_prepared_async_requires_unsafe.rs:42:13
+   |
+42 |     let _ = module.generic_async_owned(generic, payload);
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+   |
+   = note: consult the function's documentation for information on how to avoid undefined behavior

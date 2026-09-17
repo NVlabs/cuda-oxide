@@ -17,6 +17,10 @@ host launcher takes the descriptor by value and places its 128 bytes directly
 in the kernel's parameter storage. Every thread can address that same read-only
 value; no separate device descriptor allocation or upload is needed. The tensor
 data itself stays in device global memory and must outlive the launch.
+Grid-constant host launches are unsafe, including prepared launches: the caller
+must ensure that the encoded tensor addresses remain valid for the GPU until
+the work completes. This example retains the input and output buffers until
+synchronization finishes.
 
 ## Key Concepts Demonstrated
 
