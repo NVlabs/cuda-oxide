@@ -82,11 +82,34 @@ pub fn load_all_ptx_bundles_merged(
     ctx: &Arc<CudaContext>,
 ) -> Result<Arc<CudaModule>, EmbeddedModuleError> {
     let bundles = artifact_bundles_from_current_exe()?;
+    let merged = merge_ptx_bundles(&bundles)?;
 
+    let module = ctx.load_module_from_image(merged.as_bytes())?;
+    // Retain the merged module's `.entry` names (a few dozen bytes per
+    // kernel). If a later `_TID_` generic-kernel lookup misses while a
+    // same-base entry exists under a different hash, the launch paths can
+    // then report a host/device type-identity naming divergence instead of an
+    // opaque "named symbol not found". See `crate::entry_registry`.
+    crate::entry_registry::register_merged_module_entries(&module, &merged);
+    Ok(module)
+}
+
+/// Merge the PTX payloads of `bundles`, in iteration order, into one PTX
+/// module string: the first PTX bundle keeps its `.version` / `.target` /
+/// `.address_size` header directives, every later one contributes its body
+/// with those directives stripped. Bundles without a PTX payload are skipped.
+///
+/// This is the pure half of [`load_all_ptx_bundles_merged`], exposed so tests
+/// and examples can check order-dependent merge properties: module-scope
+/// symbol uniqueness and extern alignment must hold for every bundle order,
+/// not just the one the current executable happens to embed (#1277).
+pub fn merge_ptx_bundles<'a>(
+    bundles: impl IntoIterator<Item = &'a OwnedArtifactBundle>,
+) -> Result<String, EmbeddedModuleError> {
     let mut merged = String::new();
     let mut found_any = false;
 
-    for bundle in &bundles {
+    for bundle in bundles {
         if let Some(ptx_bytes) = bundle.payload(ArtifactPayloadKind::Ptx) {
             let ptx_str = std::str::from_utf8(ptx_bytes)
                 .map_err(|_| EmbeddedModuleError::UnsupportedPayload {
@@ -118,15 +141,7 @@ pub fn load_all_ptx_bundles_merged(
     if !found_any {
         return Err(EmbeddedModuleError::NoModules);
     }
-
-    let module = ctx.load_module_from_image(merged.as_bytes())?;
-    // Retain the merged module's `.entry` names (a few dozen bytes per
-    // kernel). If a later `_TID_` generic-kernel lookup misses while a
-    // same-base entry exists under a different hash, the launch paths can
-    // then report a host/device type-identity naming divergence instead of an
-    // opaque "named symbol not found". See `crate::entry_registry`.
-    crate::entry_registry::register_merged_module_entries(&module, &merged);
-    Ok(module)
+    Ok(merged)
 }
 
 fn strip_ptx_module_headers(ptx: &str) -> Result<String, String> {
@@ -262,6 +277,52 @@ mod tests {
                 .map(|target| target.sm()),
             Some("sm_90".to_string())
         );
+    }
+
+    fn ptx_bundle(name: &str, ptx: &str) -> OwnedArtifactBundle {
+        use oxide_artifacts::OwnedArtifactPayload;
+        OwnedArtifactBundle {
+            name: name.to_string(),
+            target: "sm_80".to_string(),
+            compile_options: ArtifactCompileOptions::new(),
+            payloads: vec![OwnedArtifactPayload {
+                kind: ArtifactPayloadKind::Ptx,
+                name: name.to_string(),
+                bytes: ptx.as_bytes().to_vec(),
+            }],
+            entries: Vec::new(),
+        }
+    }
+
+    /// The merge is order-explicit: exactly one header set (the first PTX
+    /// bundle's), every body present in iteration order, non-PTX bundles
+    /// skipped. #1277's collision-free-namespace example checks the same
+    /// function under both bundle orders at runtime.
+    #[test]
+    fn merges_bundles_in_iteration_order_with_one_header_set() {
+        let first = ptx_bundle(
+            "first",
+            ".version 8.9\n.target sm_80\n.address_size 64\n.visible .entry a() { ret; }\n",
+        );
+        let second = ptx_bundle(
+            "second",
+            ".version 8.9\n.target sm_80\n.address_size 64\n.visible .entry b() { ret; }\n",
+        );
+        let skipped = bundle_with_target("sm_80");
+
+        let forward = merge_ptx_bundles([&first, &skipped, &second]).unwrap();
+        assert_eq!(forward.matches(".version").count(), 1);
+        assert_eq!(forward.matches(".target sm_80").count(), 1);
+        assert!(forward.find(".entry a()").unwrap() < forward.find(".entry b()").unwrap());
+
+        let reversed = merge_ptx_bundles([&second, &first]).unwrap();
+        assert_eq!(reversed.matches(".version").count(), 1);
+        assert!(reversed.find(".entry b()").unwrap() < reversed.find(".entry a()").unwrap());
+
+        assert!(matches!(
+            merge_ptx_bundles([&skipped]),
+            Err(EmbeddedModuleError::NoModules)
+        ));
     }
 
     #[test]

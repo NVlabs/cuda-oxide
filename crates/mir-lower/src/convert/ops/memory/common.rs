@@ -17,6 +17,14 @@ use pliron::result::Result;
 use pliron::r#type::{TypeHandle, Typed};
 use pliron::value::Value;
 
+/// Name for the `index`-th counter-named module-scope global of one family
+/// (`__shared_mem`, `__device_global`). See
+/// [`crate::context::module_namespaced_symbol`] for why the module
+/// disambiguator is part of the name.
+pub(super) fn counter_named_global(ctx: &Context, family: &str, index: usize) -> String {
+    crate::context::module_namespaced_symbol(ctx, family, &index.to_string())
+}
+
 pub(super) fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
     pliron::create_error!(
         pliron::location::Location::Unknown,

@@ -92,19 +92,24 @@ target type (e.g., 4-byte aligned for `f32`, 8-byte aligned for `f64`).
 
 ## PTX Output
 
-Each kernel gets its own dynamic shared memory symbol:
+Each kernel gets its own dynamic shared memory symbol. The hex component is
+the compiling crate's stable id, which keeps one owner's symbol distinct when
+several crates' PTX bundles are merged into one module at load time:
 
 ```ptx
 ; Different kernels with different alignments
-.extern .shared .align 16 .b8 __dynamic_smem_dynamic_smem_basic[];
-.extern .shared .align 16 .b8 __dynamic_smem_dynamic_smem_partition[];
-.extern .shared .align 128 .b8 __dynamic_smem_dynamic_smem_explicit_align[];
-.extern .shared .align 256 .b8 __dynamic_smem_dynamic_smem_mixed_align[];
+.extern .shared .align 16 .b8 __dynamic_smem_00f223822842cf67_dynamic_smem_basic[];
+.extern .shared .align 16 .b8 __dynamic_smem_00f223822842cf67_dynamic_smem_partition[];
+.extern .shared .align 128 .b8 __dynamic_smem_00f223822842cf67_dynamic_smem_explicit_align[];
+.extern .shared .align 256 .b8 __dynamic_smem_00f223822842cf67_dynamic_smem_mixed_align[];
 ```
 
-This is different from static `SharedArray` which generates unique symbols per allocation:
+This is different from static `SharedArray` which generates unique symbols per
+allocation. The hex component is the compiling crate's stable id, which keeps
+the symbols distinct when several crates' PTX bundles are merged into one
+module at load time:
 
 ```ptx
-.shared .align 4 .b8 __shared_mem_0[1024];
-.shared .align 4 .b8 __shared_mem_1[512];
+.shared .align 4 .b8 __shared_mem_00f223822842cf67_0[1024];
+.shared .align 4 .b8 __shared_mem_00f223822842cf67_1[512];
 ```

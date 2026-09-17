@@ -242,6 +242,15 @@ pub struct PipelineConfig {
     ///
     /// Explicit fused operations, such as `f32::mul_add`, are unaffected.
     pub allow_fma_contraction: bool,
+    /// Stable per-compilation identity woven into counter-named module-scope
+    /// symbols (`__shared_mem_*`, `__device_global_*`) and the dynamic
+    /// shared-memory pool externs (`__dynamic_smem_*`) during MIR lowering.
+    ///
+    /// The rustc frontend passes the crate's `StableCrateId` hash so that
+    /// bundles from different crates define no common module-scope symbol
+    /// when `load_all_ptx_bundles_merged` concatenates their PTX (#1277).
+    /// `None` keeps the undecorated historical names.
+    pub module_disambiguator: Option<u64>,
 }
 
 impl Default for PipelineConfig {
@@ -259,6 +268,7 @@ impl Default for PipelineConfig {
             debug_kind: DebugKind::Off,
             debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+            module_disambiguator: None,
         }
     }
 }
@@ -433,6 +443,7 @@ fn backend_options_for(config: &PipelineConfig) -> BackendOptions {
     }
     backend_options.verbose = backend_options.verbose || config.verbose;
     backend_options.no_fma = !config.allow_fma_contraction;
+    backend_options.module_disambiguator = config.module_disambiguator;
     backend_options
 }
 
@@ -1290,6 +1301,7 @@ fn adversarial_export_name() -> u64 {
             debug_kind: DebugKind::Off,
             debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+            module_disambiguator: None,
         };
         let result = run_pipeline(&[], &[], &config, Default::default()).expect("pipeline run");
 
@@ -1343,6 +1355,7 @@ fn adversarial_export_name() -> u64 {
             debug_kind: DebugKind::Off,
             debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+            module_disambiguator: None,
         };
 
         let result = run_pipeline(&[], &[], &config, Default::default()).expect("pipeline run");
@@ -1434,6 +1447,7 @@ fn adversarial_export_name() -> u64 {
             debug_kind: DebugKind::Off,
             debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+            module_disambiguator: None,
         };
         let externs = [DeviceExternDecl {
             export_name: "consume_float".to_string(),

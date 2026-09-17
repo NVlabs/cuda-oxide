@@ -57,6 +57,17 @@ pub struct BackendOptions {
     /// are defined by the cuda-oxide-owned optimization registry. Each entry
     /// declares whether it runs before or after standard MIR preparation.
     pub mir_pass_pipeline: Option<String>,
+    /// Stable per-compilation identity woven into counter-named module-scope
+    /// symbols (`__shared_mem_*`, `__device_global_*`) and the dynamic
+    /// shared-memory pool externs (`__dynamic_smem_*`) during MIR lowering.
+    ///
+    /// Required when the emitted PTX can be textually merged with other
+    /// crates' bundles (`load_all_ptx_bundles_merged`): without it every
+    /// module names its first shared allocation `__shared_mem_0` and the
+    /// merged module fails driver JIT compilation on the duplicate
+    /// definition (#1277). The rustc pipeline passes the crate's
+    /// `StableCrateId` hash; `None` keeps the undecorated historical names.
+    pub module_disambiguator: Option<u64>,
 }
 
 impl Default for BackendOptions {
@@ -72,6 +83,7 @@ impl Default for BackendOptions {
             llc_override: None,
             opt_override: None,
             mir_pass_pipeline: None,
+            module_disambiguator: None,
         }
     }
 }
@@ -108,6 +120,9 @@ impl BackendOptions {
             llc_override: std::env::var("CUDA_OXIDE_LLC").ok().map(PathBuf::from),
             opt_override: std::env::var("CUDA_OXIDE_OPT").ok().map(PathBuf::from),
             mir_pass_pipeline: std::env::var("CUDA_OXIDE_MIR_PASSES").ok(),
+            // Compilation identity, not an environment compatibility knob:
+            // the pipeline host sets it from its own crate identity.
+            module_disambiguator: None,
         }
     }
 }

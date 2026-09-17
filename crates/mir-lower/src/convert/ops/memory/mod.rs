@@ -22,14 +22,17 @@
 //!
 //! ## Static Shared Memory (`SharedArray<T, N, ALIGN>`)
 //!
-//! Each static shared memory allocation gets a unique global symbol (`__shared_mem_N`).
-//! Multiple allocations in the same or different kernels each have their own symbol
-//! with their own size and alignment.
+//! Each static shared memory allocation gets a unique global symbol
+//! (`__shared_mem_N`, with the compiling crate's stable id woven in when the
+//! lowering options carry a module disambiguator — see
+//! `crate::context::module_namespaced_symbol`). Multiple allocations in the
+//! same or different kernels each have their own symbol with their own size
+//! and alignment.
 //!
 //! ## Dynamic Shared Memory (`DynamicSharedArray<T, ALIGN>`)
 //!
 //! Dynamic shared memory uses a symbol for each function that owns an access
-//! (`__dynamic_smem_{function_name}`).
+//! (`__dynamic_smem_{function_name}`, crate-namespaced the same way).
 //! Key characteristics:
 //!
 //! - **Per-owner symbols**: Each function containing an access gets an extern symbol

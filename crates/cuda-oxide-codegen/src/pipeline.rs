@@ -323,6 +323,7 @@ pub fn compile_translated_module(
         module,
         !backend.no_fma,
         backend_selection.intrinsic_backend,
+        backend.module_disambiguator,
     )?;
 
     let lowered_module_uses_libdevice = module_uses_libdevice(ctx, module);

@@ -2014,6 +2014,7 @@ mod tests {
             crate::LoweringOptions {
                 allow_fma_contraction: false,
                 intrinsic_backend: crate::IntrinsicBackend::LlvmNvptx,
+                module_disambiguator: None,
             },
         );
 
@@ -2502,6 +2503,7 @@ mod tests {
             crate::LoweringOptions {
                 allow_fma_contraction: true,
                 intrinsic_backend: crate::IntrinsicBackend::LlvmNvptx,
+                module_disambiguator: None,
             },
         );
         assert_eq!(
@@ -2550,6 +2552,7 @@ mod tests {
             crate::LoweringOptions {
                 allow_fma_contraction: true,
                 intrinsic_backend: crate::IntrinsicBackend::LibNvvm,
+                module_disambiguator: None,
             },
         );
         assert_eq!(

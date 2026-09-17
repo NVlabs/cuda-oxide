@@ -19,7 +19,7 @@
 //!
 //! ## Key Features Tested
 //!
-//! - Per-kernel symbols: Each kernel gets `__dynamic_smem_{kernel_name}`
+//! - Per-kernel symbols: Each kernel gets `__dynamic_smem_{crate_id}_{kernel_name}`
 //! - Max alignment: Multiple calls with different ALIGN values use the maximum
 //! - User-specified alignment: Can specify any power-of-2 alignment
 //!
@@ -43,7 +43,7 @@ mod kernels {
     /// Each thread writes its value to dynamic shared memory, syncs,
     /// then reads from its neighbor.
     ///
-    /// PTX output: `.extern .shared .align 16 .b8 __dynamic_smem_dynamic_smem_basic[];`
+    /// PTX output: `.extern .shared .align 16 .b8 __dynamic_smem_00f223822842cf67_dynamic_smem_basic[];`
     #[kernel]
     pub fn dynamic_smem_basic(data: &[f32], mut out: DisjointSlice<f32>) {
         // Default alignment (16 bytes, matches nvcc)
@@ -83,7 +83,7 @@ mod kernels {
     /// |        offset 0        |    offset N*4 bytes    |
     /// ```
     ///
-    /// PTX output: `.extern .shared .align 16 .b8 __dynamic_smem_dynamic_smem_partition[];`
+    /// PTX output: `.extern .shared .align 16 .b8 __dynamic_smem_00f223822842cf67_dynamic_smem_partition[];`
     #[kernel]
     pub fn dynamic_smem_partition(a: &[f32], b: &[f32], mut out: DisjointSlice<f32>) {
         // First array at offset 0 (default alignment)
@@ -126,7 +126,7 @@ mod kernels {
     ///
     /// Demonstrates explicit alignment specification for TMA operations.
     ///
-    /// PTX output: `.extern .shared .align 128 .b8 __dynamic_smem_dynamic_smem_explicit_align[];`
+    /// PTX output: `.extern .shared .align 128 .b8 __dynamic_smem_00f223822842cf67_dynamic_smem_explicit_align[];`
     #[kernel]
     pub fn dynamic_smem_explicit_align(data: &[f32], mut out: DisjointSlice<f32>) {
         // Explicit 128-byte alignment (required for TMA)
@@ -165,7 +165,7 @@ mod kernels {
     /// This kernel has multiple DynamicSharedArray calls with different alignments.
     /// The compiler pre-pass computes max(16, 128, 256) = 256 and uses that.
     ///
-    /// PTX output: `.extern .shared .align 256 .b8 __dynamic_smem_dynamic_smem_mixed_align[];`
+    /// PTX output: `.extern .shared .align 256 .b8 __dynamic_smem_00f223822842cf67_dynamic_smem_mixed_align[];`
     #[kernel]
     pub fn dynamic_smem_mixed_align(a: &[f32], b: &[f32], c: &[f32], mut out: DisjointSlice<f32>) {
         // Three partitions with different alignment requirements
@@ -408,9 +408,9 @@ fn main() {
     }
 
     println!("✓ SUCCESS: All dynamic shared memory tests passed!");
-    println!("\nPTX symbols to verify:");
-    println!("  - __dynamic_smem_dynamic_smem_basic        (align 16)");
-    println!("  - __dynamic_smem_dynamic_smem_partition    (align 16)");
-    println!("  - __dynamic_smem_dynamic_smem_explicit_align (align 128)");
-    println!("  - __dynamic_smem_dynamic_smem_mixed_align  (align 256)");
+    println!("\nPTX symbols to verify (<crate-id> is this crate's stable id):");
+    println!("  - __dynamic_smem_<crate-id>_dynamic_smem_basic        (align 16)");
+    println!("  - __dynamic_smem_<crate-id>_dynamic_smem_partition    (align 16)");
+    println!("  - __dynamic_smem_<crate-id>_dynamic_smem_explicit_align (align 128)");
+    println!("  - __dynamic_smem_<crate-id>_dynamic_smem_mixed_align  (align 256)");
 }
