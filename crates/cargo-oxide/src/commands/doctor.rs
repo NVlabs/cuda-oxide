@@ -346,14 +346,13 @@ pub(super) fn backend_source_check(
 /// `build` skips the auto-detection `run` does so cross-compiling keeps
 /// working (see [`detect_run_target_arch`]), which leaves the divergence
 /// invisible (issue #1266). Doctor resolves both facts, so it can compare
-/// them. Informational, never fatal.
+/// them. Informational, not fatal.
 fn doctor_report_build_arch(ctx: &Context, detected: &str) {
     // Doctor has no `--arch`, so only the env and config slots can apply.
     let configured = configured_arch_label(ctx, None);
     let Some(check) = build_arch_check(configured.as_deref(), detected) else {
         return;
     };
-    // Continuation of the driver / GPU check, not a check of its own.
     println!("  {}", check.headline);
     for line in check.details {
         println!("  {line}");
