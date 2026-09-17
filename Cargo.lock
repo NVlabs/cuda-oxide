@@ -210,6 +210,7 @@ version = "0.2.1"
 dependencies = [
  "clap",
  "cuda-artifact-finalizer",
+ "cuda-target-spec",
  "libnvvm-sys",
  "nvjitlink-sys",
  "oxide-artifacts 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",

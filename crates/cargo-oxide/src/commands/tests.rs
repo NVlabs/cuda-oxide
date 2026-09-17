@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::*;
+use cuda_target_spec::CudaArch;
 use std::ffi::OsStr;
 
 /// The concatenated sources of every module under `commands/`, standing in
@@ -3294,6 +3295,92 @@ fn parse_compute_cap_accepts_real_nvidia_smi_output() {
 #[test]
 fn parse_compute_cap_takes_first_gpu_on_multi_gpu_machines() {
     assert_eq!(parse_compute_cap("9.0\n12.0\n"), Some((9, 0)));
+}
+
+fn arch(target: &str) -> CudaArch {
+    target.parse().expect("valid CUDA target")
+}
+
+#[test]
+fn build_arch_check_stays_silent_when_build_already_targets_this_gpu() {
+    assert!(build_arch_check(Some("sm_80"), &arch("sm_80")).is_none());
+    assert!(build_arch_check(Some("sm_121a"), &arch("sm_121a")).is_none());
+}
+
+#[test]
+fn build_arch_check_compares_capability_not_spelling() {
+    // Same device, different spellings: a string compare would warn on every
+    // one of these. `compute_XX` is the libNVVM rendering of the same arch.
+    assert!(build_arch_check(Some("sm_090"), &arch("sm_90")).is_none());
+    assert!(build_arch_check(Some("compute_90"), &arch("sm_90")).is_none());
+    assert!(build_arch_check(Some("compute_121a"), &arch("sm_121a")).is_none());
+}
+
+#[test]
+fn build_arch_check_stays_silent_on_an_unparseable_configured_arch() {
+    // No capability to compare, so doctor claims nothing about it rather than
+    // reporting it as other hardware.
+    assert!(build_arch_check(Some("garbage"), &arch("sm_121a")).is_none());
+    assert!(build_arch_check(Some("sm_90x"), &arch("sm_121a")).is_none());
+}
+
+#[test]
+fn build_arch_check_reports_the_unconfigured_fallback() {
+    // The issue #1266 repro: no arch configured, so `build` emits sm_80 PTX.
+    let check = build_arch_check(None, &arch("sm_121a")).expect("unconfigured arch must warn");
+    assert_eq!(
+        check.headline,
+        "warning: `cargo oxide build` has no configured arch"
+    );
+    // Must name both places the arch can be set; the user has set neither.
+    let details = check.details.join(" ");
+    assert!(details.contains("default-arch = \"sm_121a\""), "{details}");
+    assert!(details.contains("--arch=sm_121a"), "{details}");
+    assert!(!check.failed);
+}
+
+#[test]
+fn build_arch_check_reports_a_configured_arch_naming_other_hardware() {
+    let check =
+        build_arch_check(Some("sm_90a"), &arch("sm_121a")).expect("diverging arch must warn");
+    // Configured arch first, detected GPU second; swapped misdirects the fix.
+    assert_eq!(
+        check.headline,
+        "warning: `cargo oxide build` targets sm_90a, but this GPU is sm_121a"
+    );
+    assert!(!check.failed);
+}
+
+#[test]
+fn build_arch_check_separates_the_plain_form_of_the_same_chip() {
+    // Same chip, so it must not repeat the other case's "other hardware".
+    let check =
+        build_arch_check(Some("sm_121"), &arch("sm_121a")).expect("plain vs `a` must report");
+    assert_eq!(
+        check.headline,
+        "warning: `cargo oxide build` targets sm_121, not sm_121a"
+    );
+    let details = check.details.join(" ");
+    assert!(details.contains("Same chip"), "{details}");
+    assert!(!details.contains("other hardware"), "{details}");
+    assert!(!check.failed);
+
+    // The `f` family is the same chip too, so it takes this branch rather
+    // than the other-hardware one.
+    let check = build_arch_check(Some("sm_100f"), &arch("sm_100a")).expect("`f` must report");
+    let details = check.details.join(" ");
+    assert!(details.contains("Same chip"), "{details}");
+    assert!(!details.contains("other hardware"), "{details}");
+
+    // `CudaArch` validates the suffix grammar, not that the variant exists
+    // for a capability, so a bogus sm_86a parses. Capability still matches,
+    // which is the honest verdict: same chip, unusable target form.
+    let check = build_arch_check(Some("sm_86a"), &arch("sm_86")).expect("reverse must report");
+    assert!(
+        check.headline.contains("targets sm_86a, not sm_86"),
+        "{}",
+        check.headline
+    );
 }
 
 #[test]

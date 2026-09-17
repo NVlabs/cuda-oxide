@@ -4,6 +4,7 @@
  */
 
 use crate::backend;
+use cuda_target_spec::CudaArch;
 use std::path::Path;
 use std::process::Command;
 
@@ -650,6 +651,21 @@ pub(super) fn parse_gpu_name_cap_and_driver(stdout: &str) -> Option<(String, (u3
     ))
 }
 
+/// The target a `(major, minor)` compute capability resolves to, typed.
+///
+/// [`format_sm_arch`] renders this for `CUDA_OXIDE_TARGET`; callers that
+/// compare targets take this instead, so they match on capability and suffix
+/// rather than on spelling (`sm_090` and `compute_90` are both cc 9.0).
+///
+/// The capability packs the digits as CUDA does, which assumes a single-digit
+/// minor -- what every `compute_cap` NVIDIA has shipped reports.
+pub(super) fn device_arch((major, minor): (u32, u32)) -> CudaArch {
+    let suffix = if major >= 9 { Some('a') } else { None };
+    // Infallible: `major >= 1` keeps the capability two digits wide, and `a`
+    // is a supported suffix -- the only two things `new` rejects.
+    CudaArch::new(major * 10 + minor, suffix).expect("compute capability from nvidia-smi")
+}
+
 /// Format a `(major, minor)` compute-capability tuple as the `sm_XX` /
 /// `sm_XXX[a]` string the codegen backend expects on `CUDA_OXIDE_TARGET`.
 ///
@@ -677,12 +693,8 @@ pub(super) fn parse_gpu_name_cap_and_driver(stdout: &str) -> Option<(String, (u3
 /// - **Strict superset:** PTX targeting `sm_XYa` accepts every kernel that
 ///   would have compiled for plain `sm_XY`; the `a` form only permits
 ///   *additional* arch-specific intrinsics.
-pub(super) fn format_sm_arch((major, minor): (u32, u32)) -> String {
-    if major >= 9 {
-        format!("sm_{}{}a", major, minor)
-    } else {
-        format!("sm_{}{}", major, minor)
-    }
+pub(super) fn format_sm_arch(cap: (u32, u32)) -> String {
+    device_arch(cap).sm()
 }
 
 fn inherited_or_configured_env(ctx: &Context, key: &str) -> Option<String> {
