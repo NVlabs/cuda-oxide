@@ -344,6 +344,137 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
     Ok(())
 }
 
+#[test]
+fn test_pointer_atomic_load_store_use_b64_pointer_registers() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    // Atomic value type: *mut u64.
+    let value_ptr_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic(&mut ctx, u64_ty.into(), true).into();
+
+    // Atomic storage type: *mut (*mut u64).
+    let address_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic(&mut ctx, value_ptr_ty, true).into();
+
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![address_ty, value_ptr_ty]);
+    let address = entry.deref(&ctx).get_argument(0);
+    let pointer_value = entry.deref(&ctx).get_argument(1);
+
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        value_ptr_ty,
+        AtomicOrdering::Relaxed,
+        AtomicScope::System,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    NvvmAtomicStoreOp::build(
+        &mut ctx,
+        pointer_value,
+        address,
+        AtomicOrdering::Relaxed,
+        AtomicScope::System,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut lowered = Vec::new();
+
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+
+        let template = asm
+            .get_attr_inline_asm_template(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+
+        if !template.starts_with("ld.") && !template.starts_with("st.") {
+            continue;
+        }
+
+        let constraints = asm
+            .get_attr_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+
+        lowered.push((template, constraints));
+    }
+
+    assert_eq!(
+        lowered,
+        vec![
+            (
+                "ld.relaxed.sys.b64 $0, [$1];".to_string(),
+                "=l,l,~{memory}".to_string(),
+            ),
+            (
+                "st.relaxed.sys.b64 [$0], $1;".to_string(),
+                "l,l,~{memory}".to_string(),
+            ),
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_atomic_load_rejects_shared_value_pointer() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{AtomicOrdering, AtomicScope, NvvmAtomicLoadOp};
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    let shared_value_ptr_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_shared(&mut ctx, u64_ty.into(), true).into();
+
+    let address_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic(&mut ctx, shared_value_ptr_ty, true).into();
+
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![address_ty]);
+    let address = entry.deref(&ctx).get_argument(0);
+
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        shared_value_ptr_ty,
+        AtomicOrdering::Relaxed,
+        AtomicScope::System,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    append_return(&mut ctx, entry);
+
+    let error = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .expect_err("shared pointer atomic values must fail closed")
+        .to_string();
+
+    assert!(
+        error.contains("nvvm.atomic_load has an unsupported value type"),
+        "unexpected error: {error}",
+    );
+
+    Ok(())
+}
+
 /// Orderings a PTX load or store cannot carry must be rejected, not silently
 /// weakened.
 ///

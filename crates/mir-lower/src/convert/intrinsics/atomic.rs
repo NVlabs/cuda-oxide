@@ -145,6 +145,14 @@ fn ptx_type_and_reg(
             _ => None,
         };
     }
+    // Generic pointers use 64-bit `l` registers on nvptx64. Address-space-specific
+    // pointers are rejected because their representation may differ from the
+    // generic pointer representation.
+    // Keep the LLVM pointer type intact; no ptrtoint/inttoptr round-trip is needed.
+    if let Some(ptr_ty) = ty_ref.downcast_ref::<llvm_types::PointerType>() {
+        return (ptr_ty.address_space() == llvm_types::address_space::GENERIC)
+            .then_some(("b64", "l", None));
+    }
     if ty_ref.is::<llvm_types::HalfType>() {
         return Some(("b16", "h", Some(staging(16))));
     }
