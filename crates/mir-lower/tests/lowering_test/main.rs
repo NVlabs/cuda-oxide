@@ -17,5 +17,6 @@ mod math_conversions;
 mod matrix_memory;
 mod mma;
 mod sregs_and_warp;
+mod tma;
 mod wgmma_lowering;
 mod wgmma_rejections;

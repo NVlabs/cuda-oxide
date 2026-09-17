@@ -8,6 +8,7 @@
 use crate::convert::intrinsics::common::*;
 use crate::helpers;
 use crate::{IntrinsicBackend, context};
+use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::ops as llvm;
 use llvm_export::types as llvm_types;
 use pliron::builtin::op_interfaces::CallOpCallable;
@@ -19,6 +20,7 @@ use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
 use pliron::result::Result;
+use pliron::r#type::Typed;
 
 /// Convert TMA G2S (global to shared) operations using LLVM intrinsics.
 pub(crate) fn convert_g2s(
@@ -45,7 +47,7 @@ fn g2s_inline_asm(dims: usize, multicast: bool, cta_group: i32) -> (String, Stri
         String::new()
     };
     let template = format!(
-        "cp.async.bulk.tensor.{dims}d.shared::cluster.global.tile.mbarrier::complete_tx::bytes{multicast_modifier}{cta_group_modifier} [$0], [$2, {{{coordinates}}}], [$1]{mask};"
+        "{{ .reg .u64 %cluster_dst; cvta.to.shared::cluster.u64 %cluster_dst, $0; cp.async.bulk.tensor.{dims}d.shared::cluster.global.tile.mbarrier::complete_tx::bytes{multicast_modifier}{cta_group_modifier} [%cluster_dst], [$2, {{{coordinates}}}], [$1]{mask}; }}"
     );
     let mut constraints = vec!["l"; 3];
     constraints.extend(std::iter::repeat_n("r", dims));
@@ -85,11 +87,32 @@ fn convert_g2s_impl(
         );
     }
 
-    let dst_casted = cast_to_cluster_shared_addrspace(ctx, rewriter, operands[0]);
     let barrier_casted = cast_to_shared_addrspace(ctx, rewriter, operands[1]);
 
     if context::lowering_options(ctx).intrinsic_backend == IntrinsicBackend::LibNvvm {
-        let mut inputs = vec![dst_casted, barrier_casted, operands[2]];
+        // LLVM's shared-cluster address space (7) is not part of the legacy
+        // NVVM IR contract. Convert the generic address in PTX instead. The
+        // ::cluster qualifier is essential: ::cta would exclude another CTA's
+        // destination, and a local shared address may need CTA-rank bits when
+        // converted to the cluster window. Keep the 64-bit address throughout.
+        let destination = operands[0];
+        let destination_type = destination.get_type(ctx);
+        let destination_space = destination_type
+            .deref(ctx)
+            .downcast_ref::<llvm_types::PointerType>()
+            .ok_or_else(|| pliron::input_error_noloc!("TMA G2S destination must be a pointer"))?
+            .address_space();
+        let destination = if destination_space == 0 {
+            destination
+        } else {
+            // Preserve the ordinary non-generic -> generic conversion. This
+            // does not erase address-space semantics or change other uses of
+            // a cluster pointer; backends must still support its producer.
+            let cast = llvm::AddrSpaceCastOp::new(ctx, destination, generic_ptr_ty.into());
+            rewriter.insert_operation(ctx, cast.get_operation());
+            cast.get_operation().deref(ctx).get_result(0)
+        };
+        let mut inputs = vec![destination, barrier_casted, operands[2]];
         inputs.extend(operands[3..3 + dims].iter().copied());
         if multicast {
             inputs.push(operands[3 + dims]);
@@ -110,6 +133,7 @@ fn convert_g2s_impl(
         return Ok(());
     }
 
+    let dst_casted = cast_to_cluster_shared_addrspace(ctx, rewriter, operands[0]);
     let mut arg_types: Vec<pliron::r#type::TypeHandle> = vec![
         shared_cluster_ptr_ty.into(),
         smem_ptr_ty.into(),
@@ -729,14 +753,14 @@ mod tests {
         assert_eq!(
             g2s_inline_asm(1, false, 0),
             (
-                "cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [$0], [$2, {$3}], [$1];".into(),
+                "{ .reg .u64 %cluster_dst; cvta.to.shared::cluster.u64 %cluster_dst, $0; cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes [%cluster_dst], [$2, {$3}], [$1]; }".into(),
                 "l,l,l,r,~{memory}".into(),
             )
         );
         assert_eq!(
             g2s_inline_asm(2, true, 2),
             (
-                "cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.cta_group::2 [$0], [$2, {$3, $4}], [$1], $5;".into(),
+                "{ .reg .u64 %cluster_dst; cvta.to.shared::cluster.u64 %cluster_dst, $0; cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster.cta_group::2 [%cluster_dst], [$2, {$3, $4}], [$1], $5; }".into(),
                 "l,l,l,r,r,h,~{memory}".into(),
             )
         );
