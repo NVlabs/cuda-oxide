@@ -423,6 +423,10 @@ variants take the same surface as `F32`/`F64` -- `load`, `store`, `fetch_add`,
 `core::sync::atomic` types (`AtomicU32`, `AtomicBool`, etc.) also compile to
 GPU code, defaulting to system scope.
 
+On nvptx64, `core::sync::atomic::AtomicPtr<T>` supports `load`, `store`,
+`swap`, and `compare_exchange` for generic-address-space pointer values while
+preserving pointer types through lowering.
+
 ---
 
 ## TMA — Tensor Memory Accelerator (Hopper+)

@@ -55,7 +55,7 @@ CUDA_OXIDE_LLC=/path/to/llc-22 cargo oxide run atomics
 CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 ```
 
-## Test Suite (20 tests)
+## Test Suite (21 runtime tests)
 
 ### Phase 1: Core operations (AtomicU32/I32)
 
@@ -93,9 +93,13 @@ CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 
 ### Phase 4: Standard library atomics (`core::sync::atomic`)
 
-| #  | Test                             | What it verifies                                                              |
-|----|----------------------------------|-------------------------------------------------------------------------------|
-| 20 | `core_atomic_fetch_add_test`     | `core::sync::atomic::AtomicU32` fetch_add (system scope, Relaxed)             |
+| #  | Test                         | What it verifies                                                        |
+|----|------------------------------|-------------------------------------------------------------------------|
+| 20 | `core_atomic_fetch_add_test` | `core::sync::atomic::AtomicU32` fetch_add (system scope, Relaxed)        |
+| 21 | `core_atomic_ptr_test`       | `core::sync::atomic::AtomicPtr<u16>` load/store/swap/compare_exchange   |
+
+The separate `core_atomic_ordering_probe` kernel provides compile-only
+standard-library atomic ordering coverage.
 
 ## Expected Output
 
@@ -171,7 +175,10 @@ CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 --- Test 20: core_atomic_fetch_add_test (core::sync::atomic) ---
   counter = 256 (expected 256), all old values unique
 
-=== SUCCESS: All atomic tests passed! ===
+--- Test 21: core_atomic_ptr_test (core::sync::atomic::AtomicPtr) ---
+  all 256 threads passed AtomicPtr load/store/swap/CAS
+
+=== SUCCESS: All 21 runtime atomic tests passed! ===
 ```
 
 ## Available Atomic Types

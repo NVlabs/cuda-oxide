@@ -33,7 +33,9 @@
 //! 18. `atomic_block_scope_test` -- BlockAtomicU32 fetch_add (.cta scope, Relaxed)
 //! 19. `atomic_block_scope_acqrel_test` -- BlockAtomicU32 fetch_add (.cta scope, AcqRel)
 //! 20. `core_atomic_fetch_add_test` -- core::sync::atomic::AtomicU32 (system scope)
-//! 21. `core_atomic_ordering_probe` -- compile-only core intrinsic ordering coverage
+//! 21. `core_atomic_ptr_test` -- core::sync::atomic::AtomicPtr load/store/swap/CAS
+//!
+//! `core_atomic_ordering_probe` adds compile-only core intrinsic ordering coverage.
 //!
 //! Build and run with:
 //!   cargo oxide run atomics
@@ -569,6 +571,48 @@ mod kernels {
 
         if let Some(out_elem) = out.get_mut(gid) {
             *out_elem = observed + succeeded as u32;
+        }
+    }
+
+    /// Test 21: core::sync::atomic::AtomicPtr load/store/swap/CAS.
+    #[kernel]
+    pub fn core_atomic_ptr_test(storage: &[usize], values: &[u16], mut out: DisjointSlice<u32>) {
+        let gid = thread::index_1d();
+
+        if gid.in_bounds(storage.len()) && gid.in_bounds(values.len()) {
+            let index = gid.get();
+
+            // Each thread owns one pointer-sized, correctly aligned storage slot.
+            let atomic_ptr = unsafe {
+                &*(storage.as_ptr().add(index) as *const core::sync::atomic::AtomicPtr<u16>)
+            };
+            let new_ptr = unsafe { values.as_ptr().add(index) as *mut u16 };
+
+            let loaded = atomic_ptr.load(Ordering::Acquire);
+            atomic_ptr.store(new_ptr, Ordering::Release);
+
+            // Store currently contains `new_ptr`; replace it with the original null.
+            let swapped = atomic_ptr.swap(loaded, Ordering::AcqRel);
+
+            // Store is null again, so this CAS must succeed and install `new_ptr`.
+            let exchanged_ok = match atomic_ptr.compare_exchange(
+                loaded,
+                new_ptr,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(old) => old == loaded,
+                Err(_) => false,
+            };
+
+            let final_ptr = atomic_ptr.load(Ordering::Acquire);
+
+            let passed =
+                loaded.is_null() && swapped == new_ptr && exchanged_ok && final_ptr == new_ptr;
+
+            if let Some(out_elem) = out.get_mut(gid) {
+                *out_elem = passed as u32;
+            }
         }
     }
 }
@@ -1408,5 +1452,41 @@ fn main() {
         }
     }
 
-    println!("\n=== SUCCESS: All 20 atomic tests passed! ===");
+    // =========================================================================
+    // Test 21: core::sync::atomic::AtomicPtr load/store/swap/CAS
+    // =========================================================================
+    println!("\n--- Test 21: core_atomic_ptr_test (core::sync::atomic::AtomicPtr) ---");
+    {
+        let storage_dev = DeviceBuffer::<usize>::zeroed(&stream, N).unwrap();
+        let values_dev = DeviceBuffer::<u16>::zeroed(&stream, N).unwrap();
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
+        // SAFETY: every thread uses one pointer-sized storage slot, one value,
+        // and one output element covered by the supplied buffers.
+        unsafe {
+            module.core_atomic_ptr_test(
+                (stream).as_ref(),
+                cfg,
+                &storage_dev,
+                &values_dev,
+                &mut out_dev,
+            )
+        }
+        .expect("Kernel launch failed");
+
+        stream.synchronize().unwrap();
+        let result = out_dev.to_host_vec(&stream).unwrap();
+
+        if let Some(index) = result.iter().position(|&value| value != 1) {
+            println!(
+                "  FAIL: thread {} reported AtomicPtr result {}",
+                index, result[index]
+            );
+            std::process::exit(1);
+        } else {
+            println!("  all {} threads passed AtomicPtr load/store/swap/CAS", N);
+        }
+    }
+
+    println!("\n=== SUCCESS: All 21 runtime atomic tests passed! ===");
 }
