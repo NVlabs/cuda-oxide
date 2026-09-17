@@ -13,17 +13,20 @@
 //! ```
 //!
 //! Stable MIR omits the `DBG` record, so the codegen bridge carries it in a
-//! sidecar. For supported slice-index records, the importer emits:
+//! sidecar. Supported runtime-index references use the destination local's
+//! existing debugger stack home:
 //!
 //! ```text
 //! &slice[i] -> ptr's existing debug stack slot -> CUDA-GDB
+//! &array[i] -> ptr's existing debug stack slot -> CUDA-GDB
 //! ```
 //!
-//! A stack slot is used because `ptxas` drops the affected register-only
-//! pointer locations. This adds code only in full-debug mode. Preflight accepts
-//! only non-argument, non-return locals used solely for debug info, with
-//! initialized inputs and supported `AssignRef` events. Otherwise it removes
-//! that local's debug metadata and emits no address calculation or store.
+//! A stack slot is used because `ptxas` drops or misrepresents the affected
+//! register-only and multi-value pointer locations. This adds code only in
+//! full-debug mode. Preflight accepts only non-argument, non-return locals used
+//! solely for debug info, with initialized inputs and supported `AssignRef`
+//! events. Otherwise it removes that local's debug metadata and emits no address
+//! calculation or store.
 
 use super::{rvalue, types, values};
 use crate::error::{TranslationErr, TranslationResult};
@@ -228,9 +231,12 @@ pub(crate) fn translate_statement_debug_info(
     Ok(prev_op)
 }
 
-/// Accept only `&slice[index]`, the shape covered by this fix.
+/// Accept the two runtime-index reference shapes validated by the full-debug
+/// stack-home bridge.
 ///
-/// Fields, downcasts, subslices, constant indexes, and longer projections are
+/// `&slice[index]` is the original #1259 case. `&fixed_array[index]` extends
+/// the same mechanism to one direct runtime index on a fixed-size array. Fields,
+/// downcasts, subslices, constant indexes, and longer projection chains are
 /// rejected before the general address walker runs.
 fn assign_ref_is_representable(
     ctx: &mut Context,
@@ -243,36 +249,56 @@ fn assign_ref_is_representable(
     let TyKind::RigidTy(RigidTy::Ref(_, destination_pointee, _)) = destination_ty.kind() else {
         return None;
     };
-
-    let [
-        mir::ProjectionElem::Deref,
-        mir::ProjectionElem::Index(index),
-    ] = place.projection.as_slice()
-    else {
-        return None;
-    };
-    if place.local == destination || *index == destination {
+    if place.local == destination {
         return None;
     }
 
-    let base_ty = body.local_decl(place.local).map(|decl| decl.ty)?;
-    let (slice_ty, base_is_mutable) = match base_ty.kind() {
-        TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability))
-        | TyKind::RigidTy(RigidTy::RawPtr(pointee, mutability)) => {
-            (pointee, matches!(mutability, mir::Mutability::Mut))
+    let index = match place.projection.as_slice() {
+        [
+            mir::ProjectionElem::Deref,
+            mir::ProjectionElem::Index(index),
+        ] => {
+            let base_ty = body.local_decl(place.local).map(|decl| decl.ty)?;
+            let (slice_ty, base_is_mutable) = match base_ty.kind() {
+                TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability))
+                | TyKind::RigidTy(RigidTy::RawPtr(pointee, mutability)) => {
+                    (pointee, matches!(mutability, mir::Mutability::Mut))
+                }
+                _ => return None,
+            };
+            if destination_is_mutable && !base_is_mutable {
+                return None;
+            }
+            let TyKind::RigidTy(RigidTy::Slice(element)) = slice_ty.kind() else {
+                return None;
+            };
+            if element != destination_pointee {
+                return None;
+            }
+            *index
+        }
+        [mir::ProjectionElem::Index(index)] => {
+            // Keep the first fixed-array extension intentionally narrow: one
+            // immutable reference and one direct runtime usize index.
+            if destination_is_mutable {
+                return None;
+            }
+            let base_ty = body.local_decl(place.local).map(|decl| decl.ty)?;
+            let TyKind::RigidTy(RigidTy::Array(element, _)) = base_ty.kind() else {
+                return None;
+            };
+            if element != destination_pointee {
+                return None;
+            }
+            *index
         }
         _ => return None,
     };
-    if destination_is_mutable && !base_is_mutable {
-        return None;
-    }
-    let TyKind::RigidTy(RigidTy::Slice(element)) = slice_ty.kind() else {
-        return None;
-    };
-    if element != destination_pointee
+
+    if index == destination
         || place.ty(body.locals()).ok() != Some(destination_pointee)
         || !matches!(
-            body.local_decl(*index).map(|decl| decl.ty.kind()),
+            body.local_decl(index).map(|decl| decl.ty.kind()),
             Some(TyKind::RigidTy(RigidTy::Uint(UintTy::Usize)))
         )
     {
@@ -280,17 +306,18 @@ fn assign_ref_is_representable(
     }
 
     let destination_slot = value_map.get_slot(destination)?;
-    let expected_ty = types::translate_type(ctx, &destination_ty).ok()?;
+    let expected_destination_ty = types::translate_type(ctx, &destination_ty).ok()?;
+    let base_ty = body.local_decl(place.local).map(|decl| decl.ty)?;
     let expected_base_ty = types::translate_type(ctx, &base_ty).ok()?;
-    let index_ty = body.local_decl(*index).map(|decl| decl.ty)?;
+    let index_ty = body.local_decl(index).map(|decl| decl.ty)?;
     let expected_index_ty = types::translate_type(ctx, &index_ty).ok()?;
 
-    if !slot_stores_type(ctx, destination_slot, expected_ty)
+    if !slot_stores_type(ctx, destination_slot, expected_destination_ty)
         || !value_map
             .get_slot(place.local)
             .is_some_and(|slot| slot_stores_type(ctx, slot, expected_base_ty))
         || !value_map
-            .get_slot(*index)
+            .get_slot(index)
             .is_some_and(|slot| slot_stores_type(ctx, slot, expected_index_ty))
     {
         return None;
@@ -298,7 +325,7 @@ fn assign_ref_is_representable(
 
     Some(AssignRefSources {
         base: place.local,
-        index: *index,
+        index,
     })
 }
 
@@ -611,7 +638,10 @@ mod tests {
     use pliron::op::Op;
     use rustc_public::CrateDef;
 
-    fn with_pointer_fixture(test: impl FnOnce(&mir::Body) + Send + 'static) {
+    fn with_statement_debug_fixture(
+        function_suffix: &'static str,
+        test: impl FnOnce(&mir::Body) + Send + 'static,
+    ) {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system time before unix epoch")
@@ -641,6 +671,13 @@ pub fn probe(input: &[i32], index: usize, _output: &mut i32) -> i32 {
     }
     let ptr: *const i32 = &input[computed] as *const i32;
     unsafe { *ptr }
+}
+
+#[inline(never)]
+pub fn probe_array(values: [i32; 4], index: usize) -> i32 {
+    let computed = keep_index(index) & 3;
+    let projected_runtime = &values[computed];
+    core::hint::black_box(*projected_runtime)
 }
 "#,
         )
@@ -678,9 +715,9 @@ pub fn probe(input: &[i32], index: usize, _output: &mut i32) -> i32 {
                 rustc_public::run!(&args, || {
                     let body = rustc_public::all_local_items()
                         .into_iter()
-                        .find(|item| item.name().ends_with("::probe"))
+                        .find(|item| item.name().ends_with(function_suffix))
                         .and_then(|item| item.body())
-                        .expect("probe body");
+                        .expect("statement-debug fixture body");
                     test(&body);
                     std::ops::ControlFlow::<(), _>::Continue(())
                 })
@@ -691,6 +728,14 @@ pub fn probe(input: &[i32], index: usize, _output: &mut i32) -> i32 {
             .expect("in-process fixture compilation succeeds");
 
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn with_pointer_fixture(test: impl FnOnce(&mir::Body) + Send + 'static) {
+        with_statement_debug_fixture("::probe", test);
+    }
+
+    fn with_array_fixture(test: impl FnOnce(&mir::Body) + Send + 'static) {
+        with_statement_debug_fixture("::probe_array", test);
     }
 
     fn debug_local(body: &mir::Body, name: &str) -> mir::Local {
@@ -786,21 +831,29 @@ pub fn probe(input: &[i32], index: usize, _output: &mut i32) -> i32 {
         (ctx, block, value_map, previous)
     }
 
+    fn attach_primary_debug_identity(ctx: &mut Context, slot: pliron::value::Value, name: &str) {
+        let op = slot.defining_op().expect("alloca result");
+        llvm_export::ops::set_debug_local_variable(
+            ctx,
+            op,
+            DebugLocalVariableInfo {
+                name: name.to_string(),
+                argument_index: None,
+                ty: DebugLocalTypeKind::Pointer {
+                    name: "&i32".to_string(),
+                    size_bits: 64,
+                },
+            },
+        );
+    }
+
     fn attach_debug_identities(ctx: &mut Context, slot: pliron::value::Value) {
+        attach_primary_debug_identity(ctx, slot, "ptr");
         let op = slot.defining_op().expect("alloca result");
         let ty = DebugLocalTypeKind::Pointer {
             name: "&i32".to_string(),
             size_bits: 64,
         };
-        llvm_export::ops::set_debug_local_variable(
-            ctx,
-            op,
-            DebugLocalVariableInfo {
-                name: "ptr".to_string(),
-                argument_index: None,
-                ty: ty.clone(),
-            },
-        );
         llvm_export::ops::set_debug_whole_variable_aliases(
             ctx,
             op,
@@ -946,6 +999,88 @@ pub fn probe(input: &[i32], index: usize, _output: &mut i32) -> i32 {
             let destination_ty =
                 types::translate_type(&mut ctx, &body.local_decl(destination).unwrap().ty).unwrap();
             assert_eq!(stores[0].value_opd(&ctx).get_type(&ctx), destination_ty);
+        });
+    }
+
+    #[test]
+    fn fixed_array_runtime_index_emits_stack_home_store() {
+        with_array_fixture(|body| {
+            let base = debug_local(body, "values");
+            let index = debug_local(body, "computed");
+            let destination = debug_local(body, "projected_runtime");
+            let place = mir::Place {
+                local: base,
+                projection: vec![mir::ProjectionElem::Index(index)],
+            };
+
+            let (mut ctx, block, mut value_map, previous) =
+                make_value_map(body, &[base, index, destination]);
+            let destination_slot = value_map.get_slot(destination).unwrap();
+            attach_primary_debug_identity(&mut ctx, destination_slot, "projected_runtime");
+
+            let sources =
+                assign_ref_is_representable(&mut ctx, body, &value_map, destination, &place)
+                    .expect("direct fixed-array runtime index is representable");
+            assert_eq!(sources.base, base);
+            assert_eq!(sources.index, index);
+
+            value_map.set_statement_debug_spill(destination, true);
+            let before = block.deref(&ctx).iter(&ctx).count();
+            let event = StatementDebugInfo::AssignRef { destination, place };
+            let last = translate_statement_debug_info(
+                &mut ctx,
+                body,
+                &[event],
+                &value_map,
+                block,
+                previous,
+            )
+            .expect("runtime-index AssignRef translates")
+            .expect("runtime-index AssignRef emits a final store");
+
+            assert!(
+                block.deref(&ctx).iter(&ctx).count() > before,
+                "stack-home reconstruction emits address operations and a final store"
+            );
+            let stores: Vec<_> = block
+                .deref(&ctx)
+                .iter(&ctx)
+                .filter_map(|op| Operation::get_op::<MirStoreOp>(op, &ctx))
+                .filter(|store| store.address_opd(&ctx) == destination_slot)
+                .collect();
+            assert_eq!(
+                stores.len(),
+                1,
+                "one fixed-array runtime-index event emits exactly one home store"
+            );
+            assert_eq!(stores[0].get_operation(), last);
+            let destination_ty =
+                types::translate_type(&mut ctx, &body.local_decl(destination).unwrap().ty).unwrap();
+            assert_eq!(stores[0].value_opd(&ctx).get_type(&ctx), destination_ty);
+        });
+    }
+
+    #[test]
+    fn fixed_array_multiple_runtime_indices_fail_closed() {
+        with_array_fixture(|body| {
+            let base = debug_local(body, "values");
+            let index = debug_local(body, "computed");
+            let destination = debug_local(body, "projected_runtime");
+            let place = mir::Place {
+                local: base,
+                projection: vec![
+                    mir::ProjectionElem::Index(index),
+                    mir::ProjectionElem::Index(index),
+                ],
+            };
+            let (mut ctx, _block, value_map, _previous) =
+                make_value_map(body, &[base, index, destination]);
+
+            assert!(
+                assign_ref_is_representable(&mut ctx, body, &value_map, destination, &place)
+                    .is_none(),
+                "multiple runtime indices must remain outside the bounded stack-home bridge"
+            );
         });
     }
 

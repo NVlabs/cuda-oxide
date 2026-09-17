@@ -316,9 +316,26 @@ debug event. Full mode handles the supported slice-index form like this:
 ptr = &slice[index] -> AssignRef -> debugger stack slot -> cuda-gdb
 ```
 
+A direct immutable reference into a fixed-size array uses the same bounded
+stack-home bridge:
+
+```text
+&array[index]
+    -> AssignRef
+    -> debugger stack slot
+    -> cuda-gdb
+```
+
+The multi-value `DIArgList` form can represent the address recipe in LLVM IR,
+but it is not used for this producer because the resulting runtime-indexed
+pointer location is not reliably inspectable after `ptxas`. The initial array
+extension therefore accepts exactly one runtime `usize` index on a direct
+fixed-size array and materializes the reconstructed reference only in full-debug
+mode; surrounding field/deref chains remain unsupported.
+
 Unsupported events omit that debug binding instead of emitting a partial
-value. These stores exist only in full-debug builds. We do not use
-`-Zmir-opt-level=0` because it exposes MIR forms the importer cannot yet
+value. These stack-home stores exist only in full-debug builds. We do not
+use `-Zmir-opt-level=0` because it exposes MIR forms the importer cannot yet
 translate. A local that rustc removes without an equivalent debug event cannot
 be recovered later in the pipeline.
 
@@ -377,11 +394,13 @@ checked on real hardware by `scripts/debug-smoketest.sh`.
 
 Coverage is still partial. Unsupported cases include bare slice arguments
 split into a `(ptr, len)` pair at the ABI boundary, repeated dereferences,
-runtime indices, subslices, dereference-plus-index/downcast chains, and
-non-field composite fragments. Static struct/tuple fields, fixed-array
-constant indices, enum payload downcasts, and one thin-pointer/reference
-dereference are supported. Locals in other inlined helper frames may still be
-sparser than kernel locals; select the frame that owns the source binding.
+subslices, multiple runtime indices, runtime-index projections with surrounding
+field/deref chains, dereference-plus-index/downcast chains, and non-field
+composite fragments. Static struct/tuple fields, fixed-array constant indices,
+enum payload downcasts, one thin-pointer/reference dereference, and one direct
+runtime `usize` index used by a statement-debug reference into a fixed-size
+array are supported. Locals in other inlined helper frames may still be sparser
+than kernel locals; select the frame that owns the source binding.
 
 ### Breakpoint workflow
 

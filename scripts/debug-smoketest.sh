@@ -109,12 +109,13 @@ if [ -n "${CUDA_OXIDE_DEBUG_LOG_DIR:-}" ]; then
     CLOSURE_GDB_LOG="$DEBUG_LOG_DIR/${LOG_STEM}-closure.cuda-gdb.log"
     ENUM_GDB_LOG="$DEBUG_LOG_DIR/${LOG_STEM}-enum.cuda-gdb.log"
     PROJECTION_GDB_LOG="$DEBUG_LOG_DIR/${LOG_STEM}-projection.cuda-gdb.log"
+    RUNTIME_INDEX_GDB_LOG="$DEBUG_LOG_DIR/${LOG_STEM}-runtime-index.cuda-gdb.log"
     ENUM_PROJECTION_GDB_LOG="$DEBUG_LOG_DIR/${LOG_STEM}-enum-projection.cuda-gdb.log"
     DEREF_GDB_LOG="$DEBUG_LOG_DIR/${LOG_STEM}-deref.cuda-gdb.log"
     INLINE_CALLER_GDB_LOG="$DEBUG_LOG_DIR/${LOG_STEM}-inline-caller.cuda-gdb.log"
     INLINE_HELPER_GDB_LOG="$DEBUG_LOG_DIR/${LOG_STEM}-inline-helper.cuda-gdb.log"
     for log in "$GDB_LOG" "$CLOSURE_GDB_LOG" "$ENUM_GDB_LOG" "$PROJECTION_GDB_LOG" \
-               "$ENUM_PROJECTION_GDB_LOG" "$DEREF_GDB_LOG" \
+               "$RUNTIME_INDEX_GDB_LOG" "$ENUM_PROJECTION_GDB_LOG" "$DEREF_GDB_LOG" \
                "$INLINE_CALLER_GDB_LOG" "$INLINE_HELPER_GDB_LOG"; do
         : >"$log" || { echo "debug-smoketest: FAIL (cannot write log $log)"; exit 1; }
     done
@@ -124,11 +125,12 @@ else
     CLOSURE_GDB_LOG="$(mktemp)"
     ENUM_GDB_LOG="$(mktemp)"
     PROJECTION_GDB_LOG="$(mktemp)"
+    RUNTIME_INDEX_GDB_LOG="$(mktemp)"
     ENUM_PROJECTION_GDB_LOG="$(mktemp)"
     DEREF_GDB_LOG="$(mktemp)"
     INLINE_CALLER_GDB_LOG="$(mktemp)"
     INLINE_HELPER_GDB_LOG="$(mktemp)"
-    trap 'rm -f "$GDB_LOG" "$CLOSURE_GDB_LOG" "$ENUM_GDB_LOG" "$PROJECTION_GDB_LOG" "$ENUM_PROJECTION_GDB_LOG" "$DEREF_GDB_LOG" "$INLINE_CALLER_GDB_LOG" "$INLINE_HELPER_GDB_LOG"' EXIT
+    trap 'rm -f "$GDB_LOG" "$CLOSURE_GDB_LOG" "$ENUM_GDB_LOG" "$PROJECTION_GDB_LOG" "$RUNTIME_INDEX_GDB_LOG" "$ENUM_PROJECTION_GDB_LOG" "$DEREF_GDB_LOG" "$INLINE_CALLER_GDB_LOG" "$INLINE_HELPER_GDB_LOG"' EXIT
 fi
 
 fail=0
@@ -615,6 +617,42 @@ if [ "$EXAMPLE" = "compiler_features" ]; then
         grep -qiE "INVALID_PTX|JIT compilation failed|No device code" "$PROJECTION_GDB_LOG" && { echo "debug-smoketest: FAIL (projection-debug PTX did not load under cuda-gdb)"; fail=1; }
     fi
 
+    RUNTIME_INDEX_MARKER="CUDA_OXIDE_DEBUG_RUNTIME_INDEX_BREAKPOINT"
+    RUNTIME_INDEX_LINE="$(grep -nF "$RUNTIME_INDEX_MARKER" "$DEBUG_SOURCE" | head -1 | cut -d: -f1)"
+
+    if [ -z "$RUNTIME_INDEX_LINE" ]; then
+        echo "debug-smoketest: FAIL (runtime-index debug breakpoint marker not found)"
+        fail=1
+    else
+        ( cd "$EXAMPLE_DIR" && timeout 300 "$CUDA_GDB" --batch \
+            -ex 'set pagination off' \
+            -ex 'set breakpoint pending on' \
+            -ex "break $DEBUG_SOURCE:$RUNTIME_INDEX_LINE" \
+            -ex 'run' \
+            -ex 'frame 0' \
+            -ex 'ptype projected_runtime' \
+            -ex 'print projected_runtime' \
+            -ex 'print *projected_runtime' \
+            -ex 'backtrace' \
+            -ex 'kill' \
+            "./target/release/$EXAMPLE" ) >"$RUNTIME_INDEX_GDB_LOG" 2>&1
+
+        runtime_index_gdb_status=$?
+        if [ "$runtime_index_gdb_status" -ne 0 ]; then
+            echo "debug-smoketest: FAIL (runtime-index cuda-gdb exited with status $runtime_index_gdb_status; complete log: $RUNTIME_INDEX_GDB_LOG)"
+            fail=1
+        fi
+
+        echo "----- cuda-gdb runtime-index output (tail) -----"
+        tail -30 "$RUNTIME_INDEX_GDB_LOG"
+        echo "------------------------------------------------"
+
+        grep -qiE "CUDA thread hit .*Breakpoint" "$RUNTIME_INDEX_GDB_LOG" || { echo "debug-smoketest: FAIL (runtime-index source breakpoint did not hit)"; fail=1; }
+        grep -qE '\$[0-9]+ = 55([[:space:]]|$)' "$RUNTIME_INDEX_GDB_LOG" || { echo "debug-smoketest: FAIL (runtime-index fixed-array reference is not inspectable)"; fail=1; }
+        grep -qiE 'optimized out|No symbol.*projected_runtime|not available' "$RUNTIME_INDEX_GDB_LOG" && { echo "debug-smoketest: FAIL (runtime-index binding is unavailable)"; fail=1; }
+        grep -qiE "INVALID_PTX|JIT compilation failed|No device code" "$RUNTIME_INDEX_GDB_LOG" && { echo "debug-smoketest: FAIL (runtime-index debug PTX did not load under cuda-gdb)"; fail=1; }
+    fi
+
     DEREF_MARKER="CUDA_OXIDE_DEBUG_DEREF_BREAKPOINT"
     DEREF_LINE="$(grep -nF "$DEREF_MARKER" "$DEBUG_SOURCE" | head -1 | cut -d: -f1)"
 
@@ -655,7 +693,7 @@ fi
 
 if [ "$fail" -eq 0 ]; then
     if [ "$EXAMPLE" = "compiler_features" ]; then
-        echo "debug-smoketest: PASS (source debugging, caller/helper frames, closure environments, Rust enums, and static/enum/dereference projections verified on $ARCH)"
+        echo "debug-smoketest: PASS (source debugging, caller/helper frames, closure environments, Rust enums, and static/runtime-index/enum/dereference projections verified on $ARCH)"
     elif [ "$EXAMPLE" = "debug_pointer_locals" ]; then
         echo "debug-smoketest: PASS (raw-pointer debug storage, values, pointees, types, and null control verified on $ARCH)"
     elif [ "$EXAMPLE" = "device_global" ]; then

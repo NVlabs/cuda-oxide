@@ -16,6 +16,7 @@
 //! - Full-debug closure environments
 //! - Full-debug Rust enum variants (direct and niche layouts)
 //! - Full-debug static and dereference projections
+//! - Full-debug runtime-indexed fixed-array references
 //! - Full-debug enum payload source projections
 //!
 //! Run: cargo oxide run compiler_features
@@ -155,6 +156,25 @@ mod kernels {
                 (seed, 0x1_0000_0021u64),
                 [3u32, 5, 37, 11],
             );
+        }
+    }
+
+    /// Helper whose reference binding becomes a statement-level
+    /// `AssignRef(values[runtime_index])` after `ReferencePropagation`.
+    #[inline(never)]
+    fn debug_runtime_index_value(values: [u32; 4], runtime_index: usize) -> u32 {
+        let projected_runtime = &values[runtime_index];
+        let value = *projected_runtime; // CUDA_OXIDE_DEBUG_RUNTIME_INDEX_BREAKPOINT
+        value
+    }
+
+    /// Full-debug fixture for one runtime index into a fixed-size array.
+    #[kernel]
+    pub fn test_runtime_index_debug(seed: u32, mut out: DisjointSlice<u32>) {
+        let idx = thread::index_1d();
+        if let Some(out_elem) = out.get_mut(idx) {
+            let runtime_index = (seed as usize) & 3;
+            *out_elem = debug_runtime_index_value([13u32, 21, 34, 55], runtime_index);
         }
     }
 
@@ -731,6 +751,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let result = out_dev.to_host_vec(&stream)?;
         assert_eq!(result[0], 88, "test_projection_debug failed");
         println!("  ✓ Result: {} (expected 88)", result[0]);
+    }
+
+    // Test runtime-index debug bindings on a fixed-size array via the debug stack-home bridge.
+    println!("Testing: test_runtime_index_debug");
+    {
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
+        // seed=7: runtime_index=3, projected_runtime points to 55.
+        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+        unsafe { module.test_runtime_index_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
+        let result = out_dev.to_host_vec(&stream)?;
+        assert_eq!(result[0], 55, "test_runtime_index_debug failed");
+        println!("  ✓ Result: {} (expected 55)", result[0]);
     }
 
     // Test dereference debug bindings and keep deterministic values live.

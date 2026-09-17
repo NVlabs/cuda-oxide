@@ -127,6 +127,10 @@ pub struct StatementDebugInfoBlock {
 pub enum StatementDebugInfo {
     /// At this point, source variables associated with `destination` are
     /// represented by the address of `place`.
+    ///
+    /// This sidecar preserves rustc's internal statement-debug place directly,
+    /// so it may contain `ProjectionElem::Index` even though ordinary
+    /// `VarDebugInfoContents::Place` rejects runtime indices.
     AssignRef {
         destination: rustc_public::mir::Local,
         place: rustc_public::mir::Place,

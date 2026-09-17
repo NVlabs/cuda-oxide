@@ -478,6 +478,10 @@ fn monomorphized_mir_for_statement_debug_info<'tcx>(
 /// Preserve rustc's debug-only statement assignments across the
 /// rustc-internal to stable-MIR boundary.
 ///
+/// Capturing `StmtDebugInfo` directly is intentional: its `AssignRef` place may
+/// contain a runtime `ProjectionElem::Index`, while ordinary
+/// `VarDebugInfoContents::Place` does not permit that projection.
+///
 /// This function must run inside `rustc_internal::run`, so `stable(place)` can
 /// intern every monomorphized projection type in the active bridge tables.
 fn collect_statement_debug_info<'tcx>(
