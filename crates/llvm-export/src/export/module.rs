@@ -253,6 +253,20 @@ fn validate_device_extern_function_shape(
         return Ok(());
     };
 
+    // A device extern describes the ordinary callable ABI. Erased pointer
+    // shapes alone cannot establish compatibility with a kernel declaration
+    // that transports the pointee's bytes by value. Suppressing that declaration
+    // would otherwise discard both its byval storage and grid-constant metadata.
+    if state
+        .function_grid_constants
+        .contains_key(&decl.export_name)
+    {
+        return Err(format!(
+            "device extern `@{}` conflicts with a grid-constant kernel declaration; its launch ABI is not an ordinary device function ABI",
+            decl.export_name
+        ));
+    }
+
     if state.function_definitions.contains(&decl.export_name) {
         return Err(format!(
             "device extern `@{}` conflicts with a function definition of the same exported name",

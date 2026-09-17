@@ -4,7 +4,10 @@
  */
 
 use llvm_export::{
-    export::{NvvmExportConfig, NvvmIrDialect, export_module_to_string_with_config},
+    export::{
+        DeviceExternAttrs, DeviceExternDecl, DeviceExternType, NvvmExportConfig, NvvmIrDialect,
+        export_module_to_string_with_config, export_module_with_externs,
+    },
     ops::{
         AddressOfOp, BrOp, CallOp, FuncOp, GepIndex, GetElementPtrOp, LoadOp, ReturnOp, StoreOp,
     },
@@ -333,6 +336,44 @@ fn grid_constant_declaration_retains_byval_pointee() {
         "{ir}"
     );
     assert!(ir.contains("void ([128 x i8]*)* @external_map"), "{ir}");
+}
+
+#[test]
+fn grid_constant_declaration_cannot_be_replaced_by_an_erased_shape_device_extern() {
+    let mut ctx = Context::new();
+    let module = ModuleOp::new(&mut ctx, "extern_launch_abi_conflict".try_into().unwrap());
+    let top = module_top_block(&mut ctx, &module);
+    let void = VoidType::get(&ctx);
+    let pointer = PointerType::get(&ctx, 0);
+    let byte = IntegerType::get(&ctx, 8, Signedness::Signless);
+    let descriptor = ArrayType::get(&ctx, byte.into(), 128);
+    let function_type = FuncType::get(&ctx, void.into(), vec![pointer.into()], false);
+    let declaration = FuncOp::new(&mut ctx, "external_map".try_into().unwrap(), function_type);
+    mark_grid_constant(&ctx, &declaration, 0, descriptor.into(), 64);
+    declaration.get_operation().insert_at_back(top, &ctx);
+    // The external declaration has the same erased pointer shape, but its
+    // ordinary pointer argument cannot replace 128 bytes of launch storage.
+    let externs = [DeviceExternDecl {
+        export_name: "external_map".into(),
+        param_types: vec![DeviceExternType::pointer_to(DeviceExternType::Float32, 0)],
+        return_type: DeviceExternType::Void,
+        attrs: DeviceExternAttrs::default(),
+    }];
+    for dialect in [NvvmIrDialect::LegacyLlvm7, NvvmIrDialect::Modern] {
+        let error =
+            export_module_with_externs(&ctx, &module, &externs, &NvvmExportConfig::new(dialect))
+                .expect_err("a device extern must not suppress a kernel launch declaration");
+        assert!(
+            error.contains(
+                "device extern `@external_map` conflicts with a grid-constant kernel declaration"
+            ),
+            "{error}"
+        );
+        assert!(
+            error.contains("launch ABI is not an ordinary device function ABI"),
+            "{error}"
+        );
+    }
 }
 
 #[test]
