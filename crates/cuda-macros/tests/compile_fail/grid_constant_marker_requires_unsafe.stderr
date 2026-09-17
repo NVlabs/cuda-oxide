@@ -1,0 +1,7 @@
+error[E0133]: call to unsafe function `cuda_device::__grid_constant_config` is unsafe and requires unsafe block
+ --> tests/compile_fail/grid_constant_marker_requires_unsafe.rs:8:5
+  |
+8 |     thread::__grid_constant_config::<0>();
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ call to unsafe function
+  |
+  = note: consult the function's documentation for information on how to avoid undefined behavior

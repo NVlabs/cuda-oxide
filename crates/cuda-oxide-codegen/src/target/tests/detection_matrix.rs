@@ -1614,3 +1614,17 @@ fn matrix_memory_detection_composes_architecture_and_ptx_isa_floors() {
         "an unrelated b8 instruction must not raise the ldmatrix family"
     );
 }
+
+#[test]
+fn grid_constant_uses_existing_volta_target_floor_even_with_dynamic_stack() {
+    // NVVM requires Volta+ for grid-constant storage. The shared target table
+    // already enforces that floor, including modules whose only detected
+    // instruction feature (dynamic stack) would have a lower hardware floor.
+    for prefix in ["", "call ptr @llvm.stacksave.p0()"] {
+        let llvm = format!("{prefix}\n!0 = !{{ptr @read, !\"grid_constant\", !1}}");
+        let features = detect_features_in_llvm_text(&llvm);
+        assert!(validate_target_features(&"sm_52".parse().unwrap(), features).is_err());
+        assert!(validate_target_features(&"sm_70".parse().unwrap(), features).is_ok());
+        assert!(validate_target_features(&"sm_120".parse().unwrap(), features).is_ok());
+    }
+}

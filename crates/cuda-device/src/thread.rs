@@ -1130,9 +1130,20 @@ pub unsafe fn __launch_contract_config<const DOMAIN: u8, const U32_COORDINATES: 
 /// referenced immutable pointee and its ABI alignment; LLVM export then emits
 /// the pointer `byval` attribute and NVVM `grid_constant` property. The marker
 /// itself never reaches device code.
+///
+/// # Safety
+///
+/// This changes the kernel launch ABI. It may appear only in the kernel entry
+/// declaring source parameter `PARAMETER` as `#[grid_constant]`, and every
+/// launch must pass the immutable pointee by value with its Rust size and
+/// alignment. The parameter must have an elided immutable reference lifetime
+/// and a nonzero, sized pointee without interior mutability. The parameter's
+/// storage is read-only and lives only until this launch completes: no pointer
+/// or reference into it may be used afterward. Never put this marker in a
+/// callable helper; doing so cannot change the caller's launch ABI.
 #[doc(hidden)]
 #[inline(never)]
-pub fn __grid_constant_config<const PARAMETER: usize>() {
+pub unsafe fn __grid_constant_config<const PARAMETER: usize>() {
     // Detected at compile time and removed. No runtime code is generated.
 }
 

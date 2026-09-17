@@ -99,6 +99,98 @@ pub(crate) fn known_defs() -> KnownDefs {
     KNOWN_DEFS.with(|cell| cell.get())
 }
 
+/// Validate the source reference and the fully specialized read-only storage
+/// contract using rustc's type system. MIR locals have erased regions, so the
+/// outer lifetime is read from the declaration before instantiation instead.
+pub(crate) fn validate_grid_constant_parameter(
+    instance: &mir::mono::Instance,
+    parameter: usize,
+    pointee: rustc_public::ty::Ty,
+) -> Result<(), String> {
+    use rustc_middle::ty::{self, TypingEnv};
+    use rustc_public::rustc_internal;
+
+    ty::tls::with(|tcx| {
+        let instance = rustc_internal::internal(tcx, *instance);
+        let signature = tcx.fn_sig(instance.def_id()).skip_binder().skip_binder();
+        let parameter_ty = signature.inputs().get(parameter).ok_or_else(|| {
+            format!(
+                "grid-constant source parameter {parameter} is absent from the kernel declaration"
+            )
+        })?;
+        let ty::Ref(region, _, _) = parameter_ty.kind() else {
+            return Err(format!(
+                "grid-constant source parameter {parameter} must be declared as an immutable reference"
+            ));
+        };
+        let launch_lifetime = match region.kind() {
+            ty::ReBound(
+                _,
+                ty::BoundRegion {
+                    kind: ty::BoundRegionKind::Anon,
+                    ..
+                },
+            ) => true,
+            ty::ReBound(
+                _,
+                ty::BoundRegion {
+                    kind: ty::BoundRegionKind::Named(id),
+                    ..
+                },
+            ) => tcx.item_name(id) == rustc_span::symbol::kw::UnderscoreLifetime,
+            _ => false,
+        };
+        if !launch_lifetime {
+            return Err(format!(
+                "grid-constant source parameter {parameter} must use an elided reference lifetime (&T or &'_ T); its storage lives only for this kernel launch"
+            ));
+        }
+
+        let pointee = rustc_internal::internal(tcx, pointee);
+        if !pointee.is_freeze(tcx, TypingEnv::fully_monomorphized()) {
+            return Err(format!(
+                "grid-constant source parameter {parameter} contains interior mutability; launch-parameter storage is read-only, including UnsafeCell, Cell, and atomic fields"
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// A declaration's numeric parameter indices belong only to its own entry.
+/// rustc retains the precise inlining owner in source scopes, even after it
+/// has substituted caller locals for the original callee's arguments.
+pub(crate) fn validate_grid_constant_marker_owner(
+    instance: &mir::mono::Instance,
+    block_index: usize,
+    is_kernel: bool,
+) -> Result<(), String> {
+    if !is_kernel {
+        return Err(
+            "grid-constant ABI declaration is only valid on a kernel entry, not a callable device helper"
+                .to_string(),
+        );
+    }
+    rustc_middle::ty::tls::with(|tcx| {
+        let instance = rustc_public::rustc_internal::internal(tcx, *instance);
+        let body = tcx.instance_mir(instance.def);
+        let block = body.basic_blocks.iter().nth(block_index).ok_or_else(|| {
+            "grid-constant marker's MIR block has no corresponding rustc source scope".to_string()
+        })?;
+        if let Some(owner) = block
+            .terminator()
+            .source_info
+            .scope
+            .inlined_instance(&body.source_scopes)
+        {
+            return Err(format!(
+                "grid-constant ABI declaration was inlined from `{}`; a device helper or another kernel cannot change this kernel's launch ABI",
+                tcx.def_path_str(owner.def_id())
+            ));
+        }
+        Ok(())
+    })
+}
+
 // ============================================================================
 // Identity facts (crate-anchored; a miss falls through, never errors)
 // ============================================================================
@@ -586,6 +678,207 @@ pub(crate) fn extract_enum_variant(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grid_constant_checks_freeze_lifetimes_and_marker_ownership() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_grid_constant_facts_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+#![allow(dead_code)]
+use std::cell::{Cell, UnsafeCell};
+use std::sync::atomic::AtomicU32;
+pub struct Nested<T> { value: T }
+pub fn ordinary(_: &[u32; 32]) {}
+pub fn anonymous(_: &'_ [u32; 32]) {}
+pub fn cell(_: &Cell<u32>) {}
+pub fn nested_cell(_: &Nested<[Cell<u32>; 2]>) {}
+pub fn unsafe_cell(_: &UnsafeCell<u32>) {}
+pub fn atomic(_: &AtomicU32) {}
+pub fn pointer_to_cell(_: &*const Cell<u32>) {}
+pub fn reference_to_cell(_: &&Cell<u32>) {}
+pub fn static_lifetime(_: &'static u32) {}
+pub fn named_lifetime<'a>(_: &'a u32) {}
+pub fn early_lifetime<'a: 'static>(_: &'a u32) {}
+#[inline(never)]
+pub fn generic<T>(_: &Nested<T>) {}
+pub fn instantiate_cell(value: &Nested<Cell<u32>>) { generic(value); }
+pub fn instantiate_plain(value: &Nested<u32>) { generic(value); }
+#[inline(never)]
+pub unsafe fn marker() {}
+#[inline(never)]
+pub fn direct(_: &u32) { unsafe { marker(); } }
+#[inline(always)]
+pub fn helper(_: &u32) { unsafe { marker(); } }
+pub fn caller(value: &u32) { helper(value); }
+#[inline(always)]
+pub fn another_kernel(_: &u32) { unsafe { marker(); } }
+pub fn kernel_caller(value: &u32) { another_kernel(value); }
+"#,
+        )
+        .unwrap();
+        let output = std::process::Command::new("rustc")
+            .args(["--print", "sysroot"])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let sysroot = String::from_utf8(output.stdout).unwrap();
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=grid_constant_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Zmir-opt-level=4".to_string(),
+            "-Copt-level=3".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={}", sysroot.trim()),
+            fixture.display().to_string(),
+        ];
+        let results = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    use rustc_public::ty::{RigidTy, TyKind};
+                    let mut results = std::collections::BTreeMap::new();
+                    for item in rustc_public::all_local_items() {
+                        let name = item.name();
+                        let short = name.rsplit("::").next().unwrap();
+                        let Ok(instance) = mir::mono::Instance::try_from(item) else {
+                            continue;
+                        };
+                        let Some(body) = instance.body() else {
+                            continue;
+                        };
+                        let Some(parameter) = body.locals().get(1) else {
+                            continue;
+                        };
+                        let TyKind::RigidTy(RigidTy::Ref(_, pointee, _)) = parameter.ty.kind()
+                        else {
+                            continue;
+                        };
+                        results.insert(
+                            short.to_string(),
+                            validate_grid_constant_parameter(&instance, 0, pointee),
+                        );
+                        if matches!(short, "instantiate_cell" | "instantiate_plain") {
+                            let callee = body
+                                .blocks
+                                .iter()
+                                .find_map(|block| {
+                                    let mir::TerminatorKind::Call {
+                                        func: mir::Operand::Constant(constant),
+                                        ..
+                                    } = &block.terminator.kind
+                                    else {
+                                        return None;
+                                    };
+                                    let TyKind::RigidTy(RigidTy::FnDef(def, args)) =
+                                        constant.const_.ty().kind()
+                                    else {
+                                        return None;
+                                    };
+                                    mir::mono::Instance::resolve(def, &args).ok()
+                                })
+                                .expect("generic call survives");
+                            let callee_body = callee.body().unwrap();
+                            let TyKind::RigidTy(RigidTy::Ref(_, pointee, _)) =
+                                callee_body.locals()[1].ty.kind()
+                            else {
+                                panic!("specialized reference parameter");
+                            };
+                            results.insert(
+                                format!("{short}_generic"),
+                                validate_grid_constant_parameter(&callee, 0, pointee),
+                            );
+                        }
+                        if matches!(short, "direct" | "caller" | "kernel_caller") {
+                            let (index, _) = body
+                                .blocks
+                                .iter()
+                                .enumerate()
+                                .find(|(_, block)| {
+                                    matches!(
+                                        block.terminator.kind,
+                                        mir::TerminatorKind::Call { .. }
+                                    )
+                                })
+                                .expect("marker call survives inlining");
+                            results.insert(
+                                format!("{short}_owner"),
+                                validate_grid_constant_marker_owner(&instance, index, true),
+                            );
+                            results.insert(
+                                format!("{short}_helper"),
+                                validate_grid_constant_marker_owner(&instance, index, false),
+                            );
+                        }
+                    }
+                    std::ops::ControlFlow::<(), _>::Continue(results)
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        std::fs::remove_dir_all(&root).ok();
+        for name in [
+            "ordinary",
+            "anonymous",
+            "pointer_to_cell",
+            "reference_to_cell",
+            "direct_owner",
+            "instantiate_plain_generic",
+        ] {
+            assert_eq!(results[name], Ok(()), "{name}");
+        }
+        for name in [
+            "cell",
+            "nested_cell",
+            "unsafe_cell",
+            "atomic",
+            "instantiate_cell_generic",
+        ] {
+            assert!(
+                results[name]
+                    .as_ref()
+                    .unwrap_err()
+                    .contains("interior mutability"),
+                "{name}"
+            );
+        }
+        for name in ["static_lifetime", "named_lifetime", "early_lifetime"] {
+            assert!(
+                results[name]
+                    .as_ref()
+                    .unwrap_err()
+                    .contains("elided reference lifetime"),
+                "{name}"
+            );
+        }
+        for name in ["caller_owner", "kernel_caller_owner"] {
+            assert!(
+                results[name].as_ref().unwrap_err().contains("inlined from"),
+                "{name}"
+            );
+        }
+        assert!(
+            results["direct_helper"]
+                .as_ref()
+                .unwrap_err()
+                .contains("kernel entry")
+        );
+    }
 
     #[test]
     fn reference_param_validity_uses_only_typed_rustc_public_facts() {

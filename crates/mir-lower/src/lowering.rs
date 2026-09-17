@@ -64,7 +64,8 @@ const DYNAMIC_SHARED_ALIGNMENT_ATTR: &str = "dynamic_shared_alignment";
 const KERNEL_PARAM_ABI_ALIGN_ATTR_PREFIX: &str = "cuda_oxide_param_abi_align_";
 const RETURN_ABI_ALIGN_ATTR: &str = "cuda_oxide_return_abi_align";
 
-// =====================================================================// Dynamic shared-memory contract propagation
+// =====================================================================
+// Dynamic shared-memory contract propagation
 // =====================================================================
 /// Propagate dynamic shared-memory alignment markers through the local MIR
 /// call graph before any function is lowered.
@@ -198,7 +199,8 @@ fn set_dynamic_shared_alignment_attr(ctx: &mut Context, op: Ptr<Operation>, alig
         .set(key, IntegerAttr::new(u64_ty, value));
 }
 
-// =====================================================================// Function Conversion
+// =====================================================================
+// Function Conversion
 // =====================================================================
 /// Convert a `MirFuncOp` to `llvm.func` using pliron's `inline_region`.
 ///
@@ -223,6 +225,11 @@ pub fn convert_func(
     let is_kernel = is_kernel_func(ctx, op);
 
     let func_type = mir_func.get_type(ctx);
+    {
+        use pliron::builtin::type_interfaces::FunctionTypeInterface;
+        let count = func_type.deref(ctx).arg_types().len();
+        validate_grid_constant_attributes(ctx, op, count).map_err(anyhow_to_pliron)?;
+    }
 
     // Kernel parameters are host data: the host writes them (by value at
     // launch, or into DeviceBuffer memory behind a pointer or slice) and
@@ -272,7 +279,7 @@ pub fn convert_func(
         Vec::new()
     };
     let kernel_reference_param_validities = if is_kernel {
-        kernel_reference_param_validities(ctx, &mir_func, func_type, llvm_func_type)
+        kernel_reference_param_validities(ctx, &mir_func, &kernel_parameter_layout, llvm_func_type)
             .map_err(anyhow_to_pliron)?
     } else {
         Vec::new()
@@ -349,7 +356,8 @@ pub fn convert_func(
     Ok(())
 }
 
-// =====================================================================// Kernel Attribute Propagation
+// =====================================================================
+// Kernel Attribute Propagation
 // =====================================================================
 /// Propagate GPU kernel attributes from MIR func to LLVM func.
 fn propagate_kernel_attrs(
@@ -404,88 +412,33 @@ fn propagate_kernel_attrs(
 fn kernel_reference_param_validities(
     ctx: &mut Context,
     mir_func: &MirFuncOp,
-    mir_func_type: pliron::r#type::TypedHandle<pliron::builtin::types::FunctionType>,
+    parameter_layout: &[KernelParameterLayout],
     llvm_func_type: pliron::r#type::TypedHandle<llvm_export::types::FuncType>,
 ) -> std::result::Result<Vec<(usize, u64)>, anyhow::Error> {
     use pliron::builtin::type_interfaces::FunctionTypeInterface;
 
-    let mir_args = {
-        let func_ref = mir_func_type.deref(ctx);
-        func_ref.arg_types().to_vec()
-    };
-    let llvm_args = {
-        let func_ref = llvm_func_type.deref(ctx);
-        func_ref.arg_types().to_vec()
-    };
-
+    let llvm_args = llvm_func_type.deref(ctx).arg_types().to_vec();
     let mut result = Vec::new();
-    let mut llvm_arg_index = 0usize;
-
-    for (source_index, mir_ty) in mir_args.into_iter().enumerate() {
-        let validity = mir_func.reference_param_validity(ctx, source_index);
-        match classify_argument_type(ctx, mir_ty, true)? {
-            ReconstructKind::Slice { space_fields } => {
-                if let Some(validity) = validity {
-                    let llvm_ty = *llvm_args.get(llvm_arg_index).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "kernel reference validity mapping ran past LLVM argument {}",
-                            llvm_arg_index
-                        )
-                    })?;
-                    if !llvm_ty.deref(ctx).is::<llvm_export::types::PointerType>() {
-                        return Err(anyhow::anyhow!(
-                            "kernel source argument {} carries reference validity but its slice data component is not an LLVM pointer",
-                            source_index
-                        ));
-                    }
-                    result.push((llvm_arg_index, validity.0));
-                }
-                llvm_arg_index = llvm_arg_index
-                    .checked_add(2 + space_fields)
-                    .ok_or_else(|| anyhow::anyhow!("kernel parameter index overflow"))?;
-            }
-            ReconstructKind::TransparentScalar | ReconstructKind::None => {
-                if let Some(validity) = validity {
-                    let llvm_ty = *llvm_args.get(llvm_arg_index).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "kernel reference validity mapping ran past LLVM argument {}",
-                            llvm_arg_index
-                        )
-                    })?;
-                    if !llvm_ty.deref(ctx).is::<llvm_export::types::PointerType>() {
-                        return Err(anyhow::anyhow!(
-                            "kernel source argument {} carries reference validity but lowers to a non-pointer parameter",
-                            source_index
-                        ));
-                    }
-                    result.push((llvm_arg_index, validity.0));
-                }
-                llvm_arg_index += 1;
-            }
-            ReconstructKind::Zst => {
-                if validity.is_some() {
-                    return Err(anyhow::anyhow!(
-                        "kernel source argument {} carries reference validity but was removed as a zero-sized ABI argument",
-                        source_index
-                    ));
-                }
-            }
-            ReconstructKind::Struct(_) => {
-                return Err(anyhow::anyhow!(
-                    "kernel parameter unexpectedly used the internal flattened struct ABI"
-                ));
-            }
+    for (source_index, parameter) in parameter_layout.iter().enumerate() {
+        let Some(validity) = mir_func.reference_param_validity(ctx, source_index) else {
+            continue;
+        };
+        if parameter.llvm_range.is_empty() {
+            return Err(anyhow::anyhow!(
+                "kernel source argument {source_index} carries reference validity but was removed as a zero-sized ABI argument"
+            ));
         }
+        let llvm_index = parameter.llvm_range.start;
+        if !llvm_args[llvm_index]
+            .deref(ctx)
+            .is::<llvm_export::types::PointerType>()
+        {
+            return Err(anyhow::anyhow!(
+                "kernel source argument {source_index} carries reference validity but its first ABI component is not an LLVM pointer"
+            ));
+        }
+        result.push((llvm_index, validity.0));
     }
-
-    if llvm_arg_index != llvm_args.len() {
-        return Err(anyhow::anyhow!(
-            "kernel reference validity mapping consumed {} LLVM arguments, expected {}",
-            llvm_arg_index,
-            llvm_args.len()
-        ));
-    }
-
     Ok(result)
 }
 
@@ -504,14 +457,8 @@ fn propagate_kernel_reference_param_validities(
     }
 }
 
-/// Compute language ABI alignments that LLVM's structural parameter types lose.
-///
-/// Kernel aggregates are passed directly in `.param` space. A packed LLVM
-/// struct has natural alignment one even when Rust's `repr(packed(N))` ABI
-/// requires a larger power-of-two alignment. Preserve only the cases where
-/// rustc's ABI alignment is stricter than LLVM's natural alignment; the LLVM
-/// exporter renders these markers as NVVM `!nvvm.annotations` `"align"`
-/// properties, which preserve the contract in both modern NVPTX and libNVVM.
+/// One source-to-physical parameter map shared by alignment, reference validity,
+/// and grid-constant transport. Slices expand; zero-sized values disappear.
 #[derive(Clone)]
 struct KernelParameterLayout {
     mir_ty: TypeHandle,
@@ -572,6 +519,7 @@ fn kernel_parameter_layout(
     Ok(result)
 }
 
+/// Preserve Rust aggregate alignment when LLVM structural types under-align it.
 fn kernel_param_abi_alignments(
     ctx: &mut Context,
     parameter_layout: &[KernelParameterLayout],
@@ -618,6 +566,70 @@ struct KernelGridConstantParam {
     alignment: u64,
 }
 
+/// Validate every declaration before mapping source indices. An orphan or
+/// misspelled index must never disappear and silently restore the pointer ABI.
+fn validate_grid_constant_attributes(
+    ctx: &Context,
+    op: Ptr<Operation>,
+    parameter_count: usize,
+) -> std::result::Result<(), anyhow::Error> {
+    use pliron::builtin::attributes::{IntegerAttr, StringAttr, TypeAttr};
+    let operation = op.deref(ctx);
+    let attrs = &operation.attributes;
+    for key_id in attrs.0.keys() {
+        let key: &str = key_id.as_ref();
+        let (prefix, suffix, typed) =
+            if let Some(index) = key.strip_prefix(MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX) {
+                (
+                    MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX,
+                    index,
+                    attrs.get::<TypeAttr>(key_id).is_some(),
+                )
+            } else if let Some(index) = key.strip_prefix(MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX) {
+                (
+                    MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX,
+                    index,
+                    attrs.get::<IntegerAttr>(key_id).is_some(),
+                )
+            } else {
+                continue;
+            };
+        if !attrs
+            .get::<StringAttr>(&"gpu_kernel".try_into().unwrap())
+            .is_some_and(|value| value.as_str() == "true")
+        {
+            return Err(anyhow::anyhow!(
+                "grid-constant ABI attributes require a kernel entry"
+            ));
+        }
+        let index = suffix
+            .parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("malformed grid-constant attribute `{key}`"))?;
+        if !typed || key != format!("{prefix}{index}") {
+            return Err(anyhow::anyhow!("malformed grid-constant attribute `{key}`"));
+        }
+        if index >= parameter_count {
+            return Err(anyhow::anyhow!(
+                "grid-constant source parameter index {index} is out of range for {parameter_count} parameters"
+            ));
+        }
+        let pointee_key = format!("{MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{index}");
+        let alignment_key = format!("{MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{index}");
+        if attrs
+            .get::<TypeAttr>(&pointee_key.as_str().try_into().unwrap())
+            .is_none()
+            || attrs
+                .get::<IntegerAttr>(&alignment_key.as_str().try_into().unwrap())
+                .is_none()
+        {
+            return Err(anyhow::anyhow!(
+                "grid-constant source parameter {index} has incomplete pointee/alignment metadata"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn kernel_grid_constant_params(
     ctx: &mut Context,
     mir_op: Ptr<Operation>,
@@ -652,6 +664,11 @@ fn kernel_grid_constant_params(
             match (pointee, alignment) {
                 (None, None) => continue,
                 (Some(pointee), Some(alignment)) => {
+                    if alignment.value().bw() > 64 {
+                        return Err(anyhow::anyhow!(
+                            "kernel grid-constant parameter {source_index} alignment exceeds 64 bits"
+                        ));
+                    }
                     (pointee.get_type(ctx), alignment.value().to_u64())
                 }
                 _ => {
@@ -661,6 +678,20 @@ fn kernel_grid_constant_params(
                 }
             }
         };
+
+        let source = parameter.mir_ty.deref(ctx);
+        let source_ref = source.downcast_ref::<dialect_mir::types::MirPtrType>();
+        if !source_ref.is_some_and(|reference| {
+            reference.kind == dialect_mir::types::MirPointerKind::SharedRef
+                && !reference.is_mutable
+                && reference.address_space == 0
+                && reference.pointee == mir_pointee
+        }) {
+            return Err(anyhow::anyhow!(
+                "kernel grid-constant source parameter {source_index} must be a shared reference to the recorded pointee in generic address space"
+            ));
+        }
+        drop(source);
 
         if parameter.llvm_range.len() != 1 {
             return Err(anyhow::anyhow!(
@@ -684,7 +715,7 @@ fn kernel_grid_constant_params(
                 "kernel grid-constant source parameter {source_index} has invalid alignment {alignment}"
             ));
         }
-        let pointee = convert_type(ctx, mir_pointee)?;
+        let pointee = crate::convert::types::convert_grid_constant_storage_type(ctx, mir_pointee)?;
         result.push(KernelGridConstantParam {
             llvm_index,
             pointee,
@@ -860,7 +891,8 @@ fn propagate_alwaysinline_attr(
     }
 }
 
-// =====================================================================// Entry Block Prologue
+// =====================================================================
+// Entry Block Prologue
 // =====================================================================
 /// Build LLVM entry block prologue: reconstruct aggregate args from flattened
 /// LLVM block arguments and return the values to pass to the MIR entry block.
@@ -967,7 +999,8 @@ fn build_entry_prologue(
     Ok(result_args)
 }
 
-// =====================================================================// Argument Classification
+// =====================================================================
+// Argument Classification
 // =====================================================================
 /// Classification of argument types for reconstruction strategy.
 enum ReconstructKind {
@@ -1060,7 +1093,8 @@ fn classify_argument_type(
     }
 }
 
-// =====================================================================// Aggregate Reconstruction
+// =====================================================================
+// Aggregate Reconstruction
 // =====================================================================
 /// Reconstruct a slice value from its flattened fields.
 ///
@@ -1215,7 +1249,8 @@ fn insert_op_sequentially(
     }
 }
 
-// =====================================================================// Dynamic Shared Memory Pre-scan
+// =====================================================================
+// Dynamic Shared Memory Pre-scan
 // =====================================================================
 /// Compute the maximum dynamic shared memory alignment across all
 /// `MirExternSharedOp` operations in a function.
@@ -1248,7 +1283,8 @@ fn compute_max_dynamic_smem_alignment(
     max_alignment
 }
 
-// =====================================================================// Error Conversion
+// =====================================================================
+// Error Conversion
 // =====================================================================
 /// Convert an `anyhow::Error` into a `pliron::result::Error`.
 fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
@@ -1259,7 +1295,8 @@ fn anyhow_to_pliron(e: anyhow::Error) -> pliron::result::Error {
     )
 }
 
-// =====================================================================// Pass Registration
+// =====================================================================
+// Pass Registration
 // =====================================================================
 /// Register the MIR → LLVM lowering pass (placeholder for pass infrastructure).
 pub fn register(_ctx: &mut Context) {}
@@ -1604,8 +1641,9 @@ mod reference_param_validity_tests {
 
         let llvm_func_type =
             convert_function_type(&mut ctx, mir_func_type, true).expect("kernel type lowers");
+        let layout = kernel_parameter_layout(&mut ctx, mir_func_type, llvm_func_type).unwrap();
         let mapped =
-            kernel_reference_param_validities(&mut ctx, &mir_func, mir_func_type, llvm_func_type)
+            kernel_reference_param_validities(&mut ctx, &mir_func, &layout, llvm_func_type)
                 .expect("reference validity mapping succeeds");
 
         assert_eq!(mapped, vec![(0, 4), (1, 4)]);
@@ -1627,5 +1665,268 @@ mod reference_param_validity_tests {
                 .deref(&ctx)
                 .is::<llvm_export::types::PointerType>()
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)]
+mod grid_constant_abi_tests {
+    use super::*;
+    use dialect_mir::{
+        attributes::ReferenceParamValidityAttr,
+        types::{MirArrayType, MirPointerKind, MirPtrType, MirSliceType},
+    };
+    use pliron::builtin::{
+        attributes::{IntegerAttr, TypeAttr},
+        types::{FunctionType, IntegerType, Signedness},
+    };
+    use pliron::utils::apint::APInt;
+    use std::num::NonZero;
+
+    fn record(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        index: usize,
+        pointee: TypeHandle,
+        align: u64,
+    ) {
+        let int = IntegerType::get(ctx, 64, Signedness::Unsigned);
+        let attrs = &mut op.deref_mut(ctx).attributes;
+        attrs.set(
+            format!("{MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{index}")
+                .as_str()
+                .try_into()
+                .unwrap(),
+            TypeAttr::new(pointee),
+        );
+        attrs.set(
+            format!("{MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{index}")
+                .as_str()
+                .try_into()
+                .unwrap(),
+            IntegerAttr::new(int, APInt::from_u64(align, NonZero::new(64).unwrap())),
+        );
+    }
+
+    #[test]
+    fn grid_constant_storage_applies_by_value_layout_and_pointer_width_rules() {
+        for (space, packed) in [(3, true), (3, false), (0, true), (0, false)] {
+            let mut ctx = Context::new();
+            dialect_mir::register(&mut ctx);
+            crate::register(&mut ctx);
+            let byte: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+            let pointer: TypeHandle =
+                MirPtrType::get_with_kind(&mut ctx, byte, false, space, MirPointerKind::RawConst)
+                    .into();
+            let (offsets, size, align) = if packed {
+                (vec![0, 1, 9], 10, 1)
+            } else {
+                (vec![0, 8, 16], 24, 8)
+            };
+            let payload: TypeHandle = MirStructType::get_with_full_layout(
+                &mut ctx,
+                "PointerPayload".into(),
+                vec!["tag".into(), "pointer".into(), "tail".into()],
+                vec![byte, pointer, byte],
+                vec![0, 1, 2],
+                offsets,
+                size,
+                align,
+            )
+            .into();
+            let payloads = [
+                payload,
+                MirArrayType::get(&mut ctx, payload, 2).into(),
+                MirArrayType::get(&mut ctx, pointer, 3).into(),
+            ];
+            for payload in payloads {
+                let reference: TypeHandle = MirPtrType::get_generic_with_kind(
+                    &mut ctx,
+                    payload,
+                    false,
+                    MirPointerKind::SharedRef,
+                )
+                .into();
+                let function_type = FunctionType::get(&ctx, vec![reference], vec![]);
+                let op = Operation::new(
+                    &mut ctx,
+                    MirFuncOp::get_concrete_op_info(),
+                    vec![],
+                    vec![],
+                    vec![],
+                    1,
+                );
+                MirFuncOp::new(&mut ctx, op, TypeAttr::new(function_type.into()));
+                record(&mut ctx, op, 0, payload, align);
+                let llvm_type = convert_function_type(&mut ctx, function_type, true).unwrap();
+                let layout = kernel_parameter_layout(&mut ctx, function_type, llvm_type).unwrap();
+                let result = kernel_grid_constant_params(&mut ctx, op, &layout, llvm_type);
+                if space == 3 {
+                    assert!(
+                        result
+                            .err()
+                            .unwrap()
+                            .to_string()
+                            .contains("target-dependent shared-memory pointer")
+                    );
+                } else {
+                    assert_eq!(
+                        result.unwrap().len(),
+                        1,
+                        "ordinary generic pointers preserve host storage"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grid_constant_storage_rejects_unrepresentable_source_layout() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        crate::register(&mut ctx);
+        let word: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        // A legacy overlapping struct model can be addressed by byte offsets,
+        // but cannot transport its bytes as a sequential LLVM aggregate value.
+        let overlap: TypeHandle = MirStructType::get_with_full_layout(
+            &mut ctx,
+            "Overlapping".into(),
+            vec!["a".into(), "b".into()],
+            vec![word, word],
+            vec![0, 1],
+            vec![0, 0],
+            4,
+            4,
+        )
+        .into();
+        assert!(convert_type(&mut ctx, overlap).is_ok());
+        let error = crate::convert::types::convert_grid_constant_storage_type(&mut ctx, overlap)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot be represented by an LLVM struct value")
+        );
+    }
+
+    #[test]
+    fn malformed_grid_constant_declarations_cannot_be_dropped() {
+        use pliron::builtin::attributes::StringAttr;
+        for (suffix, kernel, complete, expected) in [
+            ("1", Some("true"), true, "out of range"),
+            ("01", Some("true"), true, "malformed"),
+            ("x", Some("true"), true, "malformed"),
+            ("0", None, true, "kernel entry"),
+            ("0", Some("false"), true, "kernel entry"),
+            ("0", Some("true"), false, "incomplete"),
+        ] {
+            let mut ctx = Context::new();
+            dialect_mir::register(&mut ctx);
+            let byte: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+            let op = Operation::new(
+                &mut ctx,
+                MirFuncOp::get_concrete_op_info(),
+                vec![],
+                vec![],
+                vec![],
+                1,
+            );
+            let integer = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+            {
+                let attrs = &mut op.deref_mut(&ctx).attributes;
+                if let Some(kernel) = kernel {
+                    attrs.set(
+                        "gpu_kernel".try_into().unwrap(),
+                        StringAttr::new(kernel.into()),
+                    );
+                }
+                attrs.set(
+                    format!("{MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{suffix}")
+                        .as_str()
+                        .try_into()
+                        .unwrap(),
+                    TypeAttr::new(byte),
+                );
+                if complete {
+                    attrs.set(
+                        format!("{MIR_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{suffix}")
+                            .as_str()
+                            .try_into()
+                            .unwrap(),
+                        IntegerAttr::new(integer, APInt::from_u64(1, NonZero::new(64).unwrap())),
+                    );
+                }
+            }
+            let error = validate_grid_constant_attributes(&ctx, op, 1).unwrap_err();
+            assert!(error.to_string().contains(expected), "{suffix}: {error}");
+        }
+    }
+
+    #[test]
+    fn grid_constants_share_mapping_with_reference_validity_after_slice_and_zst() {
+        let mut ctx = Context::new();
+        dialect_mir::register(&mut ctx);
+        crate::register(&mut ctx);
+        let byte: TypeHandle = IntegerType::get(&ctx, 8, Signedness::Unsigned).into();
+        let payload: TypeHandle = MirArrayType::get(&mut ctx, byte, 128).into();
+        let zst: TypeHandle = MirArrayType::get(&mut ctx, byte, 0).into();
+        let reference: TypeHandle =
+            MirPtrType::get_generic_with_kind(&mut ctx, payload, false, MirPointerKind::SharedRef)
+                .into();
+        let slice: TypeHandle = MirSliceType::get_with_mutability_and_kind(
+            &mut ctx,
+            byte,
+            false,
+            MirPointerKind::SharedRef,
+        )
+        .into();
+        let function_type =
+            FunctionType::get(&ctx, vec![slice, zst, reference, byte, reference], vec![]);
+        let op = Operation::new(
+            &mut ctx,
+            MirFuncOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![],
+            1,
+        );
+        let function = MirFuncOp::new(&mut ctx, op, TypeAttr::new(function_type.into()));
+        function.set_reference_param_validity(&mut ctx, 0, ReferenceParamValidityAttr(1));
+        function.set_reference_param_validity(&mut ctx, 2, ReferenceParamValidityAttr(64));
+        function.set_reference_param_validity(&mut ctx, 4, ReferenceParamValidityAttr(64));
+        record(&mut ctx, op, 2, payload, 64);
+        record(&mut ctx, op, 4, payload, 64);
+        let llvm_type = convert_function_type(&mut ctx, function_type, true).unwrap();
+        let layout = kernel_parameter_layout(&mut ctx, function_type, llvm_type).unwrap();
+        assert_eq!(
+            layout
+                .iter()
+                .map(|p| p.llvm_range.clone())
+                .collect::<Vec<_>>(),
+            vec![0..2, 2..2, 2..3, 3..4, 4..5]
+        );
+        let grid = kernel_grid_constant_params(&mut ctx, op, &layout, llvm_type).unwrap();
+        assert_eq!(
+            grid.iter()
+                .map(|p| (p.llvm_index, p.alignment))
+                .collect::<Vec<_>>(),
+            vec![(2, 64), (4, 64)]
+        );
+        assert_eq!(llvm_type_size_align(&ctx, grid[0].pointee).unwrap().0, 128);
+        let validities =
+            kernel_reference_param_validities(&mut ctx, &function, &layout, llvm_type).unwrap();
+        assert_eq!(validities, vec![(0, 1), (2, 64), (4, 64)]);
+
+        // A stale pointee annotation cannot silently change the launch packet size.
+        record(&mut ctx, op, 2, byte, 64);
+        let error = kernel_grid_constant_params(&mut ctx, op, &layout, llvm_type)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("recorded pointee"));
+        record(&mut ctx, op, 2, payload, 3);
+        let error = kernel_grid_constant_params(&mut ctx, op, &layout, llvm_type)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("invalid alignment 3"));
     }
 }

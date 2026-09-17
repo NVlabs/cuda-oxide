@@ -173,7 +173,7 @@ fn emit_function_reference(
     name: &str,
 ) -> Result<(), String> {
     if state.legacy_typed_pointers() {
-        state.export_function_pointer_type(state.function_type(name)?, output)?;
+        state.export_named_function_pointer_type(name, output)?;
     } else {
         write!(output, "ptr").unwrap();
     }

@@ -162,7 +162,9 @@ pub(crate) fn inject_grid_constant_markers(input: &mut ItemFn) -> syn::Result<()
             .attrs
             .retain(|attribute| !attr_path_ends_with(attribute, "grid_constant"));
         markers.push(parse_quote! {
-            ::cuda_device::thread::__grid_constant_config::<#index>();
+            // SAFETY: this marker is emitted only on the kernel entry whose
+            // parameter declaration also determines host by-value marshalling.
+            unsafe { ::cuda_device::thread::__grid_constant_config::<#index>(); }
         });
     }
     input.block.stmts.splice(0..0, markers);

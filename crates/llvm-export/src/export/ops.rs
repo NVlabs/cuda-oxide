@@ -1554,6 +1554,13 @@ impl<'a> ModuleExportState<'a> {
             }
             CallOpCallable::Indirect(_) => None,
         };
+        if let Some(name) = &direct_callee_name
+            && self.function_grid_constants.contains_key(name)
+        {
+            return Err(format!(
+                "grid-constant kernel entry `@{name}` cannot be called as a device function; move shared code into an ordinary helper"
+            ));
+        }
         let legacy_atomic_add = if let Some(name) = &direct_callee_name {
             self.legacy_nvvm_atomic_add_signature(name, llvm_func_ty)?
         } else {
@@ -2078,13 +2085,14 @@ impl<'a> ModuleExportState<'a> {
         } else {
             super::names::strip_device_prefix(&symbol_name)
         };
-        let function_type = self
-            .function_types
-            .get(&function_name)
-            .copied()
-            .ok_or_else(|| {
-                format!("legacy addressof references unknown symbol `@{symbol_name}`")
-            })?;
+        if self.function_grid_constants.contains_key(&function_name) {
+            return Err(format!(
+                "cannot take the device function address of grid-constant kernel entry `@{function_name}`; its launch ABI is not an ordinary function ABI"
+            ));
+        }
+        self.function_types.get(&function_name).ok_or_else(|| {
+            format!("legacy addressof references unknown symbol `@{symbol_name}`")
+        })?;
         if result_pointer.address_space() != 0 {
             return Err(format!(
                 "function addressof `@{function_name}` must produce a program-address-space (0) pointer, got address space {}",
@@ -2105,7 +2113,7 @@ impl<'a> ModuleExportState<'a> {
             }
             write!(output, ")*").unwrap();
         } else {
-            self.export_function_pointer_type(function_type, output)?;
+            self.export_named_function_pointer_type(&function_name, output)?;
         }
         write!(output, " @{function_name} to i8*").unwrap();
         writeln!(output).unwrap();

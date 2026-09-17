@@ -12,6 +12,12 @@ For TMA multicast (also sm_90+), see the [`tma_multicast`](../tma_multicast/) ex
 1. **tma_copy_2d_test**: Async 2D tile copy from global to shared memory
 2. **tma_pipeline_test**: TMA with mbarrier for completion tracking
 
+Both kernels use `#[grid_constant] tensor_map: &TmaDescriptor`. The generated
+host launcher takes the descriptor by value and places its 128 bytes directly
+in the kernel's parameter storage. Every thread can address that same read-only
+value; no separate device descriptor allocation or upload is needed. The tensor
+data itself stays in device global memory and must outlive the launch.
+
 ## Key Concepts Demonstrated
 
 ### TMA Descriptor Creation (Host)
@@ -44,7 +50,7 @@ fn create_tma_descriptor(
 ```rust
 #[kernel]
 pub fn tma_copy_2d_test(
-    tensor_map: *const TmaDescriptor,
+    #[grid_constant] tensor_map: &TmaDescriptor,
     mut out: DisjointSlice<f32>,
     tile_x: i32, tile_y: i32,
 ) {
@@ -180,7 +186,7 @@ GPU Compute Capability: sm_86
 
 - **TMA (Tests 1 & 2)**: Hopper (sm_90) or newer — including consumer Blackwell (sm_120)
 - **CUDA Driver**: 12.0+
-- **Memory**: Tensor descriptors in device-accessible memory
+- **Memory**: Tensor descriptors in read-only kernel parameter storage
 
 ## Pipeline Pattern (Double Buffering)
 
@@ -236,7 +242,7 @@ for iter in 0..num_iters {
 
 ```ptx
 // TMA descriptor parameter (128-byte opaque blob)
-.param .align 16 .b8 tensor_map[128]
+.param .align 64 .b8 tensor_map[128]
 
 // Async 2D tensor copy
 cp.async.bulk.tensor.2d.shared::cluster.global.tile.mbarrier::complete_tx::bytes

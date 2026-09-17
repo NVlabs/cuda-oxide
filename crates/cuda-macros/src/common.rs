@@ -181,6 +181,16 @@ pub(crate) fn grid_constant_pointee(pat_type: &PatType) -> syn::Result<Option<Ty
             "#[grid_constant] parameters are read-only; use &T rather than &mut T",
         ));
     }
+    if reference
+        .lifetime
+        .as_ref()
+        .is_some_and(|lifetime| lifetime.ident != "_")
+    {
+        return Err(syn::Error::new_spanned(
+            &reference.lifetime,
+            "#[grid_constant] storage lives only for this kernel launch; use &T or &'_ T, not a named or 'static lifetime",
+        ));
+    }
     if matches!(reference.elem.as_ref(), Type::Slice(_)) {
         return Err(syn::Error::new_spanned(
             &reference.elem,

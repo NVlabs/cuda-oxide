@@ -164,6 +164,8 @@ fn detect_cluster_config(
 fn detect_grid_constant_params(
     body: &mir::Body,
     reachable: &std::collections::BTreeSet<usize>,
+    instance: &mono::Instance,
+    is_kernel: bool,
 ) -> Result<Vec<usize>, String> {
     use rustc_public::ty::TyConstKind;
 
@@ -189,6 +191,7 @@ fn detect_grid_constant_params(
         {
             continue;
         }
+        facts::validate_grid_constant_marker_owner(instance, block_idx, is_kernel)?;
         if args.0.len() != 1 {
             return Err(format!(
                 "cuda_device grid-constant marker has {} generic arguments; expected exactly 1",
@@ -2007,6 +2010,52 @@ pub fn translate_body(
         }
     };
 
+    // Validate the source contract before translating argument types, so DSTs
+    // and interior-mutability failures report the grid-constant declaration
+    // rather than an incidental failure deeper in type lowering.
+    let grid_constant_params =
+        detect_grid_constant_params(body, &reachable, instance, is_kernel)
+            .map_err(|error| input_error_noloc!(TranslationErr::invalid_op(error)))?;
+    let mut grid_constant_layouts = Vec::with_capacity(grid_constant_params.len());
+    for source_index in grid_constant_params {
+        if source_index >= num_args {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter index {source_index} is out of range for {num_args} parameters"
+            )));
+        }
+        let local = mir::Local::from(source_index + 1);
+        let parameter_ty = body.locals()[local].ty;
+        let TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) = parameter_ty.kind() else {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter {source_index} is not a reference"
+            )));
+        };
+        if mutability != mir::Mutability::Not {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter {source_index} is mutable"
+            )));
+        }
+        facts::validate_grid_constant_parameter(instance, source_index, pointee)
+            .map_err(|error| input_error_noloc!(TranslationErr::invalid_op(error)))?;
+        let layout = pointee.layout().map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "could not query grid-constant parameter {source_index} pointee layout: {error:?}"
+            )))
+        })?;
+        let shape = layout.shape();
+        if !shape.is_sized() {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter {source_index} requires a sized pointee"
+            )));
+        }
+        if shape.size.bytes() == 0 {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter {source_index} has a zero-sized pointee"
+            )));
+        }
+        grid_constant_layouts.push((source_index, pointee, shape.abi_align));
+    }
+
     for arg_idx in 0..num_args {
         // MIR local index for arguments: local 1, 2, 3, ... (0 is return value)
         let local = mir::Local::from(arg_idx + 1);
@@ -2106,7 +2155,6 @@ pub fn translate_body(
         }
     }
 
-    // Check if the function has the #[cuda_oxide::kernel] attribute (passed via is_kernel flag)
     if is_kernel {
         // Add "gpu_kernel" attribute to the mir.func operation.
         // This will be used by the lowering pass to set the "gpu_kernel" attribute on the llvm.func.
@@ -2119,41 +2167,7 @@ pub fn translate_body(
             .attributes
             .set(key, kernel_attr);
 
-        let grid_constant_params = match detect_grid_constant_params(body, &reachable) {
-            Ok(params) => params,
-            Err(error) => {
-                return input_err_noloc!(TranslationErr::invalid_op(error));
-            }
-        };
-        for source_index in grid_constant_params {
-            if source_index >= num_args {
-                return input_err_noloc!(TranslationErr::invalid_op(format!(
-                    "grid-constant source parameter index {source_index} is out of range for {num_args} parameters"
-                )));
-            }
-            let local = mir::Local::from(source_index + 1);
-            let parameter_ty = body.locals()[local].ty;
-            let TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) = parameter_ty.kind() else {
-                return input_err_noloc!(TranslationErr::invalid_op(format!(
-                    "grid-constant source parameter {source_index} is not a reference"
-                )));
-            };
-            if mutability != mir::Mutability::Not {
-                return input_err_noloc!(TranslationErr::invalid_op(format!(
-                    "grid-constant source parameter {source_index} is mutable"
-                )));
-            }
-            let layout = pointee.layout().map_err(|error| {
-                input_error_noloc!(TranslationErr::unsupported(format!(
-                    "could not query grid-constant parameter {source_index} pointee layout: {error:?}"
-                )))
-            })?;
-            let shape = layout.shape();
-            if shape.size.bytes() == 0 {
-                return input_err_noloc!(TranslationErr::invalid_op(format!(
-                    "grid-constant source parameter {source_index} has a zero-sized pointee"
-                )));
-            }
+        for (source_index, pointee, alignment) in grid_constant_layouts {
             let pointee_ty = types::translate_type(ctx, &pointee)?;
             let type_key: Identifier =
                 format!("{MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{source_index}")
@@ -2171,7 +2185,7 @@ pub fn translate_body(
                 pliron::builtin::types::Signedness::Unsigned,
             );
             let align = pliron::utils::apint::APInt::from_u64(
-                shape.abi_align,
+                alignment,
                 std::num::NonZero::new(64).expect("64 is non-zero"),
             );
             let mut operation = mir_func_op.get_operation().deref_mut(ctx);

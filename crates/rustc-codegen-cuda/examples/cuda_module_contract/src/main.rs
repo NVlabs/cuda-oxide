@@ -101,16 +101,20 @@ mod kernels {
 
     /// Generic grid-constant parameters keep their by-value entry ABI without
     /// leaking that ABI into the callable generic helper.
+    ///
+    /// # Safety
+    /// `output` must contain 32 writable elements, owned by this block.
     #[kernel]
     #[launch_bounds(32)]
     #[launch_contract(domain = 1, block = (32, 1, 1))]
-    pub fn generic_grid_constant<T: Copy>(
+    pub unsafe fn generic_grid_constant<T: Copy>(
         #[grid_constant] constants: &GridConstants,
         output: *mut u32,
         _tag: T,
     ) {
+        let index = thread::threadIdx_x() as usize;
         unsafe {
-            *output = constants.values[3];
+            *output.add(index) = constants.values[index];
         }
     }
 
@@ -118,13 +122,49 @@ mod kernels {
     /// ABI. Its first parameter must remain one ordinary device pointer.
     ///
     /// # Safety
-    /// `constants` and `output` must be valid for one grid-constant read and
-    /// one `u32` write respectively.
+    /// `constants` must point to a valid, immutable `GridConstants` value in
+    /// device memory for the duration of the launch. `output` must contain
+    /// 32 writable elements, owned by this block.
     #[kernel]
     #[launch_bounds(32)]
     #[launch_contract(domain = 1, block = (32, 1, 1))]
     pub unsafe fn ordinary_calls_generic(constants: *const GridConstants, output: *mut u32) {
-        generic_grid_constant::<u8>(unsafe { &*constants }, output, 0);
+        unsafe { generic_grid_constant::<u8>(&*constants, output, 0) };
+    }
+
+    #[inline(never)]
+    fn read_grid_constant(constants: &GridConstants, index: usize) -> u32 {
+        constants.values[index]
+    }
+
+    /// Two descriptors after a dropped ZST and a flattened slice. Recording
+    /// both addresses across two blocks also detects per-thread local copies.
+    #[allow(clippy::too_many_arguments)]
+    #[kernel]
+    #[launch_contract(domain = 1, block = (32, 1, 1))]
+    pub fn mixed_grid_constants(
+        _empty: (),
+        input: &[u32],
+        #[grid_constant] first: &GridConstants,
+        _other_empty: (),
+        #[grid_constant] second: &GridConstants,
+        mut output: DisjointSlice<u32>,
+        mut first_addresses: DisjointSlice<u64>,
+        mut second_addresses: DisjointSlice<u64>,
+    ) {
+        let index = thread::index_1d();
+        let linear = index.get();
+        if let Some(output) = output.get_mut(index) {
+            *output = input[linear]
+                .wrapping_add(read_grid_constant(first, linear % 32))
+                .wrapping_add(read_grid_constant(second, 31 - linear % 32));
+        }
+        if let Some(address) = first_addresses.get_mut(thread::index_1d()) {
+            *address = first as *const GridConstants as u64;
+        }
+        if let Some(address) = second_addresses.get_mut(thread::index_1d()) {
+            *address = second as *const GridConstants as u64;
+        }
     }
 
     /// Size requirements: the generated checked launchers prove every
@@ -233,10 +273,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ctx = CudaContext::new(0)?;
     let stream = ctx.default_stream();
-    // SAFETY: this example has one device-code owner, and `cargo oxide` builds
-    // the merged PTX set from the `kernels` module above with no conflicting
-    // entry definitions.
-    let module = unsafe { kernels::load(&ctx)? };
+    // SAFETY: this example has one device-code owner and all specializations
+    // are instantiated in this same crate. Either loading route therefore
+    // produces exactly the entries described by the generated host API.
+    let module = unsafe {
+        if std::env::args().any(|argument| argument == "--load-nvvm") {
+            // The generic module's default loader merges PTX bundles. Select
+            // this crate's single bundle explicitly to exercise libNVVM IR.
+            kernels::from_module(cuda_host::load_embedded_module(
+                &ctx,
+                "cuda_module_contract",
+            )?)?
+        } else {
+            kernels::load(&ctx)?
+        }
+    };
 
     const N: usize = 1024;
     let scale = 1.5f32;
@@ -280,21 +331,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     module.grid_constant_read(&stream, &constants_launch, &mut constants_output, constants)?;
     assert_eq!(constants_output.to_host_vec(&stream)?, constants.values);
 
-    let generic_constant_output = DeviceBuffer::<u32>::zeroed(&stream, 1)?;
+    let generic_constant_output = DeviceBuffer::<u32>::zeroed(&stream, 32)?;
     let tag = 0_u8;
     let generic_constant_launch =
         module.prepare_generic_grid_constant_for(&tag, LaunchConfig1D::new(1, 32, 0))?;
-    module.generic_grid_constant(
-        &stream,
-        &generic_constant_launch,
-        constants,
-        generic_constant_output.cu_deviceptr() as *mut u32,
-        tag,
-    )?;
+    // SAFETY: exactly one block writes its 32 distinct output elements.
+    unsafe {
+        module.generic_grid_constant(
+            &stream,
+            &generic_constant_launch,
+            constants,
+            generic_constant_output.cu_deviceptr() as *mut u32,
+            tag,
+        )?;
+    }
     assert_eq!(
         generic_constant_output.to_host_vec(&stream)?,
-        [constants.values[3]]
+        constants.values
     );
+
+    // Calling the generic helper from an ordinary pointer entry must preserve
+    // the pointer ABI. The descriptor remains a separate device allocation.
+    let device_constants = DeviceBuffer::from_host(&stream, &constants.values)?;
+    assert_eq!(
+        device_constants.cu_deviceptr() % align_of::<GridConstants>() as u64,
+        0
+    );
+    let ordinary_launch = module.prepare_ordinary_calls_generic(LaunchConfig1D::new(1, 32, 0))?;
+    // SAFETY: device_constants contains one initialized descriptor and remains
+    // alive until the synchronous generated launcher completes.
+    unsafe {
+        module.ordinary_calls_generic(
+            &stream,
+            &ordinary_launch,
+            device_constants.cu_deviceptr() as *const GridConstants,
+            generic_constant_output.cu_deviceptr() as *mut u32,
+        )?;
+    }
+    assert_eq!(
+        generic_constant_output.to_host_vec(&stream)?,
+        constants.values
+    );
+
+    let second = GridConstants {
+        values: core::array::from_fn(|index| 0x1200_0000 | (index as u32 * 7)),
+    };
+    let mixed_input: Vec<u32> = (0..64).map(|index| index * 11).collect();
+    let mixed_device_input = DeviceBuffer::from_host(&stream, &mixed_input)?;
+    let mut mixed_output = DeviceBuffer::<u32>::zeroed(&stream, 64)?;
+    let mut first_addresses = DeviceBuffer::<u64>::zeroed(&stream, 64)?;
+    let mut second_addresses = DeviceBuffer::<u64>::zeroed(&stream, 64)?;
+    let mixed_launch = module.prepare_mixed_grid_constants(LaunchConfig1D::new(2, 32, 0))?;
+    module.mixed_grid_constants(
+        &stream,
+        &mixed_launch,
+        (),
+        &mixed_device_input,
+        constants,
+        (),
+        second,
+        &mut mixed_output,
+        &mut first_addresses,
+        &mut second_addresses,
+    )?;
+    let expected: Vec<u32> = mixed_input
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value
+                .wrapping_add(constants.values[index % 32])
+                .wrapping_add(second.values[31 - index % 32])
+        })
+        .collect();
+    assert_eq!(mixed_output.to_host_vec(&stream)?, expected);
+    let first_addresses = first_addresses.to_host_vec(&stream)?;
+    let second_addresses = second_addresses.to_host_vec(&stream)?;
+    assert_ne!(first_addresses[0], second_addresses[0]);
+    for addresses in [first_addresses, second_addresses] {
+        assert_ne!(addresses[0], 0);
+        assert_eq!(addresses[0] % 64, 0);
+        assert!(addresses.iter().all(|address| *address == addresses[0]));
+    }
 
     let mut generic_output = DeviceBuffer::<u32>::zeroed(&stream, N)?;
     let add_three = |value: u32| value + 3;
@@ -447,6 +564,7 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
         ("aligned_dynamic_shared", ".reqntid 256, 1, 1"),
         ("mixed_abi", ".reqntid 256, 1, 1"),
         ("grid_constant_read", ".reqntid 32, 1, 1"),
+        ("mixed_grid_constants", ".reqntid 32, 1, 1"),
         ("ordinary_calls_generic", ".reqntid 32, 1, 1"),
         ("strided_scale", ".reqntid 128, 1, 1"),
         ("helper_contract_32", ".reqntid 32, 1, 1"),
@@ -480,8 +598,10 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
                 && callable.name().starts_with("generic_grid_constant_TID_")
         })
         .ok_or("missing generic grid-constant specialization")?
-        .text();
-    if !generic.contains(".param .align 64 .b8") || !generic.contains("[128]") {
+        .definition_header_text()
+        .ok_or("generic grid-constant entry has no complete header")?;
+    let generic_params = ptx_parameters(generic);
+    if generic_params.len() != 3 || !is_descriptor_parameter(&generic_params[0]) {
         return Err("generic grid-constant specialization lost its by-value parameter ABI".into());
     }
 
@@ -494,13 +614,63 @@ fn verify_launch_contract_ptx() -> Result<(), Box<dyn std::error::Error>> {
                 && callable.name() == "ordinary_calls_generic"
         })
         .ok_or("missing ordinary generic-helper caller")?
-        .text();
-    if ordinary.contains("[128]") || !ordinary.contains(".param .u64") {
+        .definition_header_text()
+        .ok_or("ordinary helper caller has no complete header")?;
+    let ordinary_params = ptx_parameters(ordinary);
+    if ordinary_params.len() != 2
+        || !ordinary_params
+            .iter()
+            .all(|parameter| parameter.starts_with(".param .u64 "))
+    {
         return Err("grid-constant ABI leaked into an ordinary helper caller".into());
+    }
+
+    let mixed = document
+        .callables()
+        .iter()
+        .find(|callable| {
+            callable.kind() == ptx_parse::CallableKind::Entry
+                && callable.name() == "mixed_grid_constants"
+                && callable.body_text().is_some()
+        })
+        .ok_or("missing mixed grid-constant entry")?;
+    let mixed_params = ptx_parameters(
+        mixed
+            .definition_header_text()
+            .ok_or("missing mixed entry header")?,
+    );
+    if mixed_params.len() != 10
+        || !mixed_params.iter().enumerate().all(|(index, parameter)| {
+            if index == 2 || index == 3 {
+                is_descriptor_parameter(parameter)
+            } else {
+                parameter.starts_with(".param .u64 ")
+            }
+        })
+    {
+        return Err(format!(
+            "mixed grid-constant parameter positions/layout changed: {mixed_params:?}"
+        )
+        .into());
     }
 
     println!("SUCCESS: prepared-launch PTX contract verified");
     Ok(())
+}
+
+fn ptx_parameters(header: &str) -> Vec<String> {
+    header
+        .lines()
+        .filter_map(|line| {
+            let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+            line.starts_with(".param ")
+                .then(|| line.trim_end_matches(',').to_owned())
+        })
+        .collect()
+}
+
+fn is_descriptor_parameter(parameter: &str) -> bool {
+    parameter.starts_with(".param .align 64 .b8 ") && parameter.ends_with("[128]")
 }
 
 /// Assert one entry's launch geometry, and that it declares exactly one of the

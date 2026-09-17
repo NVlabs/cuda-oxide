@@ -177,6 +177,8 @@ pub fn ptx_asm(input: TokenStream) -> TokenStream {
 /// - `&[T]` -> `&cuda_core::DeviceBuffer<T>`
 /// - `&mut [T]` -> `&mut cuda_core::DeviceBuffer<T>`
 /// - `DisjointSlice<T>` -> `&mut cuda_core::DeviceBuffer<T>`
+/// - `#[grid_constant] value: &T` -> a by-value `T` (`T: Copy`); device code
+///   borrows read-only launch-parameter storage, without a device allocation
 /// - `Copy` scalar/struct/closure/raw-pointer arguments keep their original
 ///   type and pass through `cuda_host::KernelScalar`
 ///
@@ -262,6 +264,29 @@ pub fn cuda_module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// This attribute:
 /// 1. Adds `#[no_mangle]` to preserve the function name in the binary
 /// 2. Marks the function for detection by the `rustc-codegen-cuda` backend
+///
+/// # Grid-constant parameters
+///
+/// `#[grid_constant] descriptor: &T` passes the complete `T` by value in the
+/// launch parameters and gives device code a reference to that read-only
+/// storage. `T` must be sized, nonzero, and have no interior mutability
+/// (`UnsafeCell`, including cells or atomics stored within the value). The
+/// compiler checks this after generic specialization. References or raw
+/// pointers stored inside `T` still refer to separate allocations; those
+/// allocations must satisfy the usual device-access and lifetime requirements.
+///
+/// Use `&T` or `&'_ T`: the storage lasts only until this launch completes, so
+/// named and `'static` outer lifetimes are rejected. A pointer into the value
+/// must not be used after the launch. `#[cuda_module]` generates a host
+/// argument of type `T` and requires `T: Copy`; low-level launches must likewise
+/// pass the value's bytes, rather than a pointer to a device allocation.
+///
+/// ```ignore
+/// #[kernel]
+/// pub fn copy(#[grid_constant] descriptor: &TensorMap, output: *mut u32) {
+///     // descriptor borrows one read-only value shared by the entire grid.
+/// }
+/// ```
 ///
 /// # Generic Kernels
 ///

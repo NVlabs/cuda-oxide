@@ -44,8 +44,8 @@ use super::{
     literals::{format_float_literal, format_half_literal},
     names::{decode_intrinsic_identifier, has_device_prefix, strip_device_prefix},
     state::{
-        FunctionAbiAlignment, KernelBlockGeometry, KernelClusterConfig, KernelGridConstants,
-        KernelInfo, KernelLaunchBounds, ModuleExportState, PredecessorMap,
+        FunctionAbiAlignment, GridConstantParameter, KernelBlockGeometry, KernelClusterConfig,
+        KernelGridConstants, KernelInfo, KernelLaunchBounds, ModuleExportState, PredecessorMap,
     },
 };
 
@@ -561,6 +561,122 @@ impl<'a> ModuleExportState<'a> {
         Ok(())
     }
 
+    /// Validate and retain by-value pointees before any function is emitted.
+    /// LLVM 7 uses them in the pointer type itself, including symbol references.
+    pub(super) fn grid_constant_parameters(
+        &self,
+        func: &FuncOp,
+    ) -> Result<Vec<GridConstantParameter>, String> {
+        let name = func.get_symbol_name(self.ctx);
+        let fixed_func_name = exported_function_name(name.as_ref());
+        let func_type = func.get_type(self.ctx);
+        let func_ty = func_type.deref(self.ctx);
+        let attrs = &func.get_operation().deref(self.ctx).attributes;
+        let kernel_key: pliron::identifier::Identifier = "gpu_kernel".try_into().unwrap();
+        let is_kernel = attrs
+            .get::<pliron::builtin::attributes::StringAttr>(&kernel_key)
+            .is_some_and(|value| value.as_str() == "true");
+        for key_id in attrs.0.keys() {
+            let key: &str = key_id.as_ref();
+            let (prefix, index, typed) =
+                if let Some(index) = key.strip_prefix(LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX) {
+                    (
+                        LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX,
+                        index,
+                        attrs.get::<TypeAttr>(key_id).is_some(),
+                    )
+                } else if let Some(index) = key.strip_prefix(LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX) {
+                    (
+                        LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX,
+                        index,
+                        attrs.get::<IntegerAttr>(key_id).is_some(),
+                    )
+                } else {
+                    continue;
+                };
+            let index = index.parse::<usize>().map_err(|_| {
+                format!(
+                    "function `@{fixed_func_name}` has malformed grid-constant attribute `{key}`"
+                )
+            })?;
+            if key != format!("{prefix}{index}") || !typed {
+                return Err(format!(
+                    "function `@{fixed_func_name}` has malformed grid-constant attribute `{key}`"
+                ));
+            }
+            if index >= func_ty.arg_types().len() {
+                return Err(format!(
+                    "function `@{fixed_func_name}` grid-constant parameter index {index} is out of range for {} parameters",
+                    func_ty.arg_types().len()
+                ));
+            }
+        }
+        let mut grid_constant_params = Vec::new();
+        for (index, arg_ty) in func_ty.arg_types().iter().enumerate() {
+            let pointee_key = format!("{LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{index}");
+            let align_key = format!("{LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{index}");
+            let pointee_key_id: pliron::identifier::Identifier = pointee_key
+                .as_str()
+                .try_into()
+                .map_err(|_| format!("invalid grid-constant attribute name `{pointee_key}`"))?;
+            let align_key_id: pliron::identifier::Identifier = align_key
+                .as_str()
+                .try_into()
+                .map_err(|_| format!("invalid grid-constant attribute name `{align_key}`"))?;
+            let pointee = attrs.get::<TypeAttr>(&pointee_key_id);
+            let alignment = attrs.get::<IntegerAttr>(&align_key_id);
+            let (Some(pointee), Some(alignment)) = (pointee, alignment) else {
+                if pointee.is_some() || alignment.is_some() {
+                    return Err(format!(
+                        "function `@{fixed_func_name}` parameter {index} has incomplete grid-constant metadata"
+                    ));
+                }
+                continue;
+            };
+            if !is_kernel {
+                return Err(format!(
+                    "non-kernel function `@{fixed_func_name}` parameter {index} is marked grid-constant"
+                ));
+            }
+            let arg_ref = arg_ty.deref(self.ctx);
+            let Some(pointer) = arg_ref.downcast_ref::<PointerType>() else {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` grid-constant parameter {index} is not a pointer"
+                ));
+            };
+            if pointer.address_space() != 0 {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` grid-constant parameter {index} must use generic address space 0, found {}",
+                    pointer.address_space()
+                ));
+            }
+            let pointee = pointee.get_type(self.ctx);
+            if self.fixed_type_has_storage(pointee) != Some(true) {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` grid-constant parameter {index} requires a sized, non-zero pointee"
+                ));
+            }
+            let value = alignment.value();
+            if value.bw() > 64 {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` grid-constant alignment for parameter {index} is wider than 64 bits"
+                ));
+            }
+            let alignment = value.to_u64();
+            if alignment == 0 || !alignment.is_power_of_two() {
+                return Err(format!(
+                    "kernel `@{fixed_func_name}` grid-constant alignment for parameter {index} must be a non-zero power of two, found {alignment}"
+                ));
+            }
+            grid_constant_params.push(GridConstantParameter {
+                index,
+                pointee,
+                alignment,
+            });
+        }
+        Ok(grid_constant_params)
+    }
+
     fn export_grid_constant_parameter_attrs(
         &self,
         pointee: TypeHandle,
@@ -695,65 +811,16 @@ impl<'a> ModuleExportState<'a> {
 
         self.function_types.insert(fixed_func_name.clone(), ft);
 
-        // A grid-constant source parameter is represented in LLVM by the
-        // original pointer type plus `byval(Pointee)`. The body therefore
-        // addresses the launch-time parameter bytes directly instead of a
-        // compiler-created per-thread copy. The same parameter positions are
-        // also emitted through NVVM's `grid_constant` annotation below.
-        let mut grid_constant_params: Vec<(usize, TypeHandle, u64)> = Vec::new();
-        for (index, arg_ty) in func_ty.arg_types().iter().enumerate() {
-            let pointee_key = format!("{LLVM_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{index}");
-            let align_key = format!("{LLVM_GRID_CONSTANT_ALIGN_ATTR_PREFIX}{index}");
-            let pointee_key_id: pliron::identifier::Identifier = pointee_key
-                .as_str()
-                .try_into()
-                .map_err(|_| format!("invalid grid-constant attribute name `{pointee_key}`"))?;
-            let align_key_id: pliron::identifier::Identifier = align_key
-                .as_str()
-                .try_into()
-                .map_err(|_| format!("invalid grid-constant attribute name `{align_key}`"))?;
-            let pointee = attrs.get::<TypeAttr>(&pointee_key_id);
-            let alignment = attrs.get::<IntegerAttr>(&align_key_id);
-            let (Some(pointee), Some(alignment)) = (pointee, alignment) else {
-                if pointee.is_some() || alignment.is_some() {
-                    return Err(format!(
-                        "function `@{fixed_func_name}` parameter {index} has incomplete grid-constant metadata"
-                    ));
-                }
-                continue;
-            };
-            if !is_kernel {
-                return Err(format!(
-                    "non-kernel function `@{fixed_func_name}` parameter {index} is marked grid-constant"
-                ));
-            }
-            if arg_ty
-                .deref(self.ctx)
-                .downcast_ref::<PointerType>()
-                .is_none()
-            {
-                return Err(format!(
-                    "kernel `@{fixed_func_name}` grid-constant parameter {index} is not a pointer"
-                ));
-            }
-            let value = alignment.value();
-            if value.bw() > 64 {
-                return Err(format!(
-                    "kernel `@{fixed_func_name}` grid-constant alignment for parameter {index} is wider than 64 bits"
-                ));
-            }
-            let alignment = value.to_u64();
-            if alignment == 0 || !alignment.is_power_of_two() {
-                return Err(format!(
-                    "kernel `@{fixed_func_name}` grid-constant alignment for parameter {index} must be a non-zero power of two, found {alignment}"
-                ));
-            }
-            grid_constant_params.push((index, pointee.get_type(self.ctx), alignment));
-        }
+        let grid_constant_params = self
+            .function_grid_constants
+            .get(&fixed_func_name)
+            .cloned()
+            .unwrap_or_default();
         if !grid_constant_params.is_empty() {
             let positions = grid_constant_params
                 .iter()
-                .map(|(index, _, _)| {
+                .map(|parameter| {
+                    let index = parameter.index;
                     u32::try_from(index + 1).map_err(|_| {
                         format!(
                             "kernel `@{fixed_func_name}` grid-constant parameter index {index} exceeds NVVM's 32-bit position field"
@@ -903,19 +970,23 @@ impl<'a> ModuleExportState<'a> {
                 {
                     self.export_pointer_to(pointee, address_space, output)?;
                 } else {
-                    self.export_type(*arg_ty, output)?;
+                    self.export_function_parameter_type(&fixed_func_name, i, *arg_ty, output)?;
                 }
                 let grid_constant = grid_constant_params
                     .iter()
-                    .find(|(index, _, _)| *index == i);
+                    .find(|parameter| parameter.index == i);
                 if let Some(alignment) = reference_param_validities[i] {
                     write!(output, " nonnull").unwrap();
                     if alignment > 1 && grid_constant.is_none() {
                         write!(output, " align {alignment}").unwrap();
                     }
                 }
-                if let Some((_, pointee, alignment)) = grid_constant {
-                    self.export_grid_constant_parameter_attrs(*pointee, *alignment, output)?;
+                if let Some(parameter) = grid_constant {
+                    self.export_grid_constant_parameter_attrs(
+                        parameter.pointee,
+                        parameter.alignment,
+                        output,
+                    )?;
                 }
             }
             write!(output, ")").unwrap();
@@ -975,6 +1046,7 @@ impl<'a> ModuleExportState<'a> {
 
             let block = entry_block.deref(self.ctx);
             let args = block.arguments();
+            let mut entry_prologue = String::new();
             // Kernel Rust references may carry importer-proven `nonnull` and
             // pointee `align N`. Every other parameter remains bare.
             //
@@ -989,22 +1061,44 @@ impl<'a> ModuleExportState<'a> {
                     write!(output, ", ").unwrap();
                 }
                 let arg_ty = arg.get_type(self.ctx);
-                self.export_type(arg_ty, output)?;
+                self.export_function_parameter_type(&fixed_func_name, i, arg_ty, output)?;
                 let grid_constant = grid_constant_params
                     .iter()
-                    .find(|(index, _, _)| *index == i);
+                    .find(|parameter| parameter.index == i);
                 if let Some(alignment) = reference_param_validities[i] {
                     write!(output, " nonnull").unwrap();
                     if alignment > 1 && grid_constant.is_none() {
                         write!(output, " align {alignment}").unwrap();
                     }
                 }
-                if let Some((_, pointee, alignment)) = grid_constant {
-                    self.export_grid_constant_parameter_attrs(*pointee, *alignment, output)?;
+                if let Some(parameter) = grid_constant {
+                    self.export_grid_constant_parameter_attrs(
+                        parameter.pointee,
+                        parameter.alignment,
+                        output,
+                    )?;
                 }
                 let name = format!("%v{next_value_id}");
                 value_names.insert(arg, name.clone());
-                write!(output, " {name}").unwrap();
+                if self.legacy_typed_pointers()
+                    && let Some(parameter) = grid_constant
+                    && !self.is_i8_type(parameter.pointee)
+                {
+                    let abi_name = format!("{name}.byval");
+                    write!(output, " {abi_name}").unwrap();
+                    write!(entry_prologue, "  {name} = bitcast ").unwrap();
+                    self.export_function_parameter_type(
+                        &fixed_func_name,
+                        i,
+                        arg_ty,
+                        &mut entry_prologue,
+                    )?;
+                    write!(entry_prologue, " {abi_name} to ").unwrap();
+                    self.export_type(arg_ty, &mut entry_prologue)?;
+                    writeln!(entry_prologue).unwrap();
+                } else {
+                    write!(output, " {name}").unwrap();
+                }
                 next_value_id += 1;
             }
             // Mark every emitted device function `convergent` (attr group #0).
@@ -1158,6 +1252,11 @@ impl<'a> ModuleExportState<'a> {
                             } else {
                                 strip_device_prefix(&symbol_name)
                             };
+                            if self.function_grid_constants.contains_key(&function_name) {
+                                return Err(format!(
+                                    "cannot take the device function address of grid-constant kernel entry `@{function_name}`; its launch ABI is not an ordinary function ABI"
+                                ));
+                            }
                             if !self.function_types.contains_key(&function_name) {
                                 return Err(format!(
                                     "addressof references unknown symbol `@{symbol_name}`"
@@ -1281,6 +1380,7 @@ impl<'a> ModuleExportState<'a> {
                     &block_labels,
                     &pred_map,
                     i == 0,
+                    &entry_prologue,
                     debug_scope,
                     output,
                 )?;
@@ -1299,7 +1399,23 @@ impl<'a> ModuleExportState<'a> {
                 if i > 0 {
                     write!(output, ", ").unwrap();
                 }
-                self.export_type(*arg_ty, output)?;
+                self.export_function_parameter_type(&fixed_func_name, i, *arg_ty, output)?;
+                let grid_constant = grid_constant_params
+                    .iter()
+                    .find(|parameter| parameter.index == i);
+                if let Some(alignment) = reference_param_validities[i] {
+                    write!(output, " nonnull").unwrap();
+                    if alignment > 1 && grid_constant.is_none() {
+                        write!(output, " align {alignment}").unwrap();
+                    }
+                }
+                if let Some(parameter) = grid_constant {
+                    self.export_grid_constant_parameter_attrs(
+                        parameter.pointee,
+                        parameter.alignment,
+                        output,
+                    )?;
+                }
             }
             writeln!(output, ")").unwrap();
         }
@@ -1317,12 +1433,16 @@ impl<'a> ModuleExportState<'a> {
         block_labels: &FxHashMap<Ptr<BasicBlock>, String>,
         pred_map: &PredecessorMap,
         is_entry: bool,
+        entry_prologue: &str,
         debug_scope: Option<usize>,
         output: &mut String,
     ) -> Result<(), String> {
         // Always print label to ensure it can be referenced by PHI nodes
         let label = block_labels.get(&block).unwrap();
         writeln!(output, "{label}:").unwrap();
+        if is_entry {
+            output.push_str(entry_prologue);
+        }
 
         // Generate PHI nodes for block arguments (except entry block which uses function args)
         let args: Vec<_> = block.deref(self.ctx).arguments().collect();

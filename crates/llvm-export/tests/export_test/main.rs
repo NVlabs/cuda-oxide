@@ -9,6 +9,7 @@ mod control_flow;
 mod debug_info;
 mod device_externs;
 mod globals;
+mod grid_constant;
 mod instructions;
 mod kernels_and_roots;
 mod metadata;

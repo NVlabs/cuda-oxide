@@ -120,6 +120,50 @@ impl<'a> ModuleExportState<'a> {
             .is_some_and(|integer| integer.width() == 8)
     }
 
+    /// Whether a fixed LLVM type has any storage. This deliberately does not
+    /// reconstruct Rust layout: it only excludes unsized/opaque types and
+    /// zero-byte LLVM carriers from an addressable by-value parameter.
+    pub(super) fn fixed_type_has_storage(&self, ty: TypeHandle) -> Option<bool> {
+        fn visit(
+            state: &ModuleExportState<'_>,
+            ty: TypeHandle,
+            active: &mut rustc_hash::FxHashSet<TypeHandle>,
+        ) -> Option<bool> {
+            if !active.insert(ty) {
+                return None;
+            }
+            let ty_ref = ty.deref(state.ctx);
+            let result = if ty_ref.is::<IntegerType>()
+                || ty_ref.is::<PointerType>()
+                || ty_ref.is::<HalfType>()
+                || ty_ref.is::<FP32Type>()
+                || ty_ref.is::<FP64Type>()
+            {
+                Some(true)
+            } else if let Some(array) = ty_ref.downcast_ref::<crate::types::ArrayType>() {
+                visit(state, array.elem_type(), active).map(|bytes| bytes && array.size() != 0)
+            } else if let Some(vector) = ty_ref.downcast_ref::<crate::types::VectorType>() {
+                visit(state, vector.elem_type(), active)
+                    .map(|bytes| bytes && vector.num_elements() != 0)
+            } else if let Some(structure) = ty_ref.downcast_ref::<StructType>() {
+                if structure.is_opaque() {
+                    None
+                } else {
+                    let mut has_storage = false;
+                    for field in structure.fields() {
+                        has_storage |= visit(state, field, active)?;
+                    }
+                    Some(has_storage)
+                }
+            } else {
+                None
+            };
+            active.remove(&ty);
+            result
+        }
+        visit(self, ty, &mut rustc_hash::FxHashSet::default())
+    }
+
     /// Print the canonical legacy representation of an erased pointer.
     pub(super) fn export_canonical_pointer_type(&self, addrspace: u32, output: &mut String) {
         write!(output, "i8").unwrap();
@@ -151,6 +195,48 @@ impl<'a> ModuleExportState<'a> {
         function_type: TypeHandle,
         output: &mut String,
     ) -> Result<(), String> {
+        self.export_function_pointer_type_with_name(function_type, None, output)
+    }
+
+    /// A named function may retain by-value pointees which an anonymous
+    /// opaque-pointer function type cannot represent.
+    pub(super) fn export_named_function_pointer_type(
+        &self,
+        name: &str,
+        output: &mut String,
+    ) -> Result<(), String> {
+        self.export_function_pointer_type_with_name(self.function_type(name)?, Some(name), output)
+    }
+
+    pub(super) fn export_function_parameter_type(
+        &self,
+        name: &str,
+        index: usize,
+        argument: TypeHandle,
+        output: &mut String,
+    ) -> Result<(), String> {
+        if self.legacy_typed_pointers()
+            && let Some(parameter) = self
+                .function_grid_constants
+                .get(name)
+                .and_then(|parameters| parameters.iter().find(|parameter| parameter.index == index))
+        {
+            let argument_ref = argument.deref(self.ctx);
+            let pointer = argument_ref.downcast_ref::<PointerType>().ok_or_else(|| {
+                format!("grid-constant parameter {index} of `@{name}` is not a pointer")
+            })?;
+            self.export_pointer_to(parameter.pointee, pointer.address_space(), output)
+        } else {
+            self.export_type(argument, output)
+        }
+    }
+
+    fn export_function_pointer_type_with_name(
+        &self,
+        function_type: TypeHandle,
+        name: Option<&str>,
+        output: &mut String,
+    ) -> Result<(), String> {
         let function_ref = function_type.deref(self.ctx);
         let function_type = function_ref.downcast_ref::<FuncType>().ok_or_else(|| {
             format!(
@@ -165,7 +251,11 @@ impl<'a> ModuleExportState<'a> {
             if index != 0 {
                 write!(output, ", ").unwrap();
             }
-            self.export_type(*argument, output)?;
+            if let Some(name) = name {
+                self.export_function_parameter_type(name, index, *argument, output)?;
+            } else {
+                self.export_type(*argument, output)?;
+            }
         }
         if function_type.is_var_arg() {
             if !function_type.arg_types().is_empty() {

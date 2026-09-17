@@ -948,6 +948,7 @@ dependencies = [
  "combine",
  "dyn-clone",
  "expect-test",
+ "libnvvm-sys",
  "linkme",
  "log",
  "pliron",

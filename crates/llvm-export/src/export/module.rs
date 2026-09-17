@@ -115,6 +115,12 @@ fn index_module_symbols(
             state
                 .function_types
                 .insert(exported_name.clone(), function_type);
+            let grid_constants = state.grid_constant_parameters(&func)?;
+            if !grid_constants.is_empty() {
+                state
+                    .function_grid_constants
+                    .insert(exported_name.clone(), grid_constants);
+            }
             if func.get_operation().deref(state.ctx).regions().count() != 0 {
                 state.function_definitions.insert(exported_name);
             }
@@ -323,7 +329,7 @@ fn emit_llvm_used(output: &mut String, state: &ModuleExportState<'_>) -> Result<
     let element_type = if state.legacy_typed_pointers() {
         for name in function_names {
             let mut reference = String::from("i8* bitcast (");
-            state.export_function_pointer_type(state.function_type(name)?, &mut reference)?;
+            state.export_named_function_pointer_type(name, &mut reference)?;
             write!(&mut reference, " @{name} to i8*)").unwrap();
             used_refs.push(reference);
         }
