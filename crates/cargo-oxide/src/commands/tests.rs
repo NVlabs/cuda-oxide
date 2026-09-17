@@ -3110,22 +3110,22 @@ fn format_sm_arch_uses_cuda_target_spelling() {
     // cc < 9.0 — no arch-specific target exists in the PTX ISA, so we
     // emit the plain `sm_XY` form. Confirms we do not produce false
     // positives like `sm_75a` / `sm_80a` / `sm_89a`.
-    assert_eq!(format_sm_arch((7, 0)).sm(), "sm_70");
-    assert_eq!(format_sm_arch((7, 5)).sm(), "sm_75");
-    assert_eq!(format_sm_arch((8, 0)).sm(), "sm_80");
-    assert_eq!(format_sm_arch((8, 6)).sm(), "sm_86");
-    assert_eq!(format_sm_arch((8, 9)).sm(), "sm_89");
+    assert_eq!(format_sm_arch((7, 0)), "sm_70");
+    assert_eq!(format_sm_arch((7, 5)), "sm_75");
+    assert_eq!(format_sm_arch((8, 0)), "sm_80");
+    assert_eq!(format_sm_arch((8, 6)), "sm_86");
+    assert_eq!(format_sm_arch((8, 9)), "sm_89");
 
     // cc ≥ 9.0 — every chip that reports this CC is an arch-specific
     // (`a`) variant. Auto-detect emits the `a` form so the codegen
     // backend can lower WGMMA / tcgen05 / TMA-multicast / cta_group
     // intrinsics without falling through to a plain target that ptxas
     // would reject. Confirms we do not produce false negatives.
-    assert_eq!(format_sm_arch((9, 0)).sm(), "sm_90a"); // Hopper (H100/H200)
-    assert_eq!(format_sm_arch((10, 0)).sm(), "sm_100a"); // Blackwell DC
-    assert_eq!(format_sm_arch((10, 1)).sm(), "sm_101a");
-    assert_eq!(format_sm_arch((10, 3)).sm(), "sm_103a");
-    assert_eq!(format_sm_arch((12, 0)).sm(), "sm_120a"); // consumer Blackwell
+    assert_eq!(format_sm_arch((9, 0)), "sm_90a"); // Hopper (H100/H200)
+    assert_eq!(format_sm_arch((10, 0)), "sm_100a"); // Blackwell DC
+    assert_eq!(format_sm_arch((10, 1)), "sm_101a");
+    assert_eq!(format_sm_arch((10, 3)), "sm_103a");
+    assert_eq!(format_sm_arch((12, 0)), "sm_120a"); // consumer Blackwell
 }
 
 #[test]
@@ -3135,13 +3135,10 @@ fn parse_compute_cap_accepts_real_nvidia_smi_output() {
     assert_eq!(parse_compute_cap("10.3"), Some((10, 3)));
     // End-to-end with format_sm_arch: the values the backend sees.
     assert_eq!(
-        format_sm_arch(parse_compute_cap("12.0\n").unwrap()).sm(),
+        format_sm_arch(parse_compute_cap("12.0\n").unwrap()),
         "sm_120a"
     );
-    assert_eq!(
-        format_sm_arch(parse_compute_cap("7.5\n").unwrap()).sm(),
-        "sm_75"
-    );
+    assert_eq!(format_sm_arch(parse_compute_cap("7.5\n").unwrap()), "sm_75");
 }
 
 #[test]

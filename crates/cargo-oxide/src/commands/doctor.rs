@@ -760,7 +760,7 @@ pub fn doctor(ctx: &Context) {
                 "✓ {} (compute capability {}.{}, driver {})",
                 name, major, minor, driver
             );
-            doctor_report_build_arch(ctx, &format_sm_arch((major, minor)));
+            doctor_report_build_arch(ctx, &device_arch((major, minor)));
         }
         None => {
             // Some containers mount the kernel driver without shipping
