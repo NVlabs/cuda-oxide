@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::*;
+use cuda_target_spec::CudaArch;
 use std::ffi::OsStr;
 
 /// The concatenated sources of every module under `commands/`, standing in
@@ -3109,22 +3110,22 @@ fn format_sm_arch_uses_cuda_target_spelling() {
     // cc < 9.0 — no arch-specific target exists in the PTX ISA, so we
     // emit the plain `sm_XY` form. Confirms we do not produce false
     // positives like `sm_75a` / `sm_80a` / `sm_89a`.
-    assert_eq!(format_sm_arch((7, 0)), "sm_70");
-    assert_eq!(format_sm_arch((7, 5)), "sm_75");
-    assert_eq!(format_sm_arch((8, 0)), "sm_80");
-    assert_eq!(format_sm_arch((8, 6)), "sm_86");
-    assert_eq!(format_sm_arch((8, 9)), "sm_89");
+    assert_eq!(format_sm_arch((7, 0)).sm(), "sm_70");
+    assert_eq!(format_sm_arch((7, 5)).sm(), "sm_75");
+    assert_eq!(format_sm_arch((8, 0)).sm(), "sm_80");
+    assert_eq!(format_sm_arch((8, 6)).sm(), "sm_86");
+    assert_eq!(format_sm_arch((8, 9)).sm(), "sm_89");
 
     // cc ≥ 9.0 — every chip that reports this CC is an arch-specific
     // (`a`) variant. Auto-detect emits the `a` form so the codegen
     // backend can lower WGMMA / tcgen05 / TMA-multicast / cta_group
     // intrinsics without falling through to a plain target that ptxas
     // would reject. Confirms we do not produce false negatives.
-    assert_eq!(format_sm_arch((9, 0)), "sm_90a"); // Hopper (H100/H200)
-    assert_eq!(format_sm_arch((10, 0)), "sm_100a"); // Blackwell DC
-    assert_eq!(format_sm_arch((10, 1)), "sm_101a");
-    assert_eq!(format_sm_arch((10, 3)), "sm_103a");
-    assert_eq!(format_sm_arch((12, 0)), "sm_120a"); // consumer Blackwell
+    assert_eq!(format_sm_arch((9, 0)).sm(), "sm_90a"); // Hopper (H100/H200)
+    assert_eq!(format_sm_arch((10, 0)).sm(), "sm_100a"); // Blackwell DC
+    assert_eq!(format_sm_arch((10, 1)).sm(), "sm_101a");
+    assert_eq!(format_sm_arch((10, 3)).sm(), "sm_103a");
+    assert_eq!(format_sm_arch((12, 0)).sm(), "sm_120a"); // consumer Blackwell
 }
 
 #[test]
@@ -3134,10 +3135,13 @@ fn parse_compute_cap_accepts_real_nvidia_smi_output() {
     assert_eq!(parse_compute_cap("10.3"), Some((10, 3)));
     // End-to-end with format_sm_arch: the values the backend sees.
     assert_eq!(
-        format_sm_arch(parse_compute_cap("12.0\n").unwrap()),
+        format_sm_arch(parse_compute_cap("12.0\n").unwrap()).sm(),
         "sm_120a"
     );
-    assert_eq!(format_sm_arch(parse_compute_cap("7.5\n").unwrap()), "sm_75");
+    assert_eq!(
+        format_sm_arch(parse_compute_cap("7.5\n").unwrap()).sm(),
+        "sm_75"
+    );
 }
 
 #[test]
@@ -3145,16 +3149,37 @@ fn parse_compute_cap_takes_first_gpu_on_multi_gpu_machines() {
     assert_eq!(parse_compute_cap("9.0\n12.0\n"), Some((9, 0)));
 }
 
+fn arch(target: &str) -> CudaArch {
+    target.parse().expect("valid CUDA target")
+}
+
 #[test]
 fn build_arch_check_stays_silent_when_build_already_targets_this_gpu() {
-    assert!(build_arch_check(Some("sm_80"), "sm_80").is_none());
-    assert!(build_arch_check(Some("sm_121a"), "sm_121a").is_none());
+    assert!(build_arch_check(Some("sm_80"), &arch("sm_80")).is_none());
+    assert!(build_arch_check(Some("sm_121a"), &arch("sm_121a")).is_none());
+}
+
+#[test]
+fn build_arch_check_compares_capability_not_spelling() {
+    // Same device, different spellings: a string compare would warn on every
+    // one of these. `compute_XX` is the libNVVM rendering of the same arch.
+    assert!(build_arch_check(Some("sm_090"), &arch("sm_90")).is_none());
+    assert!(build_arch_check(Some("compute_90"), &arch("sm_90")).is_none());
+    assert!(build_arch_check(Some("compute_121a"), &arch("sm_121a")).is_none());
+}
+
+#[test]
+fn build_arch_check_stays_silent_on_an_unparseable_configured_arch() {
+    // No capability to compare, so doctor claims nothing about it rather than
+    // reporting it as other hardware.
+    assert!(build_arch_check(Some("garbage"), &arch("sm_121a")).is_none());
+    assert!(build_arch_check(Some("sm_90x"), &arch("sm_121a")).is_none());
 }
 
 #[test]
 fn build_arch_check_reports_the_unconfigured_fallback() {
     // The issue #1266 repro: no arch configured, so `build` emits sm_80 PTX.
-    let check = build_arch_check(None, "sm_121a").expect("unconfigured arch must warn");
+    let check = build_arch_check(None, &arch("sm_121a")).expect("unconfigured arch must warn");
     assert_eq!(
         check.headline,
         "warning: `cargo oxide build` has no configured arch"
@@ -3168,7 +3193,8 @@ fn build_arch_check_reports_the_unconfigured_fallback() {
 
 #[test]
 fn build_arch_check_reports_a_configured_arch_naming_other_hardware() {
-    let check = build_arch_check(Some("sm_90a"), "sm_121a").expect("diverging arch must warn");
+    let check =
+        build_arch_check(Some("sm_90a"), &arch("sm_121a")).expect("diverging arch must warn");
     // Configured arch first, detected GPU second; swapped misdirects the fix.
     assert_eq!(
         check.headline,
@@ -3180,7 +3206,8 @@ fn build_arch_check_reports_a_configured_arch_naming_other_hardware() {
 #[test]
 fn build_arch_check_separates_the_plain_form_of_the_same_chip() {
     // Same chip, so it must not repeat the other case's "other hardware".
-    let check = build_arch_check(Some("sm_121"), "sm_121a").expect("plain vs `a` must report");
+    let check =
+        build_arch_check(Some("sm_121"), &arch("sm_121a")).expect("plain vs `a` must report");
     assert_eq!(
         check.headline,
         "warning: `cargo oxide build` targets sm_121, not sm_121a"
@@ -3190,11 +3217,19 @@ fn build_arch_check_separates_the_plain_form_of_the_same_chip() {
     assert!(!details.contains("other hardware"), "{details}");
     assert!(!check.failed);
 
-    // Not symmetric: no cc < 9.0 chip has an `a` variant, so this is wrong
-    // hardware, not the same chip.
-    let check = build_arch_check(Some("sm_86a"), "sm_86").expect("reverse must warn");
+    // The `f` family is the same chip too, so it takes this branch rather
+    // than the other-hardware one.
+    let check = build_arch_check(Some("sm_100f"), &arch("sm_100a")).expect("`f` must report");
+    let details = check.details.join(" ");
+    assert!(details.contains("Same chip"), "{details}");
+    assert!(!details.contains("other hardware"), "{details}");
+
+    // `CudaArch` validates the suffix grammar, not that the variant exists
+    // for a capability, so a bogus sm_86a parses. Capability still matches,
+    // which is the honest verdict: same chip, unusable target form.
+    let check = build_arch_check(Some("sm_86a"), &arch("sm_86")).expect("reverse must report");
     assert!(
-        check.headline.contains("but this GPU is sm_86"),
+        check.headline.contains("targets sm_86a, not sm_86"),
         "{}",
         check.headline
     );

@@ -5,6 +5,7 @@
 
 use crate::backend;
 use crate::backend_source::{self, DependencySource, short_rev};
+use cuda_target_spec::CudaArch;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -347,7 +348,7 @@ pub(super) fn backend_source_check(
 /// working (see [`detect_run_target_arch`]), which leaves the divergence
 /// invisible (issue #1266). Doctor resolves both facts, so it can compare
 /// them. Informational, not fatal.
-fn doctor_report_build_arch(ctx: &Context, detected: &str) {
+fn doctor_report_build_arch(ctx: &Context, detected: &CudaArch) {
     // Doctor has no `--arch`, so only the env and config slots can apply.
     let configured = configured_arch_label(ctx, None);
     let Some(check) = build_arch_check(configured.as_deref(), detected) else {
@@ -364,47 +365,56 @@ fn doctor_report_build_arch(ctx: &Context, detected: &str) {
 ///
 /// `configured` must come from [`configured_arch_label`]: [`configured_arch`]
 /// returns `None` once `CUDA_OXIDE_TARGET` is exported, which would read here
-/// as nothing configured.
+/// as nothing configured. It stays a string because it is whatever the user
+/// wrote; parsing it is what makes the comparison a capability check rather
+/// than a spelling one, so `sm_090` and `compute_90` match a detected `sm_90`.
 pub(super) fn build_arch_check(
     configured: Option<&str>,
-    detected: &str,
+    detected: &CudaArch,
 ) -> Option<OxideConfigCheck> {
     let check = |headline: String, details: Vec<String>| OxideConfigCheck {
         headline,
         details,
         failed: false,
     };
-    match configured {
-        None => Some(check(
+    let detected_sm = detected.sm();
+    let Some(configured) = configured else {
+        return Some(check(
             "warning: `cargo oxide build` has no configured arch".to_string(),
             vec![
                 "Falls back to an arch derived from each kernel's features".to_string(),
-                format!("(sm_80 when none apply), not the {detected} of the first GPU"),
-                format!("nvidia-smi reports. Set default-arch = \"{detected}\" in"),
-                format!("`.cargo/cuda-oxide.toml`, or pass --arch={detected}."),
+                format!("(sm_80 when none apply), not the {detected_sm} of the first GPU"),
+                format!("nvidia-smi reports. Set default-arch = \"{detected_sm}\" in"),
+                format!("`.cargo/cuda-oxide.toml`, or pass --arch={detected_sm}."),
             ],
-        )),
-        Some(arch) if arch == detected => None,
-        // Same chip, plain form: `format_sm_arch` only detects `a` above
-        // cc 9.0, so this is not other hardware and must not say so.
-        Some(arch) if detected.strip_suffix('a') == Some(arch) => Some(check(
-            format!("warning: `cargo oxide build` targets {arch}, not {detected}"),
-            vec![
-                format!("Same chip: {detected} is the arch-specific form of {arch}, and"),
-                format!("is what `cargo oxide run` targets. {arch} builds and loads"),
-                "here, but without the arch-specific intrinsics (WGMMA,".to_string(),
-                "tcgen05) that form unlocks.".to_string(),
-            ],
-        )),
-        Some(arch) => Some(check(
-            format!("warning: `cargo oxide build` targets {arch}, but this GPU is {detected}"),
-            vec![
-                "From --arch, CUDA_OXIDE_TARGET, or `default-arch`. `cargo oxide".to_string(),
-                format!("run` would target {detected}, the first GPU nvidia-smi"),
-                format!("reports. Ignore this if {arch} is meant for other hardware."),
-            ],
-        )),
+        ));
+    };
+    // An unparseable arch has no capability to compare, so this says nothing
+    // about it; `--arch` validation already rejects one at the CLI boundary.
+    let parsed = configured.parse::<CudaArch>().ok()?;
+    if parsed == *detected {
+        return None;
     }
+    if parsed.capability() == detected.capability() {
+        // Same chip, different target form (plain, or the `f` family). Not
+        // other hardware, so it must not repeat that advice.
+        return Some(check(
+            format!("warning: `cargo oxide build` targets {configured}, not {detected_sm}"),
+            vec![
+                format!("Same chip: {detected_sm} is what `cargo oxide run` targets,"),
+                format!("and {configured} builds and loads here too, but without the"),
+                "arch-specific intrinsics (WGMMA, tcgen05) that form unlocks.".to_string(),
+            ],
+        ));
+    }
+    Some(check(
+        format!("warning: `cargo oxide build` targets {configured}, but this GPU is {detected_sm}"),
+        vec![
+            "From --arch, CUDA_OXIDE_TARGET, or `default-arch`. `cargo oxide".to_string(),
+            format!("run` would target {detected_sm}, the first GPU nvidia-smi"),
+            format!("reports. Ignore this if {configured} is meant for other hardware."),
+        ],
+    ))
 }
 
 /// Validate the development environment.

@@ -20,6 +20,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 cuda-artifact-finalizer = { workspace = true }
+cuda-target-spec = { workspace = true }
 libnvvm-sys = { workspace = true }
 nvjitlink-sys = { workspace = true }
 oxide-artifacts = { workspace = true }

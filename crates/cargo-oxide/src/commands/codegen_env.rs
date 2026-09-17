@@ -4,6 +4,7 @@
  */
 
 use crate::backend;
+use cuda_target_spec::CudaArch;
 use std::path::Path;
 use std::process::Command;
 
@@ -548,7 +549,7 @@ pub(super) fn detect_run_target_arch_with_env(
         return None;
     }
 
-    query_device_compute_cap().map(format_sm_arch)
+    query_device_compute_cap().map(|cap| format_sm_arch(cap).sm())
 }
 
 /// Query the compute capability of the first GPU via `nvidia-smi`.
@@ -629,11 +630,14 @@ pub(super) fn parse_gpu_name_cap_and_driver(stdout: &str) -> Option<(String, (u3
     ))
 }
 
-/// Format a `(major, minor)` compute-capability tuple as the `sm_XX` /
-/// `sm_XXX[a]` string the codegen backend expects on `CUDA_OXIDE_TARGET`.
+/// Resolve a `(major, minor)` compute-capability tuple to the target the
+/// codegen backend expects on `CUDA_OXIDE_TARGET`.
 ///
-/// Concatenates without a separator, matching CUDA conventions:
-/// `(7, 5)` → `"sm_75"`, `(12, 0)` → `"sm_120a"`.
+/// Returns [`CudaArch`] rather than a string so callers compare capability
+/// and suffix instead of spellings; `.sm()` renders it back for the env var.
+/// The capability packs the digits as CUDA does: `(7, 5)` → `sm_75`,
+/// `(12, 0)` → `sm_120a`. That assumes a single-digit minor, which is what
+/// every `compute_cap` NVIDIA has shipped reports.
 ///
 /// # Arch-specific (`a`) suffix
 ///
@@ -656,12 +660,11 @@ pub(super) fn parse_gpu_name_cap_and_driver(stdout: &str) -> Option<(String, (u3
 /// - **Strict superset:** PTX targeting `sm_XYa` accepts every kernel that
 ///   would have compiled for plain `sm_XY`; the `a` form only permits
 ///   *additional* arch-specific intrinsics.
-pub(super) fn format_sm_arch((major, minor): (u32, u32)) -> String {
-    if major >= 9 {
-        format!("sm_{}{}a", major, minor)
-    } else {
-        format!("sm_{}{}", major, minor)
-    }
+pub(super) fn format_sm_arch((major, minor): (u32, u32)) -> CudaArch {
+    let suffix = if major >= 9 { Some('a') } else { None };
+    // Infallible: `major >= 1` keeps the capability two digits wide, and `a`
+    // is a supported suffix -- the only two things `new` rejects.
+    CudaArch::new(major * 10 + minor, suffix).expect("compute capability from nvidia-smi")
 }
 
 fn inherited_or_configured_env(ctx: &Context, key: &str) -> Option<String> {
