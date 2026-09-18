@@ -7,9 +7,10 @@ use crate::model::{
     BackendLoweringMechanism, ImportedIntrinsic, IntrinsicBackend, OverlayBackendLowering,
     OverlayIntrinsic, RuntimeValidation, SparseMma, SparseMmaAccumulator, SparseMmaAdapter,
     SparseMmaCompatibilitySource, SparseMmaElement, SparseMmaF8F6F4Admission,
-    SparseMmaF8F6F4F16Admission, SparseMmaIntegerAdmission, SparseMmaLayout, SparseMmaLlvmAdapter,
-    SparseMmaMetadata, SparseMmaOrderedAmpereFloatAdmission, SparseMmaOrderedAmpereFloatVariant,
-    SparseMmaOverflow, SparseMmaParticipation, SparseMmaSelector, SparseMmaShape,
+    SparseMmaF8F6F4F16Admission, SparseMmaFp8F32Admission, SparseMmaIntegerAdmission,
+    SparseMmaLayout, SparseMmaLlvmAdapter, SparseMmaMetadata, SparseMmaOrderedAmpereFloatAdmission,
+    SparseMmaOrderedAmpereFloatVariant, SparseMmaOverflow, SparseMmaParticipation,
+    SparseMmaSelector, SparseMmaShape,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use anyhow::{Context, Result, ensure};
@@ -334,6 +335,30 @@ pub(in crate::resolve) fn sparse_mma_element_name(element: SparseMmaElement) -> 
     }
 }
 
+/// The reviewed plain sparse FP8 element set. These are the four SM89 forms
+/// carrying an F32 accumulator with *standard* (non-block-scale) sparsity
+/// metadata; the wider `f8f6f4` matrix on Blackwell uses `kind::f8f6f4` and
+/// `ordered_metadata` instead.
+pub(in crate::resolve) const SPARSE_MMA_FP8_F32_ELEMENTS: [SparseMmaElement; 2] =
+    [SparseMmaElement::E4m3, SparseMmaElement::E5m2];
+
+pub(in crate::resolve) fn is_sparse_mma_fp8_f32_element(element: SparseMmaElement) -> bool {
+    SPARSE_MMA_FP8_F32_ELEMENTS.contains(&element)
+}
+
+/// True for the plain SM89 sparse FP8 F32 forms: standard sparsity metadata,
+/// an F32 accumulator, and an e4m3/e5m2 multiplicand pair. The `kind::f8f6f4`,
+/// Ampere-float and `f8f6f4`-F16 families use a different metadata mode or
+/// accumulator and must keep their existing identity, target floor and PTX
+/// spelling.
+pub(in crate::resolve) fn is_sparse_mma_fp8_f32(mma: &SparseMma) -> bool {
+    mma.shape == SparseMmaShape::M16n8k64
+        && mma.accumulator == SparseMmaAccumulator::F32
+        && mma.metadata == SparseMmaMetadata::Standard
+        && is_sparse_mma_fp8_f32_element(mma.a_element)
+        && is_sparse_mma_fp8_f32_element(mma.b_element)
+}
+
 pub(in crate::resolve) fn sparse_mma_identity(mma: &SparseMma) -> SparseMmaIdentity {
     let shape = sparse_mma_shape_name(mma.shape);
     let a_element = sparse_mma_element_name(mma.a_element);
@@ -347,6 +372,7 @@ pub(in crate::resolve) fn sparse_mma_identity(mma: &SparseMma) -> SparseMmaIdent
             | SparseMmaElement::E5m2
     );
     if f8f6f4
+        && mma.metadata == SparseMmaMetadata::Ordered
         && matches!(
             mma.accumulator,
             SparseMmaAccumulator::F16 | SparseMmaAccumulator::F32
@@ -382,6 +408,26 @@ pub(in crate::resolve) fn sparse_mma_identity(mma: &SparseMma) -> SparseMmaIdent
                 a_element,
                 b_element,
                 scalar,
+            ],
+        };
+    }
+    // Plain (standard-metadata) sparse FP8 with an F32 accumulator. The PTX
+    // spelling carries no `kind::f8f6f4` qualifier, and the operation key keeps
+    // the sparse family's accumulator-in-slot-7 convention.
+    if is_sparse_mma_fp8_f32(mma) {
+        return SparseMmaIdentity {
+            id: format!("mma_sp_{shape}_f32_{a_element}_{b_element}_f32"),
+            operation_key: format!(
+                "matrix.mma.sp.{shape}.row.col.f32.{a_element}.{b_element}.f32.not_applicable.standard_metadata"
+            ),
+            source_record: format!(
+                "int_nvvm_mma_sp_{shape}_row_col_f32_{a_element}_{b_element}_f32"
+            ),
+            llvm_symbol: format!(
+                "llvm.nvvm.mma.sp.{shape}.row.col.f32.{a_element}.{b_element}.f32"
+            ),
+            ptx_modifiers: vec![
+                "sp", "sync", "aligned", shape, "row", "col", "f32", a_element, b_element, "f32",
             ],
         };
     }
@@ -517,6 +563,31 @@ pub(in crate::resolve) fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMma
         sparse_mma_carrier_recipe(mma.shape, mma.a_element, mma.b_element)?
     };
 
+    // The plain SM89 FP8 forms are the only F32-accumulator sparse family that
+    // admits standard (non-block-scale) sparsity metadata. Every other floating
+    // sparse family stays pinned to ordered metadata.
+    if is_sparse_mma_fp8_f32(mma) {
+        let scalar_contract = mma.accumulator == SparseMmaAccumulator::F32
+            && mma.overflow == SparseMmaOverflow::NotApplicable
+            && mma.metadata == SparseMmaMetadata::Standard;
+        if !scalar_contract
+            || mma.a_layout != SparseMmaLayout::Row
+            || mma.b_layout != SparseMmaLayout::Col
+            || mma.selector != carrier.selector
+            || mma.participation
+                != SparseMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes
+            || mma.adapter != carrier.adapter
+            || mma.llvm_adapter != carrier.llvm_adapter
+            || mma.compatibility_source != SparseMmaCompatibilitySource::GeneratedStub
+        {
+            return None;
+        }
+        return Some(SparseMmaRecipe {
+            identity: sparse_mma_identity(mma),
+            carrier,
+        });
+    }
+
     let scalar_contract = match carrier.accumulator {
         SparseMmaAccumulator::F16 | SparseMmaAccumulator::F32 => {
             mma.accumulator == carrier.accumulator
@@ -551,6 +622,11 @@ pub(in crate::resolve) fn sparse_mma_recipe(mma: &SparseMma) -> Option<SparseMma
 }
 
 pub(in crate::resolve) fn sparse_mma_minimum_ptx(mma: &SparseMma) -> &'static str {
+    // PTX ISA 8.4 introduced the plain sparse FP8 forms for sm_89; they are the
+    // only sparse FP8 variants outside the 8.7 `kind::f8f6f4` block-scale family.
+    if is_sparse_mma_fp8_f32(mma) {
+        return "8.4";
+    }
     if matches!(
         mma.a_element,
         SparseMmaElement::F16 | SparseMmaElement::Bf16 | SparseMmaElement::Tf32
@@ -572,6 +648,11 @@ pub(in crate::resolve) fn sparse_mma_minimum_ptx(mma: &SparseMma) -> &'static st
 pub(in crate::resolve) fn sparse_mma_hardware(
     mma: &SparseMma,
 ) -> (&'static str, Option<&'static str>) {
+    // The plain FP8 forms are available from Ada (sm_89) onward on every
+    // architecture, not only the Blackwell `kind::f8f6f4` matrix.
+    if is_sparse_mma_fp8_f32(mma) {
+        return ("all", Some("sm_89"));
+    }
     if matches!(
         mma.a_element,
         SparseMmaElement::F16 | SparseMmaElement::Bf16 | SparseMmaElement::Tf32
@@ -953,6 +1034,85 @@ pub(in crate::resolve) fn expand_sparse_mma_f8f6f4_f16_admission(
     Ok(records)
 }
 
+/// Expands the compact admission for the reviewed plain SM89 sparse FP8 F32
+/// forms into the exact four catalog records, in `a_elements` × `b_elements`
+/// order.
+pub(in crate::resolve) fn expand_sparse_mma_fp8_f32_admission(
+    admission: &SparseMmaFp8F32Admission,
+) -> Result<Vec<OverlayIntrinsic>> {
+    ensure!(
+        admission.runtime_validation == RuntimeValidation::Unexecuted,
+        "sparse FP8 MMA runtime validation may be marked executed only with GPU evidence"
+    );
+    ensure!(
+        !admission.llvm_evidence_profile.trim().is_empty()
+            && !admission.libnvvm_evidence_profile.trim().is_empty(),
+        "sparse FP8 MMA admission requires both backend evidence profiles"
+    );
+    ensure!(
+        admission.a_elements == SPARSE_MMA_FP8_F32_ELEMENTS
+            && admission.b_elements == SPARSE_MMA_FP8_F32_ELEMENTS,
+        "sparse FP8 MMA admission must list the canonical e4m3/e5m2 multiplicand matrix"
+    );
+    ensure!(
+        admission.product_count
+            == admission
+                .a_elements
+                .len()
+                .checked_mul(admission.b_elements.len())
+                .context("sparse FP8 MMA admission product count overflow")?
+            && admission.product_count == 4,
+        "sparse FP8 MMA admission product_count must be exactly 4"
+    );
+
+    let mut records = Vec::with_capacity(admission.product_count);
+    for &a_element in &admission.a_elements {
+        for &b_element in &admission.b_elements {
+            let carrier = sparse_mma_carrier_recipe(SparseMmaShape::M16n8k64, a_element, b_element)
+                .context("compact sparse FP8 MMA admission uses an unsupported format")?;
+            ensure!(
+                carrier.accumulator == SparseMmaAccumulator::F32,
+                "compact sparse FP8 MMA admission contains an integer format"
+            );
+            let mma = SparseMma {
+                shape: SparseMmaShape::M16n8k64,
+                accumulator: SparseMmaAccumulator::F32,
+                a_element,
+                b_element,
+                a_layout: SparseMmaLayout::Row,
+                b_layout: SparseMmaLayout::Col,
+                overflow: SparseMmaOverflow::NotApplicable,
+                metadata: SparseMmaMetadata::Standard,
+                selector: carrier.selector,
+                participation:
+                    SparseMmaParticipation::AllWarpLanesSameInstructionAndQualifiersNoExitedLanes,
+                adapter: carrier.adapter,
+                llvm_adapter: carrier.llvm_adapter,
+                compatibility_source: SparseMmaCompatibilitySource::GeneratedStub,
+                runtime_validation: admission.runtime_validation,
+            };
+            let recipe = sparse_mma_recipe(&mma).with_context(|| {
+                "compact sparse FP8 MMA admission requests a variant outside the closed recipe set"
+            })?;
+            let summary = format!(
+                "Multiplies warp-distributed sparse {} A and {} B fragments and adds an f32 accumulator.",
+                sparse_mma_element_name(a_element),
+                sparse_mma_element_name(b_element),
+            );
+            records.push(sparse_mma_overlay_record(
+                String::new(),
+                mma,
+                recipe,
+                &admission.llvm_evidence_profile,
+                &admission.libnvvm_evidence_profile,
+                summary,
+            ));
+        }
+    }
+    ensure!(records.len() == admission.product_count);
+    Ok(records)
+}
+
 pub(in crate::resolve) fn sparse_mma_overlay_record(
     abi_id: String,
     mma: SparseMma,
@@ -1142,6 +1302,17 @@ pub(in crate::resolve) fn validate_sparse_mma_policy(
                     == [
                         "Subtarget->getSmVersion() >= 80",
                         "Subtarget->getPTXVersion() >= 85",
+                    ]
+            } else if is_sparse_mma_fp8_f32(mma) {
+                // The upstream NVPTX selection for the plain SM89 FP8 forms
+                // carries the Ampere floor and the Ada/PTX 8.4 floor as four
+                // independent predicates.
+                declaration.selections[0].predicates
+                    == [
+                        "Subtarget->getSmVersion() >= 80",
+                        "Subtarget->getPTXVersion() >= 71",
+                        "Subtarget->getSmVersion() >= 89",
+                        "Subtarget->getPTXVersion() >= 84",
                     ]
             } else if matches!(
                 mma.accumulator,
