@@ -119,7 +119,7 @@ pub mod __private {
     #[doc(hidden)]
     pub use crate::lower::append_to_module;
     #[doc(hidden)]
-    pub use crate::options::BackendOptions;
+    pub use crate::options::{BackendOptions, DeviceArchHint};
     #[doc(hidden)]
     pub use crate::pipeline::{
         ModuleArtifactKind, ModulePipelineOutput, ModulePipelineRequest, OutputFiles,

@@ -1192,7 +1192,9 @@ pub fn generate_device_code<'tcx>(
         }
 
         let target_arch = std::env::var("CUDA_OXIDE_TARGET").ok();
-        let device_arch_hint = std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok();
+        let device_arch_hint = mir_importer::pipeline::DeviceArchHint::from_env_value(
+            std::env::var("CUDA_OXIDE_DEVICE_ARCH"),
+        );
         let allow_fma_contraction = std::env::var_os("CUDA_OXIDE_NO_FMA").is_none();
 
         if verbose && !allow_fma_contraction {

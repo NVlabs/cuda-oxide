@@ -41,7 +41,9 @@ use cuda_oxide_codegen::__private::{
     BackendOptions, ModuleArtifactKind, ModulePipelineRequest, OutputFiles, PipelineTrace,
     append_to_module, compile_translated_module, verify_operation,
 };
-pub use cuda_oxide_codegen::__private::{DeviceExternAttrs, DeviceExternDecl, PipelineError};
+pub use cuda_oxide_codegen::__private::{
+    DeviceArchHint, DeviceExternAttrs, DeviceExternDecl, PipelineError,
+};
 use llvm_export::export::DebugKind;
 pub use llvm_export::export::DeviceExternType;
 use llvm_export::ops::{DebugGlobalVariableInfo, DebugSourcePosition};
@@ -227,8 +229,9 @@ pub struct PipelineConfig {
     pub target_arch_source: &'static str,
     /// Detected architecture of the local GPU (`CUDA_OXIDE_DEVICE_ARCH`).
     ///
-    /// Used only when no explicit target is provided.
-    pub device_arch_hint: Option<String>,
+    /// Valid hints are used only when no explicit target is provided; invalid
+    /// hints always produce a target-selection error.
+    pub device_arch_hint: Option<DeviceArchHint>,
     /// Device debug metadata tier.
     pub debug_kind: DebugKind,
     /// Source identities and semantic types for device statics,
@@ -424,16 +427,14 @@ fn attach_debug_global_variables(
 /// Environment-derived compatibility options are read once at the rustc
 /// frontend boundary. Explicit pipeline configuration retains precedence.
 fn backend_options_for(config: &PipelineConfig) -> BackendOptions {
-    let mut backend_options = BackendOptions::from_env();
+    let mut backend_options =
+        BackendOptions::from_env_with_device_hint(config.device_arch_hint.clone());
     if config.target_arch.is_some() {
         backend_options.target_arch = config.target_arch.clone();
         // The label travels with the value it describes. Overriding the
         // target and leaving `from_env`'s "CUDA_OXIDE_TARGET" in place made
         // every target error blame an env var the caller may never have set.
         backend_options.target_arch_source = config.target_arch_source;
-    }
-    if config.device_arch_hint.is_some() {
-        backend_options.device_arch_hint = config.device_arch_hint.clone();
     }
     backend_options.verbose = backend_options.verbose || config.verbose;
     backend_options.no_fma = !config.allow_fma_contraction;

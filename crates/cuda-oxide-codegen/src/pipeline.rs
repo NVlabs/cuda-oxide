@@ -88,6 +88,45 @@ enum ToolchainPolicy<'a> {
     Explicit(&'a LlvmToolchain),
 }
 
+/// Backend controls whose device hint has passed the shared input boundary.
+/// Fields and construction stay private so controls and proof cannot disagree.
+pub(crate) struct ValidatedBackendOptions<'a> {
+    options: BackendOptions,
+    device_arch: Option<&'a cuda_target_spec::DeviceArch>,
+}
+
+impl<'a> ValidatedBackendOptions<'a> {
+    fn new(options: &'a BackendOptions) -> Result<Self, PipelineError> {
+        let device_arch = options
+            .device_arch_hint
+            .as_ref()
+            .map(crate::options::DeviceArchHint::as_device_arch)
+            .transpose()?;
+        // Downstream controls contain no raw hint; selection uses only the proof.
+        let options = BackendOptions {
+            device_arch_hint: None,
+            ..options.clone()
+        };
+        Ok(Self {
+            options,
+            device_arch,
+        })
+    }
+
+    pub(crate) fn options(&self) -> &BackendOptions {
+        &self.options
+    }
+
+    pub(crate) fn device_arch(&self) -> Option<&cuda_target_spec::DeviceArch> {
+        self.device_arch
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(options: &'a BackendOptions) -> Result<Self, PipelineError> {
+        Self::new(options)
+    }
+}
+
 /// Complete request for the shared post-translation pipeline.
 #[doc(hidden)]
 pub struct ModulePipelineRequest<'a> {
@@ -173,6 +212,8 @@ pub fn compile_translated_module(
     module: Ptr<Operation>,
     request: &ModulePipelineRequest<'_>,
 ) -> Result<ModulePipelineOutput, PipelineError> {
+    let mut validated = ValidatedBackendOptions::new(request.backend)?;
+
     if request.trace.dump_mir {
         request
             .trace
@@ -205,20 +246,14 @@ pub fn compile_translated_module(
     // resolvers honor an explicit target exactly (they validate it and fail
     // loudly instead of raising it), so the placeholder shape and the
     // compiled target can no longer diverge.
-    let pinned_backend: BackendOptions;
-    let backend: &BackendOptions = if request.backend.target_arch.is_none()
-        && request.backend.device_arch_hint.is_some()
+    if validated.options.target_arch.is_none()
+        && validated.device_arch.is_some()
         && has_iket_operations(ctx, module)
     {
-        pinned_backend = BackendOptions {
-            target_arch: request.backend.device_arch_hint.clone(),
-            target_arch_source: "the detected GPU, pinned by IKET materialization",
-            ..request.backend.clone()
-        };
-        &pinned_backend
-    } else {
-        request.backend
-    };
+        validated.options.target_arch = validated.device_arch.map(|arch| arch.as_ref().sm());
+        validated.options.target_arch_source = "the detected GPU, pinned by IKET materialization";
+    }
+    let backend = validated.options();
 
     let promote_and_unroll = !request.debug_kind.variables_enabled();
     if !promote_and_unroll && has_iket_operations(ctx, module) {
@@ -384,7 +419,7 @@ pub fn compile_translated_module(
     let (nvvm_target, nvvm_dialect) = if emit_nvvm_ir {
         let target = resolve_nvvm_target_with_generated(
             backend.target_arch.as_deref(),
-            backend.device_arch_hint.as_deref(),
+            validated.device_arch(),
             automatic_features,
             &generated_requirements,
         )?;
@@ -532,7 +567,7 @@ pub fn compile_translated_module(
         ToolchainPolicy::Discover => generate_ptx_discovered(
             ptx_module,
             request.debug_kind,
-            backend,
+            &validated,
             toolchain,
             request.trace.sink,
             &generated_requirements,
@@ -541,7 +576,7 @@ pub fn compile_translated_module(
         ToolchainPolicy::Explicit(_) => generate_ptx_with_toolchain(
             ptx_module,
             request.debug_kind,
-            backend,
+            &validated,
             toolchain,
             &generated_requirements,
             ptx_libdevice,
@@ -800,6 +835,59 @@ fn remove_stale_files(paths: &[PathBuf]) -> Result<(), PipelineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_device_hints_fail_at_the_shared_input_boundary() {
+        for raw in [
+            "compute_120",
+            "compute_80",
+            "sm_",
+            "foo",
+            "sm_05",
+            "sm_120f",
+            "not-an-arch",
+        ] {
+            for nvvm in [false, true] {
+                for explicit in [None, Some("sm_120"), Some("foo")] {
+                    let mut ctx = Context::new();
+                    let module = typed_mir_test_module(&mut ctx, &[]);
+                    let backend = BackendOptions {
+                        device_arch_hint: Some(crate::options::DeviceArchHint::parse(
+                            raw.to_string(),
+                        )),
+                        target_arch: explicit.map(str::to_string),
+                        ..BackendOptions::default()
+                    };
+                    let request = ModulePipelineRequest::for_rust_pipeline(
+                        &[],
+                        nvvm,
+                        &backend,
+                        DebugKind::Off,
+                        OutputFiles {
+                            llvm_ir: Path::new("unused.ll"),
+                            ptx: Path::new("unused.ptx"),
+                            stale_before_export: &[],
+                        },
+                        PipelineTrace::default(),
+                    );
+                    let Err(error) = compile_translated_module(&mut ctx, module, &request) else {
+                        panic!("invalid hint must fail at input");
+                    };
+                    assert!(matches!(error, PipelineError::TargetSelection { .. }));
+                    assert_eq!(
+                        error.to_string(),
+                        format!(
+                            "invalid CUDA_OXIDE_DEVICE_ARCH `{raw}`: expected sm_<capability> with an optional `a` suffix"
+                        )
+                    );
+                    assert_eq!(
+                        crate::api::CompileError::from(error).stage(),
+                        crate::api::CompilationStage::Input
+                    );
+                }
+            }
+        }
+    }
 
     fn typed_mir_test_module(ctx: &mut Context, callees: &[&str]) -> Ptr<Operation> {
         use pliron::basic_block::BasicBlock;

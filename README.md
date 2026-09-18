@@ -256,6 +256,8 @@ codegen backend. If everything is configured correctly, `cargo oxide run vecadd`
 compiles a Rust kernel to PTX, launches it on the GPU, and prints
 `✓ SUCCESS: All 1024 elements correct!`.
 
+`CUDA_OXIDE_DEVICE_ARCH` accepts only `sm_<capability>` with an optional `a` suffix; `compute_`, `f` family targets, and malformed hints are errors.
+
 ## Examples
 
 **190+ examples** in `crates/rustc-codegen-cuda/examples/`. Highlights:
