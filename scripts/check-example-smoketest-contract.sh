@@ -67,11 +67,59 @@ python3 - "${SMOKETEST}" "${EXAMPLES_ROOT}" <<'PY'
 import glob
 import os
 import re
+import pathlib
+import subprocess
 import sys
+import tempfile
 import tomllib
 
 smoketest, examples_root = sys.argv[1], sys.argv[2]
 source = open(smoketest, encoding="utf-8").read()
+
+# Exercise the actual CLI/preflight without building or launching an example.
+# The Rust parser owns aliases and normalization; this checks that the shell
+# trusts its token, honors explicit mode, and refuses a failed/malformed reply.
+with tempfile.TemporaryDirectory(prefix="smoketest-debug-policy-") as temp:
+    bin_dir = pathlib.Path(temp)
+    cargo = bin_dir / "cargo"
+    cargo.write_text('''#!/usr/bin/env bash
+case "$*" in
+    "oxide --help") exit 0 ;;
+    "oxide __debug-policy")
+        printf '%s\\n' "$SMOKETEST_TEST_POLICY"
+        exit "$SMOKETEST_TEST_POLICY_STATUS" ;;
+    *) exit 99 ;;
+esac
+''')
+    cargo.chmod(0o755)
+    smi = bin_dir / "nvidia-smi"
+    smi.write_text("#!/usr/bin/env bash\nexit 1\n")
+    smi.chmod(0o755)
+    controls = [
+        (token, 0, explicit, token != "full" or explicit)
+        for token in ("unset", "none", "line-tables", "full", "unrecognized")
+        for explicit in (False, True)
+    ]
+    controls += [
+        (token, status, explicit, False)
+        for token, status in (("", 0), ("unknown", 0), ("noise\nnone", 0),
+                              ("none", 1), ("full", 1), ("", 127))
+        for explicit in (False, True)
+    ]
+    for token, status, explicit, allowed in controls:
+        env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                   CUDA_OXIDE_DEBUG="opaque-to-shell",
+                   SMOKETEST_TEST_POLICY=token,
+                   SMOKETEST_TEST_POLICY_STATUS=str(status),
+                   SMOKETEST_LOG_DIR=str(bin_dir / "logs"))
+        args = ["bash", smoketest, "--only", "^$", "--no-color"]
+        if explicit:
+            args.append("--full-debug")
+        result = subprocess.run(args, env=env, capture_output=True, text=True)
+        reached_selection = "no examples matched the given filters" in result.stderr
+        if result.returncode != (1 if allowed else 2) or reached_selection != allowed:
+            sys.exit(f"debug-policy preflight failed for {(token, status, explicit)!r}: "
+                     f"{result.returncode}, {result.stdout!r}, {result.stderr!r}")
 
 # The full-debug lane exists specifically to avoid conflating a debug-info
 # census with the optimized/libNVVM compile-only matrix. Pin that routing

@@ -335,7 +335,10 @@ fi
 # both answer to the locale, so under LC_ALL=C a plain `2` or `FULL` reads as
 # an ordinary value while the compiler builds full debug; reading the parser's
 # source instead trades that for a dependency on its formatting.
-debug_policy="$(cargo oxide __debug-policy 2>/dev/null | tail -n 1)"
+if ! debug_policy="$(cargo oxide __debug-policy 2>/dev/null)"; then
+    echo "error: 'cargo oxide __debug-policy' failed; cannot determine device debug policy" >&2
+    exit 2
+fi
 case "${debug_policy}" in
 unset | none | line-tables | full | unrecognized) ;;
 *)
