@@ -19,6 +19,7 @@ use crate::resolve::guards::*;
 use crate::resolve::materialize::*;
 use crate::resolve::overlay::*;
 use crate::resolve::policy::*;
+use crate::resolve::targets::validate_arch_introduction_floor;
 
 #[test]
 fn pinned_active_mask_and_warp_match_recipes_resolve() {
@@ -843,7 +844,9 @@ fn sync_threads_recipe_rejects_unreviewed_selection_effect_and_floor_changes() {
     );
 
     let mut native_floor = valid.clone();
-    native_floor.minimum_sm = Some("sm_75".into());
+    // PTX 1.0 can name sm_11, but sync_threads must retain its all-target recipe.
+    native_floor.minimum_sm = Some("sm_11".into());
+    validate_arch_introduction_floor(&native_floor).unwrap();
     assert!(
         validate_imported_policy(&native_floor, &declaration)
             .unwrap_err()
