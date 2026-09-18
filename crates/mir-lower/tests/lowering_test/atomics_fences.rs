@@ -209,7 +209,7 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
     let mut ctx = make_test_ctx();
     let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
-    let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+    let ptr_ty = MirPtrType::get_global(&mut ctx, u32_ty.into(), true);
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into(), u64_ty.into()]);
     let address = entry.deref(&ctx).get_argument(0);
@@ -361,7 +361,7 @@ fn test_pointer_atomic_load_store_use_b64_pointer_registers() -> Result<(), anyh
 
     // Atomic storage type: *mut (*mut u64).
     let address_ty: pliron::r#type::TypeHandle =
-        MirPtrType::get_generic(&mut ctx, value_ptr_ty, true).into();
+        MirPtrType::get_global(&mut ctx, value_ptr_ty, true).into();
 
     let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![address_ty, value_ptr_ty]);
     let address = entry.deref(&ctx).get_argument(0);
@@ -558,7 +558,7 @@ fn test_seqcst_atomic_load_store_fuse_fence_into_template() -> Result<(), anyhow
     ] {
         let mut ctx = make_test_ctx();
         let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
-        let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+        let ptr_ty = MirPtrType::get_global(&mut ctx, u32_ty.into(), true);
         let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
         let address = entry.deref(&ctx).get_argument(0);
         let val = entry.deref(&ctx).get_argument(1);

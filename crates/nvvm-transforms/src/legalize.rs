@@ -68,17 +68,17 @@ pub(crate) fn legalize_for_legacy_nvvm(
     // Validate the complete module before changing it. Some unsupported
     // ordering and scope settings are otherwise ignored by libNVVM.
     let mut float_atomic_adds = Vec::new();
-    let mut integer_rmw_rewrites = Vec::new();
-    let mut integer_cmpxchg_rewrites = Vec::new();
+    let mut scalar_rmw_rewrites = Vec::new();
+    let mut scalar_cmpxchg_rewrites = Vec::new();
     for &op in &ops {
         reject_nonportable_f16_types(ctx, op)?;
         reject_unsupported_op(ctx, op)?;
         validate_rewrite_candidate(ctx, op)?;
-        if let Some(rewrite) = validate_integer_atomic_rmw(ctx, op, capability)? {
-            integer_rmw_rewrites.push(rewrite);
+        if let Some(rewrite) = validate_scalar_atomic_rmw(ctx, op, capability)? {
+            scalar_rmw_rewrites.push(rewrite);
         }
-        if let Some(rewrite) = validate_integer_cmpxchg(ctx, op, capability)? {
-            integer_cmpxchg_rewrites.push(rewrite);
+        if let Some(rewrite) = validate_scalar_cmpxchg(ctx, op, capability)? {
+            scalar_cmpxchg_rewrites.push(rewrite);
         }
         if let Some(intrinsic) = validate_float_atomic_add(ctx, op, capability)? {
             float_atomic_adds.push((op, intrinsic));
@@ -89,16 +89,16 @@ pub(crate) fn legalize_for_legacy_nvvm(
     for op in ops {
         remove_nneg(ctx, op);
 
-        if let Some(rewrite) = integer_rmw_rewrites.iter().find(|rewrite| rewrite.op == op) {
-            rewrite_scoped_integer_atomic_rmw(ctx, rewrite)?;
+        if let Some(rewrite) = scalar_rmw_rewrites.iter().find(|rewrite| rewrite.op == op) {
+            rewrite_scalar_atomic_rmw(ctx, rewrite)?;
             continue;
         }
 
-        if let Some(rewrite) = integer_cmpxchg_rewrites
+        if let Some(rewrite) = scalar_cmpxchg_rewrites
             .iter()
             .find(|rewrite| rewrite.op == op)
         {
-            rewrite_integer_cmpxchg_with_ptx(ctx, rewrite)?;
+            rewrite_scalar_cmpxchg_with_ptx(ctx, rewrite)?;
             continue;
         }
 
@@ -306,18 +306,14 @@ fn reject_unsupported_op(ctx: &Context, op: Ptr<Operation>) -> Result<()> {
                 Some(AtomicRmwKindAttr::FAdd) => None,
                 _ => Some("floating-point atomic read-modify-write operations other than add"),
             }
-        } else if scalar_integer_width(ctx, value_ty).is_some() {
-            None
         } else {
-            Some("atomic read-modify-write operations with non-scalar-integer operands")
+            // The scalar atomic validator owns integer/pointer type, width,
+            // operation, address-space, ordering and scope validation.
+            None
         }
     } else if Operation::get_op::<llvm::AtomicCmpxchgOp>(op, ctx).is_some() {
-        let value_ty = op.deref(ctx).get_operand(1).get_type(ctx);
-        if scalar_integer_width(ctx, value_ty).is_some() {
-            None
-        } else {
-            Some("atomic compare-exchange operations with non-scalar-integer operands")
-        }
+        // Complete compare-exchange validation follows below.
+        None
     } else if Operation::get_op::<llvm::FenceOp>(op, ctx).is_some() {
         Some("LLVM fences")
     } else if Operation::get_op::<llvm::DebugValueOp>(op, ctx).is_some() {
@@ -365,14 +361,14 @@ impl LegacyAtomicScope {
     }
 }
 
-struct IntegerRmwRewrite {
+struct ScalarRmwRewrite {
     op: Ptr<Operation>,
     width: u32,
     kind: AtomicRmwKindAttr,
     scope: LegacyAtomicScope,
 }
 
-struct IntegerCmpxchgRewrite {
+struct ScalarCmpxchgRewrite {
     op: Ptr<Operation>,
     extract: Ptr<Operation>,
     width: u32,
@@ -417,6 +413,22 @@ fn integer_atomic_reg_constraint(width: u32) -> &'static str {
     }
 }
 
+fn is_generic_pointer(ctx: &Context, ty: TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<llvm_types::PointerType>()
+        .is_some_and(|pointer| pointer.address_space() == 0)
+}
+
+fn atomic_scalar_width(ctx: &Context, ty: TypeHandle) -> Option<u32> {
+    if is_generic_pointer(ctx, ty) {
+        // Device compilation targets nvptx64. Preserve the pointer type;
+        // only the PTX instruction/register representation needs this width.
+        Some(64)
+    } else {
+        scalar_integer_width(ctx, ty)
+    }
+}
+
 fn integer_rmw_ptx_opcode(kind: &AtomicRmwKindAttr, width: u32) -> Option<String> {
     let suffix = match kind {
         AtomicRmwKindAttr::Xchg => format!("exch.b{width}"),
@@ -433,24 +445,28 @@ fn integer_rmw_ptx_opcode(kind: &AtomicRmwKindAttr, width: u32) -> Option<String
     Some(suffix)
 }
 
-fn valid_cmpxchg_ordering_pair(success: &AtomicOrderingAttr, failure: &AtomicOrderingAttr) -> bool {
-    match success {
-        AtomicOrderingAttr::Monotonic => matches!(failure, AtomicOrderingAttr::Monotonic),
-        AtomicOrderingAttr::Acquire => matches!(
-            failure,
-            AtomicOrderingAttr::Monotonic | AtomicOrderingAttr::Acquire
-        ),
-        AtomicOrderingAttr::Release => matches!(failure, AtomicOrderingAttr::Monotonic),
-        AtomicOrderingAttr::AcqRel => matches!(
-            failure,
-            AtomicOrderingAttr::Monotonic | AtomicOrderingAttr::Acquire
-        ),
-        AtomicOrderingAttr::SeqCst => matches!(
-            failure,
-            AtomicOrderingAttr::Monotonic
-                | AtomicOrderingAttr::Acquire
-                | AtomicOrderingAttr::SeqCst
-        ),
+fn valid_cmpxchg_ordering_pair(
+    _success: &AtomicOrderingAttr,
+    failure: &AtomicOrderingAttr,
+) -> bool {
+    // Rust and current LLVM permit failure to be stronger than success.
+    // Failure is a load, so release and acq_rel remain invalid.
+    matches!(
+        failure,
+        AtomicOrderingAttr::Monotonic | AtomicOrderingAttr::Acquire | AtomicOrderingAttr::SeqCst
+    )
+}
+
+fn combined_cmpxchg_ordering(
+    success: &AtomicOrderingAttr,
+    failure: &AtomicOrderingAttr,
+) -> AtomicOrderingAttr {
+    use AtomicOrderingAttr::*;
+    match (success, failure) {
+        (SeqCst, _) | (_, SeqCst) => SeqCst,
+        (Monotonic, Acquire) => Acquire,
+        (Release, Acquire) => AcqRel,
+        _ => success.clone(),
     }
 }
 
@@ -517,18 +533,18 @@ fn atomic_pointer_address_space(
         })
 }
 
-/// Validate integer `atomicrmw` operations for the legacy NVVM path.
+/// Validate integer and generic-pointer `atomicrmw` operations for legacy NVVM.
 ///
 /// Device-scoped operations that are directly representable in LLVM 7 remain
-/// native LLVM operations. Block- and system-scoped operations are scheduled
+/// native LLVM operations. Pointer exchange and block/system-scoped operations are scheduled
 /// for an inline-PTX rewrite so their synchronization scope is not weakened by
 /// legacy libNVVM. Strong Rust orderings have already been split into fences by
 /// MIR lowering, so the LLVM `atomicrmw` itself must always be monotonic here.
-fn validate_integer_atomic_rmw(
+fn validate_scalar_atomic_rmw(
     ctx: &Context,
     op: Ptr<Operation>,
     capability: u32,
-) -> Result<Option<IntegerRmwRewrite>> {
+) -> Result<Option<ScalarRmwRewrite>> {
     let Some(rmw) = Operation::get_op::<llvm::AtomicRmwOp>(op, ctx) else {
         return Ok(None);
     };
@@ -539,10 +555,11 @@ fn validate_integer_atomic_rmw(
         return Ok(None);
     }
 
-    let width = scalar_integer_width(ctx, value_ty).ok_or_else(|| {
+    let pointer_value = is_generic_pointer(ctx, value_ty);
+    let width = atomic_scalar_width(ctx, value_ty).ok_or_else(|| {
         pliron::input_error!(
             op.deref(ctx).loc(),
-            "legacy NVVM integer atomic RMW requires a scalar integer value"
+            "legacy NVVM atomic RMW requires a scalar integer or generic pointer value"
         )
     })?;
     if !matches!(width, 32 | 64) {
@@ -562,6 +579,12 @@ fn validate_integer_atomic_rmw(
                 "legacy NVVM integer atomic RMW is missing its operation kind"
             )
         })?;
+    if pointer_value && kind != AtomicRmwKindAttr::Xchg {
+        return pliron::input_err!(
+            op.deref(ctx).loc(),
+            "legacy NVVM pointer atomic RMW supports only exchange"
+        );
+    }
     if integer_rmw_ptx_opcode(&kind, width).is_none() {
         return pliron::input_err!(
             op.deref(ctx).loc(),
@@ -587,7 +610,9 @@ fn validate_integer_atomic_rmw(
     let syncscope = rmw.syncscope(ctx);
     let scope = legacy_atomic_scope(ctx, op, &syncscope, "integer atomic RMW")?;
 
-    if !scope.needs_scoped_rewrite() {
+    // LLVM 7 rejects pointer-valued atomicrmw even at device scope. The
+    // existing PTX route accepts pointer registers without integer casts.
+    if !pointer_value && !scope.needs_scoped_rewrite() {
         return Ok(None);
     }
     if capability < 70 {
@@ -597,7 +622,7 @@ fn validate_integer_atomic_rmw(
         );
     }
 
-    Ok(Some(IntegerRmwRewrite {
+    Ok(Some(ScalarRmwRewrite {
         op,
         width,
         kind,
@@ -605,7 +630,7 @@ fn validate_integer_atomic_rmw(
     }))
 }
 
-fn rewrite_scoped_integer_atomic_rmw(ctx: &mut Context, rewrite: &IntegerRmwRewrite) -> Result<()> {
+fn rewrite_scalar_atomic_rmw(ctx: &mut Context, rewrite: &ScalarRmwRewrite) -> Result<()> {
     let operands: Vec<_> = rewrite.op.deref(ctx).operands().collect();
     let (ptr, value) = (operands[0], operands[1]);
     let address_space = atomic_pointer_address_space(ctx, rewrite.op, ptr, "integer atomic RMW")?;
@@ -647,29 +672,30 @@ fn rewrite_scoped_integer_atomic_rmw(ctx: &mut Context, rewrite: &IntegerRmwRewr
     replace_one_result(ctx, rewrite.op, result)
 }
 
-/// Validate integer compare-exchange operations for the legacy NVVM path.
+/// Validate integer and generic-pointer compare-exchange operations for legacy NVVM.
 ///
-/// Device scope plus monotonic success and failure ordering remains a native
+/// Integer device scope plus monotonic success and failure ordering remains a native
 /// LLVM `cmpxchg`, matching the bare-atomicrmw/cmpxchg subset the legacy
 /// LLVM 7 dialect handles directly. Block/system scope or any ordered success
 /// or failure ordering is rewritten to scoped inline PTX because legacy
 /// libNVVM accepts LLVM's cmpxchg ordering fields but lowers ordered forms to
-/// a bare unordered `atom.cas`.
-fn validate_integer_cmpxchg(
+/// a bare unordered `atom.cas`. Pointer values share this PTX route at every scope.
+fn validate_scalar_cmpxchg(
     ctx: &Context,
     op: Ptr<Operation>,
     capability: u32,
-) -> Result<Option<IntegerCmpxchgRewrite>> {
+) -> Result<Option<ScalarCmpxchgRewrite>> {
     let Some(cas) = Operation::get_op::<llvm::AtomicCmpxchgOp>(op, ctx) else {
         return Ok(None);
     };
     let operands: Vec<_> = op.deref(ctx).operands().collect();
     let (ptr, compare, new_value) = (operands[0], operands[1], operands[2]);
     let value_ty = compare.get_type(ctx);
-    let width = scalar_integer_width(ctx, value_ty).ok_or_else(|| {
+    let pointer_value = is_generic_pointer(ctx, value_ty);
+    let width = atomic_scalar_width(ctx, value_ty).ok_or_else(|| {
         pliron::input_error!(
             op.deref(ctx).loc(),
-            "legacy NVVM compare-exchange requires a scalar integer value"
+            "legacy NVVM compare-exchange requires a scalar integer or generic pointer value"
         )
     })?;
     if !matches!(width, 32 | 64) {
@@ -722,13 +748,13 @@ fn validate_integer_cmpxchg(
 
     let syncscope = cas.syncscope(ctx);
     let scope = legacy_atomic_scope(ctx, op, &syncscope, "compare-exchange")?;
-    // A validated pair never has a failure ordering stronger than its success
-    // ordering, so the success check also covers every ordered failure
-    // ordering. Any ordered form routes to the scoped PTX rewrite: the inline
-    // `atom.{sem}.{scope}.cas` derives its semantics from the success
-    // ordering, which is what the PTX atomic ABI requires.
-    let needs_rewrite =
-        scope.needs_scoped_rewrite() || !matches!(success, AtomicOrderingAttr::Monotonic);
+    // PTX CAS has one ordering for both outcomes. Join the two requested
+    // orderings rather than dropping stronger failure semantics. This also
+    // avoids emitting pairs that the older LLVM 7 verifier would reject.
+    let combined_ordering = combined_cmpxchg_ordering(&success, &failure);
+    let needs_rewrite = pointer_value
+        || scope.needs_scoped_rewrite()
+        || !matches!(combined_ordering, AtomicOrderingAttr::Monotonic);
 
     if !needs_rewrite {
         return Ok(None);
@@ -742,18 +768,18 @@ fn validate_integer_cmpxchg(
 
     let extract = find_cmpxchg_old_value_extract(ctx, op, value_ty)?;
 
-    Ok(Some(IntegerCmpxchgRewrite {
+    Ok(Some(ScalarCmpxchgRewrite {
         op,
         extract,
         width,
-        success,
+        success: combined_ordering,
         scope,
     }))
 }
 
-fn rewrite_integer_cmpxchg_with_ptx(
+fn rewrite_scalar_cmpxchg_with_ptx(
     ctx: &mut Context,
-    rewrite: &IntegerCmpxchgRewrite,
+    rewrite: &ScalarCmpxchgRewrite,
 ) -> Result<()> {
     let operands: Vec<_> = rewrite.op.deref(ctx).operands().collect();
     let (ptr, compare, new_value) = (operands[0], operands[1], operands[2]);
@@ -1880,13 +1906,13 @@ fn verify_legacy_subset(ctx: &Context, module: Ptr<Operation>, capability: u32) 
     collect_ops(ctx, module, &mut ops);
     for op in ops {
         reject_unsupported_op(ctx, op)?;
-        if validate_integer_atomic_rmw(ctx, op, capability)?.is_some() {
+        if validate_scalar_atomic_rmw(ctx, op, capability)?.is_some() {
             return pliron::input_err!(
                 op.deref(ctx).loc(),
                 "legacy NVVM legalization left a scoped integer atomic RMW behind"
             );
         }
-        if validate_integer_cmpxchg(ctx, op, capability)?.is_some() {
+        if validate_scalar_cmpxchg(ctx, op, capability)?.is_some() {
             return pliron::input_err!(
                 op.deref(ctx).loc(),
                 "legacy NVVM legalization left a compare-exchange requiring PTX rewrite behind"
@@ -2452,8 +2478,31 @@ mod tests {
         ordering: AtomicOrderingAttr,
         scope: SyncScopeAttr,
     ) -> llvm::FuncOp {
-        let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
         let value_ty: TypeHandle = IntegerType::get(ctx, width, Signedness::Signless).into();
+        scalar_atomic_rmw_function(
+            ctx,
+            module,
+            name,
+            address_space,
+            value_ty,
+            kind,
+            ordering,
+            scope,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scalar_atomic_rmw_function(
+        ctx: &mut Context,
+        module: &ModuleOp,
+        name: &str,
+        address_space: u32,
+        value_ty: TypeHandle,
+        kind: AtomicRmwKindAttr,
+        ordering: AtomicOrderingAttr,
+        scope: SyncScopeAttr,
+    ) -> llvm::FuncOp {
+        let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
         let (func, entry) = function(ctx, module, name, value_ty, vec![ptr_ty, value_ty]);
         let ptr = entry.deref(ctx).get_argument(0);
         let value = entry.deref(ctx).get_argument(1);
@@ -2477,8 +2526,31 @@ mod tests {
         failure_ordering: AtomicOrderingAttr,
         scope: SyncScopeAttr,
     ) -> llvm::FuncOp {
-        let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
         let value_ty: TypeHandle = IntegerType::get(ctx, width, Signedness::Signless).into();
+        scalar_cmpxchg_function(
+            ctx,
+            module,
+            name,
+            address_space,
+            value_ty,
+            success_ordering,
+            failure_ordering,
+            scope,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scalar_cmpxchg_function(
+        ctx: &mut Context,
+        module: &ModuleOp,
+        name: &str,
+        address_space: u32,
+        value_ty: TypeHandle,
+        success_ordering: AtomicOrderingAttr,
+        failure_ordering: AtomicOrderingAttr,
+        scope: SyncScopeAttr,
+    ) -> llvm::FuncOp {
+        let ptr_ty: TypeHandle = PointerType::get(ctx, address_space).into();
         let (func, entry) = function(
             ctx,
             module,
@@ -3198,7 +3270,222 @@ mod tests {
     }
 
     #[test]
-    fn legacy_integer_cmpxchg_rewrites_scopes_and_strong_failure_ordering() {
+    fn legacy_pointer_exchange_and_cas_preserve_pointer_types_and_every_scope() {
+        for address_space in [0, 1, 3] {
+            for (scope, ptx_scope) in [
+                (named_scope("device"), "gpu"),
+                (named_scope("block"), "cta"),
+                (SyncScopeAttr::System, "sys"),
+            ] {
+                let mut ctx = Context::new();
+                let module = ModuleOp::new(&mut ctx, "pointer_atomics".try_into().unwrap());
+                let value_ty: TypeHandle = PointerType::get(&ctx, 0).into();
+                scalar_atomic_rmw_function(
+                    &mut ctx,
+                    &module,
+                    "exchange",
+                    address_space,
+                    value_ty,
+                    AtomicRmwKindAttr::Xchg,
+                    AtomicOrderingAttr::Monotonic,
+                    scope.clone(),
+                );
+                scalar_cmpxchg_function(
+                    &mut ctx,
+                    &module,
+                    "compare",
+                    address_space,
+                    value_ty,
+                    AtomicOrderingAttr::Release,
+                    AtomicOrderingAttr::Acquire,
+                    scope,
+                );
+                legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
+                module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+                let ir = export_module_to_string_with_config(
+                    &ctx,
+                    &module,
+                    &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+                )
+                .unwrap();
+                assert_eq!(
+                    ir.matches(&format!("atom.relaxed.{ptx_scope}.exch.b64"))
+                        .count(),
+                    1,
+                    "{ir}"
+                );
+                assert_eq!(
+                    ir.matches(&format!("atom.acq_rel.{ptx_scope}.cas.b64"))
+                        .count(),
+                    1,
+                    "{ir}"
+                );
+                assert_eq!(ir.matches("call i8* asm sideeffect").count(), 2, "{ir}");
+                assert_eq!(ir.matches("ret i8*").count(), 2, "{ir}");
+                assert!(!ir.contains("atomicrmw") && !ir.contains("cmpxchg"), "{ir}");
+                assert!(!ir.contains("ptrtoint") && !ir.contains("inttoptr"), "{ir}");
+                if address_space != 0 {
+                    assert!(
+                        ir.contains(&format!("addrspacecast i8 addrspace({address_space})*")),
+                        "{ir}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_pointer_atomics_reject_non_generic_values_arithmetic_and_old_targets() {
+        for (value_space, kind, capability, expected) in [
+            (1, AtomicRmwKindAttr::Xchg, 90, "generic pointer value"),
+            (3, AtomicRmwKindAttr::Xchg, 90, "generic pointer value"),
+            (0, AtomicRmwKindAttr::Add, 90, "supports only exchange"),
+            (0, AtomicRmwKindAttr::Xchg, 69, "requires sm_70"),
+        ] {
+            let mut ctx = Context::new();
+            let module = ModuleOp::new(&mut ctx, "invalid_pointer_rmw".try_into().unwrap());
+            let value_ty: TypeHandle = PointerType::get(&ctx, value_space).into();
+            scalar_atomic_rmw_function(
+                &mut ctx,
+                &module,
+                "exchange",
+                0,
+                value_ty,
+                kind,
+                AtomicOrderingAttr::Monotonic,
+                named_scope("device"),
+            );
+            let before = module.get_operation().deref(&ctx).disp(&ctx).to_string();
+            let error =
+                legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), capability).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+            assert_eq!(
+                before,
+                module.get_operation().deref(&ctx).disp(&ctx).to_string()
+            );
+        }
+        for (value_space, capability, expected) in [
+            (1, 90, "generic pointer value"),
+            (3, 90, "generic pointer value"),
+            (0, 69, "requires sm_70"),
+        ] {
+            let mut ctx = Context::new();
+            let module = ModuleOp::new(&mut ctx, "invalid_pointer_cas".try_into().unwrap());
+            let value_ty: TypeHandle = PointerType::get(&ctx, value_space).into();
+            scalar_cmpxchg_function(
+                &mut ctx,
+                &module,
+                "compare",
+                0,
+                value_ty,
+                AtomicOrderingAttr::Monotonic,
+                AtomicOrderingAttr::Monotonic,
+                named_scope("device"),
+            );
+            let before = module.get_operation().deref(&ctx).disp(&ctx).to_string();
+            let error =
+                legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), capability).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+            assert_eq!(
+                before,
+                module.get_operation().deref(&ctx).disp(&ctx).to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_cmpxchg_covers_every_rust_ordering_pair_without_weakening_failure() {
+        use AtomicOrderingAttr::*;
+        let success_orderings = [Monotonic, Acquire, Release, AcqRel, SeqCst];
+        let failure_orderings = [Monotonic, Acquire, SeqCst];
+        // Each cell is the PTX semantic and whether a preceding SC fence is
+        // needed. Rows are success orderings; columns are failure orderings.
+        let expected = [
+            [("relaxed", false), ("acquire", false), ("acquire", true)],
+            [("acquire", false), ("acquire", false), ("acquire", true)],
+            [("release", false), ("acq_rel", false), ("acquire", true)],
+            [("acq_rel", false), ("acq_rel", false), ("acquire", true)],
+            [("acquire", true), ("acquire", true), ("acquire", true)],
+        ];
+        for width in [32, 64] {
+            for (scope, ptx_scope) in [
+                (named_scope("device"), "gpu"),
+                (named_scope("block"), "cta"),
+                (SyncScopeAttr::System, "sys"),
+            ] {
+                for (row, success) in success_orderings.iter().enumerate() {
+                    for (column, failure) in failure_orderings.iter().enumerate() {
+                        let mut ctx = Context::new();
+                        let module = ModuleOp::new(&mut ctx, "ordering_pair".try_into().unwrap());
+                        integer_cmpxchg_function(
+                            &mut ctx,
+                            &module,
+                            "cas",
+                            1,
+                            width,
+                            success.clone(),
+                            failure.clone(),
+                            scope.clone(),
+                        );
+                        legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap();
+                        module.get_operation().deref(&ctx).verify(&ctx).unwrap();
+                        let ir = export_module_to_string_with_config(
+                            &ctx,
+                            &module,
+                            &NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+                        )
+                        .unwrap();
+                        if row == 0 && column == 0 && ptx_scope == "gpu" {
+                            assert_eq!(ir.matches("cmpxchg").count(), 1, "{ir}");
+                            assert!(!ir.contains("atom."), "{ir}");
+                        } else {
+                            let (sem, fence) = expected[row][column];
+                            let instruction = format!("atom.{sem}.{ptx_scope}.cas.b{width}");
+                            assert_eq!(ir.matches(&instruction).count(), 1, "{ir}");
+                            assert_eq!(
+                                ir.contains(&format!("fence.sc.{ptx_scope}")),
+                                fence,
+                                "{ir}"
+                            );
+                            assert!(!ir.contains("cmpxchg"), "{ir}");
+                        }
+                    }
+                }
+            }
+        }
+        for success in success_orderings {
+            for failure in [Release, AcqRel] {
+                let mut ctx = Context::new();
+                let module = ModuleOp::new(&mut ctx, "invalid_pair".try_into().unwrap());
+                integer_cmpxchg_function(
+                    &mut ctx,
+                    &module,
+                    "cas",
+                    1,
+                    32,
+                    success.clone(),
+                    failure,
+                    SyncScopeAttr::System,
+                );
+                let before = module.get_operation().deref(&ctx).disp(&ctx).to_string();
+                let error =
+                    legalize_for_legacy_nvvm(&mut ctx, module.get_operation(), 90).unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains("invalid success/failure ordering pair"),
+                    "{error}"
+                );
+                assert_eq!(
+                    before,
+                    module.get_operation().deref(&ctx).disp(&ctx).to_string()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_scalar_cmpxchg_rewrites_scopes_and_strong_failure_ordering() {
         let mut ctx = Context::new();
         let module = ModuleOp::new(&mut ctx, "scoped_integer_cas".try_into().unwrap());
 
@@ -3279,7 +3566,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_integer_cmpxchg_rewrites_ordered_success_with_monotonic_failure() {
+    fn legacy_scalar_cmpxchg_rewrites_ordered_success_with_monotonic_failure() {
         let mut ctx = Context::new();
         let module = ModuleOp::new(&mut ctx, "ordered_success_cas".try_into().unwrap());
 
@@ -3475,7 +3762,7 @@ mod tests {
                 32,
                 1,
                 AtomicOrderingAttr::Release,
-                AtomicOrderingAttr::Acquire,
+                AtomicOrderingAttr::Release,
                 named_scope("device"),
                 "invalid success/failure ordering pair",
             ),

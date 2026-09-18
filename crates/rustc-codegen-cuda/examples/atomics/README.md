@@ -55,7 +55,7 @@ CUDA_OXIDE_LLC=/path/to/llc-22 cargo oxide run atomics
 CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 ```
 
-## Test Suite (21 runtime tests)
+## Test Suite (22 runtime tests)
 
 ### Phase 1: Core operations (AtomicU32/I32)
 
@@ -97,6 +97,19 @@ CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 |----|------------------------------|-------------------------------------------------------------------------|
 | 20 | `core_atomic_fetch_add_test` | `core::sync::atomic::AtomicU32` fetch_add (system scope, Relaxed)        |
 | 21 | `core_atomic_ptr_test`       | `core::sync::atomic::AtomicPtr<u16>` load/store/swap/compare_exchange   |
+| 22 | `core_atomic_local_test`     | Private pointer/integer atomics, helper calls and wrapping arithmetic |
+
+The pointer test gives each thread a distinct mutable storage slot and checks
+both successful and failed compare-exchange, then reads through the loaded
+pointer. The local test calls the same pointer helper with per-thread storage.
+Pointer types survive compiler lowering; legacy NVVM uses scoped PTX for
+pointer exchange and compare-exchange. Private atomic storage uses ordinary
+accesses because no other thread can observe it.
+
+Contended counters use raw writable device pointers and the existing
+`from_ptr` atomic constructors. The host keeps their allocations alive and
+excludes non-atomic access until synchronization. Block barriers are reached
+by every thread, including the thread that performs the update.
 
 The separate `core_atomic_ordering_probe` kernel provides compile-only
 standard-library atomic ordering coverage.
@@ -178,7 +191,10 @@ standard-library atomic ordering coverage.
 --- Test 21: core_atomic_ptr_test (core::sync::atomic::AtomicPtr) ---
   all 256 threads passed AtomicPtr load/store/swap/CAS
 
-=== SUCCESS: All 21 runtime atomic tests passed! ===
+--- Test 22: core_atomic_local_test ---
+  all 256 threads passed private pointer and integer atomic operations
+
+=== SUCCESS: All 22 runtime atomic tests passed! ===
 ```
 
 ## Available Atomic Types

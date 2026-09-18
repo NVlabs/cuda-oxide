@@ -426,6 +426,10 @@ GPU code, defaulting to system scope.
 On nvptx64, `core::sync::atomic::AtomicPtr<T>` supports `load`, `store`,
 `swap`, and `compare_exchange` for generic-address-space pointer values while
 preserving pointer types through lowering.
+Local atomic storage uses ordinary thread-private accesses. Global and shared
+storage retain atomic ordering and scope, including when a helper receives a
+generic pointer. Legacy NVVM uses scoped PTX for pointer exchange and
+compare-exchange while retaining pointer-typed operands and results.
 
 ---
 

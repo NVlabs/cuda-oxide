@@ -7,6 +7,7 @@
 // mir-importer's facts.rs (see the workspace clippy.toml disallowed-methods).
 #![allow(clippy::disallowed_methods)]
 
+mod atomic_storage;
 mod atomics_fences;
 mod barriers_sync;
 mod calls_and_values;
