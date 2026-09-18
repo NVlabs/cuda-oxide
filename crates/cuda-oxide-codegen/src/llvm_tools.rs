@@ -127,6 +127,13 @@ impl LlvmToolchain {
         // for libdevice kernels).
         let llvm_link =
             resolve_sibling_tool("llvm-link", "CUDA_OXIDE_LLVM_LINK", &llc_path, llc_major);
+        // The anchor itself: `llc` decides what `opt` and `llvm-link` must
+        // match, but nothing checked it against the rustc that writes the IR.
+        if let Some(warning) =
+            rustc_llvm_mismatch_warning(rustc_llvm_major(), &llc_path, llc_major, llc_from_env)
+        {
+            diagnostics.push(warning);
+        }
         if let Some(warning) = llvm_link_mismatch_warning(
             std::env::var("CUDA_OXIDE_LLVM_LINK").ok().as_deref(),
             llvm_link.as_ref().and_then(|tool| tool.major),
@@ -295,6 +302,71 @@ pub(crate) fn parse_llvm_major(version_output: &str) -> Option<u32> {
     let rest = &version_output[idx + NEEDLE.len()..];
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
+}
+
+/// The LLVM major `rustc` itself is built against, from the `LLVM version:`
+/// line of `rustc -vV`. Note the colon: [`parse_llvm_major`] reads the
+/// `--version` banner of an LLVM binary, which spells it without one.
+pub(crate) fn parse_rustc_llvm_major(version_verbose_output: &str) -> Option<u32> {
+    const NEEDLE: &str = "LLVM version: ";
+    let idx = version_verbose_output.find(NEEDLE)?;
+    let rest = &version_verbose_output[idx + NEEDLE.len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// The LLVM major of the active `rustc`, or `None` when it cannot be run or
+/// its banner cannot be parsed.
+fn rustc_llvm_major() -> Option<u32> {
+    let output = std::process::Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_rustc_llvm_major(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Warns when the chosen `llc` is a different LLVM major than the `rustc`
+/// that produces the IR it will consume.
+///
+/// `llc` is the pipeline's anchor: `opt` and `llvm-link` are matched against
+/// it. Nothing matched the anchor itself to the IR's producer, so an `llc`
+/// from an unrelated toolchain (a sysroot that happens to be the rustup
+/// default, say) was accepted silently, and which `llc` got picked decided
+/// what the backend emitted. Issue #1234 was diagnosed twice over because of
+/// it: the same reproducer emitted a CAS loop under one `llc` and the native
+/// instruction under another.
+///
+/// This warns rather than fails: mixing majors is often tolerable, and a hard
+/// error would break setups that work today.
+pub(crate) fn rustc_llvm_mismatch_warning(
+    rustc_major: Option<u32>,
+    llc_path: &str,
+    llc_major: Option<u32>,
+    llc_from_env: bool,
+) -> Option<String> {
+    let (rustc_major, llc_major) = (rustc_major?, llc_major?);
+    if rustc_major == llc_major {
+        return None;
+    }
+    let remedy = if llc_from_env {
+        format!("unset CUDA_OXIDE_LLC (or point it at an LLVM {rustc_major} llc) to match rustc")
+    } else {
+        format!(
+            "install llvm-tools for the pinned toolchain, or set CUDA_OXIDE_LLC to an LLVM \
+             {rustc_major} llc"
+        )
+    };
+    Some(format!(
+        "warning: LLVM version mismatch between rustc and llc:\n\
+         warning:   rustc = LLVM {rustc_major} (writes the IR)\n\
+         warning:   llc   = {llc_path} (LLVM {llc_major}, lowers it)\n\
+         warning: textual IR is not stable across majors, so the instructions selected\n\
+         warning: (and the bugs reproduced) depend on which llc is picked.\n\
+         warning: {remedy}."
+    ))
 }
 
 /// Paths co-located with `llc_path` for a given tool name, most specific
@@ -489,6 +561,59 @@ mod tests {
         assert_eq!(parse_llvm_major("no version banner here"), None);
         assert_eq!(parse_llvm_major("LLVM version x.y.z"), None);
         assert_eq!(parse_llvm_major(""), None);
+    }
+
+    #[test]
+    fn parse_rustc_llvm_major_reads_the_vv_line() {
+        let vv = "rustc 1.100.0-nightly (e457a7b0d 2026-08-27)\nbinary: rustc\n\
+                  host: x86_64-unknown-linux-gnu\nrelease: 1.100.0-nightly\n\
+                  LLVM version: 23.1.0\n";
+        assert_eq!(parse_rustc_llvm_major(vv), Some(23));
+        // `--version` banners spell it without the colon; that is
+        // `parse_llvm_major`'s job, and the two must not read each other's.
+        assert_eq!(parse_rustc_llvm_major("LLVM version 23.1.0"), None);
+        assert_eq!(parse_llvm_major("LLVM version: 23.1.0"), None);
+        assert_eq!(parse_rustc_llvm_major("LLVM version: x.y.z"), None);
+        assert_eq!(parse_rustc_llvm_major(""), None);
+    }
+
+    #[test]
+    fn rustc_llc_mismatch_warns_and_names_both_sides() {
+        let warning =
+            rustc_llvm_mismatch_warning(Some(23), "/rustup/other/bin/llc", Some(22), false)
+                .expect("a major mismatch warns");
+        assert!(warning.contains("rustc = LLVM 23"), "{warning}");
+        assert!(
+            warning.contains("/rustup/other/bin/llc (LLVM 22"),
+            "{warning}"
+        );
+        // Without an override the remedy is to install matching llvm-tools.
+        assert!(warning.contains("install llvm-tools"), "{warning}");
+
+        // A pinned CUDA_OXIDE_LLC gets the remedy that applies to it.
+        let pinned = rustc_llvm_mismatch_warning(Some(23), "/opt/llvm-22/bin/llc", Some(22), true)
+            .expect("a major mismatch warns");
+        assert!(pinned.contains("unset CUDA_OXIDE_LLC"), "{pinned}");
+        assert!(pinned.contains("LLVM 23 llc"), "{pinned}");
+    }
+
+    #[test]
+    fn rustc_llc_match_or_unknown_version_is_quiet() {
+        assert_eq!(
+            rustc_llvm_mismatch_warning(Some(23), "/usr/bin/llc", Some(23), false),
+            None,
+            "same major must not warn"
+        );
+        assert_eq!(
+            rustc_llvm_mismatch_warning(None, "/usr/bin/llc", Some(22), false),
+            None,
+            "an unparseable rustc banner must not invent a mismatch"
+        );
+        assert_eq!(
+            rustc_llvm_mismatch_warning(Some(23), "/usr/bin/llc", None, false),
+            None,
+            "an unparseable llc banner must not invent a mismatch"
+        );
     }
 
     #[test]
