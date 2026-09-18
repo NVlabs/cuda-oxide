@@ -96,10 +96,15 @@ PATH = re.compile(
 )
 DOC_LINE = re.compile(r"^\s*(?:///(?!/)|//!)")
 LINE_SUFFIX = re.compile(r":[0-9]+(?:[-:][0-9]+)*$")
+# A Markdown reference definition owns its colon; it is not part of the
+# destination token. Strip only the line's label prefix, before classifying
+# the destination, so a URI (including a custom scheme) stays intact.
+REFERENCE_DEFINITION = re.compile(r"^ {0,3}\[(?:\\.|[^\[\]\\])+\]:[ \t]*")
 
 
 def paths_in_line(line):
-    cursor = 0
+    definition = REFERENCE_DEFINITION.match(line)
+    cursor = definition.end() if definition else 0
     while match := TOKEN.search(line, cursor):
         cursor = match.end()
         if match.lastgroup == "uri":
@@ -212,6 +217,9 @@ with tempfile.NamedTemporaryFile(prefix="zz-source-reference-", suffix=".rs", di
         ("case.md", f"[https://example.invalid]({missing})", 1),
         ("case.md", f"[external](https://example.invalid/a)[source]({missing})", 1),
         ("case.md", f"[external](https://[::1]/a_(b(c)))[source]({missing})", 1),
+        ("case.md", f"[source]:{missing}\n [source]: {missing}\n[source]:<{missing}#L1>", 3),
+        ("case.md", f"[source]:https://example.invalid/{missing}\n[source]:custom:{missing}", 0),
+        ("case.md", f"TODO:{missing}\nhttps://example.invalid/[source]:{missing}", 0),
         ("case.md", "crates/../scripts/no-such-source-reference-file.sh", 1),
         ("case.rs", f"/// {missing}\n//! {missing}", 2),
         ("case.rs", f"///{missing}\n//!{missing}", 2),
@@ -221,6 +229,11 @@ with tempfile.NamedTemporaryFile(prefix="zz-source-reference-", suffix=".rs", di
         actual = list(broken_references(references(filename, text), tracked, generated))
         if len(actual) != expected:
             sys.exit(f"error: source-reference guard self-test failed for {text!r}: {actual}")
+    traversal = "crates/../scripts/no-such-source-reference-file.sh"
+    if list(broken_references(references("case.md", traversal), tracked, generated)) != [
+        (1, traversal, "contains an unsupported traversal segment")
+    ]:
+        sys.exit("error: source-reference guard self-test lost the traversal diagnostic")
     if list(paths_in_line(f"`{live}` {output}")) != [live, output]:
         sys.exit("error: source-reference guard self-test failed to extract live/output paths")
     for text in (f'const P: &str = "{output}";', f"/// https://example.invalid/{output}"):
@@ -229,6 +242,9 @@ with tempfile.NamedTemporaryFile(prefix="zz-source-reference-", suffix=".rs", di
             sys.exit("error: generated-output self-test accepted a reference outside prose scope")
     if not list(declaration_errors({output}, tracked | {output}, {output})):
         sys.exit("error: generated-output self-test accepted an already tracked output")
+    seen = {path for _, path in references("case.md", f"[output]:{output}")}
+    if list(declaration_errors({output}, tracked, seen)):
+        sys.exit("error: generated-output self-test missed a reference definition")
 
 checked = 0
 broken = []
