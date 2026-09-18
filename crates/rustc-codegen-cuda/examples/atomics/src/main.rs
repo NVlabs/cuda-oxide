@@ -37,6 +37,9 @@
 //!
 //! 22. `core_atomic_local_test` -- private pointer/integer storage through helpers
 //!
+//! 23. `core_atomic_ptr_shared_value_test` -- AtomicPtr round-trip of a shared-memory pointer value
+//! 24. `core_atomic_ptr_shared_storage_test` -- AtomicPtr storage backed by shared memory
+//!
 //! `core_atomic_ordering_probe` adds compile-only core intrinsic ordering coverage.
 //!
 //! Build and run with:
@@ -49,7 +52,7 @@ use cuda_device::atomic::{
     AtomicOrdering, BlockAtomicU32, DeviceAtomicF32, DeviceAtomicF64, DeviceAtomicI32,
     DeviceAtomicI64, DeviceAtomicU32, DeviceAtomicU64,
 };
-use cuda_device::{DisjointSlice, kernel, thread};
+use cuda_device::{DisjointSlice, SharedArray, kernel, thread};
 use cuda_host::cuda_module;
 
 // =============================================================================
@@ -682,6 +685,70 @@ mod kernels {
 
             if let Some(out_elem) = out.get_mut(gid) {
                 *out_elem = passed as u32;
+            }
+        }
+    }
+
+    /// Test 23: AtomicPtr round-trips a shared-memory pointer value through
+    /// load/store/swap/CAS and preserves dereferenceability.
+    #[kernel]
+    pub fn core_atomic_ptr_shared_value_test(mut storage: DisjointSlice<usize>) {
+        static mut SHARED_VALUE: SharedArray<u16, 1> = SharedArray::UNINIT;
+
+        let gid = thread::index_1d();
+
+        if thread::threadIdx_x() == 0 {
+            let shared_ptr = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SHARED_VALUE) };
+            unsafe { shared_ptr.write(0xBEEF) };
+        }
+
+        thread::sync_threads();
+
+        if let Some(slot) = storage.get_mut(gid) {
+            let passed = {
+                let atomic_ptr = unsafe {
+                    core::sync::atomic::AtomicPtr::from_ptr((slot as *mut usize).cast::<*mut u16>())
+                };
+
+                let shared_ptr = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SHARED_VALUE) };
+
+                // SAFETY: SHARED_VALUE remains live for the kernel, is initialized
+                // before this point, and this thread exclusively owns its atomic slot.
+                unsafe { pointer_roundtrip(atomic_ptr, shared_ptr, 0xBEEF) }
+            };
+
+            *slot = passed as usize;
+        }
+    }
+
+    /// Test 24: AtomicPtr storage originates in shared memory.
+    #[kernel]
+    pub fn core_atomic_ptr_shared_storage_test(values: &[u16], mut out: DisjointSlice<u32>) {
+        static mut SHARED_STORAGE: SharedArray<usize, 256> = SharedArray::UNINIT;
+
+        let gid = thread::index_1d();
+
+        if gid.in_bounds(values.len()) && gid.get() < 256 {
+            let index = gid.get();
+
+            let storage =
+                unsafe { SharedArray::as_raw_mut_ptr(&raw mut SHARED_STORAGE).add(index) };
+
+            // Shared memory is uninitialized. Each thread exclusively owns one
+            // pointer-sized slot for the duration of this test.
+            unsafe { storage.write(0) };
+
+            let atomic_ptr =
+                unsafe { core::sync::atomic::AtomicPtr::from_ptr(storage.cast::<*mut u16>()) };
+
+            let new_ptr = unsafe { values.as_ptr().add(index) as *mut u16 };
+
+            // SAFETY: this thread exclusively owns its shared-memory atomic slot,
+            // and new_ptr points to a live bounds-checked input element.
+            let passed = unsafe { pointer_roundtrip(atomic_ptr, new_ptr, index as u16 + 1) };
+
+            if let Some(element) = out.get_mut(gid) {
+                *element = passed as u32;
             }
         }
     }
@@ -1672,5 +1739,64 @@ fn main() {
         println!("  all {N} threads passed private pointer and integer atomic operations");
     }
 
-    println!("\n=== SUCCESS: All 22 runtime atomic tests passed! ===");
+    println!("\n--- Test 23: core_atomic_ptr_shared_value_test ---");
+    {
+        let mut storage_dev = DeviceBuffer::<usize>::zeroed(&stream, N).unwrap();
+
+        unsafe { module.core_atomic_ptr_shared_value_test(stream.as_ref(), cfg, &mut storage_dev) }
+            .expect("Kernel launch failed");
+
+        stream.synchronize().unwrap();
+
+        let result = storage_dev.to_host_vec(&stream).unwrap();
+
+        if let Some(index) = result.iter().position(|&value| value != 1) {
+            println!(
+                "  FAIL: thread {} reported shared AtomicPtr round-trip result {}",
+                index, result[index]
+            );
+            std::process::exit(1);
+        } else {
+            println!(
+                "  all {} threads passed shared-pointer AtomicPtr load/store/swap/CAS/deref",
+                N
+            );
+        }
+    }
+
+    println!("\n--- Test 24: core_atomic_ptr_shared_storage_test ---");
+    {
+        let values: Vec<u16> = (0..N).map(|index| index as u16 + 1).collect();
+        let values_dev = DeviceBuffer::from_host(&stream, &values).unwrap();
+        let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+
+        unsafe {
+            module.core_atomic_ptr_shared_storage_test(
+                stream.as_ref(),
+                cfg,
+                &values_dev,
+                &mut out_dev,
+            )
+        }
+        .expect("Kernel launch failed");
+
+        stream.synchronize().unwrap();
+
+        let result = out_dev.to_host_vec(&stream).unwrap();
+
+        if let Some(index) = result.iter().position(|&value| value != 1) {
+            println!(
+                "  FAIL: thread {} reported shared-storage AtomicPtr result {}",
+                index, result[index]
+            );
+            std::process::exit(1);
+        } else {
+            println!(
+                "  all {} threads passed shared-storage AtomicPtr load/store/swap/CAS",
+                N
+            );
+        }
+    }
+
+    println!("\n=== SUCCESS: All 24 runtime atomic tests passed! ===");
 }

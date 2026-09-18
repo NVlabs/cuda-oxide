@@ -93,15 +93,22 @@ CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 
 ### Phase 4: Standard library atomics (`core::sync::atomic`)
 
-| #  | Test                         | What it verifies                                                        |
-|----|------------------------------|-------------------------------------------------------------------------|
-| 20 | `core_atomic_fetch_add_test` | `core::sync::atomic::AtomicU32` fetch_add (system scope, Relaxed)        |
-| 21 | `core_atomic_ptr_test`       | `core::sync::atomic::AtomicPtr<u16>` load/store/swap/compare_exchange   |
-| 22 | `core_atomic_local_test`     | Private pointer/integer atomics, helper calls and wrapping arithmetic |
+| #  | Test                                  | What it verifies                                                        |
+|----|---------------------------------------|-------------------------------------------------------------------------|
+| 20 | `core_atomic_fetch_add_test`          | `core::sync::atomic::AtomicU32` fetch_add (system scope, Relaxed)       |
+| 21 | `core_atomic_ptr_test`                | `core::sync::atomic::AtomicPtr<u16>` load/store/swap/compare_exchange   |
+| 22 | `core_atomic_local_test`              | Private pointer/integer atomics, helper calls and wrapping arithmetic   |
+| 23 | `core_atomic_ptr_shared_value_test`   | AtomicPtr round-trip of a shared-memory pointer value                   |
+| 24 | `core_atomic_ptr_shared_storage_test` | AtomicPtr storage backed by shared memory                               |
 
 The pointer test gives each thread a distinct mutable storage slot and checks
 both successful and failed compare-exchange, then reads through the loaded
 pointer. The local test calls the same pointer helper with per-thread storage.
+The shared-value test round-trips a pointer originating in shared memory
+through AtomicPtr load/store/swap/compare_exchange and dereferences the final
+pointer. The shared-storage test places the AtomicPtr backing storage in shared
+memory and exercises the same pointer operations from device code.
+
 Pointer types survive compiler lowering; legacy NVVM uses scoped PTX for
 pointer exchange and compare-exchange. Private atomic storage uses ordinary
 accesses because no other thread can observe it.
@@ -194,7 +201,13 @@ standard-library atomic ordering coverage.
 --- Test 22: core_atomic_local_test ---
   all 256 threads passed private pointer and integer atomic operations
 
-=== SUCCESS: All 22 runtime atomic tests passed! ===
+--- Test 23: core_atomic_ptr_shared_value_test ---
+  all 256 threads passed shared-pointer AtomicPtr load/store/swap/CAS/deref
+
+--- Test 24: core_atomic_ptr_shared_storage_test ---
+  all 256 threads passed shared-storage AtomicPtr load/store/swap/CAS
+
+=== SUCCESS: All 24 runtime atomic tests passed! ===
 ```
 
 ## Available Atomic Types
