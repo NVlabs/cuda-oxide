@@ -757,12 +757,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Testing: test_runtime_index_debug");
     {
         let mut out_dev = DeviceBuffer::<u32>::zeroed(&stream, N)?;
-        // seed=7: runtime_index=3, projected_runtime points to 55.
-        // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
-        unsafe { module.test_runtime_index_debug((stream).as_ref(), cfg, 7u32, &mut out_dev) }?;
-        let result = out_dev.to_host_vec(&stream)?;
-        assert_eq!(result[0], 55, "test_runtime_index_debug failed");
-        println!("  ✓ Result: {} (expected 55)", result[0]);
+        // Keep index 3 first for CUDA-GDB, then exercise every other runtime index.
+        for (seed, expected) in [(7u32, 55), (0, 13), (1, 21), (2, 34)] {
+            // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+            unsafe { module.test_runtime_index_debug((stream).as_ref(), cfg, seed, &mut out_dev) }?;
+            let result = out_dev.to_host_vec(&stream)?;
+            assert!(
+                result.iter().all(|&value| value == expected),
+                "test_runtime_index_debug failed for seed {seed}"
+            );
+            println!("  ✓ Runtime index {}: {expected}", seed & 3);
+        }
     }
 
     // Test dereference debug bindings and keep deterministic values live.
