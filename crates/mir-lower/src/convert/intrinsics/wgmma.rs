@@ -33,6 +33,7 @@ enum WgmmaInputKind {
     Bf16,
     F16,
     Tf32,
+    E4m3,
 }
 
 impl WgmmaInputKind {
@@ -40,7 +41,9 @@ impl WgmmaInputKind {
         match self {
             Self::Bf16 => "bf16.bf16",
             Self::F16 => "f16.f16",
-            Self::Tf32 => unreachable!("TF32 has no counted K-loop lowering"),
+            Self::Tf32 | Self::E4m3 => {
+                unreachable!("this input kind has no counted K-loop lowering")
+            }
         }
     }
 }
@@ -166,6 +169,10 @@ fn value_group_template(mma_count: usize, input_kind: WgmmaInputKind) -> String 
         ),
         WgmmaInputKind::Tf32 => (
             "wgmma.mma_async.sync.aligned.m64n64k8.f32.tf32.tf32",
+            "1, 1, 1",
+        ),
+        WgmmaInputKind::E4m3 => (
+            "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3",
             "1, 1, 1",
         ),
     };
@@ -433,6 +440,16 @@ pub(crate) fn convert_mma_group_values_tf32(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     convert_mma_group_values_for_kind(ctx, rewriter, op, WgmmaInputKind::Tf32)
+}
+
+/// Lower a value-form E4M3 K=32 WGMMA full-drain group to one inline-PTX scope.
+pub(crate) fn convert_mma_group_values_e4m3(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mma_group_values_for_kind(ctx, rewriter, op, WgmmaInputKind::E4m3)
 }
 
 fn convert_mma_group_values_for_kind(
@@ -882,6 +899,30 @@ mod tests {
         assert!(!template.contains("m64n64k16"));
         assert!(!template.contains(".bf16.bf16"));
         assert!(!template.contains(".f16.f16"));
+        assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+        assert_eq!(
+            template.matches("wgmma.commit_group.sync.aligned").count(),
+            1
+        );
+        assert_eq!(
+            template.matches("wgmma.wait_group.sync.aligned 0").count(),
+            1
+        );
+        assert!(!template.contains("ld.f32"));
+        assert!(!template.contains("st.f32"));
+        assert!(template.contains("$64, $65, 1, 1, 1;"));
+        assert!(template.contains("$66, $67, 1, 1, 1;"));
+        assert!(!template.contains("$64, $65, 1, 1, 1, 0, 0;"));
+    }
+
+    #[test]
+    fn e4m3_value_template_uses_k32_without_transpose_controls() {
+        let template = value_group_template(2, WgmmaInputKind::E4m3);
+        assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+        assert!(template.contains("m64n64k32.f32.e4m3.e4m3"));
+        assert!(!template.contains(".bf16.bf16"));
+        assert!(!template.contains(".f16.f16"));
+        assert!(!template.contains(".tf32.tf32"));
         assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
         assert_eq!(
             template.matches("wgmma.commit_group.sync.aligned").count(),

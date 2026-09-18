@@ -20,14 +20,14 @@
 //!
 //! The `m64n64k16.f32.f16.f16` variant supports canonical linear full-drain
 //! regions and the canonical counted K-loop. The `m64n64k8.f32.tf32.tf32`
-//! variant uses the canonical linear full-drain carrier only. The
-//! `m64n128k16.f32.bf16.bf16` variant supports canonical linear full-drain
-//! regions with a 64-value `[[f32; 8]; 8]` accumulator. Every accepted
-//! asynchronous lifetime is fused into one convergent inline-PTX scope and ends
-//! in `wait_group<0>` before accumulator values become visible to LLVM again.
-//! Unsupported m64n64 BF16 full-drain pointer shapes retain the deferred
-//! pointer-form fallback. m64n128, F16, and TF32 have no pointer-form fallback;
-//! the legacy K=16 TF32 entry point remains unsupported.
+//! and `m64n64k32.f32.e4m3.e4m3` variants use the canonical linear full-drain
+//! carrier only. The `m64n128k16.f32.bf16.bf16` variant supports canonical
+//! linear full-drain regions with a 64-value `[[f32; 8]; 8]` accumulator. Every
+//! accepted asynchronous lifetime is fused into one convergent inline-PTX scope
+//! and ends in `wait_group<0>` before accumulator values become visible to LLVM
+//! again. Unsupported m64n64 BF16 full-drain pointer shapes retain the deferred
+//! pointer-form fallback. m64n128, F16, TF32, and E4M3 have no pointer-form
+//! fallback; the legacy K=16 TF32 entry point remains unsupported.
 //!
 //! # Architecture
 //!
@@ -88,6 +88,9 @@
 //! - **TF32 linear full drain:** `m64n64k8.f32.tf32.tf32` uses the same
 //!   canonical accumulator and full-drain lifetime. TF32 has no pointer
 //!   fallback, counted-loop lowering, or partial-wait pipeline.
+//! - **E4M3 linear full drain:** `m64n64k32.f32.e4m3.e4m3` uses the same
+//!   canonical accumulator and full-drain lifetime with TN-only operands. E4M3
+//!   has no pointer fallback, counted-loop lowering, or partial-wait pipeline.
 //! - **Canonical counted K-loop:** one BF16 or F16 m64n64 MMA per iteration,
 //!   compile-time trip count, and `u64` descriptor recurrences of the form `desc + const`. The
 //!   fence-to-final-wait lifetime is fused so the accumulator is loaded and
@@ -100,8 +103,8 @@
 //!   lifetime is pending.
 //! - Unsupported BF16 full-drain accumulator pointer shapes retain the deferred
 //!   pointer-form lowering. Dynamic partial waits, unsupported control flow,
-//!   malformed pipeline schedules, F16 partial-wait/pipelined shapes, TF32
-//!   counted-loop or partial-wait shapes, and the legacy K=16 TF32
+//!   malformed pipeline schedules, F16 partial-wait/pipelined shapes, TF32 or
+//!   E4M3 counted-loop or partial-wait shapes, and the legacy K=16 TF32
 //!   compatibility entry point are rejected.
 //!
 //! # Hardware Support
@@ -337,6 +340,41 @@ pub unsafe fn wgmma_mma_m64n64k16_f32_f16(acc: &mut [[f32; 8]; 4], desc_a: u64, 
 pub unsafe fn wgmma_mma_m64n64k8_f32_tf32(acc: &mut [[f32; 8]; 4], desc_a: u64, desc_b: u64) {
     let _ = (acc, desc_a, desc_b);
     unreachable!("wgmma_mma_m64n64k8_f32_tf32 called outside CUDA kernel context")
+}
+
+/// WGMMA with f32 accumulator and E4M3 FP8 inputs.
+///
+/// This variant supports only the canonical linear full-drain region:
+/// `fence -> one or more MMA -> commit_group -> wait_group<0>`. It uses the
+/// fixed TN operand layout; counted loops, partial waits, and non-canonical
+/// pointer fallback are unsupported.
+///
+/// # PTX
+///
+/// ```ptx
+/// wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3
+///     {%f0, %f1, ..., %f31}, %rd_desc_a, %rd_desc_b,
+///     1, 1, 1;
+/// ```
+///
+/// # Safety
+///
+/// - Descriptors must describe initialized E4M3 K=32 tiles with A row-major
+///   and B column-major (both K-major in shared memory). When using
+///   [`make_smem_desc`], follow its 32-byte swizzle and 256-byte alignment.
+/// - Input tiles must be visible to the async proxy before this region. For
+///   generic shared-memory stores, each writer must call
+///   [`crate::barrier::fence_proxy_async_shared_cta`], then all CTA threads must
+///   call [`crate::thread::sync_threads`]. `wgmma_fence` only orders registers.
+/// - All 128 threads in the warpgroup must execute the same fence/MMA/commit/wait
+///   sequence, from within a CUDA kernel context on sm_90a.
+/// - `acc` must not be read or written until the region's final
+///   `wgmma_wait_group::<0>()` returns, and input tiles must remain unchanged
+///   until that wait completes.
+#[inline(never)]
+pub unsafe fn wgmma_mma_m64n64k32_f32_e4m3_e4m3(acc: &mut [[f32; 8]; 4], desc_a: u64, desc_b: u64) {
+    let _ = (acc, desc_a, desc_b);
+    unreachable!("wgmma_mma_m64n64k32_f32_e4m3_e4m3 called outside CUDA kernel context")
 }
 
 /// Compatibility entry point for TF32 WGMMA.

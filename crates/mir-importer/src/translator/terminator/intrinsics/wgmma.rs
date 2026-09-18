@@ -13,7 +13,7 @@ use crate::translator::rvalue;
 use crate::translator::values::ValueMap;
 use dialect_nvvm::ops::{
     WgmmaMakeSmemDescOp, WgmmaMmaM64N64K8F32Tf32Op, WgmmaMmaM64N64K16F32Bf16Op,
-    WgmmaMmaM64N64K16F32F16Op, WgmmaMmaM64N128K16F32Bf16Op,
+    WgmmaMmaM64N64K16F32F16Op, WgmmaMmaM64N64K32F32E4m3Op, WgmmaMmaM64N128K16F32Bf16Op,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::types::{IntegerType, Signedness};
@@ -407,6 +407,46 @@ pub fn emit_wgmma_mma_m64n64k8_f32_tf32(
     }
 }
 
+/// Emit E4M3 m64n64k32 WGMMA pointer form.
+///
+/// `mir-lower` accepts this variant only in a canonical linear full-drain
+/// region ending in `wait_group<0>`.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_wgmma_mma_m64n64k32_f32_e4m3_e4m3(
+    ctx: &mut Context,
+    body: &mir::Body,
+    args: &[mir::Operand],
+    target: &Option<usize>,
+    block_ptr: Ptr<BasicBlock>,
+    prev_op: Option<Ptr<Operation>>,
+    value_map: &mut ValueMap,
+    block_map: &[Ptr<BasicBlock>],
+    loc: Location,
+) -> TranslationResult<Ptr<Operation>> {
+    emit_wgmma_mma_pointer_form(
+        ctx,
+        body,
+        args,
+        target,
+        block_ptr,
+        prev_op,
+        value_map,
+        block_map,
+        loc,
+        |ctx, operands| {
+            Operation::new(
+                ctx,
+                WgmmaMmaM64N64K32F32E4m3Op::get_concrete_op_info(),
+                vec![],
+                operands,
+                vec![],
+                0,
+            )
+        },
+        "wgmma_mma_m64n64k32_f32_e4m3_e4m3",
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CUSTOM_DESCRIPTOR_UNSUPPORTED, MMA_UNSUPPORTED, unsupported_diagnostic};
@@ -422,6 +462,7 @@ mod tests {
             "cuda_device::wgmma::wgmma_mma_m64n128k16_f32_bf16",
             "cuda_device::wgmma::wgmma_mma_m64n64k16_f32_f16",
             "cuda_device::wgmma::wgmma_mma_m64n64k8_f32_tf32",
+            "cuda_device::wgmma::wgmma_mma_m64n64k32_f32_e4m3_e4m3",
         ] {
             assert_eq!(unsupported_diagnostic(path), None);
         }
