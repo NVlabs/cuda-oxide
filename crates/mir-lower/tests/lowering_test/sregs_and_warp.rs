@@ -1698,7 +1698,7 @@ fn test_redux_result_returned_from_device_function_verifies() -> Result<(), anyh
     use pliron::builtin::types::Signedness::{self, Signed, Unsigned};
     use pliron::r#type::Typed;
 
-    let cases: [(&str, ReduxBuild, Option<Signedness>); 12] = [
+    let cases: [(&str, ReduxBuild, Option<Signedness>); 16] = [
         ("add", nvvm::ReduxSyncAddOp::build, Some(Unsigned)),
         ("and", nvvm::ReduxSyncAndOp::build, Some(Unsigned)),
         ("or", nvvm::ReduxSyncOrOp::build, Some(Unsigned)),
@@ -1709,8 +1709,12 @@ fn test_redux_result_returned_from_device_function_verifies() -> Result<(), anyh
         ("max", nvvm::ReduxSyncMaxOp::build, Some(Signed)),
         ("fmin", nvvm::ReduxSyncFminOp::build, None),
         ("fmax", nvvm::ReduxSyncFmaxOp::build, None),
-        ("fmin_abs_nan", nvvm::ReduxSyncFminAbsNanOp::build, None),
-        ("fmax_abs_nan", nvvm::ReduxSyncFmaxAbsNanOp::build, None),
+        ("fmin_abs", nvvm::ReduxSyncFminAbsOp::build, None),
+        ("fmax_abs", nvvm::ReduxSyncFmaxAbsOp::build, None),
+        ("fmin_NaN", nvvm::ReduxSyncFminNanOp::build, None),
+        ("fmax_NaN", nvvm::ReduxSyncFmaxNanOp::build, None),
+        ("fmin_abs_NaN", nvvm::ReduxSyncFminAbsNanOp::build, None),
+        ("fmax_abs_NaN", nvvm::ReduxSyncFmaxAbsNanOp::build, None),
     ];
 
     for (name, build, signedness) in cases {
@@ -1740,6 +1744,25 @@ fn test_redux_result_returned_from_device_function_verifies() -> Result<(), anyh
             .filter_map(|op| Operation::get_op::<llvm::CallOp>(op, &ctx))
             .collect();
         assert_eq!(calls.len(), 1, "redux_sync_{name}");
+        let CallOpCallable::Direct(callee) = calls[0].callee(&ctx) else {
+            panic!("redux_sync_{name} must remain a direct intrinsic call");
+        };
+        assert_eq!(callee.to_string(), format!("llvm_nvvm_redux_sync_{name}"));
+        let call = calls[0].get_operation().deref(&ctx);
+        let entry = call.get_parent_block().unwrap();
+        assert_eq!(
+            call.operands().collect::<Vec<_>>(),
+            vec![
+                entry.deref(&ctx).get_argument(1),
+                entry.deref(&ctx).get_argument(0)
+            ],
+            "redux_sync_{name} must pass value before member mask"
+        );
+        assert_eq!(
+            call.get_result(0).get_type(&ctx),
+            entry.deref(&ctx).get_argument(1).get_type(&ctx),
+            "redux_sync_{name} result must retain the converted value type"
+        );
         if signedness.is_some() {
             let result_ty = calls[0]
                 .get_operation()
