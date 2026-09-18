@@ -21,6 +21,11 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 cuda-async = { workspace = true, optional = true }
 
+# Architecture-correct O_NOFOLLOW/O_NONBLOCK/ELOOP for the LTOIR cache's
+# no-symlink open; the raw values differ between x86-64 and aarch64.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "0.2"
+
 [features]
 default = []
 async = ["dep:cuda-async", "cuda-macros/async"]
