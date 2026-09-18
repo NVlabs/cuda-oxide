@@ -48,23 +48,42 @@ fn export_volatile_load_prints_keyword() {
     let ptr = entry.deref(&ctx).get_argument(0);
 
     let load = LoadOp::new(&mut ctx, ptr, i32_ty.to_handle());
-    load.set_volatile(&ctx, true);
     load.get_operation().insert_at_back(entry, &ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()
         .insert_at_back(entry, &ctx);
     func.get_operation().insert_at_back(module_block, &ctx);
 
-    let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
-    let line = ir
-        .lines()
-        .find(|line| line.contains("load volatile"))
-        .expect("volatile load line");
-
-    assert!(
-        line.trim_start().contains(" = load volatile i32, ptr "),
-        "volatile load keyword must appear immediately after load:\n{ir}"
-    );
+    // An absent attribute and an explicitly cleared attribute are both ordinary
+    // accesses. Checking true -> false catches presence-only interpretations.
+    for volatile in [None, Some(true), Some(false)] {
+        if let Some(volatile) = volatile {
+            load.set_volatile(&ctx, volatile);
+        }
+        module
+            .get_operation()
+            .verify(&ctx)
+            .expect("valid LLVM dialect");
+        for dialect in [NvvmIrDialect::Modern, NvvmIrDialect::LegacyLlvm7] {
+            let config = NvvmExportConfig::new(dialect);
+            let ir = export_module_to_string_with_config(&ctx, &module, &config)
+                .expect("export succeeds");
+            let lines: Vec<_> = ir
+                .lines()
+                .filter(|line| line.contains(" = load "))
+                .collect();
+            assert_eq!(lines.len(), 1, "one load must remain:\n{ir}");
+            let keyword = if volatile == Some(true) {
+                "volatile "
+            } else {
+                ""
+            };
+            assert!(
+                lines[0].contains(&format!(" = load {keyword}i32")),
+                "load volatility must follow the boolean value:\n{ir}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -89,23 +108,39 @@ fn export_volatile_store_prints_keyword() {
     let val = entry.deref(&ctx).get_argument(1);
 
     let store = StoreOp::new(&mut ctx, val, ptr);
-    store.set_volatile(&ctx, true);
     store.get_operation().insert_at_back(entry, &ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()
         .insert_at_back(entry, &ctx);
     func.get_operation().insert_at_back(module_block, &ctx);
 
-    let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
-    let line = ir
-        .lines()
-        .find(|line| line.contains("store volatile"))
-        .expect("volatile store line");
-
-    assert!(
-        line.trim_start().starts_with("store volatile i32 "),
-        "volatile store keyword must appear immediately after store:\n{ir}"
-    );
+    // An absent attribute and an explicitly cleared attribute are both ordinary
+    // accesses. Checking true -> false catches presence-only interpretations.
+    for volatile in [None, Some(true), Some(false)] {
+        if let Some(volatile) = volatile {
+            store.set_volatile(&ctx, volatile);
+        }
+        module
+            .get_operation()
+            .verify(&ctx)
+            .expect("valid LLVM dialect");
+        for dialect in [NvvmIrDialect::Modern, NvvmIrDialect::LegacyLlvm7] {
+            let config = NvvmExportConfig::new(dialect);
+            let ir = export_module_to_string_with_config(&ctx, &module, &config)
+                .expect("export succeeds");
+            let lines: Vec<_> = ir.lines().filter(|line| line.contains("store ")).collect();
+            assert_eq!(lines.len(), 1, "one store must remain:\n{ir}");
+            let keyword = if volatile == Some(true) {
+                "volatile "
+            } else {
+                ""
+            };
+            assert!(
+                lines[0].contains(&format!("store {keyword}i32")),
+                "store volatility must follow the boolean value:\n{ir}"
+            );
+        }
+    }
 }
 
 #[test]
