@@ -146,29 +146,14 @@ send it to another thread. The compiler's solution is **scoped thread-local
 storage**: the context is available only while you are inside the scope, and
 the type system (plus runtime checks) prevents it from leaking out.
 
-The bridge sets up two nested thread-local variables (TLVs):
+The bridge sets up a thread-local variable (TLV):
 
-| TLV                       | Type                     | Purpose                                                                      |
-| :------------------------ | :----------------------- | :--------------------------------------------------------------------------- |
-| `compiler_interface::TLV` | `&dyn CompilerInterface` | High-level queries: `local_crate()`, `all_local_items()`, entry point lookup |
-| `rustc_internal::TLV`     | `&Container`             | Stable-to-internal type translation via the `Tables` mapping                 |
+| TLV                       | Type                 | Purpose                                                                      |
+| :------------------------ | :------------------- | :--------------------------------------------------------------------------- |
+| `compiler_interface::TLV` | `&CompilerInterface` | High-level queries: `local_crate()`, `all_local_items()`, entry point lookup |
 
-Both point to the same underlying `Container` struct, but provide different
-access patterns:
-
-- **`with()`** accesses the outer TLV for making high-level compiler queries.
-- **`with_container()`** accesses the inner TLV for converting between stable
-  and internal types.
-
-This two-level design keeps the query interface separate from the raw
-translation machinery, so code that only needs to ask "give me all functions
-in the local crate" does not have to know about internal ID mappings.
-
-If you have ever used a web framework's request-scoped context (think Actix's
-`web::Data` or Axum's extractors), the mental model is similar: the data
-exists for the duration of the request (here, the compilation), and the
-framework makes it available without you having to thread it through every
-function signature.
+This TLV points to the `CompilerInterface` struct, which `rustc_public` items access indirectly via the `with` function to query
+the information they need.
 
 ## The bridge pattern
 
