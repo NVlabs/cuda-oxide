@@ -14,6 +14,61 @@ use pliron::r#type::Typed;
 
 use crate::common::{append_return, build_test_kernel, lowered_kernel_body, make_test_ctx};
 
+#[test]
+fn test_wgmma_descriptor_uses_shared_offset_and_nonoverlapping_sw32_stride()
+-> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for address_space in [0, 3] {
+        let mut ctx = make_test_ctx();
+        let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+        let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get(&mut ctx, u8_ty.into(), false, address_space);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
+        let ptr = entry.deref(&ctx).get_argument(0);
+        Operation::new(
+            &mut ctx,
+            nvvm::WgmmaMakeSmemDescOp::get_concrete_op_info(),
+            vec![u64_ty.into()],
+            vec![ptr],
+            vec![],
+            0,
+        )
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let body = lowered_kernel_body(&ctx, module_ptr);
+        assert_eq!(
+            body.iter()
+                .filter(|&&op| Operation::get_op::<llvm::AddrSpaceCastOp>(op, &ctx).is_some())
+                .count(),
+            usize::from(address_space == 0),
+        );
+        let offsets: Vec<_> = body
+            .iter()
+            .filter_map(|&op| Operation::get_op::<llvm::PtrToIntOp>(op, &ctx))
+            .collect();
+        assert_eq!(offsets.len(), 1);
+        let asm = body
+            .iter()
+            .find_map(|&op| Operation::get_op::<llvm::InlineAsmOp>(op, &ctx))
+            .expect("descriptor inline PTX");
+        assert_eq!(
+            asm.get_operation().deref(&ctx).get_operand(0),
+            offsets[0].get_operation().deref(&ctx).get_result(0),
+        );
+        let template = String::from((*asm.get_attr_inline_asm_template(&ctx).unwrap()).clone());
+        assert!(template.contains("shr.u64 addr, $1, 4;"));
+        assert!(template.contains("and.b64 addr, addr, 0x3FFF;"));
+        assert!(template.contains("or.b64 $0, addr, 0xC000001000010000;"));
+        assert!(!template.contains("cvta"));
+    }
+    Ok(())
+}
+
 pub(super) fn build_wgmma_pointer_test_kernel(
     ctx: &mut Context,
     accumulator_count: usize,

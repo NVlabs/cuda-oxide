@@ -120,9 +120,12 @@ include!("generated/wgmma_control.rs");
 
 /// Create a 64-bit shared memory descriptor for WGMMA input matrices.
 ///
-/// This helper creates the fixed-layout descriptor used by the current
-/// lowering. It combines the shared-memory address with fixed stride and
-/// swizzle fields.
+/// Describes a K-major tile with a 32-byte K span and 32-byte swizzling.
+/// The leading offset is encoded as 1 (assumed for swizzled K-major), the
+/// stride between eight-row groups is 256 bytes (encoded as 16), and the
+/// swizzle base offset is zero. This covers BF16 K=16 and E4M3 K=32 tiles.
+/// Store byte offset `row * 32 + byte_in_row` through
+/// `crate::swizzle::Swizzle::<1, 4, 7>::apply`.
 ///
 /// # Parameters
 ///
@@ -135,27 +138,27 @@ include!("generated/wgmma_control.rs");
 /// # Encoding
 ///
 /// ```rust,ignore
-/// ((shared_address >> 4) & 0x3fff) | 0xC000000800080000
+/// ((shared_address >> 4) & 0x3fff) | 0xC000001000010000
 /// ```
 ///
 /// # Safety
 ///
-/// - `ptr` must point to valid shared memory
-/// - The memory layout must match WGMMA requirements (proper alignment, swizzling)
+/// - `ptr` must point to valid shared memory aligned to 256 bytes.
+/// - The tile must use the K-major 32-byte-swizzled layout described above.
 ///
 /// # PTX
 ///
-/// Uses `cvta.to.shared.u64` to convert the generic pointer.
+/// LLVM converts the pointer to shared address space and reads its byte offset
+/// before inline PTX encodes the descriptor.
 #[inline(never)]
 pub unsafe fn make_smem_desc(ptr: *const u8) -> u64 {
     let _ = ptr;
-    // Lowered to inline PTX:
+    // After LLVM addrspacecast + ptrtoint obtains shared_offset:
     // {
     //   .reg .u64 addr;
-    //   cvta.to.shared.u64 addr, %ptr;
-    //   shr.u64 addr, addr, 4;
+    //   shr.u64 addr, shared_offset, 4;
     //   and.b64 addr, addr, 0x3fff;
-    //   or.b64 %result, addr, 0xC000000800080000;
+    //   or.b64 %result, addr, 0xC000001000010000;
     // }
     unreachable!("make_smem_desc called outside CUDA kernel context")
 }

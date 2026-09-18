@@ -9,6 +9,7 @@ use crate::convert::intrinsics::common::*;
 use dialect_nvvm::ops::{
     WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
+use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::ops as llvm;
 use llvm_export::types::{self as llvm_types, VoidType};
 use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
@@ -58,14 +59,18 @@ pub(crate) fn convert_make_smem_desc(
         return pliron::input_err_noloc!("wgmma_make_smem_desc requires operand");
     }
     let ptr = operands[0];
-    let ptr_casted = cast_to_shared_addrspace(ctx, rewriter, ptr);
+    let shared_ptr = cast_to_shared_addrspace(ctx, rewriter, ptr);
+    // Read the shared-space offset, as in cvta_generic_to_shared_offset.
+    // Applying cvta.to.shared again to this offset would treat it as generic.
+    let shared_offset = llvm::PtrToIntOp::new(ctx, shared_ptr, i64_ty.into());
+    rewriter.insert_operation(ctx, shared_offset.get_operation());
+    let shared_offset = shared_offset.get_operation().deref(ctx).get_result(0);
 
     let asm_template = r#"{
     .reg .u64 addr;
-    cvta.to.shared.u64 addr, $1;
-    shr.u64 addr, addr, 4;
+    shr.u64 addr, $1, 4;
     and.b64 addr, addr, 0x3FFF;
-    or.b64 $0, addr, 0xC000000800080000;
+    or.b64 $0, addr, 0xC000001000010000;
 }"#;
 
     let asm_op = inline_asm_convergent(
@@ -73,7 +78,7 @@ pub(crate) fn convert_make_smem_desc(
         rewriter,
         op,
         i64_ty.into(),
-        vec![ptr_casted],
+        vec![shared_offset],
         asm_template,
         "=l,l",
     );

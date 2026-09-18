@@ -212,6 +212,24 @@ mod tests {
 
     const F32: usize = 4;
 
+    #[test]
+    fn wgmma_k_major_sw32_preserves_eight_row_atoms() {
+        // PTX's CuTe Swizzle<1,4,3> uses a relative source-bit position;
+        // our equivalent is Swizzle<1,4,7>. Rows 4..7 in each eight-row group
+        // swap 16-byte halves.
+        let mut seen = [false; 2048];
+        for row in 0..64 {
+            for byte in 0..32 {
+                let offset = Swizzle::<1, 4, 7>::apply(row * 32 + byte);
+                let expected_byte = if row % 8 < 4 { byte } else { byte ^ 16 };
+                assert_eq!(offset, row * 32 + expected_byte);
+                assert!(!seen[offset]);
+                seen[offset] = true;
+            }
+        }
+        assert!(seen.into_iter().all(|present| present));
+    }
+
     /// Apply a swizzle across a whole offset array.
     fn swizzled<const B: usize, const M: usize, const S: usize>(
         offsets: [usize; WARP_LANES],

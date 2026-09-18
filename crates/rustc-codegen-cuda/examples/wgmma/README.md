@@ -7,7 +7,7 @@ Demonstrates WGMMA infrastructure for Hopper's tensor cores. WGMMA enables warpg
 ## What This Example Does
 
 Tests WGMMA synchronization primitives:
-- `wgmma_fence()` - Ensure prior memory operations complete
+- `wgmma_fence()` - Order accumulator register accesses
 - `wgmma_commit_group()` - Commit current instruction group
 - `wgmma_wait_group::<0>()` - Wait for all groups to complete
 - `make_smem_desc()` - Create SMEM descriptor with swizzle
@@ -19,8 +19,8 @@ Tests WGMMA synchronization primitives:
 ```rust
 #[kernel]
 pub unsafe fn wgmma_sync_test(mut output: DisjointSlice<u64>) {
-    // Shared memory for matrix tile (128-byte aligned)
-    static mut SMEM: SharedArray<u8, 256, 128> = SharedArray::UNINIT;
+    // Shared memory for matrix tile (256-byte aligned)
+    static mut SMEM: SharedArray<u8, 256, 256> = SharedArray::UNINIT;
 
     let tid = thread::threadIdx_x();
     let gid = thread::index_1d();
@@ -29,7 +29,7 @@ pub unsafe fn wgmma_sync_test(mut output: DisjointSlice<u64>) {
     let desc = make_smem_desc(&raw const SMEM as *const u8);
 
     // WGMMA sync sequence (this test validates fence/commit/wait only)
-    wgmma_fence();           // Ensure prior ops complete
+    wgmma_fence();           // Order prior register accesses
     wgmma_commit_group();    // Commit instruction group
     wgmma_wait_group::<0>(); // Wait for all groups
 
@@ -49,7 +49,7 @@ pub unsafe fn wgmma_sync_test(mut output: DisjointSlice<u64>) {
 // Bits 0-13:   Base address >> 4
 // Bits 16-29:  Leading dimension offset >> 4
 // Bits 32-45:  Stride offset >> 4
-// Bits 62-63:  Swizzle mode (3 = 128B swizzle)
+// Bits 62-63:  Swizzle mode (3 = 32B swizzle)
 
 let desc = make_smem_desc(smem_ptr);
 // desc encodes the memory layout for WGMMA hardware
@@ -76,16 +76,21 @@ Loading PTX from: wgmma.ptx
 --- Test: WGMMA Sync Primitives ---
 
 Launching wgmma_sync_test kernel...
-SMEM descriptor: 0xC00000080008xxxx
-✓ Swizzle mode correct (128B)
-  Leading dimension offset: 8 (raw bits)
-  Stride offset: 8 (raw bits)
+SMEM descriptor: 0xC00000100001xxxx
+✓ Swizzle mode correct (32B)
+  Leading dimension offset: 1 (raw bits)
+  Stride offset: 16 (raw bits)
+SUCCESS: WGMMA descriptor fields and alignment verified
 
 === WGMMA Test Complete ===
 ```
 
 `xxxx` is the descriptor's variable 14-bit shared-memory address field. The
-fixed `0008` fields decode to raw leading-dimension and stride offsets of `8`.
+leading offset is encoded as `1` (assumed for swizzled K-major) and the
+stride as `16` (256 bytes between eight-row groups). Mode `3` selects
+32-byte swizzling; the zero base-offset field requires 256-byte alignment.
+For a 32-byte K span, store logical byte offsets using
+`cuda_device::swizzle::Swizzle::<1, 4, 7>::apply`.
 
 ### On Pre-Hopper or Blackwell:
 
@@ -127,30 +132,25 @@ GPU Compute Capability: sm_120
 ## WGMMA Instruction Sequence
 
 ```rust
-// 1. Fence before loading data
+// All threads cooperatively write correctly swizzled A and B tiles.
+// Each writer publishes its generic shared-memory stores to the async proxy.
+fence_proxy_async_shared_cta();
+thread::sync_threads();
+
+// Fence accumulator registers, issue MMA, then fully drain the group.
 wgmma_fence();
-
-// 2. Load matrix tiles into SMEM
-// ... TMA or manual loads ...
-
-// 3. Fence after loads
-wgmma_fence();
-
-// 4. Issue WGMMA instruction
-// wgmma_mma_f16_f16_f32(acc, a_desc, b_desc);  // Not in this example
-
-// 5. Commit and wait
+// wgmma_mma_m64n64k16_f32_bf16(&mut acc, a_desc, b_desc);
 wgmma_commit_group();
-wgmma_wait_group::<0>();  // Wait for all groups
+wgmma_wait_group::<0>();
 
-// 6. Accumulator results now ready in registers
+// Accumulator results are now safe to read.
 ```
 
 ## WGMMA Functions
 
 | Function                 | PTX                               | Description       |
 |--------------------------|-----------------------------------|-------------------|
-| `wgmma_fence()`          | `wgmma.fence.sync.aligned`        | Memory fence      |
+| `wgmma_fence()`          | `wgmma.fence.sync.aligned`        | Register fence    |
 | `wgmma_commit_group()`   | `wgmma.commit_group.sync.aligned` | Commit group      |
 | `wgmma_wait_group::<N>()`| `wgmma.wait_group.sync.aligned N` | Wait for N groups |
 | `make_smem_desc(ptr)`    | Computed                          | Create descriptor |
@@ -176,7 +176,7 @@ This example only tests the **synchronization primitives** and **descriptor crea
 
 1. **Matrix layout understanding**: Row/column major, swizzle patterns
 2. **Warpgroup coordination**: 128 threads working together
-3. **Accumulator management**: 8-16 register accumulators per thread
+3. **Accumulator management**: 32 f32 register accumulators per thread for m64n64
 4. **Complex descriptor setup**: A and B matrices have different formats
 
 For production GEMM on Hopper, use cuBLAS or CUTLASS which handle these complexities.
