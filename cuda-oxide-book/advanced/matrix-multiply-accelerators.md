@@ -67,6 +67,7 @@ WGMMA always has M=64 (rows), with N and K depending on the element type:
 | :----------- | :- | :------------- |
 | f16, bf16    | 16 | 64, 128, 256   |
 | tf32         | 8  | 64, 128, 256   |
+| e4m3, e5m2   | 32 | 64, 128, 256   |
 
 Each instruction computes a 64×N×K tile. For larger K dimensions, you issue
 multiple WGMMA instructions in a loop, accumulating into the same register
@@ -120,11 +121,38 @@ For TF32, use `wgmma_mma_m64n64k8_f32_tf32`. The K=16 TF32
 compatibility entry point remains unsupported because Hopper's TF32 WGMMA
 hardware shape uses K=8.
 
+For FP8, use `wgmma_mma_m64n64k32_f32_e4m3_e4m3` with the same
+`[[f32; 8]; 4]` accumulator and full-drain sequence. The first supported
+variant is E4M3 × E4M3 with F32 accumulation and fixed TN operands:
+A is row-major and B is column-major, both K-major in shared memory.
+There are no transpose controls, counted loops, partial waits, or pointer
+fallback for FP8.
+
+`make_smem_desc` describes a fixed K-major layout with a 32-byte K span,
+32-byte swizzling, a 256-byte stride between eight-row groups, and a
+256-byte-aligned base. This byte geometry fits both BF16 K=16 and E4M3
+K=32. It is not a descriptor for arbitrary row-major data. For generic
+shared-memory stores, every writer must call
+`cuda_device::barrier::fence_proxy_async_shared_cta()`, followed by
+`thread::sync_threads()`, before the WGMMA sequence. `wgmma_fence()` orders
+register accesses and does not replace this shared-memory proxy fence.
+
+The runnable `wgmma_mma_fp8` example checks every output against an F32
+reference and compares FP8 and BF16 tile throughput using CUDA events:
+
+```bash
+cargo oxide run wgmma_mma_fp8 --arch=sm_90a
+```
+
+The older `wgmma_mma_bf16` example uses zero descriptors for compiler
+integration checks and must not be launched.
+
 ### Current cuda-oxide WGMMA lowering
 
 The compiler supports `m64n64k16.f32.bf16.bf16` across three conservative
 lowering shapes, `m64n64k16.f32.f16.f16` for canonical linear full-drain and
 counted K-loop regions, `m64n64k8.f32.tf32.tf32` for canonical linear
+full-drain regions only, `m64n64k32.f32.e4m3.e4m3` for canonical linear
 full-drain regions only, and `m64n128k16.f32.bf16.bf16` for canonical linear
 full-drain regions. In every accepted case, the entire asynchronous
 accumulator lifetime stays inside one convergent inline-PTX statement so LLVM
@@ -132,9 +160,9 @@ cannot insert a spill boundary while a WGMMA group is pending.
 
 **m64n64 linear full drain.** A canonical `[[f32; 8]; 4]` accumulator is loaded
 into 32 SSA `f32` values before the WGMMA region and stored once after the final
-`wait_group<0>`. BF16, F16, and TF32 use this value-threaded carrier.
+`wait_group<0>`. BF16, F16, TF32, and E4M3 use this value-threaded carrier.
 Unsupported BF16 full-drain pointer shapes retain the original deferred
-pointer-form lowering; F16 and TF32 do not have a pointer-form fallback.
+pointer-form lowering; F16, TF32, and E4M3 do not have a pointer-form fallback.
 
 **m64n128 BF16 linear full drain.** A canonical `[[f32; 8]; 8]` accumulator is
 carried as 64 tied SSA `f32` values through one or more homogeneous
@@ -170,9 +198,9 @@ accumulator. A final `wait_group<0>` is mandatory before any accumulator value
 escapes the fused region.
 
 Selection is intentionally fail-closed. Dynamic partial waits, unsupported
-control flow, malformed accumulator schedules, F16 partial-wait shapes, TF32
+control flow, malformed accumulator schedules, F16 partial-wait shapes, TF32/E4M3
 counted-loop or partial-wait shapes, m64n128 counted-loop or partial-wait
-shapes, F16/TF32/m64n128 non-canonical accumulators, and the legacy K=16 TF32
+shapes, F16/TF32/E4M3/m64n128 non-canonical accumulators, and the legacy K=16 TF32
 compatibility entry point are rejected instead of exposing an in-flight
 accumulator to LLVM.
 
