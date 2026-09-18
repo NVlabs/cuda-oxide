@@ -322,6 +322,7 @@ mod tests {
     use crate::convert::ops::test_util::*;
     use dialect_mir::ops as mir;
     use dialect_mir::types::{MirPtrType, MirStructType, MirTupleType, StructAbiKind};
+    use llvm_export::op_interfaces::VolatilityOpInterface;
     use llvm_export::ops as llvm;
     use pliron::builtin::op_interfaces::{
         BranchOpInterface, CallOpCallable, CallOpInterface, OperandSegmentInterface,
@@ -1056,7 +1057,7 @@ mod tests {
         assert_eq!(count_ops::<llvm::CondBrOp>(&ctx, &blocks), 3);
         for (store, expected) in stores.iter().zip([carried, middle, final_value]) {
             assert_eq!(store.get_operation().deref(&ctx).get_operand(0), expected);
-            assert!(llvm_export::ops::op_volatile(&ctx, store.get_operation()));
+            assert!(store.is_volatile(&ctx));
         }
         for (index, condition) in [first_condition, second_condition].into_iter().enumerate() {
             let block = stores[index]
