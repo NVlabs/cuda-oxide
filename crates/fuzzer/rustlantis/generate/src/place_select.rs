@@ -374,7 +374,7 @@ mod tests {
 
     use config::TyConfig;
     use mir::{
-        syntax::{Local, LocalDecl, LocalDecls, Place},
+        syntax::{Local, LocalDecl, LocalDecls, Mutability, Place, ProjectionElem, Static, TyKind},
         tyctxt::TyCtxt,
     };
     use rand::{
@@ -407,6 +407,53 @@ mod tests {
             }
         }
         (pt, tcx, decls)
+    }
+
+    #[test]
+    fn invalidated_static_reference_is_not_an_argument_candidate() {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        let t_ptr = tcx.push(TyKind::RawPtr(TyCtxt::I32, Mutability::Mut));
+        let t_shared_ref = tcx.push(TyKind::Ref(TyCtxt::I32, Mutability::Not));
+        let tcx = Rc::new(tcx);
+        let mut pt = PlaceGraph::new(tcx.clone());
+
+        let static_id = Static::new(0);
+        let static_place =
+            pt.allocate_static(static_id, TyCtxt::I32, Mutability::Mut, 7_i32.into());
+
+        let root = Local::new(1);
+        let root_p = pt.allocate_local(root, t_ptr);
+        pt.mark_place_init(root_p);
+        pt.set_static_ref(root_p, static_id);
+
+        let alias = Local::new(2);
+        let alias_p = pt.allocate_local(alias, t_shared_ref);
+        pt.mark_place_init(alias_p);
+        pt.set_ref(alias_p, static_place, None);
+
+        let mut decls = LocalDecls::new();
+        decls.push(LocalDecl::new_mut(TyCtxt::UNIT));
+        decls.push(LocalDecl::new_mut(t_ptr));
+        decls.push(LocalDecl::new_mut(t_shared_ref));
+
+        let before: Vec<Place> = PlaceSelector::for_argument(tcx.clone())
+            .of_ty(t_shared_ref)
+            .into_iter_place(&pt, &decls)
+            .collect();
+        assert!(before.iter().any(|place| place.local() == alias));
+
+        let mut through_root = Place::from_local(root);
+        through_root
+            .project(ProjectionElem::Deref, &decls, &tcx)
+            .unwrap();
+        let root_tag = pt.accessing_tag(&through_root);
+        pt.place_written(&through_root, root_tag);
+
+        let after: Vec<Place> = PlaceSelector::for_argument(tcx.clone())
+            .of_ty(t_shared_ref)
+            .into_iter_place(&pt, &decls)
+            .collect();
+        assert!(!after.iter().any(|place| place.local() == alias));
     }
 
     #[bench]
