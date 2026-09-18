@@ -1752,3 +1752,165 @@ fn test_mma_m16n8k32_s32_s8_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
     assert_eq!(found, 1, "expected one mma.sync inline-asm operation");
     Ok(())
 }
+
+#[test]
+fn test_generated_plain_sparse_fp8_m16n8k64_lowers_to_exact_convergent_inline_ptx()
+-> Result<(), anyhow::Error> {
+    use pliron::builtin::attributes::IntegerAttr;
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    // The plain (standard-metadata) SM89 sparse FP8 forms. Every combination of
+    // the reviewed e4m3/e5m2 multiplicand pair must lower to its own exact PTX
+    // spelling; mixing them up would silently compute the wrong product.
+    let cases = [
+        (
+            "e4m3",
+            "e4m3",
+            nvvm::SparseMmaElementAttr::E4m3,
+            nvvm::SparseMmaElementAttr::E4m3,
+        ),
+        (
+            "e4m3",
+            "e5m2",
+            nvvm::SparseMmaElementAttr::E4m3,
+            nvvm::SparseMmaElementAttr::E5m2,
+        ),
+        (
+            "e5m2",
+            "e4m3",
+            nvvm::SparseMmaElementAttr::E5m2,
+            nvvm::SparseMmaElementAttr::E4m3,
+        ),
+        (
+            "e5m2",
+            "e5m2",
+            nvvm::SparseMmaElementAttr::E5m2,
+            nvvm::SparseMmaElementAttr::E5m2,
+        ),
+    ];
+
+    for backend in [
+        mir_lower::IntrinsicBackend::LlvmNvptx,
+        mir_lower::IntrinsicBackend::LibNvvm,
+    ] {
+        for (a_name, b_name, a_element, b_element) in &cases {
+            let mut ctx = make_test_ctx();
+            let float_ty = FP32Type::get(&ctx);
+            let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+            let argument_types = (0..4)
+                .map(|_| float_ty.into())
+                .chain((0..9).map(|_| u32_ty.into()))
+                .collect();
+            let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+
+            let selector_op = Operation::new(
+                &mut ctx,
+                mir::MirConstantOp::get_concrete_op_info(),
+                vec![u32_ty.into()],
+                vec![],
+                vec![],
+                0,
+            );
+            mir::MirConstantOp::new(selector_op).set_attr_value(
+                &ctx,
+                IntegerAttr::new(u32_ty, APInt::from_u32(0, NonZeroUsize::new(32).unwrap())),
+            );
+            selector_op.insert_at_back(entry, &ctx);
+            let selector = selector_op.deref(&ctx).get_result(0);
+
+            let operands = (0..13)
+                .map(|index| entry.deref(&ctx).get_argument(index))
+                .chain(std::iter::once(selector))
+                .collect();
+            let operation = Operation::new(
+                &mut ctx,
+                nvvm::SparseMmaOp::get_concrete_op_info(),
+                vec![float_ty.into(); 4],
+                operands,
+                vec![],
+                0,
+            );
+            let mma = nvvm::SparseMmaOp::new(operation);
+            mma.set_attr_nvvm_sparse_mma_shape(&ctx, nvvm::SparseMmaShapeAttr::M16n8k64);
+            mma.set_attr_nvvm_sparse_mma_accumulator(&ctx, nvvm::SparseMmaAccumulatorAttr::F32);
+            mma.set_attr_nvvm_sparse_mma_a_element(&ctx, a_element.clone());
+            mma.set_attr_nvvm_sparse_mma_b_element(&ctx, b_element.clone());
+            mma.set_attr_nvvm_sparse_mma_a_layout(&ctx, nvvm::SparseMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_sparse_mma_b_layout(&ctx, nvvm::SparseMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_sparse_mma_overflow(&ctx, nvvm::SparseMmaOverflowAttr::NotApplicable);
+            mma.set_attr_nvvm_sparse_mma_metadata(&ctx, nvvm::SparseMmaMetadataAttr::Standard);
+            mma.set_attr_nvvm_sparse_mma_selector(&ctx, nvvm::SparseMmaSelectorAttr::ImmediateZero);
+            operation.insert_at_back(entry, &ctx);
+            append_return(&mut ctx, entry);
+
+            mir_lower::lower_mir_to_llvm_with_options(
+                &mut ctx,
+                module_ptr,
+                mir_lower::LoweringOptions {
+                    intrinsic_backend: backend,
+                    ..Default::default()
+                },
+            )
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+            let body = lowered_kernel_body(&ctx, module_ptr);
+            let lowered = body
+                .iter()
+                .filter_map(|op| Operation::get_op::<llvm::InlineAsmOp>(*op, &ctx))
+                .collect::<Vec<_>>();
+            assert_eq!(lowered.len(), 1, "{backend:?} {a_name}x{b_name}");
+            let asm = &lowered[0];
+            let expected_template = format!(
+                "mma.sp.sync.aligned.m16n8k64.row.col.f32.{a_name}.{b_name}.f32 {{$0, $1, $2, $3}}, {{$8, $9, $10, $11}}, {{$12, $13, $14, $15}}, {{$4, $5, $6, $7}}, $16, $17;"
+            );
+            assert_eq!(
+                asm.get_attr_inline_asm_template(&ctx)
+                    .as_deref()
+                    .map(|value| String::from(value.clone())),
+                Some(expected_template)
+            );
+            // Four f32 outputs, the f32 C fragment, the packed A/B registers,
+            // the metadata register and the compile-time selector immediate.
+            assert_eq!(
+                asm.get_attr_inline_asm_constraints(&ctx)
+                    .as_deref()
+                    .map(|value| String::from(value.clone())),
+                Some("=f,=f,=f,=f,f,f,f,f,r,r,r,r,r,r,r,r,r,n".to_string())
+            );
+            assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+            let asm_operation = asm.get_operation().deref(&ctx);
+            assert_eq!(asm_operation.get_num_operands(), 14);
+            assert_eq!(asm_operation.get_num_results(), 1);
+            let lowered_selector = asm_operation.get_operand(13);
+            let defining_op = lowered_selector
+                .defining_op()
+                .expect("sparse MMA selector remains an LLVM constant");
+            let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
+                .expect("sparse MMA selector remains an LLVM integer constant");
+            let attribute = constant.get_value(&ctx);
+            let integer = (&*attribute as &dyn pliron::attribute::Attribute)
+                .downcast_ref::<IntegerAttr>()
+                .expect("sparse MMA selector is an integer");
+            assert_eq!(integer.value().bw(), 32);
+            assert_eq!(integer.value().to_u64(), 0);
+            assert_eq!(
+                body.iter()
+                    .filter(|op| Operation::get_op::<llvm::ExtractValueOp>(**op, &ctx).is_some())
+                    .count(),
+                4
+            );
+
+            let module = Operation::get_op::<ModuleOp>(module_ptr, &ctx).unwrap();
+            let ir = llvm_export::export::export_module_to_string(&ctx, &module)
+                .expect("generated sparse MMA exports to LLVM IR");
+            assert!(ir.contains("asm sideeffect"), "{ir}");
+            assert!(ir.contains("{ convergent }"), "{ir}");
+            assert!(ir.contains(a_name), "{ir}");
+            assert!(ir.contains(b_name), "{ir}");
+        }
+    }
+
+    Ok(())
+}
