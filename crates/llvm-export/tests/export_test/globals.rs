@@ -210,22 +210,32 @@ fn immutable_globals_export_the_constant_keyword() {
     plain.set_initializer_hex(&mut ctx, "01020304");
     plain.get_operation().insert_at_back(module_block, &ctx);
 
-    for config in [
-        NvvmExportConfig::new(NvvmIrDialect::Modern),
-        NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
-    ] {
-        let ir = export_module_to_string_with_config(&ctx, &module, &config)
-            .expect("immutable global export succeeds");
-        assert!(
-            ir.contains(
-                r#"@promoted_table = addrspace(1) constant [4 x i8] c"\01\02\03\04", align 4"#
-            ),
-            "promoted global lost the constant keyword:\n{ir}"
-        );
-        assert!(
-            ir.contains(r#"@plain_static = addrspace(1) global [4 x i8] c"\01\02\03\04", align 4"#),
-            "unmarked global must not become constant:\n{ir}"
-        );
+    // The absent property and a cleared true property both denote mutable
+    // storage. The latter catches an incorrect presence-only interpretation.
+    for clear_constant in [false, true] {
+        if clear_constant {
+            plain.set_constant(&mut ctx, true);
+            plain.set_constant(&mut ctx, false);
+        }
+        for config in [
+            NvvmExportConfig::new(NvvmIrDialect::Modern),
+            NvvmExportConfig::new(NvvmIrDialect::LegacyLlvm7),
+        ] {
+            let ir = export_module_to_string_with_config(&ctx, &module, &config)
+                .expect("immutable global export succeeds");
+            assert!(
+                ir.contains(
+                    r#"@promoted_table = addrspace(1) constant [4 x i8] c"\01\02\03\04", align 4"#
+                ),
+                "promoted global lost the constant keyword:\n{ir}"
+            );
+            assert!(
+                ir.contains(
+                    r#"@plain_static = addrspace(1) global [4 x i8] c"\01\02\03\04", align 4"#
+                ),
+                "unmarked global must not become constant:\n{ir}"
+            );
+        }
     }
 }
 
