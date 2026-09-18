@@ -2295,3 +2295,83 @@ fn test_matrix_memory_ops_verify_pointer_and_packed_register_types() {
     );
     assert!(StmatrixM8n8X4Op::new(bad_store).verify(&ctx).is_err());
 }
+
+#[test]
+fn generated_plain_sparse_fp8_standard_metadata_is_a_verified_combination() {
+    use pliron::builtin::{attributes::IntegerAttr, ops::ConstantOp};
+    use pliron::utils::apint::APInt;
+    use std::num::NonZeroUsize;
+
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let f32_ty = FP32Type::get(&ctx);
+    let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
+    let block = BasicBlock::new(&mut ctx, None, vec![f32_ty.into(), u32_ty.into()]);
+    let f32_value = block.deref(&ctx).get_argument(0);
+    let u32_value = block.deref(&ctx).get_argument(1);
+    let selector_for = |ctx: &mut Context, value| {
+        let attribute = IntegerAttr::new(
+            u32_ty,
+            APInt::from_u32(value, NonZeroUsize::new(32).unwrap()),
+        );
+        ConstantOp::new(ctx, Box::new(attribute))
+            .get_operation()
+            .deref(ctx)
+            .get_result(0)
+    };
+    let zero = selector_for(&mut ctx, 0);
+    let one = selector_for(&mut ctx, 1);
+
+    // The reviewed plain SM89 forms: standard sparsity metadata with an F32
+    // accumulator over the e4m3/e5m2 multiplicand pair.
+    let plain_mma =
+        |ctx: &mut Context, selector, a: SparseMmaElementAttr, b: SparseMmaElementAttr| {
+            let operands = [vec![f32_value; 4], vec![u32_value; 9], vec![selector]].concat();
+            let operation = Operation::new(
+                ctx,
+                SparseMmaOp::get_concrete_op_info(),
+                vec![f32_ty.into(); 4],
+                operands,
+                vec![],
+                0,
+            );
+            let mma = SparseMmaOp::new(operation);
+            mma.set_attr_nvvm_sparse_mma_shape(ctx, SparseMmaShapeAttr::M16n8k64);
+            mma.set_attr_nvvm_sparse_mma_accumulator(ctx, SparseMmaAccumulatorAttr::F32);
+            mma.set_attr_nvvm_sparse_mma_a_element(ctx, a);
+            mma.set_attr_nvvm_sparse_mma_b_element(ctx, b);
+            mma.set_attr_nvvm_sparse_mma_a_layout(ctx, SparseMmaLayoutAttr::Row);
+            mma.set_attr_nvvm_sparse_mma_b_layout(ctx, SparseMmaLayoutAttr::Col);
+            mma.set_attr_nvvm_sparse_mma_overflow(ctx, SparseMmaOverflowAttr::NotApplicable);
+            mma.set_attr_nvvm_sparse_mma_metadata(ctx, SparseMmaMetadataAttr::Standard);
+            mma.set_attr_nvvm_sparse_mma_selector(ctx, SparseMmaSelectorAttr::ImmediateZero);
+            mma
+        };
+
+    for a in [SparseMmaElementAttr::E4m3, SparseMmaElementAttr::E5m2] {
+        for b in [SparseMmaElementAttr::E4m3, SparseMmaElementAttr::E5m2] {
+            let mma = plain_mma(&mut ctx, zero, a.clone(), b.clone());
+            assert!(verify_op(&mma, &ctx).is_ok(), "rejected {a:?}x{b:?}");
+        }
+    }
+
+    // The plain forms are selector-immediate-zero only.
+    let nonzero_selector = plain_mma(
+        &mut ctx,
+        one,
+        SparseMmaElementAttr::E4m3,
+        SparseMmaElementAttr::E4m3,
+    );
+    assert!(verify_op(&nonzero_selector, &ctx).is_err());
+
+    // Block-scale-only formats stay rejected under standard metadata.
+    let block_scale_only = plain_mma(
+        &mut ctx,
+        zero,
+        SparseMmaElementAttr::E2m1,
+        SparseMmaElementAttr::E2m1,
+    );
+    assert!(verify_op(&block_scale_only, &ctx).is_err());
+}

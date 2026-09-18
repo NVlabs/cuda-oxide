@@ -17,12 +17,13 @@ use crate::model::{
     PackedConversionSaturation, PackedConversionSourceFormat, PreSm70MemberMaskRule, PrmtAdmission,
     PrmtMode, RegisterMmaAccumulator, RegisterMmaAmpereFloatAdmission, RegisterMmaF8F6F4Admission,
     RegisterMmaFp8Admission, RuntimeValidation, SparseMmaElement, SparseMmaF8F6F4Admission,
-    SparseMmaF8F6F4F16Admission, SpecialRegisterAdmission, StmatrixAdmission, StmatrixLayout,
-    StmatrixMultiplicity, Tcgen05Admission, Tcgen05CpAdmissionVariant, Tcgen05CpGroup,
-    Tcgen05LdAdmissionVariant, Tcgen05MmaAdmissionVariant, Tcgen05MmaForm, Tcgen05Operation,
-    Tcgen05StAdmissionVariant, ThreadfenceAdmission, ThreadfenceScope, TmaAdmission, VoteAdapter,
-    VoteMode, VoteParticipation, WarpShuffleAdapter, WarpShuffleMode, WarpShuffleParticipation,
-    WarpShuffleSourceLane, WarpShuffleValueKind, WgmmaControlAdmission, WgmmaControlMode,
+    SparseMmaF8F6F4F16Admission, SparseMmaFp8F32Admission, SpecialRegisterAdmission,
+    StmatrixAdmission, StmatrixLayout, StmatrixMultiplicity, Tcgen05Admission,
+    Tcgen05CpAdmissionVariant, Tcgen05CpGroup, Tcgen05LdAdmissionVariant,
+    Tcgen05MmaAdmissionVariant, Tcgen05MmaForm, Tcgen05Operation, Tcgen05StAdmissionVariant,
+    ThreadfenceAdmission, ThreadfenceScope, TmaAdmission, VoteAdapter, VoteMode, VoteParticipation,
+    WarpShuffleAdapter, WarpShuffleMode, WarpShuffleParticipation, WarpShuffleSourceLane,
+    WarpShuffleValueKind, WgmmaControlAdmission, WgmmaControlMode,
 };
 use crate::ptx::{InstructionPattern, OperandPattern};
 use crate::util::read_json;
@@ -1300,6 +1301,17 @@ pub(super) fn test_f8f6f4_admission() -> SparseMmaF8F6F4Admission {
         a_elements: formats.clone(),
         b_elements: formats,
         product_count: 25,
+    }
+}
+
+pub(super) fn test_sparse_mma_fp8_f32_admission() -> SparseMmaFp8F32Admission {
+    SparseMmaFp8F32Admission {
+        llvm_evidence_profile: "llvm-test".into(),
+        libnvvm_evidence_profile: "libnvvm-test".into(),
+        runtime_validation: RuntimeValidation::Unexecuted,
+        a_elements: SPARSE_MMA_FP8_F32_ELEMENTS.into(),
+        b_elements: SPARSE_MMA_FP8_F32_ELEMENTS.into(),
+        product_count: 4,
     }
 }
 

@@ -73,6 +73,8 @@ pub struct OverlayShardFile {
     #[serde(default)]
     pub sparse_mma_f8f6f4_f16: Option<SparseMmaF8F6F4F16Admission>,
     #[serde(default)]
+    pub sparse_mma_fp8_f32: Option<SparseMmaFp8F32Admission>,
+    #[serde(default)]
     pub sparse_mma_ordered_ampere_float: Option<SparseMmaOrderedAmpereFloatAdmission>,
     #[serde(default)]
     pub prmt: Option<PrmtAdmission>,
@@ -724,6 +726,21 @@ pub struct SparseMmaF8F6F4F16Admission {
     /// ABI identity is bound from the append-only ledger by catalog ID.
     #[serde(default, rename = "first_abi_id")]
     pub _legacy_first_abi_id: Option<String>,
+    pub a_elements: Vec<SparseMmaElement>,
+    pub b_elements: Vec<SparseMmaElement>,
+    pub product_count: usize,
+}
+
+/// Compact admission for the reviewed plain (standard-metadata) SM89 sparse FP8
+/// F32 MMA forms. Unlike the `kind::f8f6f4` families these carry no block-scale
+/// qualifier: they are the ordinary `mma.sp.sync.aligned` forms that PTX ISA 8.4
+/// introduced for `sm_89`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SparseMmaFp8F32Admission {
+    pub llvm_evidence_profile: String,
+    pub libnvvm_evidence_profile: String,
+    pub runtime_validation: RuntimeValidation,
     pub a_elements: Vec<SparseMmaElement>,
     pub b_elements: Vec<SparseMmaElement>,
     pub product_count: usize,
