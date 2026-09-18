@@ -443,6 +443,7 @@ dependencies = [
  "cuda-device",
  "cuda-macros",
  "half",
+ "oxide-artifacts 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ptx-parse",
  "sha2",
  "thiserror 2.0.18",
