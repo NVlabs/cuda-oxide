@@ -1322,11 +1322,16 @@ mod tests {
     #[test]
     fn pack_lanes_uses_group_relative_bit_positions() {
         let cases = [
+            (0, u32::MAX, 0),
+            (0x8000_0000, 0x8000_0000, 1),
+            (0x8000_0000, 0x7FFF_FFFF, 0),
+            (0x8010_0089, 0x7FEF_FF76, 0),
             (0x5555_5555, 0x5555_5555, 0x0000_FFFF),
             (0x5555_5555, 0x4444_4444, 0x0000_AAAA),
             (0x8010_0089, 0x8010_0008, 0x0000_001A),
             (0x8000_0001, 0x8000_0000, 0x0000_0002),
             (u32::MAX, 0xA5A5_5A5A, 0xA5A5_5A5A),
+            (u32::MAX, 0, 0),
         ];
 
         for (group_mask, lane_mask, expected) in cases {

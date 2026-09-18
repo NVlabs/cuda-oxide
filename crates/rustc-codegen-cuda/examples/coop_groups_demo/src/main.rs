@@ -270,8 +270,18 @@ pub fn test_typed_warp16_shfl(mut out: DisjointSlice<u32>) {
     } else {
         true
     };
+    // Include the top physical lane and gaps of different sizes, so the
+    // device regression cannot pass by merely shifting an even-lane ballot.
+    let irregular_ok = if (0x8010_0089u32 & (1u32 << lane)) != 0 {
+        let group = coalesced_threads();
+        (group.ballot(lane == 3 || lane == 20 || lane == 31) == 0x1A)
+            & (group.ballot(true) == 0x1F)
+            & (group.ballot(false) == 0)
+    } else {
+        true
+    };
     if let Some(slot) = out.get_mut(gid) {
-        *slot = if tile_ok & coalesced_ok {
+        *slot = if tile_ok & coalesced_ok & irregular_ok {
             broadcast
         } else {
             u32::MAX
