@@ -577,3 +577,34 @@ fn test_tma_multicast_detection_requires_cta_mask() {
     );
     assert!(!contains_tma_cta_group_features(unrelated_i32));
 }
+
+/// A conjunctive predicate must not match across unrelated code (#1303).
+///
+/// The scan runs over LLVM IR, where `;` starts a comment instead of ending a
+/// statement: `redux_minmax.ll` is 98 lines with one semicolon in it. Split on
+/// `;` alone, a whole module is one "statement", and `redux.sync` && `.f32`
+/// is satisfied by a module that uses integer reductions and, anywhere else,
+/// a float.
+#[test]
+fn test_integer_redux_beside_unrelated_f32_is_not_the_f32_extension() {
+    // The shape `warp_reduce`'s integer fast path produces: NVVM intrinsic
+    // declarations for the integer forms, and ordinary float work in another
+    // kernel. No f32 redux anywhere.
+    let integer_redux_plus_float = r#"
+            declare i32 @llvm.nvvm.redux.sync.add(i32, i32) #0
+            declare i32 @llvm.nvvm.redux.sync.umin(i32, i32) #0
+            define float @reduce_f32(float %v) {
+              %s = call float @llvm.nvvm.shfl.sync.bfly.f32(i32 -1, float %v, i32 16, i32 31)
+              ret float %s
+            }
+        "#;
+    assert!(
+        !detect_features_in_llvm_text(integer_redux_plus_float)
+            .contains(DetectedFeatures::ReduxF32),
+        "integer redux beside unrelated f32 must not read as the f32 extension"
+    );
+
+    // The real thing still is: one declaration naming both.
+    let f32_redux = "declare float @llvm.nvvm.redux.sync.fmin.f32(float, i32) #0";
+    assert!(detect_features_in_llvm_text(f32_redux).contains(DetectedFeatures::ReduxF32));
+}
