@@ -7,6 +7,26 @@ use super::features::{DetectedFeatures, ModuleRequirements, PtxIsaRequirement};
 use crate::error::PipelineError;
 use std::path::Path;
 
+/// The text this module's predicates treat as one instruction.
+///
+/// The scan runs over **LLVM IR**, where `;` begins a comment rather than
+/// ending a statement, so splitting on `;` alone hands a predicate the whole
+/// module: `redux_minmax.ll` is 98 lines and contains exactly one semicolon.
+/// Every predicate that asks for two things in the same statement then really
+/// asks whether both appear anywhere in the module -- a module using integer
+/// `redux.sync` and, elsewhere, any `.f32` was read as needing the f32 redux
+/// extension and pushed from sm_80 to sm_100a (#1303).
+///
+/// Splitting on newlines as well keeps the granularity these predicates were
+/// written for. IR is line-oriented, and where PTX text does reach the IR it
+/// sits within a single line -- a multi-instruction asm template escapes its
+/// newlines as `\0A`, which is not a newline in the file text. So this is
+/// strictly finer than splitting on `;`: it can only remove matches that span
+/// unrelated code, never split an instruction that was whole before.
+fn statements(contents: &str) -> impl Iterator<Item = &str> {
+    contents.split([';', '\n'])
+}
+
 pub(super) fn contains_wgmma_features(contents: &str) -> bool {
     contents.contains("wgmma.fence")
         || contents.contains("wgmma.commit_group")
@@ -43,7 +63,7 @@ pub(super) fn contains_cluster_features(contents: &str) -> bool {
 }
 
 fn contains_cluster_fence_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("fence.sc.cluster")
             || statement.contains("fence.acq_rel.cluster")
             || statement.contains("fence.acquire.cluster")
@@ -52,7 +72,7 @@ fn contains_cluster_fence_features(contents: &str) -> bool {
 }
 
 fn contains_cluster_scoped_memory_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         !statement.contains("multimem.")
             && statement.contains(".cluster.")
             && ["ld.", "st.", "atom.", "red."]
@@ -66,7 +86,7 @@ fn contains_cluster_scoped_memory_features(contents: &str) -> bool {
 /// Unlike the older `.sc` / `.acq_rel` forms, `.acquire` and `.release`
 /// require sm_90 for every scope, not just `.cluster`.
 fn contains_fence_acquire_release_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("fence.acquire.") || statement.contains("fence.release.")
     })
 }
@@ -76,7 +96,7 @@ fn contains_fence_acquire_release_features(contents: &str) -> bool {
 /// Base forms need PTX 8.1. The pipeline currently has no 8.1 feature switch,
 /// so PTX 8.6 is the nearest conservative version supported by LLVM.
 fn contains_multimem_features(contents: &str) -> bool {
-    contents.split(';').any(is_multimem_instruction)
+    statements(contents).any(is_multimem_instruction)
 }
 
 fn is_multimem_instruction(statement: &str) -> bool {
@@ -87,7 +107,7 @@ fn is_multimem_instruction(statement: &str) -> bool {
 
 /// Checks PTX 8.6 multimem formats that require a Blackwell family target.
 fn contains_multimem_blackwell_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         is_multimem_instruction(statement)
             && [".e4m3", ".e5m2", ".acc::f16"]
                 .iter()
@@ -97,8 +117,7 @@ fn contains_multimem_blackwell_features(contents: &str) -> bool {
 
 /// Checks the PTX 8.6 floating-point extension to `redux.sync`.
 fn contains_redux_f32_features(contents: &str) -> bool {
-    contents
-        .split(';')
+    statements(contents)
         .any(|statement| statement.contains("redux.sync") && statement.contains(".f32"))
 }
 
@@ -388,7 +407,7 @@ fn contains_stmatrix_features(contents: &str) -> bool {
 
 /// PTX 8.6 matrix shapes/types have a Blackwell architecture-family floor.
 fn contains_blackwell_matrix_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         let newer_ldmatrix = statement.contains("ldmatrix.sync.aligned.")
             && [".m16n16.", ".m8n16.", ".b8", ".src_fmt", ".dst_fmt"]
                 .iter()
@@ -402,7 +421,7 @@ fn contains_blackwell_matrix_features(contents: &str) -> bool {
 }
 
 fn contains_ldmatrix_cta_state_space(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("ldmatrix.sync.aligned.") && statement.contains(".shared::cta.")
     })
 }
@@ -425,8 +444,7 @@ pub(super) fn contains_sm80_features(contents: &str) -> bool {
     .iter()
     .any(|mnemonic| contains_instruction_mnemonic(contents, mnemonic))
         || contains_mma_m8n8k4_f64_features(contents)
-        || contents
-            .split(';')
+        || statements(contents)
             .any(|statement| statement.contains("cvt.") && statement.contains(".bf16x2.f32"))
         || contains_mbarrier_features(contents)
         || contents.contains("redux.sync")
@@ -473,7 +491,7 @@ fn contains_mbarrier_features(contents: &str) -> bool {
 }
 
 fn contains_mbarrier_sm90_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         (statement.contains("mbarrier.") || statement.contains("llvm.nvvm.mbarrier"))
             && [
                 "try_wait",
@@ -490,20 +508,19 @@ fn contains_mbarrier_sm90_features(contents: &str) -> bool {
 }
 
 fn contains_mbarrier_ptx71_features(contents: &str) -> bool {
-    contents
-        .split(';')
+    statements(contents)
         .any(|statement| statement.contains("mbarrier.test_wait") && statement.contains(".parity"))
 }
 
 fn contains_mbarrier_ptx78_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("mbarrier.")
             && (statement.contains("try_wait") || statement.contains("shared::cta"))
     })
 }
 
 fn contains_mbarrier_ptx80_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("mbarrier.")
             && [
                 "expect_tx",
@@ -558,14 +575,14 @@ pub(super) fn contains_blackwell_features(contents: &str) -> bool {
 pub(super) fn contains_tma_multicast(contents: &str) -> bool {
     contents.lines().any(|line| {
         line.contains("g2s.tile") && (line.contains(", i1 1, i1") || line.contains(", i1 true, i1"))
-    }) || contents.split(';').any(|statement| {
+    }) || statements(contents).any(|statement| {
         statement.contains("cp.async.bulk.tensor") && statement.contains(".multicast::cluster")
     })
 }
 
 /// Checks Blackwell-only TMA forms with an explicit CTA-group qualifier.
 pub(super) fn contains_tma_cta_group_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("cp.async.bulk.tensor")
             && (statement.contains(".cta_group::1") || statement.contains(".cta_group::2"))
     }) || contents.lines().any(|line| {
@@ -579,14 +596,14 @@ pub(super) fn contains_tma_cta_group_features(contents: &str) -> bool {
 /// copies, so the following `.global` source qualifier is part of the match.
 /// The destination form was introduced in PTX 8.6 but is valid on sm_90.
 pub(super) fn contains_tma_shared_cta_destination(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("cp.async.bulk.") && statement.contains(".shared::cta.global")
     })
 }
 
 /// Checks PTX 8.6 TMA modifiers with a generic sm_100 architecture floor.
 pub(super) fn contains_tma_sm100_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         if !statement.contains("cp.async.bulk.") {
             return false;
         }
@@ -598,7 +615,7 @@ pub(super) fn contains_tma_sm100_features(contents: &str) -> bool {
 
 /// Checks PTX 8.6 TMA modes restricted to datacenter Blackwell targets.
 pub(super) fn contains_tma_blackwell_accelerated_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         if !statement.contains("cp.async.bulk.") {
             return false;
         }
@@ -618,8 +635,7 @@ fn contains_tma_ptx86_features(contents: &str) -> bool {
     contains_tma_sm100_features(contents)
         || contains_tma_blackwell_accelerated_features(contents)
         || contents.contains(".sync_restrict")
-        || contents
-            .split(';')
+        || statements(contents)
             .any(|statement| statement.contains("mbarrier.") && statement.contains(".relaxed"))
 }
 
@@ -628,14 +644,14 @@ fn contains_clc_features(contents: &str) -> bool {
 }
 
 fn contains_clc_multicast_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("clusterlaunchcontrol.")
             && statement.contains(".multicast::cluster::all")
     })
 }
 
 fn contains_cluster_ptx80_features(contents: &str) -> bool {
-    contents.split(';').any(|statement| {
+    statements(contents).any(|statement| {
         statement.contains("barrier.cluster.")
             && [".release", ".relaxed", ".acquire"]
                 .iter()
