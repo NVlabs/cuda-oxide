@@ -214,9 +214,9 @@ mod tests {
 
     #[test]
     fn wgmma_k_major_sw32_preserves_eight_row_atoms() {
-        // PTX's CuTe Swizzle<1,4,3> uses a relative source-bit position;
-        // our equivalent is Swizzle<1,4,7>. Rows 4..7 in each eight-row group
-        // swap 16-byte halves.
+        // CuTe's Swizzle<1,4,3> uses element-relative bit positions. The
+        // equivalent byte-offset form is Swizzle<1,4,7>: rows 4..7 in each
+        // eight-row group swap 16-byte halves.
         let mut seen = [false; 2048];
         for row in 0..64 {
             for byte in 0..32 {

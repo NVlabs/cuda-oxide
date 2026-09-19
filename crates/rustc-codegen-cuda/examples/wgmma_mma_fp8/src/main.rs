@@ -114,7 +114,8 @@ mod kernels {
             for (outer, row) in acc.iter().enumerate() {
                 for (inner, &value) in row.iter().enumerate() {
                     let register = outer * 8 + inner;
-                    // SAFETY: see fp8_correctness; the ownership is identical.
+                    // SAFETY: each thread writes its own 32-element fragment
+                    // after the bounds check above.
                     unsafe { *out.get_unchecked_mut(base + register) = value };
                 }
             }

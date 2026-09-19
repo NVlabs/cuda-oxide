@@ -125,8 +125,8 @@ For FP8, use `wgmma_mma_m64n64k32_f32_e4m3_e4m3` with the same
 `[[f32; 8]; 4]` accumulator and full-drain sequence. The first supported
 variant is E4M3 × E4M3 with F32 accumulation and fixed TN operands:
 A is row-major and B is column-major, both K-major in shared memory.
-There are no transpose controls, counted loops, partial waits, or pointer
-fallback for FP8.
+The FP8 PTX form has no transpose controls. cuda-oxide currently rejects
+counted loops, partial waits, and pointer fallback for FP8.
 
 `make_smem_desc` describes a fixed K-major layout with a 32-byte K span,
 32-byte swizzling, a 256-byte stride between eight-row groups, and a

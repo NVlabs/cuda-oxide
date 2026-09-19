@@ -124,9 +124,9 @@ include!("generated/wgmma_control.rs");
 /// Create a 64-bit shared memory descriptor for WGMMA input matrices.
 ///
 /// Describes a K-major tile with a 32-byte K span and 32-byte swizzling.
-/// The leading offset is encoded as 1 (assumed for swizzled K-major), the
-/// stride between eight-row groups is 256 bytes (encoded as 16), and the
-/// swizzle base offset is zero. This covers BF16 K=16 and E4M3 K=32 tiles.
+/// The descriptor encodes a 16-byte leading-dimension offset (raw value 1),
+/// a 256-byte stride between eight-row groups (raw value 16), and a zero
+/// swizzle base offset. This covers BF16 K=16 and E4M3 K=32 tiles.
 /// Store byte offset `row * 32 + byte_in_row` through
 /// `crate::swizzle::Swizzle::<1, 4, 7>::apply`.
 ///
@@ -149,7 +149,7 @@ include!("generated/wgmma_control.rs");
 /// - `ptr` must point to valid shared memory aligned to 256 bytes.
 /// - The tile must use the K-major 32-byte-swizzled layout described above.
 ///
-/// # PTX
+/// # Lowering
 ///
 /// LLVM converts the pointer to shared address space and reads its byte offset
 /// before inline PTX encodes the descriptor.

@@ -86,9 +86,9 @@ SUCCESS: WGMMA descriptor fields and alignment verified
 ```
 
 `xxxx` is the descriptor's variable 14-bit shared-memory address field. The
-leading offset is encoded as `1` (assumed for swizzled K-major) and the
-stride as `16` (256 bytes between eight-row groups). Mode `3` selects
-32-byte swizzling; the zero base-offset field requires 256-byte alignment.
+16-byte leading-dimension offset is encoded as `1`, and the 256-byte stride
+between eight-row groups is encoded as `16`. Mode `3` selects 32-byte
+swizzling; the zero base-offset field requires 256-byte alignment.
 For a 32-byte K span, store logical byte offsets using
 `cuda_device::swizzle::Swizzle::<1, 4, 7>::apply`.
 
