@@ -3201,6 +3201,11 @@ fn try_dispatch_intrinsic(
                 ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
             )?))
         }
+        "cuda_device::wgmma::wgmma_mma_m64n64k32_f32_e4m3_e4m3" => Ok(Some(
+            intrinsics::wgmma::emit_wgmma_mma_m64n64k32_f32_e4m3_e4m3(
+                ctx, body, args, target, block_ptr, prev_op, value_map, block_map, loc,
+            )?,
+        )),
 
         // =================================================================
         // DisjointSlice and SharedArray operations

@@ -9,6 +9,7 @@ use crate::convert::intrinsics::common::*;
 use dialect_nvvm::ops::{
     WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op, WgmmaMmaPipelineValuesM64N64K16F32Bf16Op,
 };
+use llvm_export::op_interfaces::CastOpInterface;
 use llvm_export::ops as llvm;
 use llvm_export::types::{self as llvm_types, VoidType};
 use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
@@ -32,6 +33,7 @@ enum WgmmaInputKind {
     Bf16,
     F16,
     Tf32,
+    E4m3,
 }
 
 impl WgmmaInputKind {
@@ -39,7 +41,9 @@ impl WgmmaInputKind {
         match self {
             Self::Bf16 => "bf16.bf16",
             Self::F16 => "f16.f16",
-            Self::Tf32 => unreachable!("TF32 has no counted K-loop lowering"),
+            Self::Tf32 | Self::E4m3 => {
+                unreachable!("this input kind has no counted K-loop lowering")
+            }
         }
     }
 }
@@ -58,14 +62,18 @@ pub(crate) fn convert_make_smem_desc(
         return pliron::input_err_noloc!("wgmma_make_smem_desc requires operand");
     }
     let ptr = operands[0];
-    let ptr_casted = cast_to_shared_addrspace(ctx, rewriter, ptr);
+    let shared_ptr = cast_to_shared_addrspace(ctx, rewriter, ptr);
+    // Read the shared-space offset, as in cvta_generic_to_shared_offset.
+    // Applying cvta.to.shared again to this offset would treat it as generic.
+    let shared_offset = llvm::PtrToIntOp::new(ctx, shared_ptr, i64_ty.into());
+    rewriter.insert_operation(ctx, shared_offset.get_operation());
+    let shared_offset = shared_offset.get_operation().deref(ctx).get_result(0);
 
     let asm_template = r#"{
     .reg .u64 addr;
-    cvta.to.shared.u64 addr, $1;
-    shr.u64 addr, addr, 4;
+    shr.u64 addr, $1, 4;
     and.b64 addr, addr, 0x3FFF;
-    or.b64 $0, addr, 0xC000000800080000;
+    or.b64 $0, addr, 0xC000001000010000;
 }"#;
 
     let asm_op = inline_asm_convergent(
@@ -73,7 +81,7 @@ pub(crate) fn convert_make_smem_desc(
         rewriter,
         op,
         i64_ty.into(),
-        vec![ptr_casted],
+        vec![shared_offset],
         asm_template,
         "=l,l",
     );
@@ -161,6 +169,10 @@ fn value_group_template(mma_count: usize, input_kind: WgmmaInputKind) -> String 
         ),
         WgmmaInputKind::Tf32 => (
             "wgmma.mma_async.sync.aligned.m64n64k8.f32.tf32.tf32",
+            "1, 1, 1",
+        ),
+        WgmmaInputKind::E4m3 => (
+            "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3",
             "1, 1, 1",
         ),
     };
@@ -428,6 +440,16 @@ pub(crate) fn convert_mma_group_values_tf32(
     _operands_info: &OperandsInfo,
 ) -> Result<()> {
     convert_mma_group_values_for_kind(ctx, rewriter, op, WgmmaInputKind::Tf32)
+}
+
+/// Lower a value-form E4M3 K=32 WGMMA full-drain group to one inline-PTX scope.
+pub(crate) fn convert_mma_group_values_e4m3(
+    ctx: &mut Context,
+    rewriter: &mut DialectConversionRewriter,
+    op: Ptr<Operation>,
+    _operands_info: &OperandsInfo,
+) -> Result<()> {
+    convert_mma_group_values_for_kind(ctx, rewriter, op, WgmmaInputKind::E4m3)
 }
 
 fn convert_mma_group_values_for_kind(
@@ -877,6 +899,30 @@ mod tests {
         assert!(!template.contains("m64n64k16"));
         assert!(!template.contains(".bf16.bf16"));
         assert!(!template.contains(".f16.f16"));
+        assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+        assert_eq!(
+            template.matches("wgmma.commit_group.sync.aligned").count(),
+            1
+        );
+        assert_eq!(
+            template.matches("wgmma.wait_group.sync.aligned 0").count(),
+            1
+        );
+        assert!(!template.contains("ld.f32"));
+        assert!(!template.contains("st.f32"));
+        assert!(template.contains("$64, $65, 1, 1, 1;"));
+        assert!(template.contains("$66, $67, 1, 1, 1;"));
+        assert!(!template.contains("$64, $65, 1, 1, 1, 0, 0;"));
+    }
+
+    #[test]
+    fn e4m3_value_template_uses_k32_without_transpose_controls() {
+        let template = value_group_template(2, WgmmaInputKind::E4m3);
+        assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+        assert!(template.contains("m64n64k32.f32.e4m3.e4m3"));
+        assert!(!template.contains(".bf16.bf16"));
+        assert!(!template.contains(".f16.f16"));
+        assert!(!template.contains(".tf32.tf32"));
         assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
         assert_eq!(
             template.matches("wgmma.commit_group.sync.aligned").count(),

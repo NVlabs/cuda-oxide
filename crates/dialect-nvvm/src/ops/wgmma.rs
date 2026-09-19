@@ -24,8 +24,10 @@
 //! F16 uses the same 32-value accumulator model for canonical linear
 //! full-drain regions and the canonical counted K-loop. TF32 uses the same
 //! carrier only for canonical linear full-drain regions, with the hardware
-//! `m64n64k8` shape. Neither F16 nor TF32 has a deferred pointer-form group or
-//! partial-wait pipeline carrier, and TF32 has no counted-loop carrier.
+//! `m64n64k8` shape. E4M3 also uses only the canonical linear full-drain
+//! carrier, with the hardware `m64n64k32` shape. F16, TF32, and E4M3 have no
+//! deferred pointer-form group or partial-wait pipeline carrier; TF32 and E4M3
+//! have no counted-loop carrier.
 
 use dialect_mir::types::{MirPtrType, address_space};
 use pliron::{
@@ -308,6 +310,52 @@ impl Verify for WgmmaMmaM64N64K8F32Tf32Op {
             return verify_err!(
                 op.loc(),
                 "nvvm.wgmma_mma_m64n64k8_f32_tf32 descriptors must be u64"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Pointer-form E4M3 WGMMA operation emitted by `mir-importer`.
+///
+/// This operation is not legal at final lowering. The deferred-accumulator
+/// fusion pass accepts it only in a canonical linear full-drain region and
+/// rewrites it to the E4M3 K=32 value-form group.
+#[pliron_op(
+    name = "nvvm.wgmma_mma_m64n64k32_f32_e4m3",
+    format,
+    interfaces = [NOpdsInterface<3>, NResultsInterface<0>],
+)]
+pub struct WgmmaMmaM64N64K32F32E4m3Op;
+
+impl WgmmaMmaM64N64K32F32E4m3Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+}
+
+impl Verify for WgmmaMmaM64N64K32F32E4m3Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        if op.get_num_operands() != 3 || op.get_num_results() != 0 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k32_f32_e4m3 requires three operands and no results"
+            );
+        }
+        if !is_supported_wgmma_accumulator(ctx, op.get_operand(0)) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k32_f32_e4m3 accumulator must be a mutable generic MIR pointer"
+            );
+        }
+        if !is_u64(ctx, op.get_operand(1).get_type(ctx))
+            || !is_u64(ctx, op.get_operand(2).get_type(ctx))
+        {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_m64n64k32_f32_e4m3 descriptors must be u64"
             );
         }
         Ok(())
@@ -791,6 +839,111 @@ impl Verify for WgmmaMmaGroupValuesM64N64K8F32Tf32Op {
                 return verify_err!(
                     op.loc(),
                     "nvvm.wgmma_mma_group_values_m64n64k8_f32_tf32 descriptors must be u64"
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Value-form E4M3 WGMMA group with 32 SSA accumulator values.
+///
+/// Operand layout:
+///
+/// ```text
+/// [acc_0, ..., acc_31, desc_a_0, desc_b_0, ..., desc_a_n, desc_b_n]
+/// ```
+///
+/// Result layout:
+///
+/// ```text
+/// [acc_0', ..., acc_31']
+/// ```
+///
+/// The operation represents one canonical linear full-drain lifetime using
+/// the hardware K=32 shape with an implicit fence, one or more E4M3 MMA
+/// instructions, one commit, and `wait_group<0>`.
+#[pliron_op(name = "nvvm.wgmma_mma_group_values_m64n64k32_f32_e4m3", format)]
+pub struct WgmmaMmaGroupValuesM64N64K32F32E4m3Op;
+
+impl WgmmaMmaGroupValuesM64N64K32F32E4m3Op {
+    /// Wrap an existing operation pointer.
+    pub fn new(op: Ptr<Operation>) -> Self {
+        Self { op }
+    }
+
+    /// Build a value-form group from 32 accumulator values and descriptor pairs.
+    pub fn build(
+        ctx: &mut Context,
+        accumulators: Vec<Value>,
+        descriptors: Vec<Value>,
+    ) -> Ptr<Operation> {
+        let f32_ty = FP32Type::get(ctx);
+        let mut operands = Vec::with_capacity(accumulators.len() + descriptors.len());
+        operands.extend(accumulators);
+        operands.extend(descriptors);
+
+        Operation::new(
+            ctx,
+            Self::get_concrete_op_info(),
+            vec![f32_ty.into(); WGMMA_M64N64_F32_ACCUMULATOR_COUNT],
+            operands,
+            vec![],
+            0,
+        )
+    }
+}
+
+impl Verify for WgmmaMmaGroupValuesM64N64K32F32E4m3Op {
+    fn verify(&self, ctx: &Context) -> Result<(), Error> {
+        let op = self.get_operation().deref(ctx);
+        let operand_count = op.get_num_operands();
+        let result_count = op.get_num_results();
+
+        if result_count != WGMMA_M64N64_F32_ACCUMULATOR_COUNT {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_group_values_m64n64k32_f32_e4m3 requires exactly 32 f32 results"
+            );
+        }
+
+        if operand_count < WGMMA_M64N64_F32_ACCUMULATOR_COUNT + 2 {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_group_values_m64n64k32_f32_e4m3 requires 32 f32 accumulators and one or more descriptor pairs"
+            );
+        }
+
+        let descriptor_count = operand_count - WGMMA_M64N64_F32_ACCUMULATOR_COUNT;
+        if !descriptor_count.is_multiple_of(2) {
+            return verify_err!(
+                op.loc(),
+                "nvvm.wgmma_mma_group_values_m64n64k32_f32_e4m3 descriptors must form pairs"
+            );
+        }
+
+        for accumulator_index in 0..WGMMA_M64N64_F32_ACCUMULATOR_COUNT {
+            if !is_f32(ctx, op.get_operand(accumulator_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_group_values_m64n64k32_f32_e4m3 accumulator operands must be f32"
+                );
+            }
+
+            if !is_f32(ctx, op.get_result(accumulator_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_group_values_m64n64k32_f32_e4m3 results must be f32"
+                );
+            }
+        }
+
+        for descriptor_index in WGMMA_M64N64_F32_ACCUMULATOR_COUNT..operand_count {
+            if !is_u64(ctx, op.get_operand(descriptor_index).get_type(ctx)) {
+                return verify_err!(
+                    op.loc(),
+                    "nvvm.wgmma_mma_group_values_m64n64k32_f32_e4m3 descriptors must be u64"
                 );
             }
         }
@@ -1344,11 +1497,13 @@ pub(super) fn register(ctx: &mut Context) {
     WgmmaMmaM64N128K16F32Bf16Op::register(ctx);
     WgmmaMmaM64N64K16F32F16Op::register(ctx);
     WgmmaMmaM64N64K8F32Tf32Op::register(ctx);
+    WgmmaMmaM64N64K32F32E4m3Op::register(ctx);
     WgmmaMmaGroupM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaGroupValuesM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaGroupValuesM64N128K16F32Bf16Op::register(ctx);
     WgmmaMmaGroupValuesM64N64K16F32F16Op::register(ctx);
     WgmmaMmaGroupValuesM64N64K8F32Tf32Op::register(ctx);
+    WgmmaMmaGroupValuesM64N64K32F32E4m3Op::register(ctx);
     WgmmaMmaLoopValuesM64N64K16F32Bf16Op::register(ctx);
     WgmmaMmaLoopValuesM64N64K16F32F16Op::register(ctx);
     WgmmaMmaLoopPipelineValuesM64N64K16F32Bf16Op::register(ctx);
