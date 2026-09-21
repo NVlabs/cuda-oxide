@@ -291,6 +291,96 @@ fn shifts_fold_and_respect_signedness() {
     );
 }
 
+/// Rust lets the shift amount have a different width from the shifted value
+/// (`u32 << usize`), and the lowering accepts that. After `#[unroll]` turns a
+/// `usize` loop counter into a constant, SCCP hands the fold exactly that pair.
+#[test]
+fn shifts_fold_with_a_shift_amount_of_a_different_width() {
+    let mut ctx = ctx();
+    let (_r, b) = func_with_entry(&mut ctx);
+    let u32t = int_ty(&mut ctx, 32, Signedness::Unsigned);
+    let u64t = int_ty(&mut ctx, 64, Signedness::Unsigned);
+    let i32t = int_ty(&mut ctx, 32, Signedness::Signed);
+    let u8t = int_ty(&mut ctx, 8, Signedness::Unsigned);
+
+    // wider amount: 1u32 << 4usize == 16, result keeps the value's type
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShlOp,
+            u32t,
+            iattr(&ctx, u32t, 1),
+            iattr(&ctx, u64t, 4)
+        ),
+        Some(16)
+    );
+
+    // wider amount, logical: 16u32 >> 2usize == 4
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShrOp,
+            u32t,
+            iattr(&ctx, u32t, 16),
+            iattr(&ctx, u64t, 2)
+        ),
+        Some(4)
+    );
+
+    // wider amount, arithmetic: (-16i32) >> 2usize == -4
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShrOp,
+            i32t,
+            iattr(&ctx, i32t, -16),
+            iattr(&ctx, u64t, 2)
+        ),
+        Some(-4)
+    );
+
+    // narrower amount: 1u64 << 40u8 == 2^40
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShlOp,
+            u64t,
+            iattr(&ctx, u64t, 1),
+            iattr(&ctx, u8t, 40)
+        ),
+        Some(1i128 << 40)
+    );
+
+    // the range check still reads the amount at its own width: 2^32 must not
+    // be truncated to 0 and folded
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShlOp,
+            u32t,
+            iattr(&ctx, u32t, 1),
+            iattr(&ctx, u64t, 1i64 << 32)
+        ),
+        None
+    );
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShrOp,
+            u32t,
+            iattr(&ctx, u32t, 1),
+            iattr(&ctx, u64t, 32)
+        ),
+        None
+    );
+}
+
 #[test]
 fn div_rem_fold_and_refuse_div_by_zero() {
     let mut ctx = ctx();
