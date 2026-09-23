@@ -5,7 +5,7 @@
 
 Tests that are currently expected to fail are marked with ``pytest.mark.xfail``.
 Search for that marker to find the affected tests; README.md records the full
-list and the reason each test is disabled.
+list and the exact missing behavior. Other failures remain errors.
 
 Environment:
   CUDA_OXIDE_CUDA_GDB   override path to cuda-gdb
@@ -97,6 +97,15 @@ def build_example(arch):
     env = os.environ.copy()
     env["CUDA_OXIDE_DEBUG"] = "full"
     env["CUDA_OXIDE_TARGET"] = arch
+    host = subprocess.check_output(
+        ["rustc", "--print", "host-tuple"], text=True, cwd=str(REPO_ROOT),
+    ).strip()
+    # cuda-gdb runs this binary locally. An inherited cross target (including
+    # Cargo's build.target configuration) must not select a different artifact.
+    env["CARGO_BUILD_TARGET"] = host
+    # Keep the build and binary fixture on the same artifact path, including
+    # when the caller uses a shared Cargo target directory elsewhere.
+    env["CARGO_TARGET_DIR"] = str(EXAMPLE_DIR / "target")
     result = subprocess.run(
         ["cargo", "oxide", "build", EXAMPLE],
         capture_output=True, text=True, env=env, cwd=str(REPO_ROOT), check=False,
@@ -104,6 +113,7 @@ def build_example(arch):
     if result.returncode != 0:
         tail = (result.stdout + result.stderr)[-3000:]
         pytest.fail(f"failed to build {EXAMPLE} with CUDA_OXIDE_DEBUG=full:\n{tail}")
+    return EXAMPLE_DIR / "target" / host / "release" / EXAMPLE
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +147,7 @@ def binary(arch):
     if not EXAMPLE_DIR.exists():
         pytest.fail(f"example not found: {EXAMPLE_DIR}")
 
-    build_example(arch)
-
-    path = EXAMPLE_DIR / "target" / "release" / EXAMPLE
+    path = build_example(arch)
     if not path.exists():
         pytest.fail(f"binary not found: {path}")
     return path
@@ -184,6 +192,11 @@ class GdbExpectation:
     should_match: bool = True
     transcript: bool = False
     validator: object = None
+    known_failure: Optional[str] = None
+
+
+class KnownDebugInfoFailure(AssertionError):
+    """Only a specifically recognized missing-debug-info result failed."""
 
 
 @dataclass
@@ -210,8 +223,10 @@ class GdbCommand:
     def __exit__(self, exc_type, exc_value, traceback):
         return False
 
-    def matches(self, pattern, description):
-        self.expectations.append(GdbExpectation(description, pattern))
+    def matches(self, pattern, description, *, known_failure=None):
+        self.expectations.append(GdbExpectation(
+            description, pattern, known_failure=known_failure,
+        ))
 
     def not_matches(self, pattern, description):
         self.expectations.append(GdbExpectation(
@@ -362,13 +377,12 @@ class GdbSession:
         env["LD_LIBRARY_PATH"] = f"{cuda_lib}:/usr/lib/x86_64-linux-gnu:{existing}"
 
         try:
-            # cuda-gdb aborts a sourced command file on the first command error.
-            # Separate --ex options keep later inspections running, while the
-            # file above remains a convenient reproduction script.
-            gdb_args = [self.cuda_gdb, "--batch"]
-            for script_line in script_lines:
-                gdb_args.extend(["--ex", script_line])
-            gdb_args.append(str(self.binary))
+            # Sourcing the script makes the first command error fatal. Separate
+            # --ex arguments can hide an earlier error behind a successful final
+            # command, even when both output markers have been printed.
+            gdb_args = [
+                self.cuda_gdb, "--batch", "-x", str(self.script), str(self.binary),
+            ]
             result = subprocess.run(
                 gdb_args,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -397,11 +411,14 @@ class GdbSession:
             timed_out=timed_out,
         )
         failures = []
+        known_failures = []
         inline_failures = {}
         trailing_failures = []
 
-        def record_failure(message, command=None):
+        def record_failure(message, command=None, *, known=False):
             failures.append(message)
+            if known:
+                known_failures.append(message)
             if command is None:
                 trailing_failures.append(message)
             else:
@@ -461,13 +478,22 @@ class GdbSession:
                     record_failure(
                         f"{command.display}: {expectation.description}",
                         command,
+                        known=(
+                            expectation.known_failure is not None
+                            and re.fullmatch(expectation.known_failure, section) is not None
+                        ),
                     )
 
         print(annotate_gdb_output(
             output, self.commands, inline_failures, trailing_failures,
         ))
         if failures:
-            pytest.fail("cuda-gdb checks failed:\n- " + "\n- ".join(failures))
+            message = "cuda-gdb checks failed:\n- " + "\n- ".join(failures)
+            # A known missing local must not hide broken frames, incorrect
+            # values, missing commands, timeouts, or abnormal debugger exits.
+            if len(known_failures) == len(failures):
+                raise KnownDebugInfoFailure(message)
+            pytest.fail(message)
 
 
 @pytest.fixture(scope="session")

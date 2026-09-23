@@ -269,7 +269,16 @@ mod kernels {
         let tid: usize = thread::threadIdx_x() as usize;
         let idx = thread::index_1d();
         let i: usize = idx.get();
-        unsafe { TILE[tid] = data[idx.get()] }
+        // This fixture launches one block of eight threads. Each thread owns
+        // four disjoint cells; initialize all 32 values the debugger prints.
+        // The raw receiver avoids overlapping mutable references to TILE.
+        let tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut TILE) };
+        unsafe {
+            tile.add(tid).write(data[i]);
+            tile.add(tid + 8).write(0);
+            tile.add(tid + 16).write(0);
+            tile.add(tid + 24).write(0);
+        }
         thread::sync_threads();
         let coeff_val: f32 = COEFF.get();
         if tid == 0 {
@@ -281,7 +290,7 @@ mod kernels {
         let global_val: u64 = unsafe { GLOBAL_COUNTER };
         // <<<GDB BREAK MEMORY SPACES>>> all address spaces are inspectable here
         if let Some(slot) = out.get_mut(idx) {
-            let neighbor: i32 = unsafe { TILE[(tid + 1) % 8] };
+            let neighbor: i32 = unsafe { tile.add((tid + 1) % 8).read() };
             *slot = neighbor as f32 + coeff_val + global_val as f32 + i as f32;
         }
     }
@@ -503,9 +512,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             unsafe { module.debuginfo_memory_spaces(&stream, cfg, &data_dev, &mut out_dev) }?;
             stream.synchronize()?;
-            // Thread 0 reads TILE[1]=1, COEFF=2.5, GLOBAL_COUNTER=7, i=0.
             let result = out_dev.to_host_vec(&stream)?;
-            assert!((result[0] - 10.5_f32).abs() < 1e-5, "got {}", result[0]);
+            for (i, actual) in result.into_iter().enumerate() {
+                let expected = ((i + 1) % N) as f32 + 2.5 + 7.0 + i as f32;
+                assert_eq!(actual, expected, "thread {i}");
+            }
             println!("  PASS");
             Ok(())
         }

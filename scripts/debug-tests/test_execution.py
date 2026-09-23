@@ -7,6 +7,8 @@ import re
 
 import pytest
 
+from conftest import KnownDebugInfoFailure
+
 
 def test_values_named_and_inlined_frames(gdb):
     """PTX, named breakpoints, inline attribution, and frame switching work."""
@@ -124,6 +126,7 @@ def test_loop_inspection_and_step(gdb, lines):
 
 @pytest.mark.xfail(
     strict=True,
+    raises=KnownDebugInfoFailure,
     reason="generated debug info omits scaled from the inlined deep_middle frame",
 )
 def test_mixed_physical_and_inlined_callstack(gdb, lines):
@@ -141,16 +144,26 @@ def test_mixed_physical_and_inlined_callstack(gdb, lines):
             r"#3 .*debuginfo_deep_stack",
             "backtrace has leaf, inline, outer, and kernel frames in order",
         )
-    gdb("frame 0")
+    with gdb("frame 0") as check:
+        check.matches(r"^#0 .*debug_tests::deep_leaf", "leaf frame is selected")
     with gdb("info args") as check:
-        check.matches(r"^v = [0-9]", "frame 0 argument v is visible")
+        check.matches(r"^v = 3$", "frame 0 argument v = 3")
     gdb("info locals")
-    gdb("frame 1")
+    with gdb("frame 1") as check:
+        check.matches(
+            r"^#1 .*?(?:debug_tests::)?deep_middle",
+            "inline middle frame is selected",
+        )
     gdb("info args")
     with gdb("info locals") as check:
-        check.matches(r"^scaled = [0-9]", "inline frame local scaled is visible")
-    gdb("frame 2")
+        check.matches(
+            r"^scaled = 3$",
+            "inline frame local scaled = 3",
+            known_failure=r"\s*No locals\.\s*",
+        )
+    with gdb("frame 2") as check:
+        check.matches(r"^#2 .*debug_tests::deep_outer", "outer frame is selected")
     gdb("info args")
     with gdb("info locals") as check:
-        check.matches(r"^offset = [0-9]", "frame 2 local offset is visible")
+        check.matches(r"^offset = 4$", "frame 2 local offset = 4")
     gdb("kill")

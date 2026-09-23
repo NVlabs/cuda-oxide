@@ -173,6 +173,13 @@ def test_memory_spaces_inspection(gdb, lines):
     with gdb("run") as check:
         check.matches(r"CUDA thread hit", "GPU breakpoint fires")
     gdb("disable 1")
+    # Raw-pointer arithmetic stops in an inline `add` frame at this source
+    # location. Select and verify its kernel caller before reading the locals.
+    with gdb("up") as check:
+        check.matches(
+            r"^#[0-9]+ .*debuginfo_memory_spaces",
+            "the memory-spaces kernel frame is selected",
+        )
     with gdb("info locals") as check:
         check.matches(
             r"^TILE = \[0, 1, 2, 3, 4, 5, 6, 7, 0 <repeats 24 times>\]$",
