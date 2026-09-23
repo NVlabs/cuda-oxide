@@ -45,6 +45,43 @@ mod kernels {
         }
     }
 
+    /// Unrolling makes the shift counts constant while retaining their types.
+    /// Folding must handle counts wider and narrower than the shifted value,
+    /// and preserve arithmetic versus logical right shifts.
+    #[kernel]
+    pub fn full_mixed_width_shifts(
+        mut left: DisjointSlice<u32>,
+        mut arithmetic: DisjointSlice<i32>,
+        mut logical: DisjointSlice<u64>,
+    ) {
+        let (Some(left), Some(arithmetic), Some(logical)) = (
+            left.get_mut(thread::index_1d()),
+            arithmetic.get_mut(thread::index_1d()),
+            logical.get_mut(thread::index_1d()),
+        ) else {
+            return;
+        };
+        let mut left_bits = 0u32;
+        let mut signed_sum = 0i32;
+        let mut i = 0usize;
+        #[unroll]
+        while i < 4 {
+            left_bits |= 1u32 << (2 * i);
+            signed_sum += -128i32 >> i;
+            i += 1;
+        }
+        let mut right_bits = 0u64;
+        let mut j = 0u8;
+        #[unroll]
+        while j < 4 {
+            right_bits |= (1u64 << 63) >> j;
+            j += 1;
+        }
+        *left = left_bits;
+        *arithmetic = signed_sum;
+        *logical = right_bits;
+    }
+
     /// Partial unroll (by 4) of a runtime-trip-count loop: `out[tid]` is the
     /// sum `0 + 1 + ... + (n-1) == n*(n-1)/2`.
     #[kernel]
@@ -379,6 +416,35 @@ fn main() {
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
     unsafe { module.full_unroll(stream.as_ref(), cfg, &mut d_full) }.expect("launch full_unroll");
     let got_full = d_full.to_host_vec(&stream).unwrap();
+
+    let mut d_shift_left = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
+    let mut d_shift_arithmetic = DeviceBuffer::<i32>::zeroed(&stream, N).unwrap();
+    let mut d_shift_logical = DeviceBuffer::<u64>::zeroed(&stream, N).unwrap();
+    // SAFETY: each thread writes its own element in three separate buffers.
+    unsafe {
+        module.full_mixed_width_shifts(
+            stream.as_ref(),
+            cfg,
+            &mut d_shift_left,
+            &mut d_shift_arithmetic,
+            &mut d_shift_logical,
+        )
+    }
+    .expect("launch full_mixed_width_shifts");
+    let got_shift_left = d_shift_left.to_host_vec(&stream).unwrap();
+    let got_shift_arithmetic = d_shift_arithmetic.to_host_vec(&stream).unwrap();
+    let got_shift_logical = d_shift_logical.to_host_vec(&stream).unwrap();
+    assert_eq!(got_shift_left, vec![85; N], "mixed-width left shift");
+    assert_eq!(
+        got_shift_arithmetic,
+        vec![-240; N],
+        "arithmetic right shift"
+    );
+    assert_eq!(
+        got_shift_logical,
+        vec![0xf000_0000_0000_0000; N],
+        "logical right shift"
+    );
 
     let trip: u32 = 10;
     let mut d_part = DeviceBuffer::<u32>::zeroed(&stream, N).unwrap();
