@@ -79,7 +79,26 @@ CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 | 11 | `atomic_bitwise_test`            | fetch_and, fetch_or, fetch_xor (`.b32` PTX types)                          |
 | 12 | `atomic_swap_test`               | swap (`atom.exch`) with sentinel 0xDEADBEEF                                |
 | 13 | `atomic_minmax_test`             | AtomicI32 fetch_min/fetch_max (signed `.s32`, range -128..+127)            |
-| 14 | `atomic_f32_fetch_add_test`      | AtomicF32 fetch_add via `atomicrmw fadd` -- native on LLVM 22, a CAS loop for global/generic `f32` on LLVM 23 (see #1234) |
+| 14 | `atomic_f32_fetch_add_test`      | AtomicF32 fetch_add via `atomicrmw fadd`; see the lowering note below |
+
+### Floating-point add lowering
+
+With the pinned `nightly-2026-08-28` toolchain's LLVM 23 NVPTX defaults,
+`atomic_f32_fetch_add_test` uses a compare-and-swap (CAS) loop for global memory.
+Generic-address-space `f32` adds also use a loop; shared `f32` and `f64` adds
+still use native instructions on supported targets. For example:
+
+```text
+global f32: add.f32 + atom.relaxed.gpu.global.cas.b32 + retry
+shared f32: atom.relaxed.gpu.shared.add.f32
+```
+
+This is a property of that LLVM snapshot and its options, not every LLVM 23
+build or the separate libNVVM backend. Native global `atom.add.f32` flushes
+subnormal inputs and results to zero; the loop preserves them under the default
+floating-point mode. Switching instructions therefore changes numerical
+behavior, not just performance. See [#1234](https://github.com/NVlabs/cuda-oxide/issues/1234)
+for the investigation.
 
 ### Phase 3: Remaining types, scopes, and coverage
 
@@ -213,7 +232,7 @@ All types are defined in `cuda_device::atomic`:
 |--------------------|------------------------------------------------------|------------------------------|
 | `load`             | Yes                                                  | Yes                          |
 | `store`            | Yes                                                  | Yes                          |
-| `fetch_add`        | Yes                                                  | Yes (`f64` native; global/generic `f32` is a CAS loop on LLVM 23, shared `f32` still native, see #1234) |
+| `fetch_add`        | Yes                                                  | Yes (native or a CAS loop; see the lowering note above) |
 | `fetch_sub`        | Yes                                                  | --                           |
 | `fetch_and`        | Yes                                                  | --                           |
 | `fetch_or`         | Yes                                                  | --                           |

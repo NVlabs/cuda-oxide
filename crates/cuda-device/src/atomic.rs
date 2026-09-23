@@ -488,13 +488,18 @@ define_float_atomic! {
 define_float_atomic! {
     /// 32-bit float atomic, **device scope** (`.gpu`).
     ///
-    /// `swap` lowers to hardware `atom.exch.b32`. No compare_exchange (PTX
-    /// limitation). `fetch_add` lowered to hardware `atom.add.f32` through
-    /// LLVM 22; on LLVM 23 the NVPTX backend regressed it to a
-    /// compare-and-swap loop in the global and generic address spaces
-    /// (tracked in <https://github.com/NVlabs/cuda-oxide/issues/1234>).
-    /// Shared `f32` still lowers to `atom.relaxed.gpu.shared.add.f32`, and
-    /// `f64` stays native in both address spaces.
+    /// `swap` lowers to hardware `atom.exch.b32`; this API does not expose
+    /// `compare_exchange` for floats. `fetch_add` uses LLVM `atomicrmw fadd`.
+    /// With the pinned `nightly-2026-08-28` toolchain's LLVM 23 NVPTX defaults,
+    /// global and generic `f32` adds use a compare-and-swap loop; shared `f32`
+    /// and `f64` adds still use native instructions on supported targets.
+    ///
+    /// Native global `atom.add.f32` flushes subnormal inputs and results to
+    /// zero. The loop preserves subnormals under the default floating-point
+    /// mode, so instruction choice also affects numerical behavior. This is
+    /// specific to that LLVM snapshot and its options, not a guarantee for
+    /// every LLVM 23 build or the separate libNVVM backend. See
+    /// <https://github.com/NVlabs/cuda-oxide/issues/1234>.
     pub struct DeviceAtomicF32(f32);
 }
 
