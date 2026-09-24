@@ -45,11 +45,11 @@ pub(super) fn spill_enum_value(
     let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
     let one_apint = APInt::from_i64(1, NonZeroUsize::new(64).unwrap());
     let one_attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, one_apint);
-    let one_const = llvm::ConstantOp::new(ctx, one_attr.into());
+    let one_const = llvm::ConstantOp::new(ctx, Box::new(one_attr));
     rewriter.insert_operation(ctx, one_const.get_operation());
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
-    let alloca_op = llvm::AllocaOp::new(ctx, llvm_struct_ty, one_val);
+    let alloca_op = llvm::AllocaOp::new(ctx, llvm_struct_ty, one_val, 0);
     rewriter.insert_operation(ctx, alloca_op.get_operation());
     if abi_align > 0 {
         llvm_export::ops::set_op_alignment(ctx, alloca_op.get_operation(), abi_align as u32);
@@ -100,7 +100,7 @@ pub(super) fn emit_integer_constant(
         ty,
         APInt::from_u128(bits, NonZeroUsize::new(width as usize).unwrap()),
     );
-    let op = llvm::ConstantOp::new(ctx, attr.into());
+    let op = llvm::ConstantOp::new(ctx, Box::new(attr));
     rewriter.insert_operation(ctx, op.get_operation());
     op.get_operation().deref(ctx).get_result(0)
 }

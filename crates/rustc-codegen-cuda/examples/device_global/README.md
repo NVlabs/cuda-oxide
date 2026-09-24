@@ -20,6 +20,22 @@ CUDA_OXIDE_DEBUG=full cargo oxide build device_global --arch sm_120
 ./crates/rustc-codegen-cuda/examples/device_global/verify-debug-info.sh
 ```
 
+For a live cuda-gdb lookup, stop inside the `device_global` kernel and keep the
+expression language on automatic/Rust mode:
+
+```gdb
+set language auto
+print device_global::DEVICE_COUNTER
+print device_global::DEVICE_MARKER
+print device_global::debug_left::SAME_LEAF
+print device_global::debug_right::SAME_LEAF
+```
+
+Use the literal crate-qualified path, without a leading `::`. A bare
+`DEVICE_COUNTER` is not required to resolve from inside the nested `kernels`
+module. The two `SAME_LEAF` lookups prove module qualification disambiguates
+same-named statics. Do not switch to C++; this is a Rust debugging contract.
+
 The first kernel updates two ordinary device statics:
 
 ```rust

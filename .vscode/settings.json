@@ -18,7 +18,9 @@
     "rust-analyzer.linkedProjects": [
         "./Cargo.toml",
         "./crates/rustc-codegen-cuda/Cargo.toml",
-        "./crates/rustc-codegen-cuda/examples/ptr_offset_from/Cargo.toml",
+        "./crates/rustc-codegen-cuda/examples/debug_pointer_locals/Cargo.toml",
         "./crates/rustc-codegen-cuda/examples/gemm_sol_final/Cargo.toml",
+        "./crates/rustc-codegen-cuda/examples/vecadd/Cargo.toml",
+        "./crates/rustc-codegen-cuda/examples/abi_hmm/Cargo.toml",
     ],
 }

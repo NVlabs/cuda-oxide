@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Focused contract tests for the experimental standalone compiler.
+//! Focused contract tests for the standalone compiler.
 
 #![cfg(unix)]
 

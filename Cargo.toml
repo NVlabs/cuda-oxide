@@ -48,14 +48,15 @@ repository = "https://github.com/NVlabs/cuda-oxide.git"
 # Examples are in: crates/rustc-codegen-cuda/examples/
 
 [workspace.dependencies]
-# Pliron MLIR framework, pinned to upstream struct-layout and GEP no-wrap semantics.
+# Pliron MLIR framework, pinned to upstream struct-layout, GEP no-wrap, volatile,
+# global-constant, inline-asm, and generic LLVM attribute semantics.
 # pliron-llvm uses default-features = false to keep llvm-sys (LLVM 23) out:
 # cuda-oxide consumes the dialect modeling only, not the FFI bridge.
 # `crates/rustc-codegen-cuda/Cargo.toml` MUST stay on this same rev, or pliron
 # resolves to two distinct crates and types stop unifying.
-pliron = { git = "https://github.com/pliron-org/pliron", rev = "8e4500e16d96926a91751a505e3d8b4ef9c4f7c8" }
-pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "8e4500e16d96926a91751a505e3d8b4ef9c4f7c8" }
-pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "8e4500e16d96926a91751a505e3d8b4ef9c4f7c8", default-features = false, features = [
+pliron = { git = "https://github.com/pliron-org/pliron", rev = "06d99a3df938394583715aacf5eadb65b4791c09" }
+pliron-derive = { git = "https://github.com/pliron-org/pliron", rev = "06d99a3df938394583715aacf5eadb65b4791c09" }
+pliron-llvm = { git = "https://github.com/pliron-org/pliron", rev = "06d99a3df938394583715aacf5eadb65b4791c09", default-features = false, features = [
     "std",
 ] }
 

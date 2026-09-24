@@ -293,34 +293,65 @@ Useful aliases:
 | `line-tables`, `line`, `lines`, `1` | source line tables only |
 | `full`, `2` | line tables plus basic variable metadata |
 
-### Why full debug turns optimization off
+### What full debug does to optimization
 
-Reliable local inspection and aggressive optimization pull in opposite
-directions. An optimized value usually lives in a register only across the
-short window where it is used; outside that window the debugger honestly has
-nowhere to read it from, so `info locals` shows `<optimized out>`. The only way
-to make a variable inspectable for its whole scope is to keep it in **memory**
-and describe it with `llvm.dbg.declare`, the way every debug build does
-(`gcc -O0`, `rustc` debug, and nvcc `-G`).
+Full debug keeps supported locals in stable memory locations that cuda-gdb can
+read.
 
-So `CUDA_OXIDE_DEBUG=full` is a `-G`-style build. It automatically:
+```text
+rustc MIR                         cuda-oxide / LLVM
+------------------------------    ------------------
+ScalarReplacement...: off    ->   mem2reg: off
+SingleUseConsts: off               loop unrolling: off
+ReferencePropagation: on           opt -O2: off
+general inlining: on*              llc: -O0
 
-- keeps every source local in its stack slot (skips Pliron `mem2reg`),
-- skips annotated loop unrolling, which requires `mem2reg`'s SSA form,
-- skips LLVM `opt -O2`, and
-- runs `llc` at `-O0`,
+* only DisjointSlice::get_mut is outlined
+```
 
-so the locals you see in cuda-gdb are real and stable. You do not need to set
-`CUDA_OXIDE_NO_OPT=1` yourself; full mode implies it.
+`ReferencePropagation` may replace a pointer assignment with an `AssignRef`
+debug event. Full mode handles the supported slice-index form like this:
+
+```text
+ptr = &slice[index] -> AssignRef -> debugger stack slot -> cuda-gdb
+```
+
+A direct immutable reference into a fixed-size array uses the same bounded
+stack-home bridge:
+
+```text
+&array[index]
+    -> AssignRef
+    -> debugger stack slot
+    -> cuda-gdb
+```
+
+The multi-value `DIArgList` form can represent the address recipe in LLVM IR,
+but it is not used for this producer because the resulting runtime-indexed
+pointer location is not reliably inspectable after `ptxas`. The initial array
+extension therefore accepts exactly one runtime `usize` index on a direct
+fixed-size array and materializes the reconstructed reference only in full-debug
+mode; surrounding field/deref chains remain unsupported.
+
+Unsupported events omit that debug binding instead of emitting a partial
+value. These stack-home stores exist only in full-debug builds. We do not
+use `-Zmir-opt-level=0` because it exposes MIR forms the importer cannot yet
+translate. A local that rustc removes without an equivalent debug event cannot
+be recovered later in the pipeline.
+
+You do not need to set `CUDA_OXIDE_NO_OPT=1`; full mode already disables the
+downstream optimization stages shown above.
 
 | Setting | Meaning |
 | :------ | :------ |
 | `CUDA_OXIDE_DEBUG=off` | no device debug metadata; fully optimized PTX |
 | `CUDA_OXIDE_DEBUG=line-tables` | source lines only; still optimized |
-| `CUDA_OXIDE_DEBUG=full` | source lines plus locals/args; optimization off (`-G`) |
+| `CUDA_OXIDE_DEBUG=full` | source lines plus supported locals/args; selective MIR controls; downstream optimization off |
 
 Line tables stay on the optimized pipeline because a line map survives
-optimization well; locals do not, which is why full mode steps off it.
+optimization well. Full mode keeps the selective MIR compatibility policy but
+steps off cuda-oxide's later optimization stages so supported locals remain
+materialized.
 
 > The promotion-aware `mir.dbg_value` salvage that Pliron `mem2reg` performs is
 > the building block for a future *optimized* debug tier (locals through
@@ -343,14 +374,33 @@ Full mode (`-G`) supports inspecting:
   correct (real-layout) offsets, e.g.
   `out = DisjointSlice {ptr: 0x..., len: 1}` and `idx = ThreadIndex {raw: 0}`
 
+For device statics, keep cuda-gdb in Rust mode and use crate-qualified names:
+
+```text
+set language auto
+print device_global::DEVICE_COUNTER
+print constant_memory_simple::kernels::SCALE
+```
+
+```text
+device_global::DEVICE_COUNTER          -> @global u64
+constant_memory_simple::kernels::SCALE -> ConstantMemory<f32>, AS4
+```
+
+The constant-memory verifier also checks `DW_AT_address_class 4` in the cubin.
+
 End-to-end behavior (breakpoint binds, backtrace, `info args`/`info locals`) is
 checked on real hardware by `scripts/debug-smoketest.sh`.
 
-Full mode does **not** yet describe: enums (`Option`, `Result`, and other
-multi-variant types), bare slice arguments split into a `(ptr, len)` pair at
-the ABI boundary, closures, projections like `x.0`, or destructured variables.
-Locals of an inlined helper frame may also show fewer entries than the kernel
-frame; select the kernel frame (`frame 1`) to inspect kernel locals.
+Coverage is still partial. Unsupported cases include bare slice arguments
+split into a `(ptr, len)` pair at the ABI boundary, repeated dereferences,
+subslices, multiple runtime indices, runtime-index projections with surrounding
+field/deref chains, dereference-plus-index/downcast chains, and non-field
+composite fragments. Static struct/tuple fields, fixed-array constant indices,
+enum payload downcasts, one thin-pointer/reference dereference, and one direct
+runtime `usize` index used by a statement-debug reference into a fixed-size
+array are supported. Locals in other inlined helper frames may still be sparser
+than kernel locals; select the frame that owns the source binding.
 
 ### Breakpoint workflow
 

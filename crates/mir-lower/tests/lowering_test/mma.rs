@@ -449,13 +449,13 @@ fn test_generated_register_mma_variants_lower_to_exact_convergent_inline_ptx()
             assert_eq!(lowered.len(), 1, "{:?}", backend);
             let asm = &lowered[0];
             assert_eq!(
-                asm.get_attr_inline_asm_template(&ctx)
+                asm.get_attr_llvm_inline_asm_template(&ctx)
                     .as_deref()
                     .map(|value| String::from(value.clone())),
                 Some(case.template.clone())
             );
             assert_eq!(
-                asm.get_attr_inline_asm_constraints(&ctx)
+                asm.get_attr_llvm_inline_asm_constraints(&ctx)
                     .as_deref()
                     .map(|value| String::from(value.clone())),
                 Some(case.constraints.to_string())
@@ -648,13 +648,13 @@ fn test_generated_sparse_mma_variants_lower_to_exact_convergent_inline_ptx()
                     "mma.{metadata_name}.sync.aligned.m16n8k32.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1, $2, $3}}, {{$8, $9}}, {{$10, $11}}, {{$4, $5, $6, $7}}, $12, $13;"
                 );
                 assert_eq!(
-                    asm.get_attr_inline_asm_template(&ctx)
+                    asm.get_attr_llvm_inline_asm_template(&ctx)
                         .as_deref()
                         .map(|value| String::from(value.clone())),
                     Some(expected_template)
                 );
                 assert_eq!(
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .as_deref()
                         .map(|value| String::from(value.clone())),
                     Some("=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,n".to_string())
@@ -670,7 +670,7 @@ fn test_generated_sparse_mma_variants_lower_to_exact_convergent_inline_ptx()
                 let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                     .expect("sparse MMA selector remains an LLVM integer constant");
                 let attribute = constant.get_value(&ctx);
-                let integer = attribute
+                let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                     .downcast_ref::<IntegerAttr>()
                     .expect("sparse MMA selector is an integer");
                 assert_eq!(integer.value().bw(), 32);
@@ -806,13 +806,13 @@ fn test_generated_sparse_mma_m16n8k64_lowers_to_exact_convergent_inline_ptx()
                     "mma.{metadata_name}.sync.aligned.m16n8k64.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1, $2, $3}}, {{$8, $9, $10, $11}}, {{$12, $13, $14, $15}}, {{$4, $5, $6, $7}}, $16, $17;"
                 );
                 assert_eq!(
-                    asm.get_attr_inline_asm_template(&ctx)
+                    asm.get_attr_llvm_inline_asm_template(&ctx)
                         .as_deref()
                         .map(|value| String::from(value.clone())),
                     Some(expected_template)
                 );
                 assert_eq!(
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .as_deref()
                         .map(|value| String::from(value.clone())),
                     Some("=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r,r,r,r,n".to_string())
@@ -828,7 +828,7 @@ fn test_generated_sparse_mma_m16n8k64_lowers_to_exact_convergent_inline_ptx()
                 let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                     .expect("sparse MMA selector remains an LLVM integer constant");
                 let attribute = constant.get_value(&ctx);
-                let integer = attribute
+                let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                     .downcast_ref::<IntegerAttr>()
                     .expect("sparse MMA selector is an integer");
                 assert_eq!(integer.value().bw(), 32);
@@ -1017,13 +1017,13 @@ fn test_generated_sparse_mma_m16n8k64_int4_lowers_both_metadata_modes() -> Resul
                     "mma.{metadata_name}.sync.aligned.m16n8k64.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1, $2, $3}}, {{$8, $9}}, {{$10, $11}}, {{$4, $5, $6, $7}}, $12, $13;"
                 );
                 assert_eq!(
-                    asm.get_attr_inline_asm_template(&ctx)
+                    asm.get_attr_llvm_inline_asm_template(&ctx)
                         .as_deref()
                         .map(|value| String::from(value.clone())),
                     Some(expected_template)
                 );
                 assert_eq!(
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .as_deref()
                         .map(|value| String::from(value.clone())),
                     Some("=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,n".to_string())
@@ -1039,7 +1039,7 @@ fn test_generated_sparse_mma_m16n8k64_int4_lowers_both_metadata_modes() -> Resul
                 let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                     .expect("sparse MMA selector remains an LLVM integer constant");
                 let attribute = constant.get_value(&ctx);
-                let integer = attribute
+                let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                     .downcast_ref::<IntegerAttr>()
                     .expect("sparse MMA selector is an integer");
                 assert_eq!(integer.value().to_u64(), selector_value as u64);
@@ -1213,13 +1213,13 @@ fn test_generated_sparse_mma_m16n8k128_int4_lowers_both_metadata_modes() -> Resu
                     "mma.{metadata_name}.sync.aligned.m16n8k128.row.col{overflow_name}.s32.{a_name}.{b_name}.s32 {{$0, $1, $2, $3}}, {{$8, $9, $10, $11}}, {{$12, $13, $14, $15}}, {{$4, $5, $6, $7}}, $16, $17;"
                 );
                 assert_eq!(
-                    asm.get_attr_inline_asm_template(&ctx)
+                    asm.get_attr_llvm_inline_asm_template(&ctx)
                         .as_deref()
                         .map(|value| String::from(value.clone())),
                     Some(expected_template)
                 );
                 assert_eq!(
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .as_deref()
                         .map(|value| String::from(value.clone())),
                     Some("=r,=r,=r,=r,r,r,r,r,r,r,r,r,r,r,r,r,r,n".to_string())
@@ -1235,7 +1235,7 @@ fn test_generated_sparse_mma_m16n8k128_int4_lowers_both_metadata_modes() -> Resu
                 let constant = Operation::get_op::<llvm::ConstantOp>(defining_op, &ctx)
                     .expect("sparse MMA selector remains an LLVM integer constant");
                 let attribute = constant.get_value(&ctx);
-                let integer = attribute
+                let integer = (&*attribute as &dyn pliron::attribute::Attribute)
                     .downcast_ref::<IntegerAttr>()
                     .expect("sparse MMA selector is an integer");
                 assert_eq!(integer.value().to_u64(), 0);
@@ -1305,10 +1305,10 @@ fn test_mma_m16n8k16_f32_bf16_lowers_to_inline_asm() -> Result<(), anyhow::Error
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 let constraints = asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()));
                 if !template.as_deref().is_some_and(|t| {
                     t.contains("mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32")
@@ -1408,10 +1408,10 @@ fn test_mma_m16n8k16_f32_f16_lowers_to_inline_asm() -> Result<(), anyhow::Error>
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 let constraints = asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()));
                 if !template.as_deref().is_some_and(|t| {
                     t.contains("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32")
@@ -1511,10 +1511,10 @@ fn test_mma_m16n8k8_f32_tf32_lowers_to_inline_asm() -> Result<(), anyhow::Error>
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 let constraints = asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()));
                 if !template.as_deref().is_some_and(|t| {
                     t.contains("mma.sync.aligned.m16n8k8.row.col.f32.tf32.tf32.f32")
@@ -1610,10 +1610,10 @@ fn test_mma_m8n8k4_f64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 let constraints = asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()));
                 if !template
                     .as_deref()
@@ -1698,10 +1698,10 @@ fn test_mma_m16n8k32_s32_s8_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 let constraints = asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()));
                 if !template
                     .as_deref()

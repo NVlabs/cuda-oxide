@@ -113,6 +113,7 @@ fn requires_params_from_inputs(
             sync_host_ty: quote! { #ty },
             async_host_ty: quote! { #ty },
             marshal: CudaModuleParamMarshal::Scalar,
+            grid_constant: false,
             mutable_slice: false,
             disjoint_slice_ty: None,
             disjoint_slice_elem: None,

@@ -117,8 +117,15 @@ simplified for readability -- the actual printed form includes more metadata.
 %checked = mir.checked_add %a, %b : i32
 %sum     = mir.extract_field %checked, 0 : mir.tuple<i32, i1>
 %overflowed = mir.extract_field %checked, 1 : mir.tuple<i32, i1>
-mir.assert %overflowed == false, "attempt to add with overflow" -> bb1
+%ok = mir.not %overflowed : i1
+mir.assert %ok
+mir.goto bb1
 ```
+
+`mir.assert` continues within its block when the condition is true and traps
+otherwise. It stays separate from the branch so merging blocks cannot erase
+the check. LLVM lowering splits the block at the assertion and adds an
+explicit branch to either the following operations or a trap block.
 
 **Struct construction and field access** (Rust: `point.x`):
 
@@ -296,11 +303,11 @@ they become `call` instructions to `@llvm.nvvm.*` intrinsics.
 
 ### Architecture Coverage
 
-At catalog SHA-256 `3df52944` (the stamp in every `ops/generated/` file
+At catalog SHA-256 `d02f79ec` (the stamp in every `ops/generated/` file
 header), the dialect holds 576 operations across 42 modules, and they come
 from two different places. The split is the first thing to know about it,
 because it decides where -- and whether -- you would add one. If the header
-stamp no longer starts with `3df52944`, the counts on this page predate the
+stamp no longer starts with `d02f79ec`, the counts on this page predate the
 catalog you are reading.
 
 **Hand-written**, directly under `crates/dialect-nvvm/src/ops/`. These are the

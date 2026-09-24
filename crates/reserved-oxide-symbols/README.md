@@ -12,13 +12,13 @@ The `cuda_oxide_*` symbol namespace that `#[kernel]` and `#[device]`
 mangle user functions into, and that the codegen backend, MIR-lowering,
 and LLVM-export passes look for.
 
-Every prefix here contains the magic component `246e25db_`, which is
+Every symbol prefix here contains the magic component `246e25db_`, which is
 `sha256("cuda_oxide_ + rust")` truncated to 8 hex chars. The hash
 exists purely to make accidental collisions impossible — a user is
 never going to write `fn cuda_oxide_codegen_v1_cuda_oxide_kernel_246e25db_foo()` by accident.
 
-All ten symbol constants the crate exports, which is also exactly what the
-`naming-guard` CI job refuses to see hardcoded anywhere outside this crate:
+The crate owns these ten symbol constants. The `naming-guard` CI job keeps
+reserved-prefix literals out of their consumers:
 
 | Constant                    | Value                                               | What it names |
 |-----------------------------|-----------------------------------------------------|---------------|
@@ -32,6 +32,13 @@ All ten symbol constants the crate exports, which is also exactly what the
 | `PTX_MERGE_REQUIRED_PREFIX` | `cuda_oxide_ptx_merge_required_246e25db_`           | statics marking modules whose generic kernels need PTX-bundle merging |
 | `LEGACY_KERNEL_PREFIX`      | `cuda_oxide_kernel_246e25db_`                       | pre-scoped-cache kernels — recognized for a compatibility diagnostic, never emitted |
 | `LEGACY_DEVICE_PREFIX`      | `cuda_oxide_device_246e25db_`                       | pre-scoped-cache device functions — same |
+
+Internal operation-attribute keys also use this crate as their naming authority.
+`KERNEL_REFERENCE_PARAM_VALIDITY_KEY_PREFIX` preserves the compiler metadata
+prefix `cuda_oxide_kernel_reference_param_validity_`; it is not a link symbol.
+Use `kernel_reference_param_validity_key(index)` to create a key and
+`kernel_reference_param_validity_index_text(key)` to read its suffix. The latter
+preserves malformed suffixes so LLVM export can diagnose invalid metadata.
 
 The two legacy forms need care: `KERNEL_PREFIX` *contains* `LEGACY_KERNEL_PREFIX`
 as a substring, since the modern name is the legacy one behind a

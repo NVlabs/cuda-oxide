@@ -56,6 +56,13 @@
 #   NVVM_VERIFY_EXAMPLES are compiled through the real libNVVM verifier and
 #                   compiler in compile-only mode.
 #
+# Full-debug census:
+#
+#   normal examples  -> build --device-debug -> PTX/DWARF -> ptxas
+#   configured cubin -> its normal cubin route -> DWARF checks
+#
+# It runs no kernels. Structural debug checks run; optimized shape tests do not.
+#
 # Categories are bash arrays at the top of this file. When adding an
 # error* example, also update STATUS.md and run
 # scripts/check-error-example-status.sh to verify both are in sync.
@@ -75,7 +82,7 @@ AUTO_NVVM_EXAMPLES=(libdevice_math)
 IKET_EXAMPLES=(iket_trace)
 BLACKWELL_COMPILE_EXAMPLES=(generated_intrinsics_blackwell)
 SM100_COMPILE_EXAMPLES=(redux_f32)
-NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance ex2_approx_f16 generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix legacy_atomic_fadd legacy_atomic_rmw_cas libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
+NVVM_VERIFY_EXAMPLES=(cp_async_small device_global enum_constant_provenance ex2_approx_f16 generated_intrinsics generated_intrinsics_blackwell generated_ldmatrix kernel_reference_validity legacy_atomic_fadd legacy_atomic_rmw_cas libdevice_math legacy_nvvm_pointer_shapes packed_atomic_add primitive_stress scoped_atomic_load_store shuffle_64 tcgen05 tuple_constant_provenance wgmma_mma_bf16)
 ERROR_EXAMPLES=(error error_set_discriminant_uninhabited error_enum_bool_payload_addr error_enum_pointer_overlap error_enum_shared_pointer_layout error_heap_alloc error_host_arch_intrinsic error_host_target_feature error_kernel_shared_param error_missing_device_attr error_generated_intrinsic_abi error_generated_intrinsic_unknown_id error_generated_intrinsic_fn_pointer error_generated_intrinsic_callable)
 
 # Per-example rustc flags policy: an example that needs a special rustc flag
@@ -104,6 +111,14 @@ NO_LAUNCH_EXAMPLES=(wgmma_mma_bf16)
 # artifacts the shape check can read.
 NO_OPT_SHAPE_EXAMPLES=(const_bool_dead_branch)
 
+# This example intentionally configures a cubin artifact in Cargo metadata.
+# Its supported project route necessarily includes NVVM IR + libNVVM +
+# nvJitLink; the full-debug census must exercise that reality rather than
+# silently rewriting the project to PTX. It is reported separately from the
+# direct-LLVM census so the one accommodation cannot be mistaken for direct
+# backend coverage.
+FULL_DEBUG_CONFIGURED_ROUTE_EXAMPLES=(interop_cubin_identity)
+
 classify() {
     local ex="$1" cat
     for cat in "${TCGEN05_EXAMPLES[@]}";     do [[ "$ex" == "$cat" ]] && { echo tcgen05;     return; }; done
@@ -131,6 +146,14 @@ example_never_launches() {
     local ex="$1" candidate
     for candidate in "${NO_LAUNCH_EXAMPLES[@]}"; do
         [[ "$ex" == "$candidate" ]] && return 0
+    done
+    return 1
+}
+
+full_debug_uses_configured_route() {
+    local ex="$1" candidate
+    for candidate in "${FULL_DEBUG_CONFIGURED_ROUTE_EXAMPLES[@]}"; do
+        [[ "${ex}" == "${candidate}" ]] && return 0
     done
     return 1
 }
@@ -183,6 +206,16 @@ OPTIONS
                        when one is available (skipped with a note when it
                        is missing or too old). Error examples must still
                        fail. Works on GPU-less CI.
+      --full-debug     Compile selected examples through the normal LLVM
+                       `cargo oxide build --device-debug` route (except an
+                       explicitly configured cubin project, reported as a
+                       separate configured-route accommodation). Validates
+                       fresh artifacts, ptxas assembly, permanent
+                       verify-debug-info.sh contracts, and intentional error
+                       diagnostics, but skips libNVVM and optimized code-shape
+                       gates because those do not accept/describe full-debug
+                       output. Nothing is executed. Cannot be combined with
+                       --compile-only.
   -x, --fail-fast      Stop at the first failure.
   -v, --verbose        Stream cargo output live (instead of capturing to
                        a per-example log file). Verdict is printed at the
@@ -205,6 +238,7 @@ EXAMPLES
   scripts/smoketest.sh -s 'wgmma|tma'  # skip wgmma and tma examples
   scripts/smoketest.sh -x -v vecadd    # stop on first fail, stream output
   scripts/smoketest.sh --compile-only  # GPU-less compile gate (used by CI)
+  scripts/smoketest.sh --full-debug    # all-example full-debug compile census
 
 Per-example logs live under .smoketest-logs/ by default. Set
 SMOKETEST_LOG_DIR to override this path.
@@ -218,6 +252,7 @@ VERBOSE=0
 KEEP_LOGS=0
 FORCE_NO_COLOR=0
 COMPILE_ONLY=0
+FULL_DEBUG=0
 declare -a POSITIONAL=()
 
 while [[ $# -gt 0 ]]; do
@@ -225,6 +260,7 @@ while [[ $# -gt 0 ]]; do
         -o|--only)      [[ $# -lt 2 ]] && { echo "error: $1 requires a pattern" >&2; exit 2; }; ONLY="$2"; shift 2;;
         -s|--skip)      [[ $# -lt 2 ]] && { echo "error: $1 requires a pattern" >&2; exit 2; }; SKIP="$2"; shift 2;;
         -c|--compile-only) COMPILE_ONLY=1; shift;;
+        --full-debug)    FULL_DEBUG=1; shift;;
         -x|--fail-fast) FAIL_FAST=1; shift;;
         -v|--verbose)   VERBOSE=1; shift;;
         --keep-logs)    KEEP_LOGS=1; shift;;
@@ -235,6 +271,11 @@ while [[ $# -gt 0 ]]; do
         *)              POSITIONAL+=("$1"); shift;;
     esac
 done
+
+if [[ ${COMPILE_ONLY} -eq 1 && ${FULL_DEBUG} -eq 1 ]]; then
+    echo "error: --compile-only and --full-debug are separate gates and cannot be combined" >&2
+    exit 2
+fi
 
 # Bare positionals act as additive --only patterns joined with `|`.
 # Combine them with any explicit --only (OR, not replace) so that
@@ -267,6 +308,57 @@ fi
 if ! cargo oxide --help >/dev/null 2>&1; then
     echo "error: 'cargo oxide' subcommand missing; build it with:" >&2
     echo "         cargo build -p cargo-oxide --release" >&2
+    exit 2
+fi
+
+# `CUDA_OXIDE_DEBUG` in the environment reaches every `cargo oxide` this script
+# runs, so a sweep started with a full-debug value is neither a normal run nor
+# the --full-debug census: mem2reg is skipped for every example, and the
+# optimized code-shape gates in the normal lane then assert on output that no
+# longer has the shapes they describe. #1217 measured 11 examples failing that
+# way, none of them a compiler bug.
+#
+# --full-debug is the supported spelling of that intent -- it drives the build
+# with `--device-debug`, runs the permanent verify-debug-info.sh contracts, and
+# keeps the optimized shape gates out of the lane instead of failing them. So
+# refuse the ambient variable rather than silently reinterpreting the sweep as
+# a census the caller did not ask for: a run that quietly stopped executing
+# kernels is the worse outcome of the two. Passing --full-debug as well is the
+# caller asking for the mode explicitly, and stays allowed.
+#
+# Which values mean full debug is not decided here. `cargo oxide
+# __debug-policy` reports what `DebugPolicy::parse_env_override` -- the one
+# parser behind the backend and the wrapper -- makes of CUDA_OXIDE_DEBUG in
+# this very environment, aliases, case and whitespace included. Any model of
+# that written here would be a second implementation of the policy, and every
+# shell form of it is wrong in some environment: `${v,,}` and `[[:space:]]`
+# both answer to the locale, so under LC_ALL=C a plain `2` or `FULL` reads as
+# an ordinary value while the compiler builds full debug; reading the parser's
+# source instead trades that for a dependency on its formatting.
+if ! debug_policy="$(cargo oxide __debug-policy 2>/dev/null)"; then
+    echo "error: 'cargo oxide __debug-policy' failed; cannot determine device debug policy" >&2
+    exit 2
+fi
+case "${debug_policy}" in
+unset | none | line-tables | full | unrecognized) ;;
+*)
+    echo "error: 'cargo oxide __debug-policy' reported no usable debug policy" >&2
+    echo "       (got '${debug_policy}'). This sweep asks the compiler which" >&2
+    echo "       values of CUDA_OXIDE_DEBUG mean full debug rather than" >&2
+    echo "       deciding for itself; rebuild cargo-oxide with:" >&2
+    echo "         cargo build -p cargo-oxide --release" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "${debug_policy}" == "full" && ${FULL_DEBUG} -eq 0 ]]; then
+    echo "error: CUDA_OXIDE_DEBUG=${CUDA_OXIDE_DEBUG-} selects full device debug;" >&2
+    echo "       use --full-debug instead." >&2
+    echo "       The variable reaches every build this sweep runs, which skips" >&2
+    echo "       dialect-mir mem2reg while the optimized code-shape gates still" >&2
+    echo "       assert on optimized output (#1217). --full-debug is the mode" >&2
+    echo "       that takes those gates out of the lane and checks the" >&2
+    echo "       full-debug contracts instead." >&2
     exit 2
 fi
 
@@ -392,6 +484,8 @@ printf "GPU: %s\n" "${gpu_info}"
 printf "LTOIR arch: %s (modern: %s)\n" "${LTOIR_ARCH}" "${LTOIR_MODERN_ARCH}"
 if [[ ${COMPILE_ONLY} -eq 1 ]]; then
     printf "Mode: compile-only (device artifacts only; nothing is executed)\n"
+elif [[ ${FULL_DEBUG} -eq 1 ]]; then
+    printf "Mode: full-debug compile census (direct LLVM plus explicit configured routes; nothing is executed)\n"
 fi
 if [[ -n "${ONLY}" ]]; then printf "Filter --only: %s\n" "${ONLY}"; fi
 if [[ -n "${SKIP}" ]]; then printf "Filter --skip: %s\n" "${SKIP}"; fi
@@ -501,6 +595,13 @@ grep_failure_markers() {
 verdict_error() {
     local log="$1" ec="$2" ex="$3"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
+    # Every error fixture promises a rejected build, not merely a familiar
+    # diagnostic. Check status before any fixture-specific marker can return
+    # success: a downgraded warning with exit 0 is a regression.
+    if [[ ${ec} -eq 0 ]]; then
+        echo "FAIL (compilation succeeded, expected failure)"
+        return 1
+    fi
 
     # The generated-intrinsic fixtures protect fail-closed compiler contracts,
     # so merely observing an unrelated compile error is not enough.
@@ -614,11 +715,7 @@ verdict_error() {
         echo "PASS (expected compile failure, exit=${ec})"
         return 0
     fi
-    if [[ ${ec} -eq 0 ]]; then
-        echo "FAIL (compilation succeeded, expected failure)"
-    else
-        echo "FAIL (exit=${ec} but no compile-error marker)"
-    fi
+    echo "FAIL (exit=${ec} but no compile-error marker)"
     return 1
 }
 
@@ -790,8 +887,8 @@ verdict_iket() {
     return 1
 }
 
-# Compile-only verdict, used for every non-error category when
-# --compile-only is set. Two requirements:
+# Artifact verdict, used for every non-error category in --compile-only and
+# --full-debug modes. Two requirements:
 #   1. `cargo oxide build` exited 0. Device codegen failures are rustc
 #      fatals (see rustc-codegen-cuda/src/lib.rs join on device results),
 #      so a broken device pipeline cannot exit 0.
@@ -815,7 +912,39 @@ verdict_compile() {
     local artifact="${ex//-/_}"
     if [[ ${ec} -gt 128 ]]; then echo "FAIL (crashed, signal $((ec - 128)))"; return 1; fi
     if [[ ${ec} -ne 0 ]]; then   echo "FAIL (exit=${ec})";                    return 1; fi
-    if verify_nvvm_in_compile_only "${ex}"; then
+    if [[ ${FULL_DEBUG} -eq 1 ]]; then
+        case "${ex}" in
+            device_ffi_test|mathdx_ffi_test|small_type_ffi_test)
+                # These fixtures deliberately leave CUDA device functions
+                # undefined: their normal route links the Rust artifact with
+                # external LTOIR later.  An executable ptxas link must fail,
+                # so validate a relocatable object and its exact undefined
+                # interface instead.
+                full_debug_relocatable_ffi_verdict \
+                    "${ex}" "${ex_dir}/${artifact}.ptx"
+                return
+                ;;
+            cutile_inter_kernel)
+                full_debug_ptx_verdict \
+                    "${ex_dir}/simt/cutile_inter_kernel_simt.ptx" \
+                    "nested interop PTX"
+                return
+                ;;
+            interop_cubin_identity)
+                full_debug_cubin_verdict "${ex_dir}/device/scale_offset_device"
+                return
+                ;;
+            *)
+                # A direct full-debug build must finish as debug PTX. Do not
+                # accept the generic .ll/.target fallback used by compile-only:
+                # that would hide a route change to NVVM IR or dropped debug
+                # propagation across almost the entire census.
+                full_debug_ptx_verdict "${ex_dir}/${artifact}.ptx" "direct LLVM PTX"
+                return
+                ;;
+        esac
+    fi
+    if [[ ${FULL_DEBUG} -eq 0 ]] && verify_nvvm_in_compile_only "${ex}"; then
         if [[ -s "${ex_dir}/${artifact}.ll" && -s "${ex_dir}/${artifact}.ltoir" ]]; then
             # An example may also have produced a .ptx via its direct-LLVM
             # invocation (e.g. tcgen05's dual-route branch); that artifact
@@ -871,12 +1000,278 @@ verdict_compile() {
     return 1
 }
 
+# Assert the artifact is full-debug PTX before asking ptxas to consume it.
+# Merely finding a fresh .ptx file is insufficient: a lost --device-debug
+# request still emits valid optimized PTX and would make the census useless.
+full_debug_ptx_verdict() {
+    local ptx="$1" route="$2"
+    if [[ ! -s "${ptx}" ]]; then
+        echo "FAIL (${route} missing at ${ptx})"
+        return 1
+    fi
+    if ! grep -Eq '^\.target[[:space:]]+.*,[[:space:]]*debug([[:space:]]*,.*)?$' "${ptx}"; then
+        echo "FAIL (${route} is not marked debug in its .target directive)"
+        return 1
+    fi
+    if ! grep -Eq '^[[:space:]]*\.section[[:space:]]+\.debug_info([[:space:]]|$)' "${ptx}"; then
+        echo "FAIL (${route} has no .debug_info section)"
+        return 1
+    fi
+    if [[ -z "${PTXAS_BIN}" ]]; then
+        echo "FAIL (${route} was not assembled: no ptxas found)"
+        return 1
+    fi
+    if ! ptxas_verify "${ptx}"; then
+        echo "FAIL (${route}; ${PTXAS_NOTE})"
+        return 1
+    fi
+    if [[ "${PTXAS_NOTE}" == "ptxas gate skipped:"* ]]; then
+        echo "FAIL (${route} was not assembled; ${PTXAS_NOTE})"
+        return 1
+    fi
+    echo "PASS (full-debug ${route}; ${PTXAS_NOTE})"
+}
+
+# These direct-LLVM FFI examples call functions supplied by external CUDA
+# LTOIR modules. `ptxas foo.ptx` tries to link an executable image and must
+# reject those undefined functions; `ptxas -c` is the correct consumability
+# check. Require a nonempty relocatable ELF, retained DWARF, and the fixture's
+# exact undefined interface so a new accidental reference cannot pass.
+full_debug_relocatable_ffi_verdict() {
+    local ex="$1" ptx="$2"
+    local arch object elf_reader sections dwarf actual_undefined expected_undefined stderr_out
+
+    case "${ex}" in
+        device_ffi_test)
+            expected_undefined=$'char_store\nchar_to_upper\ncub_warp_reduce_sum_f32\ndot_product\nfast_rsqrt\nmagnitude_squared\nsimple_add\nsmem_get_base_addr\nsmem_read_aligned_128\nsmem_write_aligned_128\nvprintf\nwarp_ballot\nwarp_reduce_sum'
+            ;;
+        mathdx_ffi_test)
+            expected_undefined=$'cublasdx_gemm_32x32x32_block_dim_x\ncublasdx_gemm_32x32x32_block_dim_y\ncublasdx_gemm_32x32x32_block_dim_z\ncublasdx_gemm_32x32x32_f32\ncublasdx_gemm_32x32x32_f32_alphabeta\ncublasdx_gemm_32x32x32_smem_size\ncublasdx_gemm_32x32x32_smem_size_ab\ncufftdx_fft_16_c2c_f32_forward\ncufftdx_fft_16_c2c_f32_inverse\ncufftdx_fft_16_elements_per_thread\ncufftdx_fft_16_storage_size\ncufftdx_fft_32_storage_size\ncufftdx_fft_8_c2c_f32_forward\ncufftdx_fft_8_c2c_f32_inverse\ncufftdx_fft_8_elements_per_thread\ncufftdx_fft_8_storage_size\ndebug_extern_double_array'
+            ;;
+        small_type_ffi_test)
+            expected_undefined=$'small_add_u16\nsmall_add_u8\nsmall_half_add\nsmall_not_bool\nsmall_scale_i16\nsmall_scale_i8\nsmall_widen_i8\nsmall_widen_u16'
+            ;;
+        *)
+            echo "FAIL (unrecognized relocatable FFI fixture ${ex})"
+            return 1
+            ;;
+    esac
+
+    if [[ ! -s "${ptx}" ]]; then
+        echo "FAIL (full-debug FFI PTX missing at ${ptx})"
+        return 1
+    fi
+    if ! grep -Eq '^\.target[[:space:]]+.*,[[:space:]]*debug([[:space:]]*,.*)?$' "${ptx}" \
+        || ! grep -Eq '^[[:space:]]*\.section[[:space:]]+\.debug_info([[:space:]]|$)' "${ptx}"; then
+        echo "FAIL (full-debug FFI PTX is missing its debug target/metadata)"
+        return 1
+    fi
+    if [[ -z "${PTXAS_BIN}" ]]; then
+        echo "FAIL (full-debug FFI PTX was not assembled: no ptxas found)"
+        return 1
+    fi
+    arch="$(sed -nE 's/^\.target[[:space:]]+(sm_[0-9]+[af]?).*/\1/p' "${ptx}" | head -1)"
+    if [[ -z "${arch}" ]]; then
+        echo "FAIL (full-debug FFI PTX has no concrete .target architecture)"
+        return 1
+    fi
+    object="$(mktemp "${TMPDIR:-/tmp}/cuda-oxide-full-debug-${ex}.XXXXXX.o")" || {
+        echo "FAIL (could not allocate a temporary FFI object)"
+        return 1
+    }
+    if ! stderr_out="$("${PTXAS_BIN}" -arch="${arch}" -c "${ptx}" -o "${object}" 2>&1)"; then
+        rm -f "${object}"
+        echo "FAIL (ptxas -c -arch=${arch} rejected full-debug FFI PTX: $(head -2 <<<"${stderr_out}" | tr '\n' ' '))"
+        return 1
+    fi
+    if [[ ! -s "${object}" ]]; then
+        rm -f "${object}"
+        echo "FAIL (ptxas -c emitted an empty full-debug FFI object)"
+        return 1
+    fi
+
+    elf_reader="$(command -v readelf || command -v llvm-readelf || true)"
+    if [[ -z "${elf_reader}" ]]; then
+        rm -f "${object}"
+        echo "FAIL (no readelf/llvm-readelf available to inspect full-debug FFI object)"
+        return 1
+    fi
+    sections="$("${elf_reader}" -W -S "${object}" 2>/dev/null)" || {
+        rm -f "${object}"
+        echo "FAIL (could not read full-debug FFI object sections)"
+        return 1
+    }
+    if ! grep -q '[.]debug_info' <<<"${sections}" \
+        || ! grep -q '[.]debug_line' <<<"${sections}"; then
+        rm -f "${object}"
+        echo "FAIL (relocatable full-debug FFI object is missing .debug_info/.debug_line)"
+        return 1
+    fi
+    dwarf="$("${elf_reader}" --debug-dump=info "${object}" 2>/dev/null)" || {
+        rm -f "${object}"
+        echo "FAIL (could not decode relocatable full-debug FFI DWARF)"
+        return 1
+    }
+    if ! grep -q 'DW_TAG_compile_unit' <<<"${dwarf}"; then
+        rm -f "${object}"
+        echo "FAIL (relocatable full-debug FFI object has no compile-unit DWARF)"
+        return 1
+    fi
+    actual_undefined="$(
+        "${elf_reader}" -W -s "${object}" 2>/dev/null \
+            | awk '$7 == "UND" && $8 != "" { print $8 }' \
+            | grep -vE '^(\.nv\.reservedSmem\..*|__UDT(_.*)?|__UFT(_.*)?)$' \
+            | LC_ALL=C sort -u
+    )"
+    rm -f "${object}"
+    if [[ "${actual_undefined}" != "${expected_undefined}" ]]; then
+        local expected_csv actual_csv
+        expected_csv="$(tr '\n' ',' <<<"${expected_undefined}" | sed 's/,$//')"
+        actual_csv="$(tr '\n' ',' <<<"${actual_undefined}" | sed 's/,$//')"
+        echo "FAIL (full-debug FFI undefined-symbol interface drifted for ${ex}; expected=[${expected_csv}]; actual=[${actual_csv}])"
+        return 1
+    fi
+    echo "PASS (full-debug FFI PTX assembled relocatably for ${arch}; DWARF and undefined interface verified)"
+}
+
+# The one configured cubin project cannot be judged through the root PTX
+# convention. Verify its complete versioned sidecar handshake and consume the
+# linked cubin's DWARF so a silently ignored interop debug policy cannot pass.
+full_debug_cubin_verdict() {
+    local stem="$1"
+    local llvm_ir="${stem}.ll"
+    local target_file="${stem}.target"
+    local options_file="${stem}.options"
+    local cubin="${stem}.cubin"
+    local identity="${stem}.cubin.identity"
+    local artifact elf_reader sections dwarf
+
+    for artifact in "${llvm_ir}" "${target_file}" "${options_file}" "${cubin}" "${identity}"; do
+        if [[ ! -s "${artifact}" ]]; then
+            echo "FAIL (configured full-debug cubin artifact missing at ${artifact})"
+            return 1
+        fi
+    done
+    if [[ "$(sed -n '1p' "${target_file}")" != "${LTOIR_MODERN_ARCH}" ]] \
+        || ! grep -qx 'compile-options=v1' "${target_file}"; then
+        echo "FAIL (configured cubin target/options handshake is malformed)"
+        return 1
+    fi
+    if [[ "$(sed -n '1p' "${options_file}")" != "cuda-oxide-compile-options-v2" ]] \
+        || [[ "$(grep -c '^debug=full$' "${options_file}")" -ne 1 ]] \
+        || [[ "$(grep -c '^debug=' "${options_file}")" -ne 1 ]]; then
+        echo "FAIL (configured cubin did not record exact debug=full policy)"
+        return 1
+    fi
+    if ! grep -q 'emissionKind: FullDebug' "${llvm_ir}"; then
+        echo "FAIL (configured cubin NVVM IR has no FullDebug compile unit)"
+        return 1
+    fi
+
+    elf_reader="$(command -v readelf || command -v llvm-readelf || true)"
+    if [[ -z "${elf_reader}" ]]; then
+        echo "FAIL (no readelf/llvm-readelf available to inspect configured cubin DWARF)"
+        return 1
+    fi
+    sections="$("${elf_reader}" -W -S "${cubin}" 2>/dev/null)" || {
+        echo "FAIL (could not read configured cubin sections)"
+        return 1
+    }
+    if ! grep -q '[.]debug_info' <<<"${sections}" \
+        || ! grep -q '[.]debug_line' <<<"${sections}"; then
+        echo "FAIL (configured cubin is missing .debug_info/.debug_line)"
+        return 1
+    fi
+    dwarf="$("${elf_reader}" --debug-dump=info "${cubin}" 2>/dev/null)" || {
+        echo "FAIL (could not decode configured cubin DWARF)"
+        return 1
+    }
+    if ! grep -q 'DW_TAG_compile_unit' <<<"${dwarf}" \
+        || ! grep -q 'DW_TAG_subprogram' <<<"${dwarf}" \
+        || ! grep -q 'scale_offset_f32' <<<"${dwarf}"; then
+        echo "FAIL (configured cubin has no compile-unit/scale_offset_f32 DWARF)"
+        return 1
+    fi
+    echo "PASS (configured cubin recorded debug=full and contains consumable DWARF)"
+}
+
 # ---- Runner --------------------------------------------------------------
+
+# Build every example with full debug. Most use direct LLVM; a configured cubin
+# keeps its declared modern libNVVM route. Category-specific architecture floors
+# still apply even though the census launches no kernels.
+run_full_debug_build() {
+    local ex="$1" log="$2" cat="$3"
+    local arch=""
+    local debug_info_check="crates/rustc-codegen-cuda/examples/${ex}/verify-debug-info.sh"
+    local invariant_shape_check="crates/rustc-codegen-cuda/examples/${ex}/verify-code-shape.sh"
+    local -a args=("build" "${ex}" "--device-debug")
+
+    case "${cat}" in
+        tcgen05)          arch="sm_100a" ;;
+        wgmma)            arch="sm_90a" ;;
+        blackwell-mma)    arch="sm_120a" ;;
+        ltoir)            arch="${LTOIR_ARCH}" ;;
+        ltoir-modern)     arch="${LTOIR_MODERN_ARCH}" ;;
+        auto-nvvm)        arch="${LTOIR_ARCH}" ;;
+        iket)             arch="sm_90" ;;
+        blackwell-compile) arch="sm_120a" ;;
+        sm100-compile)    arch="sm_100a" ;;
+    esac
+
+    # Retain the instruction floors from the compile-only verifier matrix,
+    # but use them with the direct LLVM build rather than emit-ltoir.
+    if [[ -z "${arch}" ]] && verify_nvvm_in_compile_only "${ex}"; then
+        arch="$(nvvm_verify_arch "${ex}")"
+    fi
+    case "${ex}" in
+        cluster) arch="sm_90" ;;
+        # Full debug is unsupported by the legacy LLVM 7 NVVM dialect. Keep
+        # the project's configured cubin path, but use the supported modern
+        # dialect at the host target or its GPU-less sm_100 floor.
+        interop_cubin_identity) arch="${LTOIR_MODERN_ARCH}" ;;
+    esac
+    if [[ -n "${arch}" ]]; then
+        args+=("--arch=${arch}")
+    fi
+
+    if [[ ${VERBOSE} -eq 1 ]]; then
+        cargo oxide "${args[@]}" 2>&1 | tee "${log}"
+        CARGO_EC=${PIPESTATUS[0]}
+    else
+        cargo oxide "${args[@]}" >"${log}" 2>&1
+        CARGO_EC=$?
+    fi
+
+    # These scripts are the permanent structural contracts for full-debug
+    # metadata.  They deliberately remain in this lane while the optimized
+    # verify-code-shape.sh contracts below do not.
+    if [[ ${CARGO_EC} -eq 0 && -f "${debug_info_check}" ]]; then
+        if ! bash "${debug_info_check}" >>"${log}" 2>&1; then
+            printf '%s failed its verify-debug-info.sh assertions\n' "${ex}" >>"${log}"
+            CARGO_EC=1
+        fi
+    fi
+    # `debug` is the one shape contract explicitly documented as invariant
+    # across MIR optimization levels: it rejects macro-attribute source lines
+    # on generated kernel-entry instructions. Other verify-code-shape scripts
+    # describe optimized output and remain outside this lane.
+    if [[ ${CARGO_EC} -eq 0 && "${ex}" == "debug" ]]; then
+        if ! bash "${invariant_shape_check}" >>"${log}" 2>&1; then
+            printf '%s failed its full-debug-invariant shape assertions\n' "${ex}" >>"${log}"
+            CARGO_EC=1
+        fi
+    fi
+}
 
 # Run cargo oxide for ${ex} in category ${cat}. Writes to ${log}. Returns
 # the cargo process exit code via the global ${CARGO_EC}.
 run_cargo() {
     local ex="$1" log="$2" cat="$3"
+    if [[ ${FULL_DEBUG} -eq 1 ]]; then
+        run_full_debug_build "${ex}" "${log}" "${cat}"
+        return
+    fi
     # Rust `char` must remain plain i32 in both NVVM dialects. A runtime
     # round-trip cannot distinguish it from an incorrect zeroext i32 ABI.
     if [[ ${COMPILE_ONLY} -eq 1 && "${ex}" == "device_ffi_test" ]]; then
@@ -1873,6 +2268,10 @@ pass=0
 failures=()
 started=${SECONDS}
 i=0
+full_debug_direct_ran=0
+full_debug_direct_pass=0
+full_debug_configured_ran=0
+full_debug_configured_pass=0
 
 for ex in "${selected[@]}"; do
     i=$((i + 1))
@@ -1887,6 +2286,16 @@ for ex in "${selected[@]}"; do
     fi
 
     t0=${SECONDS}
+    full_debug_route=""
+    if [[ ${FULL_DEBUG} -eq 1 ]]; then
+        if full_debug_uses_configured_route "${ex}"; then
+            full_debug_route="configured cubin/modern libNVVM (${LTOIR_MODERN_ARCH})"
+            full_debug_configured_ran=$((full_debug_configured_ran + 1))
+        else
+            full_debug_route="direct LLVM"
+            full_debug_direct_ran=$((full_debug_direct_ran + 1))
+        fi
+    fi
     run_cargo "${ex}" "${log}" "${cat}"
     ec=${CARGO_EC}
     dt=$((SECONDS - t0))
@@ -1894,10 +2303,11 @@ for ex in "${selected[@]}"; do
     if [[ ! -f "${log}" ]]; then
         verdict="FAIL (log missing: ${log})"
         status=1
-    elif [[ ( ${COMPILE_ONLY} -eq 1 || "${cat}" == "blackwell-compile" || "${cat}" == "sm100-compile" ) && "${cat}" != "error" ]]; then
-        # Compile-only collapses the GPU-gated categories: with nothing
-        # executed, "PTX (or NVVM IR) compiled" is the bar for everything
-        # except error examples, which must still fail with a diagnostic.
+    elif [[ ( ${COMPILE_ONLY} -eq 1 || ${FULL_DEBUG} -eq 1 || "${cat}" == "blackwell-compile" || "${cat}" == "sm100-compile" ) && "${cat}" != "error" ]]; then
+        # Artifact-only modes collapse the GPU-gated categories: with nothing
+        # executed, "PTX (or the explicitly configured artifact) compiled" is
+        # the bar except for error examples, which must still fail with their
+        # intended diagnostic.
         verdict="$(verdict_compile "${ex}" "${log}" "${ec}")" && status=0 || status=$?
     else
         case "${cat}" in
@@ -1912,6 +2322,17 @@ for ex in "${selected[@]}"; do
             standard)    verdict="$(verdict_standard    "${log}" "${ec}" "${ex}")" && status=0 || status=$? ;;
             *)           verdict="FAIL (unknown category: ${cat})"; status=1 ;;
         esac
+    fi
+
+    if [[ ${FULL_DEBUG} -eq 1 ]]; then
+        verdict="${verdict}; route: ${full_debug_route}"
+        if [[ ${status} -eq 0 ]]; then
+            if full_debug_uses_configured_route "${ex}"; then
+                full_debug_configured_pass=$((full_debug_configured_pass + 1))
+            else
+                full_debug_direct_pass=$((full_debug_direct_pass + 1))
+            fi
+        fi
     fi
 
     if [[ ${status} -eq 0 ]]; then
@@ -1953,6 +2374,17 @@ if [[ ${ran} -lt ${total} ]]; then
     printf "Skipped: %s%d%s (fail-fast stopped early)\n" "${C_SKIP}" "$((total - ran))" "${C_RESET}"
 fi
 printf "Elapsed: %ds\n" "${elapsed}"
+if [[ ${FULL_DEBUG} -eq 1 ]]; then
+    printf "Full-debug direct LLVM: %d / %d passed\n" \
+        "${full_debug_direct_pass}" "${full_debug_direct_ran}"
+    printf "Full-debug configured route: %d / %d passed" \
+        "${full_debug_configured_pass}" "${full_debug_configured_ran}"
+    if [[ ${full_debug_configured_ran} -gt 0 ]]; then
+        printf " (%s: cubin via modern libNVVM/nvJitLink at %s; legacy sm_90 debug is unsupported)" \
+            "${FULL_DEBUG_CONFIGURED_ROUTE_EXAMPLES[*]}" "${LTOIR_MODERN_ARCH}"
+    fi
+    printf "\n"
+fi
 
 if [[ ${#failures[@]} -gt 0 ]]; then
     echo ""

@@ -244,7 +244,7 @@ pub(super) fn find_cuda_toolkit_executable_with_env(
             .filter(|value| !value.trim().is_empty())
             .or_else(|| project_config_env(ctx, key).map(str::to_owned))
     });
-    let configured = PathBuf::from(toolkit).join("bin").join(name);
+    let configured = toolkit.join("bin").join(name);
     if configured.exists() {
         return Some(configured);
     }

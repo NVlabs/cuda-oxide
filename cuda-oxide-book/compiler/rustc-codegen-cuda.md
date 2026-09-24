@@ -239,7 +239,7 @@ enforces rules about which crates are allowed in device code:
 | `core`                | Allowed                    | `no_std` standard library                    |
 | Other `no_std` crates | Allowed                    | Any crate in the dependency tree             |
 | `std`                 | **Forbidden**              | Compile-time error                           |
-| `alloc`               | Allowed (if GPU allocator) | Experimental                                 |
+| `alloc`               | Allowed (if GPU allocator) | Requires a GPU allocator                     |
 
 The rule is simple: if a crate could conceivably run on a GPU (no OS
 dependencies, no file I/O, no networking), it is allowed. If it drags in

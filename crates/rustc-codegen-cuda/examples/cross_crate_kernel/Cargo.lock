@@ -190,6 +190,8 @@ dependencies = [
  "cuda-core",
  "cuda-macros",
  "half",
+ "libc",
+ "oxide-artifacts",
  "ptx-parse",
  "sha2",
  "thiserror",

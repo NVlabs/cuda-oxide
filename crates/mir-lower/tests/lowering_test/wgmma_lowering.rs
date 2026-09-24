@@ -286,7 +286,7 @@ fn test_deferred_wgmma_group_lowers_to_one_register_lifetime_scope() -> Result<(
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| {
                     template.contains("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
@@ -297,7 +297,7 @@ fn test_deferred_wgmma_group_lowers_to_one_register_lifetime_scope() -> Result<(
 
     let asm = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("WGMMA template");
     assert_eq!(template.matches("ld.f32 %acc").count(), 32);
@@ -310,7 +310,7 @@ fn test_deferred_wgmma_group_lowers_to_one_register_lifetime_scope() -> Result<(
         "accumulator stores must follow wait_group<0>"
     );
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some("l,l,l,~{memory}")
@@ -357,7 +357,7 @@ fn test_value_form_wgmma_group_lowers_to_tied_register_inline_ptx() -> Result<()
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| {
                     template.contains("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
@@ -369,7 +369,7 @@ fn test_value_form_wgmma_group_lowers_to_tied_register_inline_ptx() -> Result<()
     let asm = &matching[0];
     let asm_op = asm.get_operation();
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("value-form WGMMA template");
 
@@ -408,7 +408,7 @@ fn test_value_form_wgmma_group_lowers_to_tied_register_inline_ptx() -> Result<()
     let expected_constraints = expected_constraints.join(",");
 
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some(expected_constraints.as_str())
@@ -501,7 +501,7 @@ fn test_value_form_m64n128_bf16_wgmma_group_lowers_to_sixty_four_tied_registers(
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("m64n128k16.f32.bf16.bf16"))
         })
@@ -510,7 +510,7 @@ fn test_value_form_m64n128_bf16_wgmma_group_lowers_to_sixty_four_tied_registers(
 
     let asm = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("m64n128 value-form WGMMA template");
     assert_eq!(template.matches("wgmma.mma_async").count(), 2);
@@ -521,7 +521,7 @@ fn test_value_form_m64n128_bf16_wgmma_group_lowers_to_sixty_four_tied_registers(
     assert!(!template.contains("st.f32"));
 
     let constraints = asm
-        .get_attr_inline_asm_constraints(&ctx)
+        .get_attr_llvm_inline_asm_constraints(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("m64n128 value-form WGMMA constraints");
     assert_eq!(
@@ -584,7 +584,7 @@ fn test_value_form_f16_wgmma_group_lowers_to_tied_register_inline_ptx() -> Resul
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("m64n64k16.f32.f16.f16"))
         })
@@ -593,7 +593,7 @@ fn test_value_form_f16_wgmma_group_lowers_to_tied_register_inline_ptx() -> Resul
 
     let asm = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("F16 value-form WGMMA template");
     assert_eq!(template.matches("wgmma.mma_async").count(), 1);
@@ -606,7 +606,7 @@ fn test_value_form_f16_wgmma_group_lowers_to_tied_register_inline_ptx() -> Resul
     assert!(!template.contains("st.f32"));
 
     let constraints = asm
-        .get_attr_inline_asm_constraints(&ctx)
+        .get_attr_llvm_inline_asm_constraints(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("F16 value-form WGMMA constraints");
     assert_eq!(
@@ -661,7 +661,7 @@ fn test_value_form_tf32_wgmma_group_lowers_to_tied_register_inline_ptx() -> Resu
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("m64n64k8.f32.tf32.tf32"))
         })
@@ -670,7 +670,7 @@ fn test_value_form_tf32_wgmma_group_lowers_to_tied_register_inline_ptx() -> Resu
 
     let asm = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("TF32 value-form WGMMA template");
     assert_eq!(template.matches("wgmma.mma_async").count(), 1);
@@ -687,7 +687,7 @@ fn test_value_form_tf32_wgmma_group_lowers_to_tied_register_inline_ptx() -> Resu
     assert!(!template.contains("st.f32"));
 
     let constraints = asm
-        .get_attr_inline_asm_constraints(&ctx)
+        .get_attr_llvm_inline_asm_constraints(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("TF32 value-form WGMMA constraints");
     assert_eq!(
@@ -763,7 +763,7 @@ fn test_pointer_form_wgmma_sequence_preserves_deferred_fallback() -> Result<(), 
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("wgmma.mma_async"))
         })
@@ -772,7 +772,7 @@ fn test_pointer_form_wgmma_sequence_preserves_deferred_fallback() -> Result<(), 
 
     let asm = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("WGMMA template");
     assert_eq!(template.matches("ld.f32 %acc").count(), 32);
@@ -782,7 +782,7 @@ fn test_pointer_form_wgmma_sequence_preserves_deferred_fallback() -> Result<(), 
     assert!(template.contains("wgmma.commit_group.sync.aligned"));
     assert!(template.contains("wgmma.wait_group.sync.aligned 0"));
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some("l,l,l,~{memory}")
@@ -913,7 +913,7 @@ fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<()
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| {
                     template.contains("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
@@ -926,7 +926,7 @@ fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<()
         "distinct reborrow SSA values for one accumulator must not break deferred fusion"
     );
     let template = matching[0]
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("WGMMA template");
     assert_eq!(
@@ -1012,7 +1012,7 @@ fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Resu
                 .map(|inline_asm| (operation, inline_asm))
         })
         .filter(|(_, asm)| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("wgmma.mma_async"))
         })
@@ -1021,7 +1021,7 @@ fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Resu
 
     let (asm_operation, asm) = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("WGMMA template");
 
@@ -1049,7 +1049,7 @@ fn test_pointer_form_wgmma_sequence_uses_value_adapter_before_lowering() -> Resu
     let expected_constraints = expected_constraints.join(",");
 
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some(expected_constraints.as_str())
@@ -1141,7 +1141,7 @@ fn test_pointer_form_m64n128_bf16_linear_full_drain_uses_sixty_four_value_adapte
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("m64n128k16.f32.bf16.bf16"))
         })
@@ -1150,7 +1150,7 @@ fn test_pointer_form_m64n128_bf16_linear_full_drain_uses_sixty_four_value_adapte
 
     let asm = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("m64n128 pointer-form WGMMA template");
     assert_eq!(template.matches("wgmma.mma_async").count(), 2);
@@ -1159,7 +1159,7 @@ fn test_pointer_form_m64n128_bf16_linear_full_drain_uses_sixty_four_value_adapte
     assert!(!template.contains("st.f32"));
 
     let constraints = asm
-        .get_attr_inline_asm_constraints(&ctx)
+        .get_attr_llvm_inline_asm_constraints(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("m64n128 pointer-form WGMMA constraints");
     assert_eq!(
@@ -1198,7 +1198,7 @@ fn test_pointer_form_f16_wgmma_linear_full_drain_uses_value_adapter() -> Result<
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("m64n64k16.f32.f16.f16"))
         })
@@ -1207,7 +1207,7 @@ fn test_pointer_form_f16_wgmma_linear_full_drain_uses_value_adapter() -> Result<
 
     let asm = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("F16 pointer-form WGMMA template");
     assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
@@ -1250,7 +1250,7 @@ fn test_pointer_form_tf32_wgmma_linear_full_drain_uses_value_adapter() -> Result
         .into_iter()
         .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
         .filter(|asm| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("m64n64k8.f32.tf32.tf32"))
         })
@@ -1259,7 +1259,7 @@ fn test_pointer_form_tf32_wgmma_linear_full_drain_uses_value_adapter() -> Result
 
     let asm = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("TF32 pointer-form WGMMA template");
     assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
@@ -1328,7 +1328,7 @@ fn test_pointer_form_wgmma_partial_wait_pipeline_keeps_multiple_groups_in_flight
                 .map(|inline_asm| (operation, inline_asm))
         })
         .filter(|(_, asm)| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| {
                     template.contains("wgmma.mma_async")
@@ -1344,7 +1344,7 @@ fn test_pointer_form_wgmma_partial_wait_pipeline_keeps_multiple_groups_in_flight
 
     let (asm_operation, asm) = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("pipeline WGMMA template");
 
@@ -1385,7 +1385,7 @@ fn test_pointer_form_wgmma_partial_wait_pipeline_keeps_multiple_groups_in_flight
     expected_constraints.push("~{memory}".to_owned());
     let expected_constraints = expected_constraints.join(",");
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some(expected_constraints.as_str())
@@ -1816,7 +1816,7 @@ fn test_pointer_form_wgmma_two_slot_counted_pipeline_stays_register_resident()
                 .map(|inline_asm| (operation, inline_asm))
         })
         .filter(|(_, asm)| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("L__wgmma_pipeline_loop_${:uid}:"))
         })
@@ -1829,7 +1829,7 @@ fn test_pointer_form_wgmma_two_slot_counted_pipeline_stays_register_resident()
 
     let (asm_operation, asm) = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("counted-pipeline WGMMA template");
 
@@ -1871,7 +1871,7 @@ fn test_pointer_form_wgmma_two_slot_counted_pipeline_stays_register_resident()
     expected_constraints.push("~{memory}".to_owned());
     let expected_constraints = expected_constraints.join(",");
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some(expected_constraints.as_str())
@@ -1942,7 +1942,7 @@ fn test_pointer_form_wgmma_three_slot_counted_pipeline_stays_register_resident()
                 .map(|inline_asm| (operation, inline_asm))
         })
         .filter(|(_, asm)| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("L__wgmma_pipeline_loop_${:uid}:"))
         })
@@ -1955,7 +1955,7 @@ fn test_pointer_form_wgmma_three_slot_counted_pipeline_stays_register_resident()
 
     let (asm_operation, asm) = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("three-slot counted-pipeline WGMMA template");
 
@@ -2002,7 +2002,7 @@ fn test_pointer_form_wgmma_three_slot_counted_pipeline_stays_register_resident()
     expected_constraints.push("~{memory}".to_owned());
     let expected_constraints = expected_constraints.join(",");
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some(expected_constraints.as_str())
@@ -2265,7 +2265,7 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
                 .map(|inline_asm| (operation, inline_asm))
         })
         .filter(|(_, asm)| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("L__wgmma_loop_${:uid}:"))
         })
@@ -2278,7 +2278,7 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
 
     let (asm_operation, asm) = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("counted-loop WGMMA template");
 
@@ -2317,7 +2317,7 @@ fn test_pointer_form_wgmma_counted_k_loop_stays_register_resident() -> Result<()
     expected_constraints.push("~{memory}".to_owned());
     let expected_constraints = expected_constraints.join(",");
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some(expected_constraints.as_str())
@@ -2542,7 +2542,7 @@ fn test_f16_wgmma_counted_k_loop_stays_register_resident() -> Result<(), anyhow:
                 .map(|inline_asm| (operation, inline_asm))
         })
         .filter(|(_, asm)| {
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .is_some_and(|template| template.contains("L__wgmma_loop_${:uid}:"))
         })
@@ -2555,7 +2555,7 @@ fn test_f16_wgmma_counted_k_loop_stays_register_resident() -> Result<(), anyhow:
 
     let (asm_operation, asm) = &matching[0];
     let template = asm
-        .get_attr_inline_asm_template(&ctx)
+        .get_attr_llvm_inline_asm_template(&ctx)
         .map(|value| String::from((*value).clone()))
         .expect("F16 counted-loop WGMMA template");
 
@@ -2597,7 +2597,7 @@ fn test_f16_wgmma_counted_k_loop_stays_register_resident() -> Result<(), anyhow:
     expected_constraints.push("~{memory}".to_owned());
     let expected_constraints = expected_constraints.join(",");
     assert_eq!(
-        asm.get_attr_inline_asm_constraints(&ctx)
+        asm.get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .as_deref(),
         Some(expected_constraints.as_str())

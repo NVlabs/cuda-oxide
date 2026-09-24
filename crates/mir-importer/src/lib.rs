@@ -105,7 +105,8 @@ pub use error::{TranslationErr, TranslationResult};
 pub use pipeline::{
     CollectedFunction, CompilationArtifactKind, CompilationResult, DebugGlobalVariableIdentity,
     DeviceExternAttrs, DeviceExternDecl, DeviceExternType, KernelLaunchBounds, PipelineConfig,
-    PipelineError, build_debug_global_variable_info, build_debug_shared_array_variable_info,
+    PipelineError, StatementDebugInfo, StatementDebugInfoBlock, StatementDebugInfoMap,
+    build_debug_global_variable_info, build_debug_shared_array_variable_info,
     device_static_global_key, run_pipeline,
 };
 pub use translator::facts::KnownDefs;

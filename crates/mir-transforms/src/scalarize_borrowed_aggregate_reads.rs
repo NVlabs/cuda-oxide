@@ -55,8 +55,9 @@
 //! `mir.extract_array_element`.
 //!
 //! The index must either be a bounded unsigned remainder or be guarded by the
-//! unique predecessor `mir.assert(mir.lt(index, constant))`. Guarded indices are
-//! canonicalized to an equivalent remainder in the assertion-success block so
+//! unique predecessor's `mir.assert(mir.lt(index, constant))` immediately before
+//! its `mir.goto` to the load. Guarded indices are canonicalized to an equivalent
+//! remainder in the assertion-success block so
 //! the existing typed `mir.extract_array_element` lowering can scalarize them.
 //!
 //! The second phase widens one dynamic element load into a load of the whole
@@ -79,7 +80,7 @@ use dialect_mir::{
     ops::{
         MAX_SCALARIZED_CANDIDATES, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirCallOp,
         MirCastOp, MirConstantOp, MirExtractArrayElementOp, MirExtractFieldOp, MirFieldAddrOp,
-        MirFuncOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
+        MirFuncOp, MirGotoOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
     },
     types::{MirArrayType, MirPointerKind, MirPtrType, MirStructType, address_space},
 };
@@ -92,7 +93,7 @@ use pliron::{
         listener::Recorder,
         rewriter::{IRRewriter, Rewriter},
     },
-    linked_list::ContainsLinkedList,
+    linked_list::{ContainsLinkedList, LinkedList},
     location::Located,
     op::Op,
     operation::Operation,
@@ -583,14 +584,16 @@ fn bounded_pointer_index(
         return None;
     };
     let terminator = assert_block.deref(ctx).get_terminator(ctx)?;
-    Operation::get_op::<MirAssertOp>(terminator, ctx)?;
+    Operation::get_op::<MirGotoOp>(terminator, ctx)?;
     if terminator.deref(ctx).get_num_successors() != 1
         || terminator.deref(ctx).get_successor(0) != load_block
     {
         return None;
     }
 
-    let condition = terminator.deref(ctx).get_operand(0);
+    let assertion = terminator.deref(ctx).get_prev()?;
+    Operation::get_op::<MirAssertOp>(assertion, ctx)?;
+    let condition = assertion.deref(ctx).get_operand(0);
     let comparison = condition.defining_op()?;
     Operation::get_op::<MirLtOp>(comparison, ctx)?;
     if comparison.deref(ctx).get_parent_block() != Some(*assert_block)
@@ -1328,26 +1331,19 @@ mod tests {
             comparison.insert_at_back(entry, ctx);
             let condition = comparison.deref(ctx).get_result(0);
 
-            let assert = Operation::new(
-                ctx,
-                MirAssertOp::get_concrete_op_info(),
-                vec![],
-                vec![condition],
-                vec![body],
-                0,
-            );
-            assert.insert_at_back(entry, ctx);
-        } else {
-            let goto = Operation::new(
-                ctx,
-                MirGotoOp::get_concrete_op_info(),
-                vec![],
-                vec![],
-                vec![body],
-                0,
-            );
-            goto.insert_at_back(entry, ctx);
+            MirAssertOp::new(ctx, condition)
+                .get_operation()
+                .insert_at_back(entry, ctx);
         }
+        let goto = Operation::new(
+            ctx,
+            MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![],
+            vec![body],
+            0,
+        );
+        goto.insert_at_back(entry, ctx);
 
         let field_pointer: TypeHandle = MirPtrType::get_generic(ctx, array_type, false).into();
         let field = MirFieldAddrOp::build(ctx, aggregate_argument, field_pointer, 0)

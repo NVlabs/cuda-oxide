@@ -73,7 +73,7 @@ fn test_packed_atomic_add_lowers_to_exact_side_effecting_ptx() -> Result<(), any
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default();
                 assert!(
@@ -85,7 +85,7 @@ fn test_packed_atomic_add_lowers_to_exact_side_effecting_ptx() -> Result<(), any
                 }
                 lowered.push((
                     template,
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .unwrap_or_default(),
                     llvm::asm_kind(&ctx, &asm),
@@ -153,12 +153,12 @@ fn test_generated_packed_atomic_add_libnvvm_route_is_exact() -> Result<(), anyho
         .filter_map(|op| {
             let asm = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx)?;
             let template = asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))?;
             template.starts_with("atom.global.add.noftz.").then(|| {
                 (
                     template,
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone())),
                     llvm::asm_kind(&ctx, &asm),
                 )
@@ -209,7 +209,7 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
     let mut ctx = make_test_ctx();
     let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
     let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
-    let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+    let ptr_ty = MirPtrType::get_global(&mut ctx, u32_ty.into(), true);
     let (module_ptr, entry) =
         build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into(), u64_ty.into()]);
     let address = entry.deref(&ctx).get_argument(0);
@@ -294,7 +294,7 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default();
                 if !template.starts_with("ld.") && !template.starts_with("st.") {
@@ -302,7 +302,7 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
                 }
                 lowered.push((
                     template,
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .unwrap_or_default(),
                     llvm::asm_kind(&ctx, &asm),
@@ -341,6 +341,137 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
             "asm kind for {template}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn test_pointer_atomic_load_store_use_b64_pointer_registers() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{
+        AtomicOrdering, AtomicScope, NvvmAtomicLoadOp, NvvmAtomicStoreOp,
+    };
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    // Atomic value type: *mut u64.
+    let value_ptr_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic(&mut ctx, u64_ty.into(), true).into();
+
+    // Atomic storage type: *mut (*mut u64).
+    let address_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_global(&mut ctx, value_ptr_ty, true).into();
+
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![address_ty, value_ptr_ty]);
+    let address = entry.deref(&ctx).get_argument(0);
+    let pointer_value = entry.deref(&ctx).get_argument(1);
+
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        value_ptr_ty,
+        AtomicOrdering::Relaxed,
+        AtomicScope::System,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    NvvmAtomicStoreOp::build(
+        &mut ctx,
+        pointer_value,
+        address,
+        AtomicOrdering::Relaxed,
+        AtomicScope::System,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let mut lowered = Vec::new();
+
+    for op in lowered_kernel_body(&ctx, module_ptr) {
+        let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) else {
+            continue;
+        };
+
+        let template = asm
+            .get_attr_llvm_inline_asm_template(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+
+        if !template.starts_with("ld.") && !template.starts_with("st.") {
+            continue;
+        }
+
+        let constraints = asm
+            .get_attr_llvm_inline_asm_constraints(&ctx)
+            .map(|value| String::from((*value).clone()))
+            .unwrap_or_default();
+
+        lowered.push((template, constraints));
+    }
+
+    assert_eq!(
+        lowered,
+        vec![
+            (
+                "ld.relaxed.sys.b64 $0, [$1];".to_string(),
+                "=l,l,~{memory}".to_string(),
+            ),
+            (
+                "st.relaxed.sys.b64 [$0], $1;".to_string(),
+                "l,l,~{memory}".to_string(),
+            ),
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_atomic_load_rejects_shared_value_pointer() -> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use dialect_nvvm::ops::atomic::{AtomicOrdering, AtomicScope, NvvmAtomicLoadOp};
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    let mut ctx = make_test_ctx();
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    let shared_value_ptr_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_shared(&mut ctx, u64_ty.into(), true).into();
+
+    let address_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic(&mut ctx, shared_value_ptr_ty, true).into();
+
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![address_ty]);
+    let address = entry.deref(&ctx).get_argument(0);
+
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        shared_value_ptr_ty,
+        AtomicOrdering::Relaxed,
+        AtomicScope::System,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    append_return(&mut ctx, entry);
+
+    let error = mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .expect_err("shared pointer atomic values must fail closed")
+        .to_string();
+
+    assert!(
+        error.contains("nvvm.atomic_load has an unsupported value type"),
+        "unexpected error: {error}",
+    );
+
     Ok(())
 }
 
@@ -427,7 +558,7 @@ fn test_seqcst_atomic_load_store_fuse_fence_into_template() -> Result<(), anyhow
     ] {
         let mut ctx = make_test_ctx();
         let u32_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned);
-        let ptr_ty = MirPtrType::get_generic(&mut ctx, u32_ty.into(), true);
+        let ptr_ty = MirPtrType::get_global(&mut ctx, u32_ty.into(), true);
         let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into(), u32_ty.into()]);
         let address = entry.deref(&ctx).get_argument(0);
         let val = entry.deref(&ctx).get_argument(1);
@@ -455,10 +586,10 @@ fn test_seqcst_atomic_load_store_fuse_fence_into_template() -> Result<(), anyhow
                 continue;
             };
             lowered.push((
-                asm.get_attr_inline_asm_template(&ctx)
+                asm.get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default(),
-                asm.get_attr_inline_asm_constraints(&ctx)
+                asm.get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default(),
             ));
@@ -552,11 +683,11 @@ fn test_float_atomic_load_store_bitcast_through_integer_registers() -> Result<()
         for op in lowered_kernel_body(&ctx, module_ptr) {
             if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default();
                 let constraints = asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default();
                 if template.starts_with("ld.") {
@@ -672,7 +803,7 @@ fn test_fence_uses_membar_intrinsic_only_for_seqcst() -> Result<(), anyhow::Erro
             }
             if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
                 let t = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|v| String::from((*v).clone()))
                     .unwrap_or_default();
                 if t.starts_with("fence.") {
@@ -741,12 +872,12 @@ fn test_first_class_atomic_fence_lowers_at_system_scope() -> Result<(), anyhow::
                 continue;
             };
             let template = asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .unwrap_or_default();
             if template.starts_with("fence.") {
                 assert_eq!(
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some("~{memory}")

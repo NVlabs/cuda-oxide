@@ -21,6 +21,7 @@ use dialect_mir::ops::{
     MirBitAndOp, MirCallOp, MirCondBranchOp, MirConstantOp, MirGeOp, MirReturnOp, MirUnrollHintOp,
 };
 use mir_transforms::unroll::unroll_annotated_loops;
+use pliron::attribute::Attribute;
 use pliron::builtin::attributes::{IntegerAttr, StringAttr};
 use pliron::builtin::ops::ConstantOp;
 use pliron::builtin::types::FunctionType;
@@ -78,8 +79,8 @@ fn constant_i128(ctx: &Context, value: pliron::value::Value) -> Option<i128> {
     if let Some(c) = Operation::get_op::<MirConstantOp>(def, ctx) {
         return c.get_attr_value(ctx).map(|a| a.value().to_i128());
     }
-    Operation::get_op::<ConstantOp>(def, ctx)?
-        .get_value(ctx)
+    let attr = Operation::get_op::<ConstantOp>(def, ctx)?.get_value(ctx);
+    (&*attr as &dyn Attribute)
         .downcast_ref::<IntegerAttr>()
         .map(|a| a.value().to_i128())
 }

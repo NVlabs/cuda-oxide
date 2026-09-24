@@ -20,17 +20,20 @@
 //!   `#[launch_bounds(...)]`)
 
 use super::block;
+use super::facts;
 use super::types;
 use crate::error::{TranslationErr, TranslationResult};
+use crate::pipeline::StatementDebugInfoMap;
 use crate::translator::location::span_to_location;
 use crate::translator::values::{self, SlotAddrSpaceMap, ValueMap};
+use dialect_mir::attributes::ReferenceParamValidityAttr;
 use dialect_mir::ops::MirFuncOp;
 use dialect_mir::types::address_space;
 use llvm_export::export::DebugKind;
 use llvm_export::ops::{
     DebugEnumDiscriminant, DebugEnumVariant, DebugFragment, DebugFragmentVariableInfo,
     DebugLocalTypeKind, DebugLocalVariableInfo, DebugProjectedVariableInfo, DebugSourcePosition,
-    DebugSourceScopeMap, DebugTypeMember, LocalMemoryProvenanceAttr,
+    DebugSourceScopeMap, DebugTypeMember, DebugWholeVariableInfo, LocalMemoryProvenanceAttr,
 };
 use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::SymbolOpInterface;
@@ -161,6 +164,8 @@ fn detect_cluster_config(
 fn detect_grid_constant_params(
     body: &mir::Body,
     reachable: &std::collections::BTreeSet<usize>,
+    instance: &mono::Instance,
+    is_kernel: bool,
 ) -> Result<Vec<usize>, String> {
     use rustc_public::ty::TyConstKind;
 
@@ -186,6 +191,7 @@ fn detect_grid_constant_params(
         {
             continue;
         }
+        facts::validate_grid_constant_marker_owner(instance, block_idx, is_kernel)?;
         if args.0.len() != 1 {
             return Err(format!(
                 "cuda_device grid-constant marker has {} generic arguments; expected exactly 1",
@@ -632,11 +638,12 @@ struct LocalDebugInfo {
     variable: DebugLocalVariableInfo,
     loc: pliron::location::Location,
     source_scope: u32,
+    declaration: Option<DebugSourcePosition>,
 }
 
 #[derive(Default)]
 struct CollectedDebugLocals {
-    whole: FxHashMap<mir::Local, LocalDebugInfo>,
+    whole: FxHashMap<mir::Local, Vec<LocalDebugInfo>>,
     projected: FxHashMap<mir::Local, Vec<DebugProjectedVariableInfo>>,
     fragments: FxHashMap<mir::Local, Vec<DebugFragmentVariableInfo>>,
 }
@@ -693,7 +700,8 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
                 collected
                     .whole
                     .entry(local)
-                    .or_insert_with(|| LocalDebugInfo {
+                    .or_default()
+                    .push(LocalDebugInfo {
                         variable: DebugLocalVariableInfo {
                             name,
                             argument_index: info.argument_index,
@@ -701,6 +709,7 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
                         },
                         loc: span_to_location(ctx, info.source_info.span),
                         source_scope: info.source_info.scope,
+                        declaration: debug_source_position(info.source_info.span),
                     });
                 continue;
             }
@@ -733,7 +742,8 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
             collected
                 .whole
                 .entry(local)
-                .or_insert_with(|| LocalDebugInfo {
+                .or_default()
+                .push(LocalDebugInfo {
                     variable: DebugLocalVariableInfo {
                         name,
                         argument_index: info.argument_index,
@@ -741,6 +751,7 @@ fn collect_debug_locals(ctx: &mut Context, body: &mir::Body) -> CollectedDebugLo
                     },
                     loc: span_to_location(ctx, info.source_info.span),
                     source_scope: info.source_info.scope,
+                    declaration: debug_source_position(info.source_info.span),
                 });
             continue;
         }
@@ -1804,7 +1815,9 @@ fn emit_entry_allocas(
             );
         }
 
-        if let Some(info) = debug_locals.whole.get(&local) {
+        if let Some(infos) = debug_locals.whole.get(&local)
+            && let Some(info) = infos.first()
+        {
             llvm_export::ops::set_debug_local_variable(ctx, op, info.variable.clone());
             if debug_source_scopes
                 .is_some_and(|map| map.scopes.iter().any(|scope| scope.id == info.source_scope))
@@ -1812,6 +1825,17 @@ fn emit_entry_allocas(
                 llvm_export::ops::set_debug_local_source_scope(ctx, op, info.source_scope);
             }
             op.deref_mut(ctx).set_loc(info.loc.clone());
+            let aliases: Vec<_> = infos[1..]
+                .iter()
+                .map(|alias| DebugWholeVariableInfo {
+                    variable: alias.variable.clone(),
+                    source_scope: Some(alias.source_scope),
+                    declaration: alias.declaration.clone(),
+                })
+                .collect();
+            if !aliases.is_empty() {
+                llvm_export::ops::set_debug_whole_variable_aliases(ctx, op, &aliases);
+            }
         }
         if let Some(projected) = debug_locals.projected.get(&local) {
             llvm_export::ops::set_debug_projected_variables(ctx, op, projected);
@@ -1872,7 +1896,32 @@ pub fn translate_body(
     legaliser: &mut Legaliser,
     debug_kind: DebugKind,
     debug_source_scopes: Option<&DebugSourceScopeMap>,
+    statement_debug_info: Option<&StatementDebugInfoMap>,
 ) -> TranslationResult<Ptr<Operation>> {
+    if let Some(statement_debug_info) = statement_debug_info {
+        if statement_debug_info.blocks.len() != body.blocks.len() {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "statement debug sidecar has {} blocks, but stable MIR has {}",
+                statement_debug_info.blocks.len(),
+                body.blocks.len()
+            )));
+        }
+        for (block_index, (debug_block, mir_block)) in statement_debug_info
+            .blocks
+            .iter()
+            .zip(&body.blocks)
+            .enumerate()
+        {
+            if debug_block.before_statements.len() != mir_block.statements.len() {
+                return input_err_noloc!(TranslationErr::invalid_op(format!(
+                    "statement debug sidecar block {block_index} has {} statement boundaries, but stable MIR has {} statements",
+                    debug_block.before_statements.len(),
+                    mir_block.statements.len()
+                )));
+            }
+        }
+    }
+
     // Establish and validate rustc's exact per-instance reachability before
     // any whole-body semantic scan. Dead blocks must not influence function
     // attributes, pointer-slot address spaces, or later code emission.
@@ -1961,6 +2010,52 @@ pub fn translate_body(
         }
     };
 
+    // Validate the source contract before translating argument types, so DSTs
+    // and interior-mutability failures report the grid-constant declaration
+    // rather than an incidental failure deeper in type lowering.
+    let grid_constant_params =
+        detect_grid_constant_params(body, &reachable, instance, is_kernel)
+            .map_err(|error| input_error_noloc!(TranslationErr::invalid_op(error)))?;
+    let mut grid_constant_layouts = Vec::with_capacity(grid_constant_params.len());
+    for source_index in grid_constant_params {
+        if source_index >= num_args {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter index {source_index} is out of range for {num_args} parameters"
+            )));
+        }
+        let local = mir::Local::from(source_index + 1);
+        let parameter_ty = body.locals()[local].ty;
+        let TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) = parameter_ty.kind() else {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter {source_index} is not a reference"
+            )));
+        };
+        if mutability != mir::Mutability::Not {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter {source_index} is mutable"
+            )));
+        }
+        facts::validate_grid_constant_parameter(instance, source_index, pointee)
+            .map_err(|error| input_error_noloc!(TranslationErr::invalid_op(error)))?;
+        let layout = pointee.layout().map_err(|error| {
+            input_error_noloc!(TranslationErr::unsupported(format!(
+                "could not query grid-constant parameter {source_index} pointee layout: {error:?}"
+            )))
+        })?;
+        let shape = layout.shape();
+        if !shape.is_sized() {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter {source_index} requires a sized pointee"
+            )));
+        }
+        if shape.size.bytes() == 0 {
+            return input_err_noloc!(TranslationErr::invalid_op(format!(
+                "grid-constant source parameter {source_index} has a zero-sized pointee"
+            )));
+        }
+        grid_constant_layouts.push((source_index, pointee, shape.abi_align));
+    }
+
     for arg_idx in 0..num_args {
         // MIR local index for arguments: local 1, 2, 3, ... (0 is return value)
         let local = mir::Local::from(arg_idx + 1);
@@ -2037,7 +2132,29 @@ pub fn translate_body(
     let debug_name = function_debug_name(instance, is_kernel, &name_str);
     llvm_export::ops::set_debug_function_name(ctx, op_ptr, &debug_name);
 
-    // Check if the function has the #[cuda_oxide::kernel] attribute (passed via is_kernel flag)
+    // Stamp only the currently audited Rust-ABI kernel reference facts.
+    // `facts.rs` is the semantic oracle: this layer merely associates each
+    // typed rustc_public proof with its source argument index. Foreign-ABI
+    // kernels intentionally remain bare even when a parameter happens to have
+    // a reference-shaped Rust type.
+    let has_rust_abi = fn_ty.kind().fn_sig().is_some_and(|signature| {
+        matches!(signature.skip_binder().abi, rustc_public::ty::Abi::Rust)
+    });
+    if is_kernel && has_rust_abi {
+        for arg_idx in 0..num_args {
+            let local = mir::Local::from(arg_idx + 1);
+            let source_ty = &body.locals()[local].ty;
+            let Some(validity) = facts::reference_param_validity(source_ty) else {
+                continue;
+            };
+            mir_func_op.set_reference_param_validity(
+                ctx,
+                arg_idx,
+                ReferenceParamValidityAttr(validity.pointee_alignment),
+            );
+        }
+    }
+
     if is_kernel {
         // Add "gpu_kernel" attribute to the mir.func operation.
         // This will be used by the lowering pass to set the "gpu_kernel" attribute on the llvm.func.
@@ -2050,41 +2167,7 @@ pub fn translate_body(
             .attributes
             .set(key, kernel_attr);
 
-        let grid_constant_params = match detect_grid_constant_params(body, &reachable) {
-            Ok(params) => params,
-            Err(error) => {
-                return input_err_noloc!(TranslationErr::invalid_op(error));
-            }
-        };
-        for source_index in grid_constant_params {
-            if source_index >= num_args {
-                return input_err_noloc!(TranslationErr::invalid_op(format!(
-                    "grid-constant source parameter index {source_index} is out of range for {num_args} parameters"
-                )));
-            }
-            let local = mir::Local::from(source_index + 1);
-            let parameter_ty = body.locals()[local].ty;
-            let TyKind::RigidTy(RigidTy::Ref(_, pointee, mutability)) = parameter_ty.kind() else {
-                return input_err_noloc!(TranslationErr::invalid_op(format!(
-                    "grid-constant source parameter {source_index} is not a reference"
-                )));
-            };
-            if mutability != mir::Mutability::Not {
-                return input_err_noloc!(TranslationErr::invalid_op(format!(
-                    "grid-constant source parameter {source_index} is mutable"
-                )));
-            }
-            let layout = pointee.layout().map_err(|error| {
-                input_error_noloc!(TranslationErr::unsupported(format!(
-                    "could not query grid-constant parameter {source_index} pointee layout: {error:?}"
-                )))
-            })?;
-            let shape = layout.shape();
-            if shape.size.bytes() == 0 {
-                return input_err_noloc!(TranslationErr::invalid_op(format!(
-                    "grid-constant source parameter {source_index} has a zero-sized pointee"
-                )));
-            }
+        for (source_index, pointee, alignment) in grid_constant_layouts {
             let pointee_ty = types::translate_type(ctx, &pointee)?;
             let type_key: Identifier =
                 format!("{MIR_GRID_CONSTANT_POINTEE_ATTR_PREFIX}{source_index}")
@@ -2102,7 +2185,7 @@ pub fn translate_body(
                 pliron::builtin::types::Signedness::Unsigned,
             );
             let align = pliron::utils::apint::APInt::from_u64(
-                shape.abi_align,
+                alignment,
                 std::num::NonZero::new(64).expect("64 is non-zero"),
             );
             let mut operation = mir_func_op.get_operation().deref_mut(ctx);
@@ -2333,6 +2416,19 @@ pub fn translate_body(
         &reachable,
     );
 
+    if debug_kind.variables_enabled()
+        && let Some(statement_debug_info) = statement_debug_info
+    {
+        super::statement_debug::prepare_statement_debug_spills(
+            ctx,
+            body,
+            statement_debug_info,
+            &reachable,
+            rustc_mono_successors,
+            &mut value_map,
+        );
+    }
+
     // -------------------------------------------------------------------------
     // PHASE 2: Translate reachable blocks
     // -------------------------------------------------------------------------
@@ -2347,6 +2443,10 @@ pub fn translate_body(
         let mir_block = &body.blocks[idx];
         let block_ptr = block_map[idx];
         let entry_prev_op = if idx == 0 { entry_last_op } else { None };
+        let block_debug_info = debug_kind
+            .variables_enabled()
+            .then(|| statement_debug_info.map(|map| &map.blocks[idx]))
+            .flatten();
         block::translate_block(
             ctx,
             body,
@@ -2358,6 +2458,7 @@ pub fn translate_body(
             &rustc_mono_successors[idx],
             legaliser,
             entry_prev_op,
+            block_debug_info,
         )?;
         blocks_processed.insert(idx);
     }
@@ -2829,6 +2930,149 @@ pub fn scalarized_pair(a: u32, b: u64) -> u64 {
         assert!(
             result.1,
             "debug_fragment must reject non-field composite projections"
+        );
+    }
+
+    /// Reference propagation may map several source bindings to one optimized
+    /// MIR local. Keep every whole-variable identity instead of silently
+    /// retaining only the first one in the map.
+    #[test]
+    fn reference_propagation_retains_every_whole_variable_identity() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "cuda_oxide_whole_debug_alias_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let fixture = root.join("whole_debug_alias_fixture.rs");
+        std::fs::write(
+            &fixture,
+            r#"
+#[inline(never)]
+pub fn probe(x: &i32) -> i32 {
+    let first: *const i32 = x as *const i32;
+    let second: *const i32 = x as *const i32;
+    unsafe { *first + *second }
+}
+"#,
+        )
+        .unwrap();
+
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let sysroot_output = std::process::Command::new(rustc)
+            .args(["--print", "sysroot"])
+            .output()
+            .expect("query rustc sysroot");
+        assert!(sysroot_output.status.success(), "rustc --print sysroot");
+        let sysroot = String::from_utf8(sysroot_output.stdout)
+            .expect("sysroot path is UTF-8")
+            .trim()
+            .to_string();
+
+        let args = vec![
+            "rustc".to_string(),
+            "--edition=2024".to_string(),
+            "--crate-type=rlib".to_string(),
+            "--crate-name=whole_debug_alias_fixture".to_string(),
+            "--emit=metadata".to_string(),
+            "-Cdebuginfo=2".to_string(),
+            "-Copt-level=3".to_string(),
+            "-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts".to_string(),
+            format!("--out-dir={}", root.display()),
+            format!("--sysroot={sysroot}"),
+            fixture.display().to_string(),
+        ];
+
+        let identities = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                rustc_public::run!(&args, || {
+                    let body = rustc_public::all_local_items()
+                        .into_iter()
+                        .find(|item| item.name().ends_with("::probe"))
+                        .and_then(|item| item.body())
+                        .expect("probe body");
+                    let source_locals: Vec<_> = body
+                        .var_debug_info
+                        .iter()
+                        .filter(|info| matches!(info.name.as_str(), "x" | "first" | "second"))
+                        .map(|info| match &info.value {
+                            mir::VarDebugInfoContents::Place(place)
+                                if place.projection.is_empty() =>
+                            {
+                                place.local
+                            }
+                            other => panic!("whole binding expected, got {other:?}"),
+                        })
+                        .collect();
+                    assert_eq!(
+                        source_locals.len(),
+                        3,
+                        "fixture has three source identities"
+                    );
+                    assert!(
+                        source_locals.iter().all(|local| *local == source_locals[0]),
+                        "ReferencePropagation should coalesce x/first/second onto one MIR local"
+                    );
+
+                    let mut ctx = Context::new();
+                    crate::translator::register_dialects(&mut ctx);
+                    let collected = collect_debug_locals(&mut ctx, &body);
+                    let infos = collected
+                        .whole
+                        .get(&source_locals[0])
+                        .expect("coalesced local retains whole debug identities");
+                    std::ops::ControlFlow::<(), _>::Continue(
+                        infos
+                            .iter()
+                            .map(|info| {
+                                (
+                                    info.variable.name.clone(),
+                                    info.variable.argument_index,
+                                    info.variable.ty.clone(),
+                                    info.source_scope,
+                                    info.declaration.clone(),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .expect("in-process fixture compilation succeeds");
+
+        std::fs::remove_dir_all(&root).ok();
+
+        assert_eq!(
+            identities
+                .iter()
+                .map(|identity| identity.0.as_str())
+                .collect::<Vec<_>>(),
+            ["x", "first", "second"],
+            "source order determines the primary identity and two explicit aliases"
+        );
+        assert_eq!(identities[0].1, Some(1));
+        assert_eq!(identities[1].1, None);
+        assert_eq!(identities[2].1, None);
+        assert!(identities.iter().all(|identity| identity.4.is_some()));
+        assert!(
+            identities.iter().all(|identity| {
+                matches!(
+                    &identity.2,
+                    DebugLocalTypeKind::TypedPointer { name, .. } if name == "&i32"
+                )
+            }),
+            "optimized debug types must match rustc's surviving `&i32` place"
+        );
+        assert_ne!(
+            identities[0].3, identities[1].3,
+            "each identity retains its own lexical scope"
         );
     }
 

@@ -1506,9 +1506,9 @@ fn generated_sparse_mma_verifies_all_int8_variants_and_metadata_modes() {
             APInt::from_u32(value, NonZeroUsize::new(32).unwrap()),
         )
     };
-    let builtin_zero = ConstantOp::new(&mut ctx, integer(0).into());
+    let builtin_zero = ConstantOp::new(&mut ctx, Box::new(integer(0)));
     let builtin_zero = builtin_zero.get_operation().deref(&ctx).get_result(0);
-    let builtin_two = ConstantOp::new(&mut ctx, integer(2).into());
+    let builtin_two = ConstantOp::new(&mut ctx, Box::new(integer(2)));
     let builtin_two = builtin_two.get_operation().deref(&ctx).get_result(0);
     let mir_one = Operation::new(
         &mut ctx,
@@ -1720,15 +1720,15 @@ fn generated_sparse_mma_m16n8k64_verifies_selector_and_carriers() {
             APInt::from_u32(value, NonZeroUsize::new(32).unwrap()),
         )
     };
-    let zero = ConstantOp::new(&mut ctx, integer(0).into())
+    let zero = ConstantOp::new(&mut ctx, Box::new(integer(0)))
         .get_operation()
         .deref(&ctx)
         .get_result(0);
-    let one = ConstantOp::new(&mut ctx, integer(1).into())
+    let one = ConstantOp::new(&mut ctx, Box::new(integer(1)))
         .get_operation()
         .deref(&ctx)
         .get_result(0);
-    let two = ConstantOp::new(&mut ctx, integer(2).into())
+    let two = ConstantOp::new(&mut ctx, Box::new(integer(2)))
         .get_operation()
         .deref(&ctx)
         .get_result(0);
@@ -1960,11 +1960,11 @@ fn generated_sparse_mma_m16n8k128_int4_verifies_metadata_selector_and_widths() {
             APInt::from_u32(value, NonZeroUsize::new(32).unwrap()),
         )
     };
-    let zero = ConstantOp::new(&mut ctx, integer(0).into())
+    let zero = ConstantOp::new(&mut ctx, Box::new(integer(0)))
         .get_operation()
         .deref(&ctx)
         .get_result(0);
-    let one = ConstantOp::new(&mut ctx, integer(1).into())
+    let one = ConstantOp::new(&mut ctx, Box::new(integer(1)))
         .get_operation()
         .deref(&ctx)
         .get_result(0);
@@ -2126,11 +2126,11 @@ fn generated_sparse_mma_f8f6f4_verifies_all_formats_and_closed_shape() {
             APInt::from_u32(value, NonZeroUsize::new(32).unwrap()),
         )
     };
-    let zero = ConstantOp::new(&mut ctx, integer(0).into())
+    let zero = ConstantOp::new(&mut ctx, Box::new(integer(0)))
         .get_operation()
         .deref(&ctx)
         .get_result(0);
-    let one = ConstantOp::new(&mut ctx, integer(1).into())
+    let one = ConstantOp::new(&mut ctx, Box::new(integer(1)))
         .get_operation()
         .deref(&ctx)
         .get_result(0);

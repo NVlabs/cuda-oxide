@@ -697,6 +697,113 @@ mod tests {
         attributes::TypeAttr, op_interfaces::SymbolOpInterface, ops::ModuleOp, types::FunctionType,
     };
 
+    #[test]
+    fn invalid_device_hint_fails_before_iket_promotion_on_both_paths() {
+        use crate::options::{BackendOptions, DeviceArchHint, IketInstrumentation};
+        use crate::pipeline::{
+            ModulePipelineRequest, OutputFiles, PipelineTrace, compile_translated_module,
+        };
+        for (iket, debug_kind) in [
+            (
+                IketInstrumentation::Auto,
+                llvm_export::export::DebugKind::Off,
+            ),
+            (
+                IketInstrumentation::Auto,
+                llvm_export::export::DebugKind::Full,
+            ),
+            (
+                IketInstrumentation::Disabled,
+                llvm_export::export::DebugKind::Full,
+            ),
+        ] {
+            for nvvm in [false, true] {
+                let mut ctx = Context::new();
+                let module = test_module(&mut ctx, 1);
+                assert!(has_iket_operations(&ctx, module));
+                let backend = BackendOptions {
+                    iket: iket.clone(),
+                    device_arch_hint: Some(DeviceArchHint::parse("compute_120".to_string())),
+                    ..BackendOptions::default()
+                };
+                let files = OutputFiles {
+                    llvm_ir: std::path::Path::new("unused.ll"),
+                    ptx: std::path::Path::new("unused.ptx"),
+                    stale_before_export: &[],
+                };
+                let request = ModulePipelineRequest::for_rust_pipeline(
+                    &[],
+                    nvvm,
+                    &backend,
+                    debug_kind,
+                    files,
+                    PipelineTrace::default(),
+                );
+                let Err(error) = compile_translated_module(&mut ctx, module, &request) else {
+                    panic!("invalid hint must fail before IKET promotion");
+                };
+                assert!(matches!(error, PipelineError::TargetSelection { .. }));
+                assert_eq!(
+                    error.to_string(),
+                    "invalid CUDA_OXIDE_DEVICE_ARCH `compute_120`: expected sm_<capability> with an optional `a` suffix"
+                );
+                assert!(
+                    has_iket_operations(&ctx, module),
+                    "error must precede materialization"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn proven_device_hint_reaches_both_backends_and_iket_promotion() {
+        use crate::options::{BackendOptions, DeviceArchHint};
+        use crate::pipeline::{
+            ModulePipelineRequest, OutputFiles, PipelineTrace, compile_translated_module,
+        };
+        for nvvm in [false, true] {
+            for event_count in [0, 1] {
+                let mut ctx = Context::new();
+                let module = test_module(&mut ctx, event_count);
+                let root = tempfile::tempdir().unwrap();
+                let llvm_ir = root.path().join("module.ll");
+                let ptx = root.path().join("module.ptx");
+                let backend = BackendOptions {
+                    device_arch_hint: Some(DeviceArchHint::parse("sm_120".to_string())),
+                    verbose: true,
+                    ..BackendOptions::default()
+                };
+                let request = ModulePipelineRequest::for_rust_pipeline(
+                    &[],
+                    nvvm,
+                    &backend,
+                    llvm_export::export::DebugKind::Off,
+                    OutputFiles {
+                        llvm_ir: &llvm_ir,
+                        ptx: &ptx,
+                        stale_before_export: &[],
+                    },
+                    PipelineTrace::default(),
+                );
+                let output = compile_translated_module(&mut ctx, module, &request).unwrap();
+                assert_eq!(output.target, "sm_120");
+                if !nvvm {
+                    let source = if event_count == 0 {
+                        "detected GPU"
+                    } else {
+                        "the detected GPU, pinned by IKET materialization"
+                    };
+                    assert!(
+                        output.diagnostics.iter().any(|line| line
+                            .starts_with(&format!("Target: sm_120 (from {source}; detected "))),
+                        "{:?}",
+                        output.diagnostics
+                    );
+                }
+            }
+        }
+    }
+
     fn test_module(ctx: &mut Context, event_count: usize) -> Ptr<Operation> {
         dialect_mir::register(ctx);
         dialect_iket::register(ctx);
@@ -942,6 +1049,7 @@ mod tests {
             module,
             true,
             mir_lower::IntrinsicBackend::LlvmNvptx,
+            None,
         )
         .unwrap();
         assert!(!has_iket_operations(&ctx, module));

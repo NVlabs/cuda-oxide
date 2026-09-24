@@ -286,11 +286,15 @@ fn read_regular_file_exact(path: &Path, expected_length: u64) -> io::Result<Vec<
         use std::os::unix::fs::OpenOptionsExt;
         // O_NOFOLLOW prevents a final symlink from escaping the cache, while
         // O_NONBLOCK prevents a raced FIFO/device replacement from blocking.
-        options.custom_flags(0o400000 | 0o4000);
+        // Named constants, not literal octal: these flag values are
+        // architecture-specific. For example, O_NOFOLLOW is 0o400000 on
+        // x86-64 but 0o100000 on aarch64, so the x86-64 literal does not
+        // prevent an aarch64 cache read from following a symlink.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     let file = options.open(path).map_err(|error| {
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        if error.raw_os_error() == Some(40) {
+        if error.raw_os_error() == Some(libc::ELOOP) {
             return io::Error::new(io::ErrorKind::InvalidData, "cache artifact is a symlink");
         }
         error

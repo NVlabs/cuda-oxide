@@ -471,6 +471,140 @@ fn handwritten_atomic_carriers_reject_malformed_ir() {
 }
 
 #[test]
+fn pointer_atomic_values_accept_only_pointer_valid_operations() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    // The atomic value itself is a pointer to u64.
+    let value_ptr_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic(&mut ctx, u64_ty.into(), true).into();
+
+    // The atomic storage therefore points to a pointer value.
+    let address_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic(&mut ctx, value_ptr_ty, true).into();
+
+    let block = BasicBlock::new(&mut ctx, None, vec![address_ty, value_ptr_ty]);
+    let address = block.deref(&ctx).get_argument(0);
+    let pointer_value = block.deref(&ctx).get_argument(1);
+
+    assert!(
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            address,
+            value_ptr_ty,
+            AtomicOrdering::Relaxed,
+            AtomicScope::System,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+
+    assert!(
+        NvvmAtomicStoreOp::build(
+            &mut ctx,
+            pointer_value,
+            address,
+            AtomicOrdering::Relaxed,
+            AtomicScope::System,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+
+    assert!(
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            address,
+            pointer_value,
+            value_ptr_ty,
+            AtomicRmwKind::Xchg,
+            AtomicOrdering::Relaxed,
+            AtomicScope::System,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+
+    assert!(
+        NvvmAtomicCmpxchgOp::build(
+            &mut ctx,
+            address,
+            pointer_value,
+            pointer_value,
+            value_ptr_ty,
+            AtomicOrdering::Relaxed,
+            AtomicOrdering::Relaxed,
+            AtomicScope::System,
+        )
+        .verify(&ctx)
+        .is_ok()
+    );
+
+    // Pointer exchange is valid, but integer/float arithmetic RMWs are not.
+    assert!(
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            address,
+            pointer_value,
+            value_ptr_ty,
+            AtomicRmwKind::Add,
+            AtomicOrdering::Relaxed,
+            AtomicScope::System,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+
+    assert!(
+        NvvmAtomicRmwOp::build(
+            &mut ctx,
+            address,
+            pointer_value,
+            value_ptr_ty,
+            AtomicRmwKind::FAdd,
+            AtomicOrdering::Relaxed,
+            AtomicScope::System,
+        )
+        .verify(&ctx)
+        .is_err()
+    );
+}
+
+#[test]
+fn pointer_atomic_values_reject_shared_address_space() {
+    let mut ctx = Context::new();
+    dialect_mir::register(&mut ctx);
+    dialect_nvvm::register(&mut ctx);
+
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+
+    let shared_value_ptr_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_shared(&mut ctx, u64_ty.into(), true).into();
+
+    let address_ty: pliron::r#type::TypeHandle =
+        MirPtrType::get_generic(&mut ctx, shared_value_ptr_ty, true).into();
+
+    let block = BasicBlock::new(&mut ctx, None, vec![address_ty]);
+    let address = block.deref(&ctx).get_argument(0);
+
+    assert!(
+        NvvmAtomicLoadOp::build(
+            &mut ctx,
+            address,
+            shared_value_ptr_ty,
+            AtomicOrdering::Relaxed,
+            AtomicScope::System,
+        )
+        .verify(&ctx)
+        .is_err(),
+        "shared address-space pointer values must remain unsupported",
+    );
+}
+
+#[test]
 fn atomic_cmpxchg_accepts_exactly_llvm_ordering_pairs() {
     let mut ctx = Context::new();
     dialect_mir::register(&mut ctx);

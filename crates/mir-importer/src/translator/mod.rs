@@ -56,6 +56,7 @@ pub(crate) mod location;
 pub(crate) mod payload_store;
 pub mod rvalue;
 pub mod statement;
+pub(crate) mod statement_debug;
 pub mod terminator;
 pub mod types;
 pub mod values;

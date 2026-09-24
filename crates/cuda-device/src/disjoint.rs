@@ -475,7 +475,15 @@ impl<'a, T, IndexSpace: FlatIndexSpace + SpaceLayout> DisjointSlice<'a, T, Index
     ///     *elem = a[i] + b[i];
     /// }
     /// ```
-    #[inline]
+    // Full-debug frame shape:
+    // caller PC -> kernel
+    // helper PC -> get_mut -> kernel
+    //
+    // NVPTX otherwise covers discontiguous inlined instructions with one DWARF
+    // envelope, so CUDA-GDB can report `get_mut` at caller-only PCs. Outline this
+    // helper only in full debug; other modes keep normal inlining.
+    #[cfg_attr(cuda_oxide_internal_outline_disjoint_get_mut_v1, inline(never))]
+    #[cfg_attr(not(cuda_oxide_internal_outline_disjoint_get_mut_v1), inline)]
     pub fn get_mut<'kernel>(&mut self, idx: ThreadIndex<'kernel, IndexSpace>) -> Option<&mut T> {
         let i = idx.get();
         if size_of::<T>() != 0 && idx.is_valid() && i < self.len {

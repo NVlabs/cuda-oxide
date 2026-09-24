@@ -10,6 +10,8 @@
 //! Demonstrates TMA (Tensor Memory Accelerator) usage:
 //! - cp_async_bulk_tensor_2d_g2s: Async 2D tensor copy global → shared
 //! - mbarrier: Barrier-based completion tracking
+//! - `#[grid_constant]`: the descriptor is passed by value in the launch packet,
+//!   without allocating or uploading a separate descriptor buffer.
 //!
 //! Note: This example requires Hopper (sm_90) or newer GPUs.
 //! For TMA multicast (also sm_90+), see the `tma_multicast` example.
@@ -53,7 +55,7 @@ mod kernels {
     /// - ALL threads: wait on barrier
     #[kernel]
     pub fn tma_copy_2d_test(
-        tensor_map: *const TmaDescriptor,
+        #[grid_constant] tensor_map: &TmaDescriptor,
         mut out: DisjointSlice<f32>,
         tile_x: i32,
         tile_y: i32,
@@ -125,7 +127,10 @@ mod kernels {
 
     /// Simple TMA pipeline test - ALL threads participate in barrier.
     #[kernel]
-    pub fn tma_pipeline_test(tensor_map: *const TmaDescriptor, mut out: DisjointSlice<u32>) {
+    pub fn tma_pipeline_test(
+        #[grid_constant] tensor_map: &TmaDescriptor,
+        mut out: DisjointSlice<u32>,
+    ) {
         const TILE_SIZE: usize = 1024;
         const TILE_BYTES: u32 = (TILE_SIZE * 4) as u32;
         // TMA destinations require 128-byte alignment
@@ -289,8 +294,6 @@ fn run_tma_copy_test(
         TILE_HEIGHT,
     )?;
 
-    let dev_tensor_map = DeviceBuffer::from_host(stream, &tensor_map.opaque[..])?;
-
     println!("3. Launching tma_copy_2d_test kernel...");
 
     let tile_x: i32 = 0;
@@ -304,15 +307,12 @@ fn run_tma_copy_test(
         shared_mem_bytes: 0,
     };
 
-    // Get raw device pointer to TMA descriptor
-    let tensor_map_ptr = dev_tensor_map.cu_deviceptr() as *const TmaDescriptor;
-
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
     unsafe {
         module.tma_copy_2d_test(
             (stream).as_ref(),
             cfg,
-            tensor_map_ptr,
+            tensor_map,
             &mut dev_output,
             tile_x,
             tile_y,
@@ -379,8 +379,6 @@ fn run_tma_pipeline_test(
         PIPELINE_TILE_HEIGHT,
     )?;
 
-    let dev_tensor_map = DeviceBuffer::from_host(stream, &tensor_map.opaque[..])?;
-
     println!(
         "1. Launching tma_pipeline_test kernel (tile: {}x{})...",
         PIPELINE_TILE_WIDTH, PIPELINE_TILE_HEIGHT
@@ -392,11 +390,8 @@ fn run_tma_pipeline_test(
         shared_mem_bytes: 0,
     };
 
-    // Get raw device pointer to TMA descriptor
-    let tensor_map_ptr = dev_tensor_map.cu_deviceptr() as *const TmaDescriptor;
-
     // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
-    unsafe { module.tma_pipeline_test((stream).as_ref(), cfg, tensor_map_ptr, &mut dev_output) }?;
+    unsafe { module.tma_pipeline_test((stream).as_ref(), cfg, tensor_map, &mut dev_output) }?;
 
     stream.synchronize()?;
 
@@ -428,7 +423,7 @@ fn create_tma_descriptor(
     height: u64,
     tile_width: u32,
     tile_height: u32,
-) -> Result<CUtensorMap, Box<dyn std::error::Error>> {
+) -> Result<TmaDescriptor, Box<dyn std::error::Error>> {
     let mut tensor_map = MaybeUninit::<CUtensorMap>::uninit();
     let tensor_rank = 2u32;
     let global_dim: [u64; 2] = [width, height];
@@ -457,5 +452,10 @@ fn create_tma_descriptor(
         return Err(format!("cuTensorMapEncodeTiled failed: {:?}", result).into());
     }
 
-    Ok(unsafe { tensor_map.assume_init() })
+    const { assert!(size_of::<TmaDescriptor>() == size_of::<CUtensorMap>()) };
+    // SAFETY: the successful driver call initialized all 128 descriptor bytes.
+    // Both types carry those same opaque bytes, and CUtensorMap's alignment is
+    // at least TmaDescriptor's. The returned Copy value goes into launch storage.
+    const { assert!(align_of::<CUtensorMap>() >= align_of::<TmaDescriptor>()) };
+    Ok(unsafe { tensor_map.as_ptr().cast::<TmaDescriptor>().read() })
 }

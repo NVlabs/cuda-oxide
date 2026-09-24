@@ -32,6 +32,7 @@ roadmap, **N/A** = not applicable or no identified need.
 | Array Types (`[T; N]`) | **Full** | Static construction, constant- and runtime-index access. Array value constants (bare and nested) materialized. Mutable arrays auto-promoted to memory-backed. |
 | `CuSimd<T, N>` SIMD Type | **Full** | Generic SIMD register type with named accessors (`x`/`y`/`z`/`w`), runtime and compile-time indexing, `to_array` conversion. |
 | ABI Scalarization | **Full** | Slices are scalarized at kernel boundaries (`&[T]` -> `(ptr, len)`, reconstructed inside the function). Structs and closures pass by value as one byval `.param`; field flattening still applies on internal device-to-device calls. |
+| Grid-constant parameters | **Full** | `#[grid_constant] value: &T` passes `T` by value and retains a grid-wide read-only address. Host launches are unsafe. Nonzero sized pointees without interior mutability, launch-scoped references, and Volta+ targets are required. |
 
 Array value constants support primitive leaves (integers, `f16`, `f32`,
 `f64`), nested arrays, and tuples recursively composed of supported scalar,
@@ -148,7 +149,7 @@ Anonymous promoted allocations remain unsupported.
 | Bi-directional LTOIR Support | **Full** | Rust kernels call CUDA C++ device functions **and** C++ calls Rust device functions. Via NVVM IR → libNVVM → LTOIR → nvJitLink. |
 | Device FFI (`extern "C"`) | **Full** | `#[device] extern "C" { fn ... }` declarations for external LTOIR functions. CUB/CCCL integration demonstrated. |
 | MathDx FFI (cuFFTDx / cuBLASDx) | **Full** | cuFFTDx (8/16/32-point thread-level FFT), cuBLASDx (32x32x32 block-level GEMM) via LTOIR. |
-| Tile interop | **Experimental** | Inter-kernel interop works today: a [cutile-rs Tile kernel](https://github.com/NVlabs/cutile-rs) and a cuda-oxide SIMT PTX kernel can run in one host process on the same CUDA stream over shared device tensors. Intra-kernel Tile interop is work in progress and tracked in [#96](https://github.com/NVlabs/cuda-oxide/issues/96). |
+| Tile interop | **Partial** | Inter-kernel interop works today: a [cutile-rs Tile kernel](https://github.com/NVlabs/cutile-rs) and a cuda-oxide SIMT PTX kernel can run in one host process on the same CUDA stream over shared device tensors. Intra-kernel Tile interop is work in progress and tracked in [#96](https://github.com/NVlabs/cuda-oxide/issues/96). |
 | Cross-Crate Kernels | **Full** | Kernels and device functions defined in library crates with monomorphization at the binary crate use site. |
 
 ## Compiler: Functions
@@ -174,7 +175,7 @@ Anonymous promoted allocations remain unsupported.
 | Local Clean | **Full** | `cargo oxide clean` removes project-local `target/` directories and generated device artifacts (`.ptx`, `.ll`, `.opt.ll`, `.ltoir`, `.cubin`, `.target`, `.options`, `.cubin.target`), never the shared `~/.cargo/cuda-oxide/` cache. |
 | Compute Sanitizer Wrapper | **Full** | `cargo oxide sanitize <example>` builds the example and runs the host binary under NVIDIA Compute Sanitizer (`memcheck`, `racecheck`, `initcheck`, or `synccheck`). |
 | cuda-gdb Source Debugging | **Full** | `cargo oxide debug` builds device debug information on the PTX path and launches `cuda-gdb`. Legacy NVVM IR does not yet support debug metadata. |
-| cuda-gdb Local / Argument Inspection | **Partial** | `CUDA_OXIDE_DEBUG=full` is a `-G`-style build (optimization off, locals kept in memory) so `info args`/`info locals` show real values for scalars, pointers/references, structs/tuples/arrays, closure environments, and Rust enums with direct-tag or niche layouts, including active variants and payload fields. Static source projections through struct/tuple fields, fixed-array constant indices, and enum downcast payload fields are described with address-offset DWARF expressions. A single dereference through a thin pointer/reference, optionally followed by static field projections, is also described with DWARF dereference/address-offset expressions. rustc scalar-replacement fragments backed by whole MIR locals are carried as `DW_OP_LLVM_fragment` through both `dbg.declare` and salvaged `dbg.value` records. Full-debug disables the scalar-replacement pass that creates those fragments (it would split closure environments before the importer sees them), so ordinary `full` builds do not carry fragments; the fragment path is covered by the exporter tests. ABI-split bare slices, dereference-plus-index and dereference-downcast chains, repeated dereferences, runtime indices, subslices, and non-field composite-fragment projections are not yet described. |
+| cuda-gdb Local / Argument Inspection | **Partial** | Full mode keeps supported locals in memory. It disables `ScalarReplacementOfAggregates` and `SingleUseConsts`, keeps `ReferencePropagation` and general MIR inlining, and outlines only `DisjointSlice::get_mut`. Common scalars, pointers, aggregates, closures, enums, and selected projections work; see [Debugging and Error Handling](../gpu-programming/error-handling-and-debugging.md) for current limits. |
 
 ## Compiler: Inline PTX
 
@@ -236,10 +237,10 @@ Anonymous promoted allocations remain unsupported.
 |:--------|:-------|:------------|
 | Typed Group Handles | **Full** | `Grid`, `Cluster`, `ThreadBlock`, `WarpTile<N>` (N ∈ {1,2,4,8,16,32}), `CoalescedThreads`. |
 | Group Universal API | **Full** | `size()`, `thread_rank()`, `sync()` on every group handle. |
-| Warp Tile Partitioning | **Full** | `ThreadBlock::tiled_partition::<N>()` carves a sub-warp `WarpTile<N>`. `coalesced_threads()` materialises the active-lane group. |
+| Warp Tile Partitioning | **Full** | `ThreadBlock::tiled_partition::<N>()` partitions a block into fixed-size `WarpTile<N>` groups; the block thread count must be evenly divisible by `N`. `coalesced_threads()` materialises the active-lane group. |
 | Warp Collectives | **Full** | `ballot`, `all`, `any`, `shfl`, `shfl_xor`, `shfl_down`, `shfl_up` (`u32` and `f32`); `match_any` / `match_all` (`i32` and `i64`); `active_mask`. |
 | Warp Reductions / Scans | **Full** | `warp_reduce`, `warp_scan` (inclusive). `Sum`/`Min`/`Max` for `u32`/`i32`/`f32`; `BitAnd`/`BitOr`/`BitXor` for `u32`. |
-| Block Reductions / Scans | **Full** | `block_reduce`, `block_scan` (inclusive). Const-generic over `NUM_WARPS`; same op/type matrix as warp variants; uses `__shared__` scratch. |
+| Block Reductions / Scans | **Full** | `block_reduce`, `block_scan` (inclusive). `NUM_WARPS` is the shared-memory capacity in warp totals and must be at least `ceil(block_threads / 32)`; partial final warps are supported. Same op/type matrix as warp variants. |
 | Cooperative Kernel Launch | **Full** | `#[cooperative_launch]` on a `#[cuda_module]` kernel (or `unsafe { cuda_launch! { cooperative: true, ... } }`) enables `Grid::sync()` for grid-wide barriers. |
 
 ## Runtime Library: Debug

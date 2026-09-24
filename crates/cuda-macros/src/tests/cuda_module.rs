@@ -63,7 +63,7 @@ fn grid_constant_uses_one_by_value_host_argument() {
     );
     assert!(
         expanded.contains(
-            "constCOPY_CUDA_SIGNATURE:::cuda_host::CudaKernelSignature="
+            "constcopy_CUDA_SIGNATURE:::cuda_host::CudaKernelSignature="
         ) && expanded.contains(
             "kind:::cuda_host::CudaKernelArgumentKind::GridConstant{size:::core::mem::size_of::<TensorMap>(),alignment:::core::mem::align_of::<TensorMap>()"
         ) && expanded.contains(
@@ -78,13 +78,13 @@ fn concrete_kernel_signature_is_generated_from_launcher_arguments() {
     let module: ItemMod = parse_quote! {
         mod kernels {
             #[kernel]
-            pub fn classify(flag: bool, count: u32, data: &[f32], out: *mut f32) {}
+            pub fn classify(flag: ::core::primitive::bool, count: ::core::primitive::u32, data: &[f32], out: *mut f32) {}
         }
     };
     let expanded = expand_to_compact_string(module);
 
     assert!(
-        expanded.contains("pubconstCLASSIFY_CUDA_SIGNATURE:::cuda_host::CudaKernelSignature")
+        expanded.contains("pubconstclassify_CUDA_SIGNATURE:::cuda_host::CudaKernelSignature")
             && expanded.contains(
                 "name:\"flag\",kind:::cuda_host::CudaKernelArgumentKind::Scalar(::cuda_host::CudaKernelScalarKind::Bool)"
             )
@@ -99,6 +99,98 @@ fn concrete_kernel_signature_is_generated_from_launcher_arguments() {
             ),
         "{expanded}"
     );
+}
+
+#[test]
+fn grid_constant_launch_safety_is_independent_of_source_safety_and_geometry() {
+    let module: ItemMod = parse_quote! {
+        mod kernels {
+            #[kernel]
+            #[launch_contract(domain = 1, block = (1, 1, 1))]
+            pub fn grid(#[grid_constant] value: &Payload) {}
+
+            #[kernel]
+            #[launch_contract(domain = 1, block = (1, 1, 1))]
+            pub fn generic<T: Copy>(#[grid_constant] value: &T) {}
+
+            #[kernel]
+            #[launch_contract(domain = 1, block = (1, 1, 1))]
+            pub fn ordinary(value: Payload) {}
+        }
+    };
+    let expanded: ItemMod = syn::parse2(expand_cuda_module(module).unwrap()).unwrap();
+    let items = &expanded.content.as_ref().unwrap().1;
+    // The device Rust signatures and their fingerprint inputs remain safe.
+    for name in ["grid", "generic", "ordinary"] {
+        let source = items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == name => Some(function),
+                _ => None,
+            })
+            .expect("source kernel is preserved");
+        assert!(source.sig.unsafety.is_none(), "{name}");
+    }
+    let mut checked = 0;
+    for item in items {
+        let syn::Item::Impl(implementation) = item else {
+            continue;
+        };
+        for item in &implementation.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            let name = method.sig.ident.to_string();
+            if ["grid", "generic"]
+                .iter()
+                .any(|prefix| name == *prefix || name.starts_with(&format!("{prefix}_")))
+            {
+                assert!(
+                    method.sig.unsafety.is_some(),
+                    "{name} must require a host proof"
+                );
+                let docs = method
+                    .attrs
+                    .iter()
+                    .filter_map(|attribute| {
+                        let syn::Meta::NameValue(value) = &attribute.meta else {
+                            return None;
+                        };
+                        if !value.path.is_ident("doc") {
+                            return None;
+                        }
+                        let syn::Expr::Lit(value) = &value.value else {
+                            return None;
+                        };
+                        let syn::Lit::Str(value) = &value.lit else {
+                            return None;
+                        };
+                        Some(value.value())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(docs.contains("# Safety"), "{name}: {docs}");
+                assert!(
+                    docs.contains("until the device work completes"),
+                    "{name}: {docs}"
+                );
+                assert!(
+                    docs.contains("allocations referenced by their fields"),
+                    "{name}: {docs}"
+                );
+                checked += 1;
+            } else if matches!(
+                name.as_str(),
+                "ordinary" | "ordinary_async" | "ordinary_async_owned"
+            ) {
+                assert!(
+                    method.sig.unsafety.is_none(),
+                    "ordinary scalar policy is unchanged"
+                );
+            }
+        }
+    }
+    assert_eq!(checked, if cfg!(feature = "async") { 12 } else { 4 });
 }
 
 /// With the host surface off, nothing in the expansion may name the
@@ -289,9 +381,54 @@ fn cfg_gated_generic_uses_the_same_gate_for_marker_and_loader() {
         "loader selection must inherit the generic kernel's cfg:\n{expanded}"
     );
     assert!(
-            expanded.contains("if__cuda_oxide_has_enabled_generic_kernel{let_=name;::cuda_host::load_all_ptx_bundles_merged(ctx)?}else{::cuda_host::load_embedded_module(ctx,name)?}"),
+            expanded.contains(&format!("if__cuda_oxide_has_enabled_generic_kernel{{let_=name;::cuda_host::load_all_ptx_bundles_merged(ctx)?}}else{{{ANCHORED_EMBEDDED_LOADER}}}")),
             "loader must fall back to the embedded artifact when no generic kernel is enabled:\n{expanded}"
         );
+}
+
+/// The embedded-artifact loader: read the bundle from the binary that maps
+/// the artifact anchor, or from the executable when no anchor was referenced.
+const ANCHORED_EMBEDDED_LOADER: &str = concat!(
+    "match__cuda_oxide_artifact_anchor{::core::option::Option::Some(anchor)=>{",
+    "#[cfg(any(target_os=\"linux\",target_os=\"android\"))]",
+    "{::cuda_host::load_embedded_module_from_anchor(ctx,name,anchor)?}",
+    "#[cfg(not(any(target_os=\"linux\",target_os=\"android\")))]",
+    "{let_=anchor;::cuda_host::load_embedded_module(ctx,name)?}",
+    "}::core::option::Option::None=>::cuda_host::load_embedded_module(ctx,name)?,}",
+);
+
+#[test]
+fn generated_loader_preserves_other_platform_executable_lookup() {
+    let module: ItemMod = parse_quote! {
+        mod kernels { #[kernel] pub fn plain() {} }
+    };
+    let expanded = expand_to_compact_string(module);
+    assert!(expanded.contains(
+        "#[cfg(not(any(target_os=\"linux\",target_os=\"android\")))]{let_=anchor;::cuda_host::load_embedded_module(ctx,name)?}"
+    ), "{expanded}");
+    assert!(expanded.contains(
+        "#[cfg(any(target_os=\"linux\",target_os=\"android\"))]{::cuda_host::load_embedded_module_from_anchor(ctx,name,anchor)?}"
+    ), "{expanded}");
+}
+
+#[test]
+fn non_generic_cuda_module_loads_from_the_binary_that_maps_its_anchor() {
+    let module: ItemMod = parse_quote! {
+        mod kernels {
+            #[kernel]
+            pub fn plain(output: &mut [u32]) {}
+        }
+    };
+    let expanded = expand_to_compact_string(module);
+
+    assert!(
+        expanded.contains("#[allow(unused_mut)]letmut__cuda_oxide_artifact_anchor:::core::option::Option<&::core::primitive::u8>=::core::option::Option::None;"),
+        "load_named must start without an anchor address:\n{expanded}"
+    );
+    assert!(
+        expanded.contains(&format!("letmodule={ANCHORED_EMBEDDED_LOADER};")),
+        "loader must prefer the binary that maps the anchor:\n{expanded}"
+    );
 }
 
 #[test]

@@ -13,6 +13,50 @@ use anyhow::{Context, Result, bail, ensure};
 
 use super::families::*;
 
+/// Check authored instruction floors, never backend-profile evidence floors.
+pub(super) fn validate_arch_introduction_floor(policy: &OverlayIntrinsic) -> Result<()> {
+    let native_sm = policy
+        .packed_alu
+        .as_ref()
+        .map(|packed| packed.native_minimum_sm)
+        .or_else(|| {
+            policy
+                .packed_atomic
+                .as_ref()
+                .map(|packed| packed.native_minimum_sm)
+        })
+        .or_else(|| {
+            policy
+                .integer_minmax
+                .as_ref()
+                .map(|integer| integer.native_minimum_sm)
+        });
+    let sm = match native_sm {
+        Some(sm) => sm,
+        None => match policy.minimum_sm.as_deref() {
+            Some(sm) => parse_sm_spelling(&policy.id, "minimum_sm", sm, None)?,
+            None => return Ok(()),
+        },
+    };
+    let arch = cuda_target_spec::CudaArch::new(u32::from(sm), None)?;
+    let introduction = cuda_target_spec::arch_introduced_ptx(&arch).with_context(|| {
+        format!(
+            "{} has no recorded PTX introduction for hardware floor {arch}",
+            policy.id
+        )
+    })?;
+    let floor = parse_ptx_version(&policy.minimum_ptx, &policy.id)?;
+    ensure!(
+        floor.encoded() >= introduction,
+        "{} minimum_ptx {} is below PTX {}.{}, which first named hardware floor {arch}",
+        policy.id,
+        policy.minimum_ptx,
+        introduction / 10,
+        introduction % 10,
+    );
+    Ok(())
+}
+
 pub(super) fn validate_selected_target_predicates(
     policy: &OverlayIntrinsic,
     selection: &crate::model::ImportedSelection,

@@ -395,6 +395,29 @@ fn convert_by_value_abi_type(
     Ok(llvm_ty)
 }
 
+/// A grid-constant reference transports its pointee's bytes by value. Apply
+/// the ordinary by-value layout proof, then require a target-stable storage
+/// representation: AS3 pointers shrink from 64 to 32 bits in modern NVVM,
+/// including inside arrays and naturally aligned structs. Keeping such a
+/// pointee would change the launch packet while field addresses still use
+/// rustc's offsets. A generic pointer retains the host's 64-bit storage.
+pub(crate) fn convert_grid_constant_storage_type(
+    ctx: &mut Context,
+    mir_ty: TypeHandle,
+) -> Result<TypeHandle, anyhow::Error> {
+    let llvm_ty = convert_by_value_abi_type(ctx, mir_ty, "grid-constant parameter storage")?;
+    if super::llvm_type_contains_pointer_in_address_space(
+        ctx,
+        llvm_ty,
+        llvm_types::address_space::SHARED,
+    ) {
+        return Err(anyhow::anyhow!(
+            "grid-constant parameter storage contains a target-dependent shared-memory pointer; use a payload with target-stable pointer storage"
+        ));
+    }
+    Ok(llvm_ty)
+}
+
 /// Convert a MIR function type to an LLVM function type.
 ///
 /// This handles the ABI-level transformations required for GPU kernels.

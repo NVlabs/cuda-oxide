@@ -67,6 +67,11 @@ enum Commands {
     /// startup environment that will be given to Cargo/rustc.
     #[command(name = "__materializer-handshake", hide = true)]
     MaterializerHandshake,
+    /// Internal helper: report the debug policy `CUDA_OXIDE_DEBUG` selects in
+    /// this environment, so tooling asks the shared parser instead of
+    /// restating its alias, case and whitespace rules.
+    #[command(name = "__debug-policy", hide = true)]
+    DebugPolicy,
     /// Build and run an example or project
     Run {
         /// Example name (required in workspace, optional for standalone projects)
@@ -196,6 +201,10 @@ enum Commands {
         /// Also settable via CUDA_OXIDE_DEBUG=full.
         #[arg(long)]
         device_debug: bool,
+        /// Compile `debug_assert!` and `cfg(debug_assertions)` device paths
+        /// while keeping release-like optimization and overflow checks disabled.
+        #[arg(long)]
+        debug_assertions: bool,
         /// Elide slice/array bounds checks in every device kernel
         /// (out-of-bounds indexing becomes UB, like get_unchecked).
         /// Also settable via CUDA_OXIDE_UNCHECKED_INDEXING=1.
@@ -608,6 +617,9 @@ fn validate_materialization_cli(cli: &Cli) -> Result<(), String> {
             "--materialize-cubin cannot be passed to the internal materializer discovery helper"
                 .to_string(),
         ),
+        Commands::DebugPolicy => Err(
+            "--materialize-cubin cannot be passed to the internal debug-policy helper".to_string(),
+        ),
     }
 }
 
@@ -661,6 +673,9 @@ fn main() {
     match cli.command {
         Commands::MaterializerHandshake => {
             commands::print_materializer_handshake();
+        }
+        Commands::DebugPolicy => {
+            commands::print_debug_policy();
         }
         Commands::Run {
             example,
@@ -746,6 +761,7 @@ fn main() {
             unchecked_indexing,
             lineinfo,
             device_debug,
+            debug_assertions,
             cargo_target_dir,
             device_codegen_crate,
             device_cfgs,
@@ -768,6 +784,7 @@ fn main() {
                     materialize_cubin,
                     arch.as_deref(),
                 );
+                commands::warn_for_default_build_arch(&ctx, arch.as_deref());
                 commands::codegen_build(
                     &ctx,
                     &example,
@@ -779,6 +796,7 @@ fn main() {
                     no_fmad,
                     unchecked_indexing,
                     commands::DeviceDebug::from_flags(lineinfo, device_debug),
+                    debug_assertions,
                     materialize_cubin,
                 );
             } else {
@@ -803,6 +821,7 @@ fn main() {
                     materialize_cubin,
                     arch.as_deref(),
                 );
+                commands::warn_for_default_build_arch(&ctx, arch.as_deref());
                 commands::codegen_cargo_passthrough(
                     &ctx,
                     commands::CargoPassthroughSubcommand::Build,
@@ -818,6 +837,7 @@ fn main() {
                         unchecked_indexing,
                         materialize_cubin,
                         device_debug: commands::DeviceDebug::from_flags(lineinfo, device_debug),
+                        debug_assertions,
                     },
                     &cargo_args,
                 );
@@ -928,6 +948,7 @@ fn main() {
                     unchecked_indexing,
                     materialize_cubin,
                     device_debug: commands::DeviceDebug::from_flags(lineinfo, device_debug),
+                    debug_assertions: false,
                 },
                 &cargo_args,
             );
@@ -1349,10 +1370,29 @@ mod tests {
         let build_args = strings(&["cargo-oxide", "build", "--"]);
         assert!(has_passthrough_separator(&build_args));
         let build_cli = Cli::try_parse_from(build_args).expect("empty passthrough should parse");
-        let Commands::Build { cargo_args, .. } = build_cli.command else {
+        let Commands::Build {
+            cargo_args,
+            debug_assertions,
+            ..
+        } = build_cli.command
+        else {
             panic!("expected build command");
         };
         assert!(cargo_args.is_empty());
+        assert!(!debug_assertions, "--debug-assertions must default off");
+    }
+
+    #[test]
+    fn build_parser_accepts_debug_assertions() {
+        let cli = Cli::try_parse_from(["cargo-oxide", "build", "debug", "--debug-assertions"])
+            .expect("build --debug-assertions should parse");
+        let Commands::Build {
+            debug_assertions, ..
+        } = cli.command
+        else {
+            panic!("expected build command");
+        };
+        assert!(debug_assertions);
     }
 
     #[test]

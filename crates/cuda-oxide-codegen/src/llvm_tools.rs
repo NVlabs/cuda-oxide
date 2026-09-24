@@ -30,7 +30,7 @@
 //!    `opt-23` / `opt-22` / `opt-21` / `opt` on `PATH`) are considered, filtered to
 //!    the same major as `llc`.
 //! 4. If no same-major `opt` exists, resolution records a diagnostic naming
-//!    every rejected candidate. The experimental API treats requested
+//!    every rejected candidate. The standalone API treats requested
 //!    optimization as strict; the legacy rustc path retains its unoptimized
 //!    fallback.
 //!

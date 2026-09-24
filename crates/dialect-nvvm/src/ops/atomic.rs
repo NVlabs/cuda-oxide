@@ -152,8 +152,16 @@ fn is_float_atomic_type(ctx: &Context, ty: TypeHandle) -> bool {
         || ty.downcast_ref::<FP64Type>().is_some()
 }
 
+fn is_pointer_atomic_type(ctx: &Context, ty: TypeHandle) -> bool {
+    ty.deref(ctx)
+        .downcast_ref::<MirPtrType>()
+        .is_some_and(|pointer| pointer.address_space == dialect_mir::types::address_space::GENERIC)
+}
+
 fn is_atomic_value_type(ctx: &Context, ty: TypeHandle) -> bool {
-    is_integer_atomic_type(ctx, ty) || is_float_atomic_type(ctx, ty)
+    is_integer_atomic_type(ctx, ty)
+        || is_float_atomic_type(ctx, ty)
+        || is_pointer_atomic_type(ctx, ty)
 }
 
 fn verify_atomic_pointer(
@@ -214,7 +222,7 @@ fn verify_rmw_kind(ctx: &Context, ty: TypeHandle, kind: &AtomicRmwKind) -> bool 
 ///
 /// # Results
 ///
-/// - loaded value (i32, i64, f16, f32, f64)
+/// - loaded value (i32, i64, f16, f32, f64, or a generic pointer)
 ///
 /// # Attributes
 ///
@@ -752,10 +760,10 @@ impl Verify for NvvmAtomicCmpxchgOp {
         verify_atomic_pointer(ctx, &op, 0, "nvvm.atomic_cmpxchg")?;
         let value_ty = op.get_operand(1).get_type(ctx);
         verify_atomic_value_type(ctx, &op, value_ty, "nvvm.atomic_cmpxchg")?;
-        if !is_integer_atomic_type(ctx, value_ty) {
+        if !is_integer_atomic_type(ctx, value_ty) && !is_pointer_atomic_type(ctx, value_ty) {
             return verify_err!(
                 op.loc(),
-                "nvvm.atomic_cmpxchg supports only 32-bit or 64-bit integers"
+                "nvvm.atomic_cmpxchg supports only 32-bit or 64-bit integers or generic pointers"
             );
         }
         if op.get_operand(2).get_type(ctx) != value_ty || op.get_result(0).get_type(ctx) != value_ty

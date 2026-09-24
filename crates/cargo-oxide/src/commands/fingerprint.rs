@@ -194,6 +194,7 @@ pub(super) fn sanitize_codegen_fingerprint_with_env(
         unchecked_indexing,
         materialize_cubin: materialization.enabled(),
         device_debug,
+        debug_assertions: false,
     };
     let base = passthrough_codegen_fingerprint_with_env(
         ctx,
@@ -229,6 +230,33 @@ pub(super) fn standard_codegen_fingerprint(
     detected_device_arch: Option<&str>,
     materialization: &MaterializationMode,
 ) -> String {
+    standard_codegen_fingerprint_with_env(
+        ctx,
+        verbose,
+        no_fmad,
+        unchecked_indexing,
+        device_debug,
+        emit_nvvm_ir,
+        target_arch,
+        detected_device_arch,
+        materialization,
+        &inherited_process_env(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn standard_codegen_fingerprint_with_env(
+    ctx: &Context,
+    verbose: bool,
+    no_fmad: bool,
+    unchecked_indexing: bool,
+    device_debug: DeviceDebug,
+    emit_nvvm_ir: bool,
+    target_arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+    materialization: &MaterializationMode,
+    inherited_env: &BTreeMap<String, Vec<u8>>,
+) -> String {
     let opts = CargoPassthroughOptions {
         verbose,
         emit_nvvm_ir,
@@ -241,8 +269,16 @@ pub(super) fn standard_codegen_fingerprint(
         unchecked_indexing,
         materialize_cubin: materialization.enabled(),
         device_debug,
+        debug_assertions: false,
     };
-    let base = passthrough_codegen_fingerprint(ctx, &opts, None, target_arch, materialization);
+    let base = passthrough_codegen_fingerprint_with_env(
+        ctx,
+        &opts,
+        None,
+        target_arch,
+        materialization,
+        inherited_env,
+    );
     let mut hash = sha2::Sha256::new();
     for bytes in [
         "standard-codegen-v1".as_bytes(),
@@ -290,37 +326,77 @@ pub(super) fn pipeline_codegen_fingerprint(
 pub(super) fn interop_codegen_fingerprint(
     ctx: &Context,
     verbose: bool,
-    no_fmad: bool,
-    unchecked_indexing: bool,
-    device_debug: DeviceDebug,
+    options: InteropDeviceBuildOptions,
     target_arch: Option<&str>,
     detected_device_arch: Option<&str>,
     artifact_dir: &Path,
     emit_nvvm_ir: bool,
     device_features: Option<&str>,
-    sanitizer_line_tables: bool,
     materialization: &MaterializationMode,
 ) -> String {
-    let base = standard_codegen_fingerprint(
+    interop_codegen_fingerprint_with_env(
         ctx,
         verbose,
-        no_fmad,
-        unchecked_indexing,
-        device_debug,
+        options,
+        target_arch,
+        detected_device_arch,
+        artifact_dir,
+        emit_nvvm_ir,
+        device_features,
+        materialization,
+        &inherited_process_env(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn interop_codegen_fingerprint_with_env(
+    ctx: &Context,
+    verbose: bool,
+    options: InteropDeviceBuildOptions,
+    target_arch: Option<&str>,
+    detected_device_arch: Option<&str>,
+    artifact_dir: &Path,
+    emit_nvvm_ir: bool,
+    device_features: Option<&str>,
+    materialization: &MaterializationMode,
+    inherited_env: &BTreeMap<String, Vec<u8>>,
+) -> String {
+    // Canonicalize the sanitizer's implicit line-table default into the same
+    // policy that an explicit --lineinfo request uses. Higher-priority CLI,
+    // ambient, and project values already participate in the standard key and
+    // suppress this default in the child command. Route identity itself is not
+    // codegen identity: sanitize+full and build+full must share artifacts.
+    let inherited_debug = inherited_env.contains_key("CUDA_OXIDE_DEBUG");
+    let project_debug = ctx
+        .config
+        .env
+        .iter()
+        .any(|(key, _)| key == "CUDA_OXIDE_DEBUG");
+    let effective_device_debug = if options.device_debug == DeviceDebug::Off
+        && options.sanitizer_line_tables
+        && !inherited_debug
+        && !project_debug
+    {
+        DeviceDebug::LineTables
+    } else {
+        options.device_debug
+    };
+    let base = standard_codegen_fingerprint_with_env(
+        ctx,
+        verbose,
+        options.no_fmad,
+        options.unchecked_indexing,
+        effective_device_debug,
         emit_nvvm_ir,
         target_arch,
         detected_device_arch,
         materialization,
+        inherited_env,
     );
     let mut hash = sha2::Sha256::new();
     for bytes in [
         "interop-codegen-v1".as_bytes(),
         base.as_bytes(),
-        if sanitizer_line_tables {
-            b"line-tables"
-        } else {
-            b"default-debug"
-        },
         artifact_dir.as_os_str().as_encoded_bytes(),
         device_features.unwrap_or("").as_bytes(),
     ] {

@@ -23,7 +23,7 @@ use pliron::{
 
 use crate::ops::{
     DebugGlobalVariableInfo, DebugLocalTypeKind, DebugLocalVariableInfo,
-    DebugProjectedVariableInfo, DebugSourcePosition,
+    DebugProjectedVariableInfo, DebugSourcePosition, DebugWholeVariableInfo,
 };
 
 use super::config::FunctionLocalStaticPlacement;
@@ -277,7 +277,9 @@ impl<'a> ModuleExportState<'a> {
         // Clang's NVPTX frontend represents a shared variable's CUDA DWARF
         // address class with this target expression. NVPTXDwarfDebug consumes
         // the sequence and emits DW_AT_address_class = 8 (shared space) for
-        // cuda-gdb. The empty expression remains the established AS1 shape.
+        // cuda-gdb. AS1 global and AS4 constant variables use the established
+        // empty expression; NVPTX derives class 4 for AS4 from the physical
+        // global's address space.
         let expression = if address_space == crate::types::address_space::SHARED {
             "!DIExpression(DW_OP_constu, 8, DW_OP_swap, DW_OP_xderef)"
         } else {
@@ -437,6 +439,30 @@ impl<'a> ModuleExportState<'a> {
             loc,
             &projected.variable,
             projected.source_scope,
+            declaration,
+        )
+    }
+
+    pub(super) fn debug_whole_variable_for_scope(
+        &mut self,
+        scope: usize,
+        loc: &Location,
+        whole: &DebugWholeVariableInfo,
+    ) -> Option<(usize, usize)> {
+        let declaration = whole.declaration.as_ref().map(|declaration| {
+            (
+                declaration.file.clone(),
+                SourcePosition {
+                    line: declaration.line,
+                    column: declaration.column,
+                },
+            )
+        });
+        self.debug_local_variable_for_source(
+            scope,
+            loc,
+            &whole.variable,
+            whole.source_scope,
             declaration,
         )
     }

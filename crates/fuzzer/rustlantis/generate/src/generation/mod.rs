@@ -79,9 +79,13 @@ impl GenerationCtx {
                 .ok_or(SelectionError::Exhausted)?;
             self.make_choice_weighted(ppath.into_iter(), weights, |ppath| {
                 if self.pt.ty(ppath.target_index()).is_copy(&self.tcx) {
-                    Ok(Operand::Copy(ppath.to_place(&self.pt)))
+                    Ok(Operand::Copy(
+                        ppath.to_place(&self.pt, self.current_decls()),
+                    ))
                 } else {
-                    Ok(Operand::Move(ppath.to_place(&self.pt)))
+                    Ok(Operand::Move(
+                        ppath.to_place(&self.pt, self.current_decls()),
+                    ))
                 }
             })?
         };
@@ -166,7 +170,7 @@ impl GenerationCtx {
                         .into_weighted(&self.pt)
                         .ok_or(SelectionError::Exhausted)?;
                     let r = self.make_choice_weighted(ppath.into_iter(), weights, |ppath| {
-                        Ok(Operand::Copy(ppath.to_place(&self.pt)))
+                        Ok(Operand::Copy(ppath.to_place(&self.pt, self.current_decls())))
                     });
                     let r = r.unwrap_or_else(|_| {
                         Operand::Constant(
@@ -328,7 +332,10 @@ impl GenerationCtx {
             .into_weighted(&self.pt)
             .ok_or(SelectionError::Exhausted)?;
         self.make_choice_weighted(candidates.into_iter(), weights, |ppath| {
-            Ok(Rvalue::AddressOf(*mutability, ppath.to_place(&self.pt)))
+            Ok(Rvalue::AddressOf(
+                *mutability,
+                ppath.to_place(&self.pt, self.current_decls()),
+            ))
         })
     }
 
@@ -343,13 +350,20 @@ impl GenerationCtx {
             .except(lhs);
         if let Some(_) = self.pt.pointee(lhs.to_place_index(&self.pt).unwrap()) {
             // The MIR linter doesn't like it if we do x = &(*x)
-            selector = selector.except(lhs.clone().project(ProjectionElem::Deref));
+            selector = selector.except(
+                lhs.clone()
+                    .project(ProjectionElem::Deref, self.current_decls(), &self.tcx)
+                    .expect("a reference-typed place can be dereferenced"),
+            );
         }
         let (candidates, weights) = selector
             .into_weighted(&self.pt)
             .ok_or(SelectionError::Exhausted)?;
         self.make_choice_weighted(candidates.into_iter(), weights, |ppath| {
-            Ok(Rvalue::Ref(*mutability, ppath.to_place(&self.pt)))
+            Ok(Rvalue::Ref(
+                *mutability,
+                ppath.to_place(&self.pt, self.current_decls()),
+            ))
         })
     }
 
@@ -436,7 +450,7 @@ impl GenerationCtx {
             .ok_or(SelectionError::Exhausted)?;
 
         self.make_choice_weighted(lhs_choices.into_iter(), weights, |ppath| {
-            let lhs = ppath.to_place(&self.pt);
+            let lhs = ppath.to_place(&self.pt, self.current_decls());
             trace!(
                 "generating an assignment statement with lhs {}: {}",
                 lhs.serialize_place(&self.tcx),
@@ -489,7 +503,7 @@ impl GenerationCtx {
     #[allow(dead_code)]
     fn generate_deinit(&self) -> Result<Statement> {
         let place = PlaceSelector::for_operand(self.tcx.clone())
-            .into_iter_place(&self.pt)
+            .into_iter_place(&self.pt, self.current_decls())
             .choose(&mut *self.rng.borrow_mut())
             .ok_or(SelectionError::Exhausted)?;
         Ok(Statement::Deinit(place))
@@ -508,7 +522,7 @@ impl GenerationCtx {
             .ok_or(SelectionError::Exhausted)?;
 
         self.make_choice_weighted(choices.into_iter(), weights, |ppath| {
-            let place = ppath.to_place(&self.pt);
+            let place = ppath.to_place(&self.pt, self.current_decls());
             trace!(
                 "generating a set discriminant statement with place {}",
                 place.serialize_place(&self.tcx),
@@ -658,7 +672,7 @@ impl GenerationCtx {
         let (place, place_val) =
             self.make_choice_weighted(places.into_iter(), weights, |ppath| {
                 let val = self.pt.known_val(ppath.target_index()).expect("has_value");
-                Ok((ppath.to_place(&self.pt), *val))
+                Ok((ppath.to_place(&self.pt, self.current_decls()), *val))
             })?;
 
         return Ok(TerminatorParams::SwitchInt {
@@ -720,7 +734,7 @@ impl GenerationCtx {
 
         let return_place =
             self.make_choice_weighted(return_places.into_iter(), weights, |ppath| {
-                Result::Ok(ppath.to_place(&self.pt))
+                Result::Ok(ppath.to_place(&self.pt, self.current_decls()))
             })?;
 
         // TODO: if return place has a ref, don't generate 0 argument as this can never be valid
@@ -737,7 +751,7 @@ impl GenerationCtx {
                 .into_weighted(&self.pt)
                 .ok_or(SelectionError::Exhausted)?;
             let arg = self.make_choice_weighted(places.into_iter(), weights, |ppath| {
-                let place = ppath.to_place(&self.pt);
+                let place = ppath.to_place(&self.pt, self.current_decls());
                 let pidx = ppath.target_index();
                 let ty = self.pt.ty(pidx);
 
@@ -802,7 +816,9 @@ impl GenerationCtx {
         let return_place = self.make_choice_weighted(
             return_places.into_iter(),
             weights,
-            |ppath: crate::pgraph::PlacePath| Result::Ok(ppath.to_place(&self.pt)),
+            |ppath: crate::pgraph::PlacePath| {
+                Result::Ok(ppath.to_place(&self.pt, self.current_decls()))
+            },
         )?;
 
         let (callee, args) = self.choose_intrinsic(&return_place)?;

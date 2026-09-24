@@ -20,16 +20,23 @@ CUDA_OXIDE_DEBUG=full cargo oxide run shared_debug --arch sm_120
 
 For cuda-gdb, break at the line marked `DEBUG_SHARED_BREAK` and require:
 
+- `show language` reports `auto; currently rust`;
 - `info locals` lists `TILE`;
-- `whatis TILE` / `ptype TILE` report `@shared int [32]`;
+- `whatis TILE` / `ptype TILE` report `[i32; 32]`;
 - `print sizeof(TILE)` is 128;
 - block 0 prints `TILE[0] == 0`, `TILE[1] == 1`, `TILE[7] == 7`;
 - block 1 prints `TILE[0] == 100`, `TILE[1] == 101` at the same shared offset;
-- `print &TILE` is an `@shared` pointer (cuda-gdb's Rust formatter omits the
-  qualifier; `set language c++` exposes the underlying address class);
+- `print &TILE` is non-null and reports the same shared-memory offset in both
+  blocks (the storage itself is distinct per block);
 - the qualified spelling `shared_debug::kernels::shared_debug::TILE` is an
   observational control. The required bare lookup takes precedence because
   the DIE is scoped to its owning subprogram.
+
+CUDA-GDB's Rust formatter does not print the address-space qualifier on
+`&TILE`, so the live lookup is not the address-class proof. The verifier runs
+ptxas and requires all six shared-static DIEs in the cubin to carry
+`DW_AT_address_class 8`; keep the debugger in Rust mode for the source-level
+checks.
 
 The owner association is deliberately narrow: these statics materialize in
 their declaration function. If MIR inlining materializes one local static in

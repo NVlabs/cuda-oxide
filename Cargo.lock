@@ -443,6 +443,9 @@ dependencies = [
  "cuda-device",
  "cuda-macros",
  "half",
+ "libc",
+ "libloading",
+ "oxide-artifacts 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ptx-parse",
  "sha2",
  "thiserror 2.0.18",
@@ -948,6 +951,7 @@ dependencies = [
  "combine",
  "dyn-clone",
  "expect-test",
+ "libnvvm-sys",
  "linkme",
  "log",
  "pliron",
@@ -1127,8 +1131,8 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pliron"
-version = "0.17.0"
-source = "git+https://github.com/pliron-org/pliron?rev=8e4500e16d96926a91751a505e3d8b4ef9c4f7c8#8e4500e16d96926a91751a505e3d8b4ef9c4f7c8"
+version = "0.18.0"
+source = "git+https://github.com/pliron-org/pliron?rev=06d99a3df938394583715aacf5eadb65b4791c09#06d99a3df938394583715aacf5eadb65b4791c09"
 dependencies = [
  "awint",
  "combine",
@@ -1154,8 +1158,8 @@ dependencies = [
 
 [[package]]
 name = "pliron-derive"
-version = "0.17.0"
-source = "git+https://github.com/pliron-org/pliron?rev=8e4500e16d96926a91751a505e3d8b4ef9c4f7c8#8e4500e16d96926a91751a505e3d8b4ef9c4f7c8"
+version = "0.18.0"
+source = "git+https://github.com/pliron-org/pliron?rev=06d99a3df938394583715aacf5eadb65b4791c09#06d99a3df938394583715aacf5eadb65b4791c09"
 dependencies = [
  "combine",
  "convert_case",
@@ -1168,8 +1172,8 @@ dependencies = [
 
 [[package]]
 name = "pliron-llvm"
-version = "0.17.0"
-source = "git+https://github.com/pliron-org/pliron?rev=8e4500e16d96926a91751a505e3d8b4ef9c4f7c8#8e4500e16d96926a91751a505e3d8b4ef9c4f7c8"
+version = "0.18.0"
+source = "git+https://github.com/pliron-org/pliron?rev=06d99a3df938394583715aacf5eadb65b4791c09#06d99a3df938394583715aacf5eadb65b4791c09"
 dependencies = [
  "bitflags",
  "log",

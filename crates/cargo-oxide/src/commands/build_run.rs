@@ -54,8 +54,9 @@ pub fn codegen_run(
     // GPU only when that GPU can run the kernel. If the kernel needs a newer
     // arch (tcgen05 needs sm_100a even on a consumer sm_120 GPU), the backend
     // builds for the required arch and the module simply skips at load time.
-    // We only detect for `run`, not `build`/`pipeline`: `run` loads the cubin
-    // on the local GPU, whereas those may legitimately cross-compile for
+    // The detected arch is used as a target hint for `run`. `build` may probe
+    // the first GPU reported by `nvidia-smi` for diagnostics, but keeps backend
+    // target selection untouched because it may legitimately cross-compile for
     // another machine.
     let detected_device_arch =
         detect_run_target_arch(target_arch, emit_nvvm_ir || materialization.enabled());
@@ -75,6 +76,7 @@ pub fn codegen_run(
             bin,
             no_fmad,
             unchecked_indexing,
+            device_debug,
             &materialization,
             app_args,
         );
@@ -232,11 +234,13 @@ pub fn codegen_sanitize(
             target_arch,
             detected_device_arch.as_deref(),
             None,
-            InteropDeviceBuildOptions {
+            InteropDeviceBuildOptions::for_route(
+                InteropDeviceBuildRoute::Sanitize,
                 no_fmad,
                 unchecked_indexing,
-                sanitizer_line_tables: true,
-            },
+                device_debug,
+                false,
+            ),
             &materialization,
         );
         let binary = build_host_cargo(ctx, example, &example_dir, features, bin, verbose);
@@ -287,6 +291,37 @@ pub fn codegen_sanitize(
     );
 }
 
+pub(super) fn build_arch_warning(
+    arch_configured: bool,
+    local_arch: Option<&str>,
+) -> Option<String> {
+    if arch_configured {
+        return None;
+    }
+
+    let local_arch = local_arch?;
+
+    Some(format!(
+        "Warning: no target architecture is configured; \
+     `cargo oxide build` will use the backend default. \
+     The first GPU reported by `nvidia-smi` has architecture {local_arch}. \
+     Pass `--arch <sm_XX>` to target a specific architecture explicitly."
+    ))
+}
+
+pub fn warn_for_default_build_arch(ctx: &Context, arch: Option<&str>) {
+    let arch_configured = has_configured_arch(ctx, arch);
+    let local_arch = if arch_configured {
+        None
+    } else {
+        detect_local_device_arch()
+    };
+
+    if let Some(warning) = build_arch_warning(arch_configured, local_arch.as_deref()) {
+        eprintln!("{warning}");
+    }
+}
+
 // =============================================================================
 // Build command (compile only, don't run)
 // =============================================================================
@@ -308,6 +343,7 @@ pub fn codegen_build(
     no_fmad: bool,
     unchecked_indexing: bool,
     device_debug: DeviceDebug,
+    debug_assertions: bool,
     materialize_cubin: bool,
 ) {
     let target_arch = configured_arch(ctx, arch);
@@ -333,6 +369,8 @@ pub fn codegen_build(
             device_features,
             no_fmad,
             unchecked_indexing,
+            device_debug,
+            debug_assertions,
             &materialization,
         );
         return;
@@ -380,7 +418,7 @@ pub fn codegen_build(
     apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
-        CodegenProfilePolicy::ReleaseLike,
+        CodegenProfilePolicy::release_like(debug_assertions),
         &[],
         &fingerprint,
     );
@@ -460,6 +498,7 @@ pub fn codegen_inspect_ptx(
         no_fmad,
         unchecked_indexing,
         device_debug,
+        false,
         false,
     );
 

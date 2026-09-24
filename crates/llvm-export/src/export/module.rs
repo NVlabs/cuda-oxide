@@ -115,6 +115,12 @@ fn index_module_symbols(
             state
                 .function_types
                 .insert(exported_name.clone(), function_type);
+            let grid_constants = state.grid_constant_parameters(&func)?;
+            if !grid_constants.is_empty() {
+                state
+                    .function_grid_constants
+                    .insert(exported_name.clone(), grid_constants);
+            }
             if func.get_operation().deref(state.ctx).regions().count() != 0 {
                 state.function_definitions.insert(exported_name);
             }
@@ -247,6 +253,20 @@ fn validate_device_extern_function_shape(
         return Ok(());
     };
 
+    // A device extern describes the ordinary callable ABI. Erased pointer
+    // shapes alone cannot establish compatibility with a kernel declaration
+    // that transports the pointee's bytes by value. Suppressing that declaration
+    // would otherwise discard both its byval storage and grid-constant metadata.
+    if state
+        .function_grid_constants
+        .contains_key(&decl.export_name)
+    {
+        return Err(format!(
+            "device extern `@{}` conflicts with a grid-constant kernel declaration; its launch ABI is not an ordinary device function ABI",
+            decl.export_name
+        ));
+    }
+
     if state.function_definitions.contains(&decl.export_name) {
         return Err(format!(
             "device extern `@{}` conflicts with a function definition of the same exported name",
@@ -323,7 +343,7 @@ fn emit_llvm_used(output: &mut String, state: &ModuleExportState<'_>) -> Result<
     let element_type = if state.legacy_typed_pointers() {
         for name in function_names {
             let mut reference = String::from("i8* bitcast (");
-            state.export_function_pointer_type(state.function_type(name)?, &mut reference)?;
+            state.export_named_function_pointer_type(name, &mut reference)?;
             write!(&mut reference, " @{name} to i8*)").unwrap();
             used_refs.push(reference);
         }

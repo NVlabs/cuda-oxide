@@ -136,6 +136,10 @@ pub fn launch_bounds_test(...) {
 # Run the non-failing debug suite.
 cargo oxide run debug
 
+# Run this mode only under cuda-gdb; continuing from `brkpt` must finish it.
+CUDA_OXIDE_DEBUG=full cargo oxide build debug
+cuda-gdb --args ./crates/rustc-codegen-cuda/examples/debug/target/release/debug --breakpoint
+
 # Run the isolated assertion-failure path.
 cargo oxide run debug -- --fail-assert
 ```
@@ -222,18 +226,23 @@ Lower `minblocks` = fewer blocks = more registers per thread = better per-thread
 ## Using cuda-gdb
 
 ```bash
-# Compile with debug info (already enabled in dev builds)
-cargo oxide pipeline debug
+# Compile with full device debug information.
+CUDA_OXIDE_DEBUG=full cargo oxide build debug
 
-# Launch debugger
-cuda-gdb ./target/release/debug
+# Launch the fixture's isolated breakpoint mode from its example directory.
+cd crates/rustc-codegen-cuda/examples/debug
+cuda-gdb --args ./target/release/debug --breakpoint
 
 # In cuda-gdb:
 (cuda-gdb) run
-(cuda-gdb) # Stops at breakpoint in thread 0
+(cuda-gdb) # Stops at debug::breakpoint() in thread 0
 (cuda-gdb) cuda thread       # Show current CUDA thread
-(cuda-gdb) print idx         # Print variable
+(cuda-gdb) frame 0
+(cuda-gdb) print idx_raw     # Must be 0
+(cuda-gdb) backtrace         # Frame 0 must be breakpoint_test<<<...>>>
 (cuda-gdb) continue
+# Host output must end with:
+# PASS breakpoint_test: runtime values = [0, 1, 2, 3, 4, 5, 6, 7]
 ```
 
 ## Using Profiler Triggers

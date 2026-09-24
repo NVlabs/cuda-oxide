@@ -1,6 +1,6 @@
 # cuda-oxide-codegen
 
-Experimental, rustc-independent PTX backend.
+Rustc-independent PTX backend.
 
 It accepts a module already assembled from cuda-oxide's `dialect-mir` and
 `dialect-nvvm` operations and produces PTX through the same MIR preparation,
@@ -12,4 +12,4 @@ It needs neither `rustc_private` nor a nightly toolchain matched to
 `rustc_driver`, so a caller that can build the IR itself can reach PTX without
 the compiler-plugin machinery `rustc-codegen-cuda` requires.
 
-Experimental in the ordinary sense — the surface may change.
+The v1 surface may change.

@@ -523,7 +523,7 @@ impl MirToLlvmConversion for ConstantOp {
         rewriter: &mut DialectConversionRewriter,
         _operands_info: &OperandsInfo,
     ) -> Result<()> {
-        let value = self.get_value(ctx);
+        let value = pliron::dyn_clone::clone_box(&*self.get_value(ctx));
         super::ops::constants::convert_builtin_constant(ctx, rewriter, self.get_operation(), value)
     }
 }

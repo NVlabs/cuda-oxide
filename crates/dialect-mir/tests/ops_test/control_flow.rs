@@ -141,35 +141,33 @@ fn test_mir_control_flow_verify() {
     assert!(mir_ret_bad.verify(&ctx).is_err(), "Return type mismatch");
 
     // 4. MirAssertOp
-    let assert_succ = BasicBlock::new(&mut ctx, None, vec![]);
-
-    let (assert_flat, assert_sizes) =
-        MirAssertOp::compute_segment_sizes(vec![vec![cond_val], vec![]]);
-    let op_assert = Operation::new(
-        &mut ctx,
-        MirAssertOp::get_concrete_op_info(),
-        vec![],
-        assert_flat,
-        vec![assert_succ],
-        0,
-    );
-    MirAssertOp::new(op_assert).set_operand_segment_sizes(&ctx, assert_sizes);
-    let assert_op = MirAssertOp::new(op_assert);
+    let assert_op = MirAssertOp::new(&mut ctx, cond_val);
     assert!(assert_op.verify(&ctx).is_ok(), "Valid Assert");
-
-    let (assert_bad_flat, assert_bad_sizes) =
-        MirAssertOp::compute_segment_sizes(vec![vec![val], vec![]]);
-    let op_assert_bad = Operation::new(
-        &mut ctx,
-        MirAssertOp::get_concrete_op_info(),
-        vec![],
-        assert_bad_flat,
-        vec![assert_succ],
-        0,
-    );
-    MirAssertOp::new(op_assert_bad).set_operand_segment_sizes(&ctx, assert_bad_sizes);
     assert!(
-        MirAssertOp::new(op_assert_bad).verify(&ctx).is_err(),
+        MirAssertOp::new(&mut ctx, val).verify(&ctx).is_err(),
         "Assert cond type mismatch"
     );
+
+    let assert_succ = BasicBlock::new(&mut ctx, None, vec![]);
+    for (operands, successors) in [
+        (vec![], vec![]),
+        (vec![cond_val, cond_val], vec![]),
+        (vec![cond_val], vec![assert_succ]),
+    ] {
+        let malformed = Operation::new(
+            &mut ctx,
+            MirAssertOp::get_concrete_op_info(),
+            vec![],
+            operands,
+            successors,
+            0,
+        );
+        assert!(
+            Operation::get_op::<MirAssertOp>(malformed, &ctx)
+                .unwrap()
+                .verify(&ctx)
+                .is_err(),
+            "Assertions must have exactly one condition and no successors"
+        );
+    }
 }

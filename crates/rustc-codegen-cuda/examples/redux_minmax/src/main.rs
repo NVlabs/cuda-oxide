@@ -22,6 +22,20 @@ use cuda_host::cuda_module;
 
 const FULL_MASK: u32 = 0xffff_ffff;
 
+/// Device helpers that return a reduction directly (#811): the result reaches
+/// the helper's `return` without passing through a store, the shape a generic
+/// fast path such as `warp_reduce`'s takes. Kept out of line so each helper
+/// lowers as its own device function.
+#[inline(never)]
+fn min_i32_via_helper(value: i32) -> i32 {
+    warp::redux_sync_min_i32(FULL_MASK, value)
+}
+
+#[inline(never)]
+fn max_u32_via_helper(value: u32) -> u32 {
+    warp::redux_sync_max_u32(FULL_MASK, value)
+}
+
 // =============================================================================
 // KERNELS
 // =============================================================================
@@ -81,6 +95,27 @@ mod kernels {
                 *out.get_unchecked_mut(0) = and;
                 *out.get_unchecked_mut(1) = or;
                 *out.get_unchecked_mut(2) = xor;
+            }
+        }
+    }
+
+    /// The Test 1 inputs, reduced through the out-of-line helpers above.
+    /// Lane 0 writes the signed min and the unsigned max.
+    #[kernel]
+    pub fn redux_via_device_helpers(
+        mut signed_out: DisjointSlice<i32>,
+        mut unsigned_out: DisjointSlice<u32>,
+    ) {
+        let lane = warp::lane_id();
+        let v = lane as i32 - 16;
+
+        let smin = min_i32_via_helper(v);
+        let umax = max_u32_via_helper(v as u32);
+
+        if lane == 0 {
+            unsafe {
+                *signed_out.get_unchecked_mut(0) = smin;
+                *unsigned_out.get_unchecked_mut(0) = umax;
             }
         }
     }
@@ -164,6 +199,36 @@ fn main() {
         println!("✓ and/or/xor correct");
     } else {
         println!("✗ bitwise reduction mismatch!");
+        failed = true;
+    }
+
+    // ===== Test 3: reductions returned from device helpers =====
+    println!("\n--- Test 3: redux.sync results returned from device helpers ---");
+    let mut helper_signed_dev = DeviceBuffer::<i32>::zeroed(&stream, 1).unwrap();
+    let mut helper_unsigned_dev = DeviceBuffer::<u32>::zeroed(&stream, 1).unwrap();
+
+    // SAFETY: launch shape/resources match the kernel; buffers cover its accesses.
+    unsafe {
+        module.redux_via_device_helpers(
+            (stream).as_ref(),
+            cfg,
+            &mut helper_signed_dev,
+            &mut helper_unsigned_dev,
+        )
+    }
+    .expect("Kernel launch failed");
+
+    let helper_signed = helper_signed_dev.to_host_vec(&stream).unwrap();
+    let helper_unsigned = helper_unsigned_dev.to_host_vec(&stream).unwrap();
+    println!(
+        "[signed min, unsigned max] = [{:?}, {:?}] (expected [[-16], [4294967295]])",
+        helper_signed, helper_unsigned
+    );
+
+    if helper_signed == [-16] && helper_unsigned == [u32::MAX] {
+        println!("✓ reductions returned from device helpers correct");
+    } else {
+        println!("✗ helper-returned reduction mismatch!");
         failed = true;
     }
 

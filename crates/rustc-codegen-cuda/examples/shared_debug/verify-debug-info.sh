@@ -8,6 +8,21 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_file="${root}/src/main.rs"
 llvm_ir="${1:-${root}/shared_debug.ll}"
 
+# Keep standalone verification consistent with scripts/smoketest.sh: honor an
+# explicit tool override and the conventional CUDA install roots even when
+# ptxas is not on PATH.
+ptxas_bin=""
+for candidate in "${CUDA_OXIDE_PTXAS:-}" \
+                 "$(command -v ptxas 2>/dev/null || true)" \
+                 "${CUDA_HOME:+${CUDA_HOME}/bin/ptxas}" \
+                 /usr/local/cuda/bin/ptxas \
+                 /usr/local/cuda-*/bin/ptxas; do
+    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+        ptxas_bin="${candidate}"
+        break
+    fi
+done
+
 test -s "${llvm_ir}"
 
 definition_line() {
@@ -154,7 +169,7 @@ for entry in "${toolsets[@]}"; do
     if ! command -v "${llvm_as}" >/dev/null 2>&1 \
         || ! command -v "${opt}" >/dev/null 2>&1 \
         || ! command -v "${llc}" >/dev/null 2>&1 \
-        || ! command -v ptxas >/dev/null 2>&1; then
+        || [[ -z "${ptxas_bin}" ]]; then
         continue
     fi
     major="$("${llc}" --version | sed -nE 's/.*LLVM version ([0-9]+)\..*/\1/p' | head -n 1)"
@@ -176,7 +191,7 @@ for entry in "${toolsets[@]}"; do
         -filetype=asm "${bitcode}" -o "${ptx}" 2>"${tmpdir}/llc.err"
     reject_stripped_debug_info "${tmpdir}/llc.err" "${llc}"
     grep -Eq '^\.target sm_90, debug$' "${ptx}"
-    ptxas -arch=sm_90 -g "${ptx}" -o "${cubin}"
+    "${ptxas_bin}" -arch=sm_90 -g "${ptx}" -o "${cubin}"
     if command -v "${dwarfdump}" >/dev/null 2>&1; then
         "${dwarfdump}" --debug-info "${cubin}" >"${dwarf}"
         [[ "$(grep -c 'DW_AT_address_class.*0x08' "${dwarf}")" -eq 6 ]]
@@ -188,7 +203,8 @@ for entry in "${toolsets[@]}"; do
 done
 
 if [[ "${validated}" -eq 0 ]]; then
-    echo "note: no LLVM toolset matching the ${placement} placement was found; graph shape verified from the text only" >&2
+    echo "shared-static AS3 debug-info: FAIL (no complete LLVM+ptxas toolset matching the ${placement} placement exercised cubin address class 8)" >&2
+    exit 1
 fi
 
 echo "shared-static AS3 debug-info shape verified (placement: ${placement}; LLVM toolsets exercised: ${validated})"

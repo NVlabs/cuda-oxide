@@ -203,13 +203,13 @@ fn convert_global_alloc_places_in_global_or_constant_addrspace() {
 }
 
 #[test]
-fn ordinary_global_debug_info_survives_lowering_but_constant_memory_stays_out_of_scope() {
+fn as1_and_as4_global_debug_info_survive_lowering_with_distinct_semantic_types() {
     let mut ctx = make_ctx();
     let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
     let ordinary = append_global_alloc(&mut ctx, block, "crate::GLOBAL_COUNTER", false);
     let constant_key = dialect_mir::ops::encode_rust_static_global_key("_ZN5crate5COEFFE");
     let constant = append_global_alloc(&mut ctx, block, &constant_key, true);
-    let info = llvm::DebugGlobalVariableInfo {
+    let ordinary_info = llvm::DebugGlobalVariableInfo {
         name: "GLOBAL_COUNTER".to_string(),
         namespace: vec!["crate".to_string(), "state".to_string()],
         ty: llvm::DebugLocalTypeKind::Basic {
@@ -225,11 +225,40 @@ fn ordinary_global_debug_info_survives_lowering_but_constant_memory_stays_out_of
         is_local_to_unit: true,
         is_function_local: false,
     };
-    llvm::set_debug_global_variable(&mut ctx, ordinary, &info);
-    // Deliberately tag AS4 too: the AS1-only implementation must not
-    // accidentally expand its behavior merely because the generic debug
-    // carrier can be attached to any op.
-    llvm::set_debug_global_variable(&mut ctx, constant, &info);
+    let constant_info = llvm::DebugGlobalVariableInfo {
+        name: "COEFF".to_string(),
+        namespace: vec!["crate".to_string(), "kernels".to_string()],
+        ty: llvm::DebugLocalTypeKind::Struct {
+            name: "ConstantMemory".to_string(),
+            size_bits: 32,
+            members: vec![llvm::DebugTypeMember {
+                name: "0".to_string(),
+                offset_bits: 0,
+                ty: llvm::DebugLocalTypeKind::Struct {
+                    name: "UnsafeCell".to_string(),
+                    size_bits: 32,
+                    members: vec![llvm::DebugTypeMember {
+                        name: "value".to_string(),
+                        offset_bits: 0,
+                        ty: llvm::DebugLocalTypeKind::Basic {
+                            name: "f32".to_string(),
+                            size_bits: 32,
+                            encoding: "DW_ATE_float",
+                        },
+                    }],
+                },
+            }],
+        },
+        declaration: llvm::DebugSourcePosition {
+            file: PathBuf::from("/tmp/global.rs"),
+            line: 11,
+            column: 1,
+        },
+        is_local_to_unit: true,
+        is_function_local: false,
+    };
+    llvm::set_debug_global_variable(&mut ctx, ordinary, &ordinary_info);
+    llvm::set_debug_global_variable(&mut ctx, constant, &constant_info);
     append_mir_return(&mut ctx, block, vec![]);
 
     crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
@@ -251,12 +280,13 @@ fn ordinary_global_debug_info_survives_lowering_but_constant_memory_stays_out_of
 
     assert_eq!(
         llvm::debug_global_variable(&ctx, ordinary.get_operation()),
-        Some(info),
+        Some(ordinary_info),
         "source identity and semantic type must survive MIR-to-LLVM lowering"
     );
-    assert!(
-        llvm::debug_global_variable(&ctx, constant.get_operation()).is_none(),
-        "AS4 debug metadata is a separate feature and must not leak into this AS1 change"
+    assert_eq!(
+        llvm::debug_global_variable(&ctx, constant.get_operation()),
+        Some(constant_info),
+        "AS4 must retain the source ConstantMemory/UnsafeCell/f32 graph rather than its physical byte storage"
     );
 }
 
@@ -290,11 +320,11 @@ fn immutable_marking_survives_lowering_and_is_not_assumed() {
     };
 
     assert!(
-        by_key("promoted_table").is_immutable(&ctx),
+        by_key("promoted_table").is_constant(&ctx),
         "a global marked immutable in MIR must stay immutable through lowering"
     );
     assert!(
-        !by_key("plain_static").is_immutable(&ctx),
+        !by_key("plain_static").is_constant(&ctx),
         "lowering must not infer immutability; only the promoted-constant \
              sites may claim it"
     );

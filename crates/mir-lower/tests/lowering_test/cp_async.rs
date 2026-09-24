@@ -178,7 +178,7 @@ fn test_generated_cp_async_mbarrier_preserves_backend_and_address_routes()
             }
             if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap();
                 let Some(index) = templates
@@ -191,12 +191,12 @@ fn test_generated_cp_async_mbarrier_preserves_backend_and_address_routes()
                 assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Convergent);
                 assert!(
                     inline_asm
-                        .get_attr_inline_asm_convergent(&ctx)
-                        .is_some_and(|value| bool::from((*value).clone()))
+                        .get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent"))
                 );
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some("l,~{memory}")
@@ -330,14 +330,14 @@ fn test_generated_cp_async_libnvvm_uses_all_exact_inline_ptx() -> Result<(), any
         };
         assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::SideEffect);
         assert!(
-            asm.get_attr_inline_asm_convergent(&ctx)
-                .is_some_and(|value| !bool::from((*value).clone()))
+            !asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
         lowered.push((
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .unwrap(),
-            asm.get_attr_inline_asm_constraints(&ctx)
+            asm.get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .unwrap(),
         ));
@@ -494,7 +494,7 @@ fn assert_cp_async_inline_asm_lowering(
                     continue;
                 };
                 let template = inline_asm
-                    .get_attr_inline_asm_template(ctx)
+                    .get_attr_llvm_inline_asm_template(ctx)
                     .map(|s| String::from((*s).clone()));
                 if template.as_deref() != Some(expected_template.as_str()) {
                     continue;
@@ -503,16 +503,16 @@ fn assert_cp_async_inline_asm_lowering(
                 matches += 1;
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(ctx)
+                        .get_attr_llvm_inline_asm_constraints(ctx)
                         .map(|s| String::from((*s).clone()))
                         .as_deref(),
                     Some("l,l,~{memory}")
                 );
                 assert_eq!(llvm::asm_kind(ctx, &inline_asm), llvm::AsmKind::SideEffect);
                 assert!(
-                    inline_asm
-                        .get_attr_inline_asm_convergent(ctx)
-                        .is_some_and(|value| !bool::from((*value).clone()))
+                    !inline_asm
+                        .get_attr_llvm_inline_asm_attrs(ctx)
+                        .is_some_and(|attrs| attrs.has("convergent"))
                 );
 
                 let operands: Vec<_> = inline_asm.get_operation().deref(ctx).operands().collect();
@@ -673,7 +673,7 @@ fn assert_cp_async_zfill_inline_asm_lowering(
                     continue;
                 };
                 let template = inline_asm
-                    .get_attr_inline_asm_template(ctx)
+                    .get_attr_llvm_inline_asm_template(ctx)
                     .map(|s| String::from((*s).clone()));
                 if template.as_deref() != Some(expected_template.as_str()) {
                     continue;
@@ -682,16 +682,16 @@ fn assert_cp_async_zfill_inline_asm_lowering(
                 matches += 1;
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(ctx)
+                        .get_attr_llvm_inline_asm_constraints(ctx)
                         .map(|s| String::from((*s).clone()))
                         .as_deref(),
                     Some("l,l,r,~{memory}")
                 );
                 assert_eq!(llvm::asm_kind(ctx, &inline_asm), llvm::AsmKind::SideEffect);
                 assert!(
-                    inline_asm
-                        .get_attr_inline_asm_convergent(ctx)
-                        .is_some_and(|value| !bool::from((*value).clone()))
+                    !inline_asm
+                        .get_attr_llvm_inline_asm_attrs(ctx)
+                        .is_some_and(|attrs| attrs.has("convergent"))
                 );
 
                 let operands: Vec<_> = inline_asm.get_operation().deref(ctx).operands().collect();

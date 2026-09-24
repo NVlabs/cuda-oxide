@@ -34,7 +34,7 @@ use dialect_mir::{
     ops::{
         MAX_SCALARIZED_CANDIDATES, MirAllocaOp, MirArrayElementAddrOp, MirAssertOp, MirConstantOp,
         MirConstructArrayOp, MirConstructStructOp, MirConstructTupleOp, MirExtractArrayElementOp,
-        MirFieldAddrOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
+        MirFieldAddrOp, MirGotoOp, MirLoadOp, MirLtOp, MirRemOp, MirStoreOp,
     },
     types::MirArrayType,
 };
@@ -47,7 +47,7 @@ use pliron::{
         listener::Recorder,
         rewriter::{IRRewriter, Rewriter},
     },
-    linked_list::ContainsLinkedList,
+    linked_list::{ContainsLinkedList, LinkedList},
     location::Located,
     op::Op,
     operation::Operation,
@@ -442,9 +442,9 @@ fn bounded_dynamic_index(
 
     // Keep the assertion proof deliberately narrow. The dynamic projection
     // and its load must be in the same block, that block must have one
-    // predecessor, and the predecessor must terminate in the exact successful
-    // edge of `assert(index < constant)`. The comparison must use this precise
-    // SSA index value. This is sufficient to establish domination without
+    // predecessor, and that predecessor must assert `index < constant`
+    // immediately before its goto to the load. The comparison must use this
+    // precise SSA index value. This is sufficient to establish domination without
     // introducing a general range analysis.
     if projection_block != load_block {
         return None;
@@ -456,14 +456,16 @@ fn bounded_dynamic_index(
     };
 
     let terminator = assert_block.deref(ctx).get_terminator(ctx)?;
-    Operation::get_op::<MirAssertOp>(terminator, ctx)?;
+    Operation::get_op::<MirGotoOp>(terminator, ctx)?;
     if terminator.deref(ctx).get_num_successors() != 1
         || terminator.deref(ctx).get_successor(0) != load_block
     {
         return None;
     }
 
-    let condition = terminator.deref(ctx).get_operand(0);
+    let assertion = terminator.deref(ctx).get_prev()?;
+    Operation::get_op::<MirAssertOp>(assertion, ctx)?;
+    let condition = assertion.deref(ctx).get_operand(0);
     let comparison = condition.defining_op()?;
     Operation::get_op::<MirLtOp>(comparison, ctx)?;
     if comparison.deref(ctx).get_parent_block() != Some(*assert_block)
@@ -942,15 +944,18 @@ mod tests {
                 comparison.insert_at_back(entry, ctx);
                 let condition = comparison.deref(ctx).get_result(0);
 
-                let assert = Operation::new(
+                MirAssertOp::new(ctx, condition)
+                    .get_operation()
+                    .insert_at_back(entry, ctx);
+                let goto = Operation::new(
                     ctx,
-                    MirAssertOp::get_concrete_op_info(),
+                    MirGotoOp::get_concrete_op_info(),
                     vec![],
-                    vec![condition],
+                    vec![],
                     vec![body],
                     0,
                 );
-                assert.insert_at_back(entry, ctx);
+                goto.insert_at_back(entry, ctx);
 
                 raw_index_value
             }

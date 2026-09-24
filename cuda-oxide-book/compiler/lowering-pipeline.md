@@ -427,9 +427,28 @@ out = DisjointSlice {ptr: 0x..., len: 1}
 
 Pliron `mem2reg` still has a promotion-aware salvage path: when it promotes a
 debug-tagged slot it emits a `mir.dbg_value` ("this source variable has this SSA
-value here") that lowers to `llvm.dbg.value`. That is the groundwork for a
-future *optimized* debug tier; the current `full` tier does not run `mem2reg`,
-so it relies on `dbg.declare` instead.
+value here") that lowers to `llvm.dbg.value`. The current `full` tier does not
+run `mem2reg`, so place-backed locals normally rely on `dbg.declare`.
+
+`ReferencePropagation` can replace a pointer assignment with an internal
+`AssignRef` event:
+
+```text
+ptr = &slice[i] -> AssignRef(ptr, slice[i])
+```
+
+Full mode carries that event across stable MIR. For the supported
+borrowed-slice index form, it writes the address into the variable's debugger
+stack slot at the same program point:
+
+```text
+AssignRef -> address of slice[i] -> ptr's debugger slot
+```
+
+The importer validates the complete event set first. Invalid or unsupported
+events omit that destination before translation, so no partial instrumentation
+is emitted. Default, line-table, and release builds are unchanged. Promotion
+salvage remains groundwork for a future *optimized* debug tier.
 
 ### Variable scopes and inlining
 
@@ -612,7 +631,7 @@ So `llc` is resolved first, by the table above, and its major is read from
 | 4th      | `opt-22` / `opt-21` / `opt` on `PATH`              | Filtered to the same major as `llc`.                                  |
 
 If no same-major `opt` exists, resolution records a diagnostic naming every
-rejected candidate. The experimental API treats a requested optimization as
+rejected candidate. The standalone API treats a requested optimization as
 strict and fails; the legacy rustc path falls back to running unoptimized.
 
 Because step 2 keys off whichever `llc` won, pinning `CUDA_OXIDE_LLC` alone is
@@ -635,7 +654,7 @@ the kernel calls into libdevice. Both have their own override:
 When either piece is missing, the two paths react differently. An ordinary
 build does not fail: the backend's path decision sees that the IR-level link
 is unavailable and falls back to the NVVM path, the same automatic switch
-described under target selection. The experimental API's `Linking::Libdevice`
+described under target selection. The standalone API's `Linking::Libdevice`
 is strict and fails up front instead, with a `LibdeviceUnavailable` error
 naming the missing piece: `libdevice.10.bc`, or an `llvm-link` sharing the
 selected `llc`'s major.

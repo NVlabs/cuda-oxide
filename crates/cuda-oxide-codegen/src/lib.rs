@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Experimental, rustc-independent cuda-oxide PTX backend.
+//! Rustc-independent cuda-oxide PTX backend.
 //!
 //! The only supported public surface is [`experimental`]. It accepts a module
 //! assembled from cuda-oxide's `dialect-mir` and `dialect-nvvm` operations and
@@ -34,11 +34,11 @@ mod target;
 mod verify;
 mod warp_aggregate_constant_fp_atomics;
 
-/// Experimental standalone code-generation API.
+/// Standalone code-generation API.
 ///
 /// # Version contract
 ///
-/// This API is an experimental v1. It is source-compatible only with the exact
+/// This v1 API is source-compatible only with the exact
 /// cuda-oxide revision that supplies it. Frontends must pin cuda-oxide, Pliron,
 /// `dialect-mir`, and `dialect-nvvm` to one revision; their in-memory IR is not
 /// a stable interchange format.
@@ -109,7 +109,7 @@ pub mod experimental {
 
 /// Existing cross-crate implementation hooks for mir-importer.
 ///
-/// This is not part of the experimental standalone frontend contract.
+/// This is not part of the standalone frontend contract.
 #[doc(hidden)]
 pub mod __private {
     #[doc(hidden)]
@@ -119,7 +119,7 @@ pub mod __private {
     #[doc(hidden)]
     pub use crate::lower::append_to_module;
     #[doc(hidden)]
-    pub use crate::options::BackendOptions;
+    pub use crate::options::{BackendOptions, DeviceArchHint};
     #[doc(hidden)]
     pub use crate::pipeline::{
         ModuleArtifactKind, ModulePipelineOutput, ModulePipelineRequest, OutputFiles,

@@ -177,6 +177,8 @@ pub fn ptx_asm(input: TokenStream) -> TokenStream {
 /// - `&[T]` -> `&cuda_core::DeviceBuffer<T>`
 /// - `&mut [T]` -> `&mut cuda_core::DeviceBuffer<T>`
 /// - `DisjointSlice<T>` -> `&mut cuda_core::DeviceBuffer<T>`
+/// - `#[grid_constant] value: &T` -> a by-value `T` (`T: Copy`); device code
+///   borrows read-only launch-parameter storage, without a device allocation
 /// - `Copy` scalar/struct/closure/raw-pointer arguments keep their original
 ///   type and pass through `cuda_host::KernelScalar`
 ///
@@ -251,7 +253,9 @@ pub fn ptx_asm(input: TokenStream) -> TokenStream {
 /// borrowed-async, and owned-async methods are therefore `unsafe`: callers must
 /// prove that the chosen dimensions and resources satisfy the kernel. Add
 /// `#[launch_contract(...)]` to generate a prepared-launch path that is safe
-/// when the source kernel itself is safe.
+/// when the source kernel itself is safe and has no `#[grid_constant]`
+/// parameters. Grid-constant host launchers remain unsafe because copying the
+/// parameter does not prove device validity of values reached through it.
 #[proc_macro_attribute]
 pub fn cuda_module(attr: TokenStream, item: TokenStream) -> TokenStream {
     cuda_module::cuda_module_entry(attr, item)
@@ -262,6 +266,43 @@ pub fn cuda_module(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// This attribute:
 /// 1. Adds `#[no_mangle]` to preserve the function name in the binary
 /// 2. Marks the function for detection by the `rustc-codegen-cuda` backend
+///
+/// # Grid-constant parameters
+///
+/// `#[grid_constant] descriptor: &T` passes the complete `T` by value in the
+/// launch parameters and gives device code a reference to that read-only
+/// storage. `T` must be sized, nonzero, and have no interior mutability
+/// (`UnsafeCell`, including cells or atomics stored within the value). The
+/// compiler checks this after generic specialization. References or raw
+/// pointers stored inside `T` still refer to separate allocations; those
+/// allocations must satisfy the usual device-access and lifetime requirements.
+///
+/// Use `&T` or `&'_ T`: the storage lasts only until this launch completes, so
+/// named and `'static` outer lifetimes are rejected. A pointer into the value
+/// must not be used after the launch. `#[cuda_module]` generates a host
+/// argument of type `T` and requires `T: Copy`; low-level launches must likewise
+/// pass the value's bytes, rather than a pointer to a device allocation.
+///
+/// Every generated host launcher with a grid-constant parameter is `unsafe`,
+/// including prepared synchronous, borrowed-async, and owned-async methods.
+/// `Copy` permits copying the bytes, and the compiler's immutability check
+/// protects the copied storage; neither proves that nested references are
+/// valid on the GPU. The caller must ensure that references within the value
+/// are device-valid and that memory reached through it remains accessible,
+/// alive, and correctly synchronized until device execution completes.
+/// Submitting a launch or constructing an async operation does not end these
+/// obligations, and copying the value does not retain separate allocations.
+/// Prepared launch checks cover geometry and declared resources, not these
+/// nested-allocation requirements. This conservative rule also applies to
+/// payloads containing only numbers. It does not change the source kernel's
+/// Rust safety or the ordinary signature of a generic device helper.
+///
+/// ```ignore
+/// #[kernel]
+/// pub fn copy(#[grid_constant] descriptor: &TensorMap, output: *mut u32) {
+///     // descriptor borrows one read-only value shared by the entire grid.
+/// }
+/// ```
 ///
 /// # Generic Kernels
 ///

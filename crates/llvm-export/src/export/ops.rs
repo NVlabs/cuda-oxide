@@ -11,6 +11,7 @@ use std::fmt::Write;
 
 use pliron::r#type::Typed;
 use pliron::{
+    attribute::Attribute,
     basic_block::BasicBlock,
     builtin::{
         attributes::{FPDoubleAttr, FPSingleAttr, IntegerAttr, StringAttr},
@@ -29,7 +30,9 @@ use crate::{
         AtomicOrderingAttr, AtomicRmwKindAttr, FCmpPredicateAttr, FPHalfAttr, FastmathFlags,
         FastmathFlagsAttr, GepIndexAttr, GepNoWrapFlags, ICmpPredicateAttr, SyncScopeAttr,
     },
-    op_interfaces::{ATTR_KEY_FAST_MATH_FLAGS, PointerTypeResult, SyncScopeInterface},
+    op_interfaces::{
+        ATTR_KEY_FAST_MATH_FLAGS, PointerTypeResult, SyncScopeInterface, VolatilityOpInterface,
+    },
     ops,
     types::{ArrayType, FuncType, HalfType, PointerType, VoidType},
 };
@@ -712,7 +715,7 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
         let ty = res.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
-        let volatile_kw = if crate::ops::op_volatile(self.ctx, op.get_operation()) {
+        let volatile_kw = if op.is_volatile(self.ctx) {
             "volatile "
         } else {
             ""
@@ -753,7 +756,7 @@ impl<'a> ModuleExportState<'a> {
         let ptr = op_ref.get_operand(1);
         let val_ty = val.get_type(self.ctx);
         let addrspace = addrspace_of(ptr.get_type(self.ctx), self.ctx);
-        let volatile_kw = if crate::ops::op_volatile(self.ctx, op.get_operation()) {
+        let volatile_kw = if op.is_volatile(self.ctx) {
             "volatile "
         } else {
             ""
@@ -795,7 +798,7 @@ impl<'a> ModuleExportState<'a> {
         let res = op_ref.get_result(0);
         let res_name = value_names.get(&res).unwrap();
         let elem_ty = op
-            .get_attr_alloca_element_type(self.ctx)
+            .get_attr_llvm_alloca_element_type(self.ctx)
             .expect("Missing alloca_element_type");
 
         let elem_llvm_ty = elem_ty.get_type(self.ctx);
@@ -945,6 +948,19 @@ impl<'a> ModuleExportState<'a> {
             emitted = true;
         }
 
+        for alias in crate::ops::debug_whole_variable_aliases(self.ctx, op.get_operation()) {
+            let Some((var_id, loc_id)) = self.debug_whole_variable_for_scope(scope, loc, &alias)
+            else {
+                continue;
+            };
+            writeln!(
+                output,
+                "  call void @llvm.dbg.declare(metadata ptr {alloca_name}, metadata !{var_id}, metadata !DIExpression()), !dbg !{loc_id}"
+            )
+            .unwrap();
+            emitted = true;
+        }
+
         for projected in crate::ops::debug_projected_variables(self.ctx, op.get_operation()) {
             let Some((var_id, loc_id)) =
                 self.debug_projected_variable_for_scope(scope, loc, &projected)
@@ -1016,6 +1032,23 @@ impl<'a> ModuleExportState<'a> {
             && let Some((var_id, loc_id)) =
                 self.debug_local_variable_for_scope(scope, loc, op.get_operation(), &info)
         {
+            write!(output, "  call void @llvm.dbg.value(metadata ").unwrap();
+            self.export_type(value.get_type(self.ctx), output)?;
+            write!(output, " ").unwrap();
+            self.export_value(value, value_names, output)?;
+            writeln!(
+                output,
+                ", metadata !{var_id}, metadata !DIExpression()), !dbg !{loc_id}"
+            )
+            .unwrap();
+            emitted = true;
+        }
+
+        for alias in crate::ops::debug_whole_variable_aliases(self.ctx, op.get_operation()) {
+            let Some((var_id, loc_id)) = self.debug_whole_variable_for_scope(scope, loc, &alias)
+            else {
+                continue;
+            };
             write!(output, "  call void @llvm.dbg.value(metadata ").unwrap();
             self.export_type(value.get_type(self.ctx), output)?;
             write!(output, " ").unwrap();
@@ -1126,7 +1159,7 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
         let ptr = op_ref.get_operand(0);
         let elem_ty = op
-            .get_attr_gep_src_elem_type(self.ctx)
+            .get_attr_llvm_gep_src_elem_type(self.ctx)
             .expect("Missing gep_src_elem_type")
             .get_type(self.ctx);
         let base_type = ptr.get_type(self.ctx);
@@ -1181,7 +1214,7 @@ impl<'a> ModuleExportState<'a> {
             self.export_value(ptr, value_names, output)?;
         }
 
-        for idx_attr in &op.get_attr_gep_indices(self.ctx).unwrap().0 {
+        for idx_attr in &op.get_attr_llvm_gep_indices(self.ctx).unwrap().0 {
             write!(output, ", ").unwrap();
             match idx_attr {
                 GepIndexAttr::Constant(val) => {
@@ -1523,6 +1556,13 @@ impl<'a> ModuleExportState<'a> {
             }
             CallOpCallable::Indirect(_) => None,
         };
+        if let Some(name) = &direct_callee_name
+            && self.function_grid_constants.contains_key(name)
+        {
+            return Err(format!(
+                "grid-constant kernel entry `@{name}` cannot be called as a device function; move shared code into an ordinary helper"
+            ));
+        }
         let legacy_atomic_add = if let Some(name) = &direct_callee_name {
             self.legacy_nvvm_atomic_add_signature(name, llvm_func_ty)?
         } else {
@@ -1804,27 +1844,13 @@ impl<'a> ModuleExportState<'a> {
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
-        let asm_template = read_string_attr(op.get_attr_inline_asm_template(self.ctx));
-        let constraints = read_string_attr(op.get_attr_inline_asm_constraints(self.ctx));
-        // NVVM-dialect ops carry an AsmKind tag (set by InlineAsmOpExt::build).
-        // User-written ptx_asm! ops carry separate sideeffect/convergent attrs.
-        // Resolve both into (has_sideeffect, is_convergent).
-        let kind = ops::asm_kind_opt(self.ctx, op);
-        let (has_sideeffect, is_convergent) = match kind {
-            Some(ops::AsmKind::Convergent) => (true, true),
-            Some(ops::AsmKind::ConvergentPure) => (false, true),
-            Some(ops::AsmKind::SideEffect) => (true, false),
-            Some(ops::AsmKind::Pure) => (false, false),
-            None => {
-                // ptx_asm! path: read the individual attributes.
-                let se = ops::inline_asm_sideeffect(self.ctx, op.get_operation());
-                let cv = op
-                    .get_attr_inline_asm_convergent(self.ctx)
-                    .map(|a| bool::from((*a).clone()))
-                    .unwrap_or(false);
-                (se, cv)
-            }
-        };
+        let asm_template = read_string_attr(op.get_attr_llvm_inline_asm_template(self.ctx));
+        let constraints = read_string_attr(op.get_attr_llvm_inline_asm_constraints(self.ctx));
+        let has_sideeffect = op
+            .get_attr_llvm_inline_asm_side_effects(self.ctx)
+            .map(|attr| bool::from((*attr).clone()))
+            .unwrap_or(true);
+        let is_convergent = ops::inline_asm_convergence(self.ctx, op)?;
 
         // pliron-llvm always stores a single result slot (a void result for
         // no-value asm), so decide void vs valued by the result *type*, not the
@@ -1955,6 +1981,7 @@ impl<'a> ModuleExportState<'a> {
         value_names: &mut FxHashMap<Value, String>,
     ) -> Result<(), String> {
         let val_attr = op.get_value(self.ctx);
+        let val_attr = &*val_attr as &dyn Attribute;
         let const_str = if let Some(int_attr) = val_attr.downcast_ref::<IntegerAttr>() {
             // Use APInt's proper decimal string conversion instead of parsing debug format.
             // The old code parsed debug strings like "APInt { value: 0x4000_0000_0000_u64 }"
@@ -2046,13 +2073,14 @@ impl<'a> ModuleExportState<'a> {
         } else {
             super::names::strip_device_prefix(&symbol_name)
         };
-        let function_type = self
-            .function_types
-            .get(&function_name)
-            .copied()
-            .ok_or_else(|| {
-                format!("legacy addressof references unknown symbol `@{symbol_name}`")
-            })?;
+        if self.function_grid_constants.contains_key(&function_name) {
+            return Err(format!(
+                "cannot take the device function address of grid-constant kernel entry `@{function_name}`; its launch ABI is not an ordinary function ABI"
+            ));
+        }
+        self.function_types.get(&function_name).ok_or_else(|| {
+            format!("legacy addressof references unknown symbol `@{symbol_name}`")
+        })?;
         if result_pointer.address_space() != 0 {
             return Err(format!(
                 "function addressof `@{function_name}` must produce a program-address-space (0) pointer, got address space {}",
@@ -2073,7 +2101,7 @@ impl<'a> ModuleExportState<'a> {
             }
             write!(output, ")*").unwrap();
         } else {
-            self.export_function_pointer_type(function_type, output)?;
+            self.export_named_function_pointer_type(&function_name, output)?;
         }
         write!(output, " @{function_name} to i8*").unwrap();
         writeln!(output).unwrap();

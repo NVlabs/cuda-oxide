@@ -92,11 +92,21 @@ impl Place {
         }
     }
 
-    pub fn from_projected(local: Local, projections: &[ProjectionElem]) -> Self {
-        Place {
+    /// Builds `local` projected by `projections`, validated against the
+    /// body's `local_decls`: the base local and every `Index` local must be
+    /// declared, and each projection must apply to the type it projects.
+    pub fn from_projected(
+        local: Local,
+        projections: &[ProjectionElem],
+        local_decls: &LocalDecls,
+        tcx: &TyCtxt,
+    ) -> Result<Self, ProjectionError> {
+        let place = Place {
             local,
             projection: SmallVec::from(projections),
-        }
+        };
+        place.checked_ty(local_decls, tcx)?;
+        Ok(place)
     }
 
     pub fn local(&self) -> Local {
@@ -107,18 +117,128 @@ impl Place {
         &self.projection
     }
 
-    pub fn project(&mut self, proj: ProjectionElem) -> &mut Self {
-        // TODO: validation
+    /// Appends `proj`, validated against the body's `local_decls` like
+    /// [`Place::from_projected`]. On error the place is left unchanged.
+    pub fn project(
+        &mut self,
+        proj: ProjectionElem,
+        local_decls: &LocalDecls,
+        tcx: &TyCtxt,
+    ) -> Result<&mut Self, ProjectionError> {
+        let base = self.checked_ty(local_decls, tcx)?;
+        project_elem(base, proj, local_decls, tcx).map_err(|reason| ProjectionError::Invalid {
+            position: self.projection.len(),
+            elem: proj,
+            base,
+            reason,
+        })?;
         self.projection.push(proj);
-        self
+        Ok(self)
+    }
+
+    /// The type of this place, or the first reason its projection chain is
+    /// invalid for `local_decls`.
+    pub fn checked_ty(
+        &self,
+        local_decls: &LocalDecls,
+        tcx: &TyCtxt,
+    ) -> Result<TyId, ProjectionError> {
+        let decl = local_decls
+            .get(self.local)
+            .ok_or(ProjectionError::MissingLocal(self.local))?;
+        self.projection
+            .iter()
+            .enumerate()
+            .try_fold(decl.ty, |base, (position, &elem)| {
+                project_elem(base, elem, local_decls, tcx).map_err(|reason| {
+                    ProjectionError::Invalid {
+                        position,
+                        elem,
+                        base,
+                        reason,
+                    }
+                })
+            })
     }
 
     pub fn ty(&self, local_decl: &LocalDecls, tcx: &TyCtxt) -> TyId {
-        local_decl[self.local()]
-            .ty
-            .projected_ty(tcx, self.projection())
+        self.checked_ty(local_decl, tcx)
+            .unwrap_or_else(|err| panic!("invalid place {self:?}: {err}"))
     }
 }
+
+/// One projection step with the checks that need the body: an `Index` local
+/// must be a declared `usize`. Type semantics stay in [`TyId::project_one`].
+fn project_elem(
+    base: TyId,
+    elem: ProjectionElem,
+    local_decls: &LocalDecls,
+    tcx: &TyCtxt,
+) -> Result<TyId, InvalidProjection> {
+    if let ProjectionElem::Index(index) = elem {
+        let decl = local_decls
+            .get(index)
+            .ok_or(InvalidProjection::MissingIndexLocal(index))?;
+        if decl.ty != TyCtxt::USIZE {
+            return Err(InvalidProjection::NonUsizeIndexLocal {
+                local: index,
+                ty: decl.ty,
+            });
+        }
+    }
+    base.project_one(tcx, elem)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectionError {
+    /// The place's base local is not declared in the body.
+    MissingLocal(Local),
+    /// `elem`, at `position` in the chain, cannot project `base`.
+    Invalid {
+        position: usize,
+        elem: ProjectionElem,
+        base: TyId,
+        reason: InvalidProjection,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidProjection {
+    DerefOfNonPointer,
+    TupleFieldOfNonTuple,
+    TupleFieldOutOfBounds { len: usize },
+    FieldOfNonStruct,
+    FieldOutOfBounds { len: usize },
+    IndexOfNonArray,
+    MissingIndexLocal(Local),
+    NonUsizeIndexLocal { local: Local, ty: TyId },
+    ConstantIndexOutOfBounds { len: usize },
+    DowncastOfNonEnum,
+    VariantOutOfBounds { count: usize },
+    VariantFieldOutOfBounds { len: usize },
+    DowncastFieldTyMismatch { stored: TyId, actual: TyId },
+}
+
+impl std::fmt::Display for ProjectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProjectionError::MissingLocal(local) => {
+                write!(f, "base local {local:?} is not declared")
+            }
+            ProjectionError::Invalid {
+                position,
+                elem,
+                base,
+                reason,
+            } => write!(
+                f,
+                "projection {position} ({elem:?}) cannot project {base:?}: {reason:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ProjectionError {}
 
 impl From<Local> for Place {
     fn from(value: Local) -> Self {
@@ -350,37 +470,75 @@ impl TyId {
     }
 
     pub fn projected_ty(self, tcx: &TyCtxt, projs: &[ProjectionElem]) -> Self {
-        match projs {
-            [] => self,
-            [head, tail @ ..] => {
-                let projected = match head {
-                    ProjectionElem::Deref => match self.kind(tcx) {
-                        TyKind::RawPtr(pointee, ..) | TyKind::Ref(pointee, ..) => *pointee,
-                        _ => panic!("not a reference"),
-                    },
-                    ProjectionElem::TupleField(idx) => {
-                        self.tuple_elems(tcx).expect("is a tuple")[idx.index()]
-                    }
-                    ProjectionElem::Index(_) | ProjectionElem::ConstantIndex { .. } => {
-                        match self.kind(tcx) {
-                            TyKind::Array(ty, ..) => *ty,
-                            _ => panic!("not an array"),
-                        }
-                    }
-                    ProjectionElem::Field(fid) => match self.kind(tcx) {
-                        TyKind::Adt(adt) => {
-                            let fields = &adt.variants.first().expect("adt is a struct").fields;
-                            fields[*fid]
-                        }
-                        _ => panic!("not an adt"),
-                    },
-                    ProjectionElem::DowncastField(vid, fid, _) => match self.kind(tcx) {
-                        TyKind::Adt(adt) => adt.variants[*vid].fields[*fid],
-                        _ => panic!("not an adt"),
-                    },
-                };
-                projected.projected_ty(tcx, tail)
+        projs.iter().fold(self, |ty, &elem| {
+            ty.project_one(tcx, elem)
+                .unwrap_or_else(|reason| panic!("{elem:?} cannot project {ty:?}: {reason:?}"))
+        })
+    }
+
+    /// The type `elem` projects out of `self`. The single owner of projection
+    /// type semantics, shared by [`TyId::projected_ty`] and [`Place`]
+    /// construction. An `Index` local's own type is checked by `Place`, which
+    /// has the body's `LocalDecls`.
+    pub fn project_one(
+        self,
+        tcx: &TyCtxt,
+        elem: ProjectionElem,
+    ) -> Result<Self, InvalidProjection> {
+        match (elem, self.kind(tcx)) {
+            (ProjectionElem::Deref, TyKind::RawPtr(pointee, ..) | TyKind::Ref(pointee, ..)) => {
+                Ok(*pointee)
             }
+            (ProjectionElem::Deref, _) => Err(InvalidProjection::DerefOfNonPointer),
+            (ProjectionElem::TupleField(fid), TyKind::Tuple(elems)) => elems
+                .get(fid.index())
+                .copied()
+                .ok_or(InvalidProjection::TupleFieldOutOfBounds { len: elems.len() }),
+            (ProjectionElem::TupleField(_), _) => Err(InvalidProjection::TupleFieldOfNonTuple),
+            (ProjectionElem::Index(_), TyKind::Array(elem_ty, _)) => Ok(*elem_ty),
+            (ProjectionElem::ConstantIndex { offset }, TyKind::Array(elem_ty, len)) => {
+                if offset < *len as u64 {
+                    Ok(*elem_ty)
+                } else {
+                    Err(InvalidProjection::ConstantIndexOutOfBounds { len: *len })
+                }
+            }
+            (ProjectionElem::Index(_) | ProjectionElem::ConstantIndex { .. }, _) => {
+                Err(InvalidProjection::IndexOfNonArray)
+            }
+            (ProjectionElem::Field(fid), TyKind::Adt(adt)) if !adt.is_enum() => {
+                let fields = &adt
+                    .variants
+                    .first()
+                    .ok_or(InvalidProjection::FieldOfNonStruct)?
+                    .fields;
+                fields
+                    .get(fid)
+                    .copied()
+                    .ok_or(InvalidProjection::FieldOutOfBounds { len: fields.len() })
+            }
+            (ProjectionElem::Field(_), _) => Err(InvalidProjection::FieldOfNonStruct),
+            (ProjectionElem::DowncastField(vid, fid, stored), TyKind::Adt(adt))
+                if adt.is_enum() =>
+            {
+                let variant =
+                    adt.variants
+                        .get(vid)
+                        .ok_or(InvalidProjection::VariantOutOfBounds {
+                            count: adt.variants.len(),
+                        })?;
+                let actual = variant.fields.get(fid).copied().ok_or(
+                    InvalidProjection::VariantFieldOutOfBounds {
+                        len: variant.fields.len(),
+                    },
+                )?;
+                if stored == actual {
+                    Ok(actual)
+                } else {
+                    Err(InvalidProjection::DowncastFieldTyMismatch { stored, actual })
+                }
+            }
+            (ProjectionElem::DowncastField(..), _) => Err(InvalidProjection::DowncastOfNonEnum),
         }
     }
 
@@ -931,5 +1089,281 @@ impl UnOp {
             UnOp::Not => "!",
             UnOp::Neg => "-",
         }
+    }
+}
+
+#[cfg(test)]
+mod place_construction {
+    use config::TyConfig;
+    use index_vec::IndexVec;
+
+    use super::*;
+    use crate::tyctxt::AdtMeta;
+
+    struct Body {
+        tcx: TyCtxt,
+        decls: LocalDecls,
+        root: Local,
+        index: Local,
+        signed: Local,
+        arr: TyId,
+    }
+
+    /// `root: *mut (u32, [S; 2])` with `struct S { i16, E }` and
+    /// `enum E { V0(u64), V1(i8) }`, plus `index: usize` and `signed: i32`.
+    fn body() -> Body {
+        let mut tcx = TyCtxt::from_primitives(TyConfig::default());
+        let e = tcx.push_adt(
+            Adt {
+                variants: IndexVec::from_iter([
+                    VariantDef {
+                        fields: IndexVec::from_iter([TyCtxt::U64]),
+                    },
+                    VariantDef {
+                        fields: IndexVec::from_iter([TyCtxt::I8]),
+                    },
+                ]),
+            },
+            AdtMeta { copy: true },
+        );
+        let s = tcx.push_adt(
+            Adt {
+                variants: IndexVec::from_iter([VariantDef {
+                    fields: IndexVec::from_iter([TyCtxt::I16, e]),
+                }]),
+            },
+            AdtMeta { copy: true },
+        );
+        let arr = tcx.push(TyKind::Array(s, 2));
+        let tuple = tcx.push(TyKind::Tuple(vec![TyCtxt::U32, arr]));
+        let ptr = tcx.push(TyKind::RawPtr(tuple, Mutability::Mut));
+
+        let mut decls = LocalDecls::new();
+        decls.push(LocalDecl::new_mut(TyCtxt::UNIT));
+        let root = decls.push(LocalDecl::new_mut(ptr));
+        let index = decls.push(LocalDecl::new_mut(TyCtxt::USIZE));
+        let signed = decls.push(LocalDecl::new_mut(TyCtxt::I32));
+        Body {
+            tcx,
+            decls,
+            root,
+            index,
+            signed,
+            arr,
+        }
+    }
+
+    fn reason(err: ProjectionError) -> InvalidProjection {
+        match err {
+            ProjectionError::Invalid { reason, .. } => reason,
+            other => panic!("expected an invalid projection, got {other:?}"),
+        }
+    }
+
+    /// `(*root).1[index].1 as V1 .0`, and the same chain with a constant index.
+    fn valid_chain(index: ProjectionElem) -> [ProjectionElem; 5] {
+        [
+            ProjectionElem::Deref,
+            ProjectionElem::TupleField(FieldIdx::new(1)),
+            index,
+            ProjectionElem::Field(FieldIdx::new(1)),
+            ProjectionElem::DowncastField(VariantIdx::new(1), FieldIdx::new(0), TyCtxt::I8),
+        ]
+    }
+
+    #[test]
+    fn valid_chain_builds_the_same_place_either_way() {
+        let b = body();
+        for index in [
+            ProjectionElem::Index(b.index),
+            ProjectionElem::ConstantIndex { offset: 1 },
+        ] {
+            let chain = valid_chain(index);
+            let built = Place::from_projected(b.root, &chain, &b.decls, &b.tcx).unwrap();
+            assert_eq!(built.ty(&b.decls, &b.tcx), TyCtxt::I8);
+
+            let mut stepped = Place::from_local(b.root);
+            for elem in chain {
+                stepped.project(elem, &b.decls, &b.tcx).unwrap();
+            }
+            assert_eq!(stepped, built);
+        }
+    }
+
+    #[test]
+    fn base_local_must_be_declared() {
+        let b = body();
+        let missing = Local::new(b.decls.len());
+        assert_eq!(
+            Place::from_projected(missing, &[ProjectionElem::Deref], &b.decls, &b.tcx),
+            Err(ProjectionError::MissingLocal(missing))
+        );
+    }
+
+    #[test]
+    fn index_local_must_be_declared() {
+        let b = body();
+        let missing = Local::new(b.decls.len());
+        let err = Place::from_projected(
+            b.root,
+            &valid_chain(ProjectionElem::Index(missing)),
+            &b.decls,
+            &b.tcx,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ProjectionError::Invalid {
+                position: 2,
+                elem: ProjectionElem::Index(missing),
+                base: b.arr,
+                reason: InvalidProjection::MissingIndexLocal(missing),
+            }
+        );
+    }
+
+    #[test]
+    fn index_local_must_be_usize() {
+        let b = body();
+        let signed = b.signed;
+        let err = Place::from_projected(
+            b.root,
+            &valid_chain(ProjectionElem::Index(signed)),
+            &b.decls,
+            &b.tcx,
+        )
+        .unwrap_err();
+        assert_eq!(
+            reason(err),
+            InvalidProjection::NonUsizeIndexLocal {
+                local: signed,
+                ty: TyCtxt::I32,
+            }
+        );
+    }
+
+    #[test]
+    fn each_projection_must_fit_its_base_type() {
+        let b = body();
+        let deref = [ProjectionElem::Deref];
+        let at_tuple = |elem| [ProjectionElem::Deref, elem];
+        let at_s = |elem| {
+            [
+                ProjectionElem::Deref,
+                ProjectionElem::TupleField(FieldIdx::new(1)),
+                ProjectionElem::ConstantIndex { offset: 0 },
+                elem,
+            ]
+        };
+        let at_e = |elem| {
+            [
+                ProjectionElem::Deref,
+                ProjectionElem::TupleField(FieldIdx::new(1)),
+                ProjectionElem::ConstantIndex { offset: 0 },
+                ProjectionElem::Field(FieldIdx::new(1)),
+                elem,
+            ]
+        };
+        let cases: Vec<(Vec<ProjectionElem>, InvalidProjection)> = vec![
+            (
+                [deref, deref].concat(),
+                InvalidProjection::DerefOfNonPointer,
+            ),
+            (
+                at_tuple(ProjectionElem::TupleField(FieldIdx::new(2))).to_vec(),
+                InvalidProjection::TupleFieldOutOfBounds { len: 2 },
+            ),
+            (
+                at_tuple(ProjectionElem::Field(FieldIdx::new(0))).to_vec(),
+                InvalidProjection::FieldOfNonStruct,
+            ),
+            (
+                at_tuple(ProjectionElem::Index(b.index)).to_vec(),
+                InvalidProjection::IndexOfNonArray,
+            ),
+            (
+                [
+                    ProjectionElem::Deref,
+                    ProjectionElem::TupleField(FieldIdx::new(1)),
+                    ProjectionElem::ConstantIndex { offset: 2 },
+                ]
+                .to_vec(),
+                InvalidProjection::ConstantIndexOutOfBounds { len: 2 },
+            ),
+            (
+                at_s(ProjectionElem::Field(FieldIdx::new(2))).to_vec(),
+                InvalidProjection::FieldOutOfBounds { len: 2 },
+            ),
+            (
+                at_s(ProjectionElem::DowncastField(
+                    VariantIdx::new(0),
+                    FieldIdx::new(0),
+                    TyCtxt::I16,
+                ))
+                .to_vec(),
+                InvalidProjection::DowncastOfNonEnum,
+            ),
+            (
+                at_e(ProjectionElem::Field(FieldIdx::new(0))).to_vec(),
+                InvalidProjection::FieldOfNonStruct,
+            ),
+            (
+                at_e(ProjectionElem::DowncastField(
+                    VariantIdx::new(2),
+                    FieldIdx::new(0),
+                    TyCtxt::I8,
+                ))
+                .to_vec(),
+                InvalidProjection::VariantOutOfBounds { count: 2 },
+            ),
+            (
+                at_e(ProjectionElem::DowncastField(
+                    VariantIdx::new(1),
+                    FieldIdx::new(1),
+                    TyCtxt::I8,
+                ))
+                .to_vec(),
+                InvalidProjection::VariantFieldOutOfBounds { len: 1 },
+            ),
+            (
+                at_e(ProjectionElem::DowncastField(
+                    VariantIdx::new(1),
+                    FieldIdx::new(0),
+                    TyCtxt::U64,
+                ))
+                .to_vec(),
+                InvalidProjection::DowncastFieldTyMismatch {
+                    stored: TyCtxt::U64,
+                    actual: TyCtxt::I8,
+                },
+            ),
+        ];
+        for (chain, expected) in cases {
+            let err = Place::from_projected(b.root, &chain, &b.decls, &b.tcx).unwrap_err();
+            let ProjectionError::Invalid {
+                position, reason, ..
+            } = err
+            else {
+                panic!("{chain:?}: expected an invalid projection, got {err:?}");
+            };
+            assert_eq!(reason, expected, "{chain:?}");
+            assert_eq!(position, chain.len() - 1, "{chain:?}");
+        }
+    }
+
+    #[test]
+    fn rejected_projection_leaves_the_place_unchanged() {
+        let b = body();
+        let mut place = Place::from_local(b.root);
+        place
+            .project(ProjectionElem::Deref, &b.decls, &b.tcx)
+            .unwrap();
+        let before = place.clone();
+
+        let err = place
+            .project(ProjectionElem::Deref, &b.decls, &b.tcx)
+            .unwrap_err();
+        assert_eq!(reason(err), InvalidProjection::DerefOfNonPointer);
+        assert_eq!(place, before);
     }
 }

@@ -341,7 +341,7 @@ fn translate_goto(
     Ok(op)
 }
 
-/// Translates a MIR `Assert` terminator to a `mir.assert` operation.
+/// Translates a MIR `Assert` terminator to `mir.assert` followed by `mir.goto`.
 ///
 /// Asserts that a condition matches the expected value, trapping on failure.
 /// On success, branches to the target block.
@@ -452,26 +452,10 @@ fn translate_assert(
         cond_value
     };
 
-    // Alloca + load/store model: successor block has no arguments; assert
-    // carries only its condition operand.
-    let target_idx: usize = target;
-    let target_block = block_map[target_idx];
-
-    let (flat_operands, segment_sizes) =
-        MirAssertOp::compute_segment_sizes(vec![vec![final_cond], vec![]]);
-
-    let op = Operation::new(
-        ctx,
-        MirAssertOp::get_concrete_op_info(),
-        vec![],
-        flat_operands,
-        vec![target_block],
-        0,
-    );
-    Operation::get_op::<MirAssertOp>(op, ctx)
-        .expect("MirAssertOp")
-        .set_operand_segment_sizes(ctx, segment_sizes);
-    op.deref_mut(ctx).set_loc(loc);
+    // Keep the potentially trapping check separate from its success branch.
+    // Generic CFG merging may erase the goto, but must retain the assertion.
+    let op = MirAssertOp::new(ctx, final_cond).get_operation();
+    op.deref_mut(ctx).set_loc(loc.clone());
 
     if let Some(prev) = last_inserted {
         op.insert_after(ctx, prev);
@@ -481,7 +465,7 @@ fn translate_assert(
         op.insert_at_front(block_ptr, ctx);
     }
 
-    Ok(op)
+    Ok(helpers::emit_goto(ctx, target, op, block_map, loc))
 }
 
 /// Build the comparison constant for one `SwitchInt` arm, typed as the

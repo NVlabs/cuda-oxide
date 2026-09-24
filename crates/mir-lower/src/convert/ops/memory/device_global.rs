@@ -5,7 +5,7 @@
 
 //! Conversion of `mir.global_alloc` to device globals, including relocated initializers.
 
-use super::common::anyhow_to_pliron;
+use super::common::{anyhow_to_pliron, counter_named_global};
 use crate::context::{DeviceGlobalDeclaration, DeviceGlobalRecord, DeviceGlobalsMap};
 use crate::convert::types::{
     convert_type, llvm_type_size_align, validate_initialized_global_layout,
@@ -245,7 +245,9 @@ fn create_device_global(
         } else {
             let counter = *next_device_global_index;
             *next_device_global_index += 1;
-            format!("__device_global_{counter}").try_into().unwrap()
+            counter_named_global(ctx, "__device_global", counter)
+                .try_into()
+                .unwrap()
         };
 
     let global_op = if alignment > 0 {
@@ -255,8 +257,10 @@ fn create_device_global(
     };
     global_op.set_address_space(ctx, spec.addr_space);
     global_op.set_source_global_key(ctx, spec.key);
-    if spec.addr_space == llvm_export::types::address_space::GLOBAL
-        && let Some(info) = spec.debug_info
+    if matches!(
+        spec.addr_space,
+        llvm_export::types::address_space::GLOBAL | llvm_export::types::address_space::CONSTANT
+    ) && let Some(info) = spec.debug_info
     {
         llvm::set_debug_global_variable(ctx, global_op.get_operation(), info);
     }
@@ -267,7 +271,7 @@ fn create_device_global(
         global_op.set_initializer_relocations(ctx, initializer_relocations);
     }
     if spec.immutable {
-        global_op.mark_immutable(ctx);
+        global_op.set_constant(ctx, true);
     }
 
     let parent_block = op

@@ -65,6 +65,73 @@ rules:
   allowed through the compiler, but no device-side `#[global_allocator]` is
   configured today. Even with one, device `malloc` is extremely slow.
 
+### Grid-constant parameters
+
+Use `#[grid_constant]` on an immutable reference when the kernel needs the
+address of a read-only value supplied at launch:
+
+```rust
+#[repr(C, align(64))]
+#[derive(Clone, Copy)]
+struct Descriptor { bytes: [u8; 128] }
+
+#[cuda_module]
+mod kernels {
+    use super::*;
+
+    #[kernel]
+    pub fn consume(#[grid_constant] descriptor: &Descriptor) {
+        // Pass descriptor's address to a device helper or a TMA operation.
+    }
+}
+```
+
+The generated host launcher accepts `Descriptor` by value. The driver copies
+its 128 bytes into kernel parameter storage, and each device thread borrows
+that same storage for the duration of the launch:
+
+```text
+host Descriptor -> one by-value launch argument -> shared read-only device &Descriptor
+```
+
+Taking the address does not create a private descriptor copy for each thread.
+This is useful for TMA tensor maps: the descriptor can travel with the launch
+instead of requiring a separate device allocation and upload. It does not
+promise a particular speedup; measure the kernel and launch workload that
+matter to your application. The existing `tma_copy` example demonstrates this
+with a real tensor map.
+
+The pointee must be sized, nonzero in size, and have no interior mutability
+(`UnsafeCell`, including `Cell` and atomics, is rejected). Its outer reference
+must have an elided lifetime or `'_`; a named or `'static` lifetime cannot
+describe storage that expires when the launch finishes. Do not modify any
+part of the parameter or use its address after that launch. Pointers stored
+*inside* a descriptor still need to refer to memory accessible to the GPU.
+The generated typed launcher also requires the value to be `Copy`, as for
+other by-value kernel arguments. Normal by-value layout restrictions still
+apply. Values containing device shared-memory pointers are rejected because
+those pointers have different storage widths across the supported backends;
+ordinary generic or global pointers do not have that restriction.
+
+Generated host launch methods for grid-constant parameters are always
+`unsafe`, including prepared and async methods, even when the device kernel
+is a safe function. `Copy` and read-only parameter storage do not prove that
+references or pointers stored inside the value are valid on the GPU. At
+launch, the caller must ensure that any allocations the kernel accesses are
+device-accessible, correctly aligned and initialized, live until GPU work
+completes, and satisfy Rust's aliasing and synchronization rules. A prepared
+launch checks geometry and resources; it does not prove these memory
+properties. This requirement also applies to payloads containing only data;
+the current type bound does not distinguish them from pointer-bearing values.
+
+When using a manual unsafe launch, supply the entire pointee value as one
+argument, with its Rust size and alignment. Passing an eight-byte device
+pointer to this parameter does not match its ABI. An ordinary unannotated
+pointer parameter keeps the existing pointer ABI; use that for descriptors
+that reside in global memory or need to be updated there. Grid-constant
+parameters require compute capability 7.0 or newer. Both the LLVM NVPTX and
+libNVVM paths preserve their by-value size and alignment.
+
 ## Device helper functions
 
 Not all GPU code belongs in the kernel itself. You can factor logic into helper

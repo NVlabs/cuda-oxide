@@ -55,6 +55,12 @@ fn has_backend_identity_cfg(flags: &[&str]) -> bool {
     })
 }
 
+fn has_full_debug_cfg(flags: &[&str]) -> bool {
+    flags
+        .windows(2)
+        .any(|pair| pair == ["--cfg", FULL_DEBUG_GET_MUT_OUTLINE_CFG])
+}
+
 fn is_sha256(value: &str) -> bool {
     value.len() == 64
         && value
@@ -1107,21 +1113,86 @@ fn sanitizer_detects_options_that_weaken_success_status() {
 }
 
 #[test]
+fn interop_device_build_debug_assertions_select_the_release_like_assertion_profile() {
+    assert_eq!(
+        InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Build,
+            false,
+            false,
+            DeviceDebug::Off,
+            false
+        )
+        .codegen_profile(),
+        CodegenProfilePolicy::ReleaseLike
+    );
+    assert_eq!(
+        InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Build,
+            false,
+            false,
+            DeviceDebug::Off,
+            true
+        )
+        .codegen_profile(),
+        CodegenProfilePolicy::ReleaseLikeWithDebugAssertions
+    );
+}
+
+#[test]
+fn interop_build_keeps_debug_assertions_and_device_debug_independent() {
+    let ctx = test_context(OxideConfig::default());
+    for debug in [DeviceDebug::Off, DeviceDebug::LineTables, DeviceDebug::Full] {
+        for assertions in [false, true] {
+            let options = InteropDeviceBuildOptions::for_route(
+                InteropDeviceBuildRoute::Build,
+                false,
+                false,
+                debug,
+                assertions,
+            );
+            let mut cmd = Command::new("cargo");
+            apply_interop_device_codegen_options_with_env(&mut cmd, &ctx, false, options, None);
+            let mut encoded = build_encoded_rustflags_with_existing(
+                Path::new("/tmp/librustc_codegen_cuda.so"),
+                options.codegen_profile(),
+                &[],
+                &[],
+                None,
+                None,
+            );
+            append_full_debug_rustflags(&mut encoded, &cmd, None);
+            let flags = decoded_rustflags(&encoded);
+
+            assert!(flags.contains(&"-Copt-level=3"));
+            assert!(flags.contains(&if assertions {
+                "-Cdebug-assertions=on"
+            } else {
+                "-Cdebug-assertions=off"
+            }));
+            if assertions {
+                assert!(flags.contains(&"-Coverflow-checks=off"));
+            }
+            assert_eq!(has_full_debug_cfg(&flags), debug == DeviceDebug::Full);
+            for required in FULL_DEBUG_MIR_RUSTFLAGS {
+                assert_eq!(flags.contains(required), debug == DeviceDebug::Full);
+            }
+        }
+    }
+}
+
+#[test]
 fn sanitize_interop_codegen_defaults_to_line_tables_and_forwards_no_fmad() {
     let ctx = test_context(OxideConfig::default());
     let mut cmd = Command::new("cargo");
-
-    apply_interop_device_codegen_options_with_env(
-        &mut cmd,
-        &ctx,
+    let options = InteropDeviceBuildOptions::for_route(
+        InteropDeviceBuildRoute::Sanitize,
+        true,
         false,
-        InteropDeviceBuildOptions {
-            no_fmad: true,
-            unchecked_indexing: false,
-            sanitizer_line_tables: true,
-        },
+        DeviceDebug::Off,
         false,
     );
+
+    apply_interop_device_codegen_options_with_env(&mut cmd, &ctx, false, options, None);
 
     assert_eq!(command_env(&cmd, "CUDA_OXIDE_NO_FMA").as_deref(), Some("1"));
     assert_eq!(
@@ -1129,16 +1200,17 @@ fn sanitize_interop_codegen_defaults_to_line_tables_and_forwards_no_fmad() {
         Some("line-tables")
     );
 
-    let fingerprint = sanitize_codegen_fingerprint(
+    let fingerprint = interop_codegen_fingerprint_with_env(
         &ctx,
         false,
-        true,
-        false,
-        DeviceDebug::Off,
+        options,
         Some("sm_80"),
         None,
-        Some(Path::new("/tmp/generated-ptx")),
+        Path::new("/tmp/generated-ptx"),
+        false,
+        None,
         &MaterializationMode::default(),
+        &BTreeMap::new(),
     );
     apply_codegen_configuration(
         &mut cmd,
@@ -1183,8 +1255,14 @@ fn standard_interop_codegen_forwards_no_fmad_without_debug_override() {
         &mut cmd,
         &ctx,
         false,
-        InteropDeviceBuildOptions::standard(true, false),
-        false,
+        InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Build,
+            true,
+            false,
+            DeviceDebug::Off,
+            false,
+        ),
+        None,
     );
 
     assert_eq!(command_env(&cmd, "CUDA_OXIDE_NO_FMA").as_deref(), Some("1"));
@@ -1192,21 +1270,254 @@ fn standard_interop_codegen_forwards_no_fmad_without_debug_override() {
 }
 
 #[test]
+fn interop_build_run_and_sanitize_routes_forward_device_debug() {
+    let ctx = test_context(OxideConfig::default());
+
+    for (route, requested, expected, sanitizer_line_tables) in [
+        (
+            InteropDeviceBuildRoute::Build,
+            DeviceDebug::Full,
+            "full",
+            false,
+        ),
+        (
+            InteropDeviceBuildRoute::Run,
+            DeviceDebug::LineTables,
+            "line",
+            false,
+        ),
+        (
+            InteropDeviceBuildRoute::Sanitize,
+            DeviceDebug::Full,
+            "full",
+            true,
+        ),
+    ] {
+        let options = InteropDeviceBuildOptions::for_route(route, false, false, requested, false);
+        assert_eq!(options.device_debug, requested);
+        assert_eq!(options.sanitizer_line_tables, sanitizer_line_tables);
+
+        let mut cmd = Command::new("cargo");
+        apply_interop_device_codegen_options_with_env(&mut cmd, &ctx, false, options, None);
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_DEBUG").as_deref(),
+            Some(expected),
+            "{route:?} must forward its CLI debug policy"
+        );
+
+        let mut encoded = "base".to_string();
+        append_full_debug_rustflags(&mut encoded, &cmd, None);
+        let flags = decoded_rustflags(&encoded);
+        if requested == DeviceDebug::Full {
+            assert!(
+                has_full_debug_cfg(&flags),
+                "{route:?} omitted full-debug cfg"
+            );
+            for required in FULL_DEBUG_MIR_RUSTFLAGS {
+                assert!(flags.contains(required), "{route:?} omitted {required}");
+            }
+        } else {
+            assert_eq!(flags, ["base"]);
+        }
+    }
+}
+
+#[test]
+fn sanitize_interop_debug_precedence_is_cli_then_ambient_then_project_then_default() {
+    struct Case {
+        label: &'static str,
+        cli: DeviceDebug,
+        inherited: Option<&'static str>,
+        project: Option<&'static str>,
+        expected: &'static str,
+    }
+
+    let cases = [
+        Case {
+            label: "CLI full outranks ambient and project",
+            cli: DeviceDebug::Full,
+            inherited: Some("line"),
+            project: Some("off"),
+            expected: "full",
+        },
+        Case {
+            label: "CLI line tables outrank ambient and project",
+            cli: DeviceDebug::LineTables,
+            inherited: Some("full"),
+            project: Some("off"),
+            expected: "line",
+        },
+        Case {
+            label: "ambient opt-out outranks project and sanitizer default",
+            cli: DeviceDebug::Off,
+            inherited: Some("off"),
+            project: Some("full"),
+            expected: "off",
+        },
+        Case {
+            label: "project setting outranks sanitizer default",
+            cli: DeviceDebug::Off,
+            inherited: None,
+            project: Some("full"),
+            expected: "full",
+        },
+        Case {
+            label: "sanitizer supplies line tables only as the final default",
+            cli: DeviceDebug::Off,
+            inherited: None,
+            project: None,
+            expected: "line-tables",
+        },
+    ];
+
+    for case in cases {
+        let ctx = test_context(OxideConfig {
+            env: case
+                .project
+                .map(|value| vec![("CUDA_OXIDE_DEBUG".to_string(), value.to_string())])
+                .unwrap_or_default(),
+            ..OxideConfig::default()
+        });
+        let options = InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Sanitize,
+            false,
+            false,
+            case.cli,
+            false,
+        );
+        let mut cmd = Command::new("cargo");
+        apply_interop_device_codegen_options_with_env(
+            &mut cmd,
+            &ctx,
+            false,
+            options,
+            case.inherited.map(OsStr::new),
+        );
+
+        assert_eq!(
+            command_env(&cmd, "CUDA_OXIDE_DEBUG").as_deref(),
+            Some(case.expected),
+            "{}",
+            case.label
+        );
+    }
+}
+
+#[test]
+fn interop_fingerprint_tracks_effective_device_debug_policy() {
+    let ctx = test_context(OxideConfig::default());
+    let project_full = test_context(OxideConfig {
+        env: vec![("CUDA_OXIDE_DEBUG".to_string(), "full".to_string())],
+        ..OxideConfig::default()
+    });
+    let materialization = MaterializationMode::default();
+    let empty_env = BTreeMap::new();
+    let mut inherited_full = BTreeMap::new();
+    inherited_full.insert("CUDA_OXIDE_DEBUG".to_string(), b"full".to_vec());
+    let mut inherited_off = BTreeMap::new();
+    inherited_off.insert("CUDA_OXIDE_DEBUG".to_string(), b"off".to_vec());
+    let options =
+        |route, debug| InteropDeviceBuildOptions::for_route(route, false, false, debug, false);
+    let fingerprint = |ctx: &Context, options, inherited_env: &BTreeMap<String, Vec<u8>>| {
+        interop_codegen_fingerprint_with_env(
+            ctx,
+            false,
+            options,
+            Some("sm_80"),
+            None,
+            Path::new("/tmp/cuda-oxide-artifacts"),
+            false,
+            None,
+            &materialization,
+            inherited_env,
+        )
+    };
+
+    let off = options(InteropDeviceBuildRoute::Build, DeviceDebug::Off);
+    let line = options(InteropDeviceBuildRoute::Build, DeviceDebug::LineTables);
+    let full = options(InteropDeviceBuildRoute::Build, DeviceDebug::Full);
+    assert_ne!(
+        fingerprint(&ctx, off, &empty_env),
+        fingerprint(&ctx, line, &empty_env)
+    );
+    assert_ne!(
+        fingerprint(&ctx, off, &empty_env),
+        fingerprint(&ctx, full, &empty_env)
+    );
+    assert_ne!(
+        fingerprint(&ctx, line, &empty_env),
+        fingerprint(&ctx, full, &empty_env)
+    );
+
+    // A CLI policy replaces inherited and project values in both the command
+    // and its cache identity, rather than producing irrelevant identities.
+    assert_eq!(
+        fingerprint(&ctx, line, &empty_env),
+        fingerprint(&ctx, line, &inherited_full)
+    );
+    assert_eq!(
+        fingerprint(&ctx, line, &empty_env),
+        fingerprint(&project_full, line, &empty_env)
+    );
+    // Without a CLI level, project configuration participates in the key and
+    // an inherited value replaces it, mirroring command-environment order.
+    assert_eq!(
+        fingerprint(&project_full, off, &empty_env),
+        fingerprint(&ctx, full, &empty_env)
+    );
+    assert_eq!(
+        fingerprint(&project_full, off, &inherited_off),
+        fingerprint(&ctx, off, &inherited_off)
+    );
+
+    // Sanitizer's implicit line-table request is output-affecting even though
+    // it is not represented by a CLI DeviceDebug variant.
+    let sanitize_default = options(InteropDeviceBuildRoute::Sanitize, DeviceDebug::Off);
+    assert_ne!(
+        fingerprint(&ctx, off, &empty_env),
+        fingerprint(&ctx, sanitize_default, &empty_env)
+    );
+    assert_eq!(
+        fingerprint(&ctx, line, &empty_env),
+        fingerprint(&ctx, sanitize_default, &empty_env),
+        "implicit sanitizer line tables and explicit line tables have identical device semantics"
+    );
+    assert_eq!(
+        fingerprint(&ctx, full, &empty_env),
+        fingerprint(
+            &ctx,
+            options(InteropDeviceBuildRoute::Sanitize, DeviceDebug::Full),
+            &empty_env,
+        ),
+        "the sanitize route must not fork the cache when CLI full already fixes the policy"
+    );
+    assert_eq!(
+        fingerprint(&ctx, off, &inherited_full),
+        fingerprint(&ctx, sanitize_default, &inherited_full),
+        "ambient full suppresses the sanitizer default in both command and cache identity"
+    );
+}
+
+#[test]
 fn interop_fingerprint_tracks_artifact_mode_and_device_features() {
     let ctx = test_context(OxideConfig::default());
+    let options = InteropDeviceBuildOptions::for_route(
+        InteropDeviceBuildRoute::Build,
+        false,
+        false,
+        DeviceDebug::Off,
+        false,
+    );
     let fingerprint = |emit_nvvm_ir: bool, device_features: Option<&str>| {
         interop_codegen_fingerprint(
             &ctx,
             false,
-            false,
-            false,
-            DeviceDebug::Off,
+            options,
             Some("sm_120a"),
             None,
             Path::new("/tmp/cuda-oxide-artifacts"),
             emit_nvvm_ir,
             device_features,
-            false,
             &MaterializationMode::default(),
         )
     };
@@ -1227,8 +1538,14 @@ fn interop_codegen_forwards_unchecked_indexing() {
         &mut cmd,
         &ctx,
         false,
-        InteropDeviceBuildOptions::standard(false, true),
-        false,
+        InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Run,
+            false,
+            true,
+            DeviceDebug::Off,
+            false,
+        ),
+        None,
     );
 
     assert_eq!(
@@ -1554,7 +1871,7 @@ fn ambient_cuda_toolkit_path_shadows_the_project_configured_root() {
 fn test_passthrough_defers_profile_flags_to_cargo_and_keeps_invariants() {
     let rustflags = build_encoded_rustflags_with_existing(
         Path::new("/tmp/librustc_codegen_cuda.so"),
-        CargoPassthroughSubcommand::Test.codegen_profile(),
+        CargoPassthroughSubcommand::Test.codegen_profile(false),
         &[],
         &["--cfg".to_string(), "device_test".to_string()],
         None,
@@ -1594,6 +1911,7 @@ fn test_passthrough_defers_profile_flags_to_cargo_and_keeps_invariants() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     for cargo_args in [
         vec!["--release".to_string()],
@@ -1621,7 +1939,7 @@ fn test_passthrough_defers_profile_flags_to_cargo_and_keeps_invariants() {
 fn build_passthrough_retains_release_profile_and_required_flags() {
     let rustflags = build_encoded_rustflags_with_existing(
         Path::new("/tmp/librustc_codegen_cuda.so"),
-        CargoPassthroughSubcommand::Build.codegen_profile(),
+        CargoPassthroughSubcommand::Build.codegen_profile(false),
         &[],
         &[],
         Some("-Lnative=/nix/store/cuda-cudart/lib\u{1f}-Copt-level=0\u{1f}-Zcodegen-backend=llvm"),
@@ -1644,6 +1962,40 @@ fn build_passthrough_retains_release_profile_and_required_flags() {
         ]
     );
     assert!(!flags.contains(&"native=/nix/store/cuda-cudart/lib"));
+}
+
+#[test]
+fn build_debug_assertions_keep_release_optimization_without_overflow_checks() {
+    let rustflags = build_encoded_rustflags_with_existing(
+        Path::new("/tmp/librustc_codegen_cuda.so"),
+        CargoPassthroughSubcommand::Build.codegen_profile(true),
+        &[],
+        &[],
+        Some("-Cdebug-assertions=off\u{1f}-Coverflow-checks=on\u{1f}-Copt-level=0"),
+        None,
+    );
+    let flags = decoded_rustflags(&rustflags);
+
+    assert_eq!(
+        &flags[flags.len() - 7..],
+        [
+            "-Zcodegen-backend=/tmp/librustc_codegen_cuda.so",
+            "-Copt-level=3",
+            "-Cdebug-assertions=on",
+            "-Coverflow-checks=off",
+            "-Zmir-enable-passes=-JumpThreading",
+            "-Zalways-encode-mir",
+            "-Csymbol-mangling-version=v0",
+        ]
+    );
+}
+
+#[test]
+fn test_profile_ignores_the_build_only_debug_assertions_toggle() {
+    assert_eq!(
+        CargoPassthroughSubcommand::Test.codegen_profile(true),
+        CodegenProfilePolicy::CargoSelected
+    );
 }
 
 #[test]
@@ -1671,11 +2023,13 @@ fn encoded_rustflags_preserve_configured_flag_boundaries_and_spaces() {
 }
 
 #[test]
-fn encoded_rustflags_remove_legacy_global_codegen_fingerprints() {
+fn encoded_rustflags_remove_wrapper_owned_codegen_cfgs() {
     let encoded = [
         "--cfg",
         "cuda_oxide_internal_codegen_env=\"inherited\"",
         "--cfg=cuda_oxide_internal_materializer_provenance=\"inherited\"",
+        "--cfg",
+        FULL_DEBUG_GET_MUT_OUTLINE_CFG,
         "--cfg",
         "keep_inherited",
     ]
@@ -1686,12 +2040,17 @@ fn encoded_rustflags_remove_legacy_global_codegen_fingerprints() {
         &[
             "--cfg".to_string(),
             "cuda_oxide_internal_codegen_env=\"configured\"".to_string(),
+            "--cfg=cuda_oxide_internal_outline_disjoint_get_mut_v1".to_string(),
+            "--cfg".to_string(),
+            "cuda_oxide_internal_outline_disjoint_get_mut_v1_extra".to_string(),
             "--cfg".to_string(),
             "keep_configured".to_string(),
         ],
         &[
             "--cfg".to_string(),
             "cuda_oxide_internal_materializer_provenance=\"explicit\"".to_string(),
+            "--cfg".to_string(),
+            "cuda_oxide_internal_outline_disjoint_get_mut_v1=\"spoofed\"".to_string(),
             "--cfg".to_string(),
             "keep_explicit".to_string(),
         ],
@@ -1700,11 +2059,27 @@ fn encoded_rustflags_remove_legacy_global_codegen_fingerprints() {
     );
     let flags = decoded_rustflags(&rustflags);
 
-    assert!(!flags.iter().any(|flag| {
-        flag.contains(LEGACY_CODEGEN_FINGERPRINT_CFG)
-            || flag.contains(LEGACY_MATERIALIZER_PROVENANCE_CFG)
-    }));
-    for retained in ["keep_configured", "keep_inherited", "keep_explicit"] {
+    let is_wrapper_owned_cfg = |flag: &&str| {
+        let value = flag.strip_prefix("--cfg=").unwrap_or(flag);
+        [
+            LEGACY_CODEGEN_FINGERPRINT_CFG,
+            LEGACY_MATERIALIZER_PROVENANCE_CFG,
+            FULL_DEBUG_GET_MUT_OUTLINE_CFG,
+        ]
+        .iter()
+        .any(|name| {
+            value
+                .strip_prefix(name)
+                .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('='))
+        })
+    };
+    assert!(!flags.iter().any(is_wrapper_owned_cfg));
+    for retained in [
+        "cuda_oxide_internal_outline_disjoint_get_mut_v1_extra",
+        "keep_configured",
+        "keep_inherited",
+        "keep_explicit",
+    ] {
         assert!(flags.contains(&retained));
     }
 }
@@ -2049,6 +2424,7 @@ fn passthrough_command_preserves_argv_and_cli_overrides_config_defaults() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let cargo_args = vec![
         "-p".to_string(),
@@ -2118,6 +2494,42 @@ fn passthrough_command_preserves_argv_and_cli_overrides_config_defaults() {
 }
 
 #[test]
+fn build_passthrough_debug_assertions_select_the_wrapper_profile() {
+    let ctx = test_context(OxideConfig::default());
+    let opts = CargoPassthroughOptions {
+        verbose: false,
+        emit_nvvm_ir: false,
+        arch: None,
+        features: None,
+        cargo_target_dir: None,
+        device_codegen_crate: None,
+        device_cfgs: &[],
+        no_fmad: false,
+        unchecked_indexing: false,
+        materialize_cubin: false,
+        device_debug: DeviceDebug::Off,
+        debug_assertions: true,
+    };
+
+    let cmd =
+        passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Build, &opts, &[]).unwrap();
+    let encoded = command_env(&cmd, "CARGO_ENCODED_RUSTFLAGS").unwrap();
+    let flags = decoded_rustflags(&encoded);
+
+    assert_eq!(
+        &flags[flags.len() - 6..],
+        [
+            "-Copt-level=3",
+            "-Cdebug-assertions=on",
+            "-Coverflow-checks=off",
+            "-Zmir-enable-passes=-JumpThreading",
+            "-Zalways-encode-mir",
+            "-Csymbol-mangling-version=v0",
+        ]
+    );
+}
+
+#[test]
 fn passthrough_command_accepts_empty_cargo_args() {
     let ctx = test_context(OxideConfig::default());
     let opts = CargoPassthroughOptions {
@@ -2132,6 +2544,7 @@ fn passthrough_command_accepts_empty_cargo_args() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
 
     let cmd =
@@ -2159,6 +2572,7 @@ fn architecture_and_output_mode_do_not_change_global_rustflags() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let base_cmd =
         passthrough_command_for_test(&ctx, CargoPassthroughSubcommand::Build, &base, &[]).unwrap();
@@ -2306,6 +2720,7 @@ device-owner = { path = "../device-owner" }
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
 
     let cold = cargo_artifact_freshness(&ctx, &base, None);
@@ -2404,6 +2819,7 @@ fn passthrough_fingerprint_tracks_output_affecting_settings() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let inherited_env = BTreeMap::new();
     let base_hash = passthrough_codegen_fingerprint_with_env(
@@ -2540,6 +2956,7 @@ fn passthrough_fingerprint_tracks_non_unicode_presence_switch_bytes() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let fingerprint = |inherited_env: &BTreeMap<String, Vec<u8>>| {
         passthrough_codegen_fingerprint_with_env(
@@ -2898,25 +3315,186 @@ fn parse_gpu_name_cap_and_driver_splits_on_last_two_commas() {
 }
 
 #[test]
-fn cuda_toolkit_root_prefers_toolkit_path_then_home_then_default() {
-    let toolkit_and_home = cuda_toolkit_root(|var| match var {
-        "CUDA_TOOLKIT_PATH" => Some("/cuda/toolkit".to_string()),
-        "CUDA_HOME" => Some("/cuda/home".to_string()),
-        _ => None,
-    });
-    assert_eq!(toolkit_and_home, "/cuda/toolkit");
+fn cuda_toolkit_resolution_prefers_toolkit_path_then_home() {
+    let accept_all = |_: &Path| Ok(13_030);
 
-    let home_only = cuda_toolkit_root(|var| (var == "CUDA_HOME").then(|| "/cuda/home".to_string()));
-    assert_eq!(home_only, "/cuda/home");
+    let both = resolve_cuda_toolkit(
+        |var| match var {
+            "CUDA_TOOLKIT_PATH" => Some("/cuda/toolkit".into()),
+            "CUDA_HOME" => Some("/cuda/home".into()),
+            _ => None,
+        },
+        accept_all,
+    );
+    assert_eq!(both.root, Path::new("/cuda/toolkit"));
+    assert_eq!(both.source, ToolkitSource::Explicit("CUDA_TOOLKIT_PATH"));
+    assert!(both.rejected.is_empty());
 
-    let empty_toolkit_path = cuda_toolkit_root(|var| match var {
-        "CUDA_TOOLKIT_PATH" => Some("  ".to_string()),
-        "CUDA_HOME" => Some("/cuda/home".to_string()),
-        _ => None,
-    });
-    assert_eq!(empty_toolkit_path, "/cuda/home");
+    let home_only = resolve_cuda_toolkit(
+        |var| (var == "CUDA_HOME").then(|| "/cuda/home".into()),
+        accept_all,
+    );
+    assert_eq!(home_only.root, Path::new("/cuda/home"));
+    assert_eq!(home_only.source, ToolkitSource::Explicit("CUDA_HOME"));
+}
 
-    assert_eq!(cuda_toolkit_root(|_| None), "/usr/local/cuda");
+#[test]
+fn an_explicit_toolkit_that_does_not_validate_is_answered_not_stepped_over() {
+    // The build script fails on a variable that is set but does not validate,
+    // rather than falling through to discovery. A typo in CUDA_HOME must not
+    // read here as a healthy default install (#1265).
+    let typo = resolve_cuda_toolkit(
+        |var| (var == "CUDA_HOME").then(|| "/cuda/typo".into()),
+        |root| Err(format!("{} does not contain cuda.h", root.display())),
+    );
+    assert_eq!(typo.source, ToolkitSource::Unresolved);
+    assert_eq!(typo.root, Path::new("/cuda/typo"));
+    assert_eq!(
+        typo.rejected,
+        vec!["CUDA_HOME=/cuda/typo is invalid: /cuda/typo does not contain cuda.h"]
+    );
+
+    // An empty value is its own error there, not an unset variable.
+    let empty = resolve_cuda_toolkit(
+        |var| (var == "CUDA_TOOLKIT_PATH").then(std::ffi::OsString::new),
+        |_| Ok(13_030),
+    );
+    assert_eq!(empty.source, ToolkitSource::Unresolved);
+    assert_eq!(
+        empty.rejected,
+        vec!["CUDA_TOOLKIT_PATH is set to an empty string"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn toolkit_resolution_preserves_non_unicode_explicit_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let parent = unique_temp_dir("cargo_oxide_toolkit_non_unicode");
+    let root = parent.join(std::ffi::OsString::from_vec(b"cuda-\xff".to_vec()));
+    fs::create_dir_all(root.join("include")).unwrap();
+    fs::write(root.join("include/cuda.h"), "#define CUDA_VERSION 13000\n").unwrap();
+
+    let resolve = || {
+        resolve_cuda_toolkit(
+            |key| (key == "CUDA_TOOLKIT_PATH").then(|| root.clone().into_os_string()),
+            |path| validate_cuda_toolkit(path, None),
+        )
+    };
+    let choice = resolve();
+    assert_eq!(choice.root, root);
+    assert_eq!(choice.source, ToolkitSource::Explicit("CUDA_TOOLKIT_PATH"));
+
+    fs::remove_file(root.join("include/cuda.h")).unwrap();
+    let rejected = resolve();
+    assert_eq!(rejected.root, root);
+    assert_eq!(rejected.source, ToolkitSource::Unresolved);
+    assert_eq!(rejected.rejected.len(), 1);
+    fs::remove_dir_all(parent).unwrap();
+}
+
+#[test]
+fn discovery_takes_the_first_candidate_that_validates() {
+    // The drift this fixes: the old mirror answered `/usr/local/cuda` for an
+    // unset environment, while the build script walks a fixed list and stops
+    // at the first root carrying a new-enough cuda.h. Indices rather than
+    // literals, so the assertion is about the order and not about the paths.
+    let chosen = DEFAULT_TOOLKIT_CANDIDATES[1];
+    let skipped = DEFAULT_TOOLKIT_CANDIDATES[0];
+    let choice = resolve_cuda_toolkit(
+        |_| None,
+        |root| {
+            if root == Path::new(chosen) {
+                Ok(13_020)
+            } else {
+                Err(format!("{} does not contain cuda.h", root.display()))
+            }
+        },
+    );
+    assert_eq!(choice.source, ToolkitSource::Discovered);
+    assert_eq!(choice.root, Path::new(chosen));
+    assert_eq!(
+        choice.rejected,
+        vec![format!("{skipped}: {skipped} does not contain cuda.h")]
+    );
+
+    // Nothing validates: every candidate is reported, and the root is only
+    // somewhere to point the message.
+    let nothing = resolve_cuda_toolkit(
+        |_| None,
+        |root| Err(format!("{} is not a directory", root.display())),
+    );
+    assert_eq!(nothing.source, ToolkitSource::Unresolved);
+    assert_eq!(
+        nothing.root,
+        Path::new(DEFAULT_TOOLKIT_CANDIDATES.last().unwrap())
+    );
+    assert_eq!(nothing.rejected.len(), DEFAULT_TOOLKIT_CANDIDATES.len());
+}
+
+#[test]
+fn validate_cuda_toolkit_applies_the_build_scripts_acceptance() {
+    let root = unique_temp_dir("cargo_oxide_toolkit_validate");
+    fs::create_dir_all(root.join("include")).unwrap();
+    let cuda_h = root.join("include/cuda.h");
+    let root_str = root.to_str().unwrap().to_string();
+
+    fs::write(&cuda_h, "#define CUDA_VERSION 13030\n").unwrap();
+    assert_eq!(validate_cuda_toolkit(&root_str, None), Ok(13_030));
+
+    // A host include directory must never shadow an explicit target tree.
+    assert!(validate_cuda_toolkit(&root_str, Some("missing-target")).is_err());
+    let target = root.join("targets/test-target/include");
+    fs::create_dir_all(&target).unwrap();
+    fs::write(target.join("cuda.h"), "#define CUDA_VERSION 13000\n").unwrap();
+    assert_eq!(
+        validate_cuda_toolkit(&root_str, Some("test-target")),
+        Ok(13_000)
+    );
+    fs::write(target.join("cuda.h"), "#define CUDA_VERSION 12080\n").unwrap();
+    assert!(validate_cuda_toolkit(&root_str, Some("test-target")).is_err());
+
+    // The floor is the build script's 13.0, not a guess: a toolkit below it
+    // is rejected even though cuda.h is right there.
+    fs::write(&cuda_h, "#define CUDA_VERSION 12080\n").unwrap();
+    let too_old = validate_cuda_toolkit(&root_str, None).unwrap_err();
+    assert!(too_old.contains("too old"), "{too_old}");
+    assert!(too_old.contains("12.8"), "{too_old}");
+
+    fs::remove_file(&cuda_h).unwrap();
+    let headerless = validate_cuda_toolkit(&root_str, None).unwrap_err();
+    assert!(
+        headerless.contains("does not contain cuda.h"),
+        "{headerless}"
+    );
+
+    let absent = validate_cuda_toolkit(format!("{root_str}/nope"), None).unwrap_err();
+    assert!(absent.contains("is not a directory"), "{absent}");
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn cuda_version_from_header_reads_the_define_the_build_script_reads() {
+    assert_eq!(
+        cuda_version_from_header("#define CUDA_VERSION 13030"),
+        Some(13_030)
+    );
+    assert_eq!(
+        cuda_version_from_header("/* preamble */\n#define CUDA_VERSION   13000  \n"),
+        Some(13_000)
+    );
+    // A neighbouring define is not the one, and neither is prose.
+    assert_eq!(
+        cuda_version_from_header("#define CUDA_VERSION_MAJOR 13"),
+        None
+    );
+    assert_eq!(cuda_version_from_header("no defines here"), None);
+
+    assert_eq!(format_cuda_version(13_030), "13.3");
+    assert_eq!(format_cuda_version(13_000), "13.0");
+    assert_eq!(format_cuda_version(12_080), "12.8");
 }
 
 #[test]
@@ -2952,10 +3530,9 @@ fn cuda_header_candidates_cover_standard_and_redistributable_layouts() {
     // a blank value means "unset".
     assert_eq!(
         cuda_header_candidates("/opt/ctk", Some("aarch64-linux"), "aarch64", "linux"),
-        vec![
-            PathBuf::from("/opt/ctk/include/cuda.h"),
-            PathBuf::from("/opt/ctk/targets/aarch64-linux/include/cuda.h"),
-        ]
+        vec![PathBuf::from(
+            "/opt/ctk/targets/aarch64-linux/include/cuda.h"
+        )]
     );
     assert_eq!(
         cuda_header_candidates("/opt/ctk", Some("  "), "x86_64", "linux"),
@@ -3157,6 +3734,27 @@ fn detect_run_target_arch_skips_when_env_target_set() {
     // helpers perform on other test threads, which the cargo test harness
     // runs concurrently by default.
     assert_eq!(detect_run_target_arch_with_env(None, false, true), None);
+}
+
+#[test]
+fn build_arch_warning_is_emitted_when_arch_is_unconfigured_and_local_gpu_exists() {
+    let warning = build_arch_warning(false, Some("sm_121a"))
+        .expect("an unconfigured build with a local GPU should warn");
+
+    assert!(warning.contains("backend default"));
+    assert!(warning.contains("first GPU reported by `nvidia-smi`"));
+    assert!(warning.contains("sm_121a"));
+    assert!(warning.contains("--arch <sm_XX>"));
+}
+
+#[test]
+fn build_arch_warning_is_suppressed_when_arch_is_configured() {
+    assert_eq!(build_arch_warning(true, Some("sm_121a")), None);
+}
+
+#[test]
+fn build_arch_warning_is_suppressed_when_no_local_gpu_is_detected() {
+    assert_eq!(build_arch_warning(false, None), None);
 }
 
 fn write_list_example(
@@ -4057,6 +4655,46 @@ fn nvvm_ir_requested_env_disable_overrides_enabled_project_configuration() {
 }
 
 #[test]
+fn debug_policy_token_reports_what_the_shared_parser_decides() {
+    // `scripts/smoketest.sh` asks for this token to decide whether its
+    // optimized code-shape gates apply. The spellings below are the ones a
+    // second implementation gets wrong: `2` is an alias, the comparison is
+    // case-insensitive, and the value is trimmed with `str::trim`, which
+    // takes the Unicode White_Space set rather than the POSIX class.
+    for full in [
+        "full",
+        "2",
+        "FULL",
+        "Full",
+        "  full  ",
+        "\u{a0}full",
+        "\tfull\n",
+    ] {
+        assert_eq!(debug_policy_token(Some(full)), "full", "{full:?}");
+    }
+    for lines in [
+        "1",
+        "line",
+        "lines",
+        "line-tables",
+        "line-tables-only",
+        " Line ",
+    ] {
+        assert_eq!(debug_policy_token(Some(lines)), "line-tables", "{lines:?}");
+    }
+    for none in ["0", "off", "none", "OFF"] {
+        assert_eq!(debug_policy_token(Some(none)), "none", "{none:?}");
+    }
+    // An unrecognized value is distinct from an unset one: the first is
+    // someone writing a value that means nothing, the second leaves the
+    // caller's own default in place. Neither is full debug.
+    for other in ["", "   ", "fullx", "full full", "3", "yes", "debug"] {
+        assert_eq!(debug_policy_token(Some(other)), "unrecognized", "{other:?}");
+    }
+    assert_eq!(debug_policy_token(None), "unset");
+}
+
+#[test]
 fn scaffold_sync_template_uses_launch_contract_and_docs() {
     let files = scaffold_files("demo_kernel", false);
     assert!(files.cargo_toml.contains("name = \"demo_kernel\""));
@@ -4222,6 +4860,7 @@ fn passthrough_fingerprint_separates_the_device_debug_policies() {
         unchecked_indexing: false,
         materialize_cubin: false,
         device_debug: DeviceDebug::Off,
+        debug_assertions: false,
     };
     let line_tables = CargoPassthroughOptions {
         device_debug: DeviceDebug::LineTables,
@@ -4255,42 +4894,45 @@ fn passthrough_fingerprint_separates_the_device_debug_policies() {
     assert_ne!(fp(&line_tables), fp(&full));
 }
 
-/// Full debug disables only the two MIR passes that erase debugger-visible
-/// state (scalar replacement splits closure environments, single-use const
-/// folding removes constant locals' places); every other MIR optimization
-/// stays on, so the importer sees release-build MIR shapes.
+/// Full debug excludes only SROA and `SingleUseConsts`.
+/// `ReferencePropagation` and MIR inlining stay enabled; a private cfg outlines
+/// only `DisjointSlice::get_mut` to keep CUDA-GDB frame ranges accurate.
 #[test]
-fn full_device_debug_disables_only_debug_hostile_mir_passes() {
+fn full_device_debug_applies_only_the_targeted_debug_controls() {
     let cmd = Command::new("cargo");
     let mut encoded = "base".to_string();
 
-    append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
+    append_full_debug_rustflags(&mut encoded, &cmd, Some("full"));
 
     assert_eq!(
         decoded_rustflags(&encoded),
         [
             "base",
+            "--cfg",
+            FULL_DEBUG_GET_MUT_OUTLINE_CFG,
             "-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts"
         ]
     );
     assert!(!encoded.contains("mir-opt-level"), "{encoded}");
+    assert!(!encoded.contains("inline-mir"), "{encoded}");
 }
 
 #[test]
-fn numeric_full_debug_alias_selects_the_same_mir_flag() {
-    // The backend accepts `CUDA_OXIDE_DEBUG=2` as full debug; the shared
-    // parser guarantees the build policy agrees, so `2` must select the same
-    // MIR flag as `full`.
+fn numeric_full_debug_alias_selects_the_same_rustc_controls() {
+    // The shared parser makes `CUDA_OXIDE_DEBUG=2` select the same rustc
+    // controls as `full`.
     let mut cmd = Command::new("cargo");
     cmd.env("CUDA_OXIDE_DEBUG", "2");
     let mut encoded = "base".to_string();
 
-    append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
+    append_full_debug_rustflags(&mut encoded, &cmd, None);
 
     assert_eq!(
         decoded_rustflags(&encoded),
         [
             "base",
+            "--cfg",
+            FULL_DEBUG_GET_MUT_OUTLINE_CFG,
             "-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts"
         ]
     );
@@ -4302,7 +4944,7 @@ fn line_tables_keep_normal_mir_optimization() {
     cmd.env("CUDA_OXIDE_DEBUG", "line");
     let mut encoded = "base".to_string();
 
-    append_full_debug_mir_rustflag(&mut encoded, &cmd, None);
+    append_full_debug_rustflags(&mut encoded, &cmd, None);
 
     assert_eq!(decoded_rustflags(&encoded), ["base"]);
 }
@@ -4313,9 +4955,51 @@ fn explicit_line_tables_override_inherited_full_debug_for_mir_optimization() {
     cmd.env("CUDA_OXIDE_DEBUG", "line");
     let mut encoded = "base".to_string();
 
-    append_full_debug_mir_rustflag(&mut encoded, &cmd, Some("full"));
+    append_full_debug_rustflags(&mut encoded, &cmd, Some("full"));
 
     assert_eq!(decoded_rustflags(&encoded), ["base"]);
+}
+
+#[test]
+fn non_full_codegen_profiles_do_not_activate_the_targeted_debug_cfg() {
+    for profile in [
+        CodegenProfilePolicy::CargoSelected,
+        CodegenProfilePolicy::ReleaseLike,
+        CodegenProfilePolicy::ReleaseLikeWithDebugInfo,
+    ] {
+        for (debug, inherited) in [
+            (None, None),
+            (Some("off"), Some("full")),
+            (Some("line"), Some("full")),
+        ] {
+            let mut encoded = build_encoded_rustflags_with_existing(
+                Path::new("/tmp/librustc_codegen_cuda.so"),
+                profile,
+                &[],
+                &[],
+                None,
+                None,
+            );
+            let mut cmd = Command::new("cargo");
+            if let Some(debug) = debug {
+                cmd.env("CUDA_OXIDE_DEBUG", debug);
+            }
+
+            append_full_debug_rustflags(&mut encoded, &cmd, inherited);
+
+            let flags = decoded_rustflags(&encoded);
+            assert!(
+                !has_full_debug_cfg(&flags),
+                "{profile:?}/{debug:?}: {flags:?}"
+            );
+            assert!(
+                !flags
+                    .iter()
+                    .any(|flag| FULL_DEBUG_MIR_RUSTFLAGS.contains(flag)),
+                "{profile:?}/{debug:?}: {flags:?}"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

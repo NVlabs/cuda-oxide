@@ -86,22 +86,31 @@ use pliron::{input_err, input_error_noloc};
 use rustc_public::mir;
 use rustc_public::ty::{GenericArgKind, RigidTy, TyConst, TyConstKind, TyKind};
 // =============================================================================
-// Type info — extracted from the atomic type name in the call path
+// Type info — extracted from a named atomic type or a core MIR element type
 // =============================================================================
 
-/// Describes an atomic type parsed from a `cuda_device::atomic::*` path.
+/// Describes the element type and scope used to lower an atomic operation.
 ///
-/// Example: `BlockAtomicI64` → `{ bit_width: 64, is_float: false, is_signed: true, scope: Block }`
+/// Named `cuda_device::atomic` types populate this from their path, while core
+/// atomic intrinsics populate it from their MIR element type.
+///
+/// Example: `BlockAtomicI64` →
+/// `{ bit_width: 64, is_float: false, is_signed: true, is_pointer: false, scope: Block }`
 pub struct AtomicTypeInfo {
     pub bit_width: u32,
     pub is_float: bool,
     pub is_signed: bool,
+    pub is_pointer: bool,
     pub scope: AtomicScope,
 }
 
 impl AtomicTypeInfo {
     /// Get the pliron result type for this atomic's element.
     fn element_type(&self, ctx: &mut Context) -> pliron::r#type::TypeHandle {
+        if self.is_pointer {
+            unreachable!("pointer atomic element types must be preserved from MIR");
+        }
+
         if self.is_float {
             match self.bit_width {
                 // Rust `f16` is represented by dialect-mir's own `mir.fp16` (apfloat::Half);
@@ -152,6 +161,7 @@ fn parse_atomic_type_name(type_name: &str) -> Option<AtomicTypeInfo> {
         bit_width,
         is_float,
         is_signed,
+        is_pointer: false,
         scope,
     })
 }
@@ -811,7 +821,7 @@ fn intrinsic_ordering_from_discriminant(discr: u64) -> Option<AtomicOrdering> {
 ///
 /// Core atomics always use system scope for safe host-device coherence.
 fn type_info_from_mir_ty(ty: &rustc_public::ty::Ty) -> Option<AtomicTypeInfo> {
-    let (bit_width, is_float, is_signed) = match ty.kind() {
+    let (bit_width, is_float, is_signed, is_pointer) = match ty.kind() {
         TyKind::RigidTy(RigidTy::Uint(uint_ty)) => {
             use rustc_public::ty::UintTy;
             let width = match uint_ty {
@@ -825,7 +835,7 @@ fn type_info_from_mir_ty(ty: &rustc_public::ty::Ty) -> Option<AtomicTypeInfo> {
                 // `PipelineConfig::target_pointer_width` is a future change.
                 UintTy::Usize => 64,
             };
-            (width, false, false)
+            (width, false, false, false)
         }
         TyKind::RigidTy(RigidTy::Int(int_ty)) => {
             use rustc_public::ty::IntTy;
@@ -840,7 +850,7 @@ fn type_info_from_mir_ty(ty: &rustc_public::ty::Ty) -> Option<AtomicTypeInfo> {
                 // `PipelineConfig::target_pointer_width` is a future change.
                 IntTy::Isize => 64,
             };
-            (width, false, true)
+            (width, false, true, false)
         }
         TyKind::RigidTy(RigidTy::Float(float_ty)) => {
             use rustc_public::ty::FloatTy;
@@ -850,7 +860,12 @@ fn type_info_from_mir_ty(ty: &rustc_public::ty::Ty) -> Option<AtomicTypeInfo> {
                 FloatTy::F64 => 64,
                 FloatTy::F128 => 128,
             };
-            (width, true, false)
+            (width, true, false, false)
+        }
+        TyKind::RigidTy(RigidTy::RawPtr(_, _)) => {
+            // Core AtomicPtr values are pointer-width on nvptx64; the NVVM verifier
+            // restricts lowered pointer values to the 64-bit generic address space.
+            (64, false, false, true)
         }
         _ => return None,
     };
@@ -859,6 +874,7 @@ fn type_info_from_mir_ty(ty: &rustc_public::ty::Ty) -> Option<AtomicTypeInfo> {
         bit_width,
         is_float,
         is_signed,
+        is_pointer,
         scope: AtomicScope::System, // core atomics always use system scope
     })
 }
@@ -878,6 +894,13 @@ fn type_info_from_mir_ty(ty: &rustc_public::ty::Ty) -> Option<AtomicTypeInfo> {
 /// | `umax`       | `UMax` (unsigned)     |
 /// | `xchg`       | `Xchg`                |
 fn intrinsic_op_to_rmw_kind(op: &str, info: &AtomicTypeInfo) -> Option<AtomicRmwKind> {
+    if info.is_pointer {
+        return match op {
+            "xchg" => Some(AtomicRmwKind::Xchg),
+            _ => None,
+        };
+    }
+
     match op {
         "xadd" => {
             if info.is_float {
@@ -1439,8 +1462,6 @@ fn emit_core_atomic_load(
     type_info: &AtomicTypeInfo,
     ordering: AtomicOrdering,
 ) -> TranslationResult<Ptr<Operation>> {
-    let result_ty = type_info.element_type(ctx);
-
     let (ptr_val, last_op) = rvalue::translate_operand(
         ctx,
         body,
@@ -1450,6 +1471,25 @@ fn emit_core_atomic_load(
         prev_op,
         loc.clone(),
     )?;
+
+    // Pointer atomics must preserve the translated MIR pointer type rather than
+    // reconstructing the value as an integer of pointer width.
+    let result_ty = if type_info.is_pointer {
+        let ptr_ty = ptr_val.get_type(ctx);
+        let ptr_ty = ptr_ty.deref(ctx);
+        let Some(ptr_ty) = ptr_ty.downcast_ref::<dialect_mir::types::MirPtrType>() else {
+            return input_err!(
+                loc.clone(),
+                TranslationErr::unsupported(
+                    "core atomic load address is not a MIR pointer".to_string()
+                )
+            );
+        };
+
+        ptr_ty.pointee
+    } else {
+        type_info.element_type(ctx)
+    };
 
     let (prepared_destination, last_op) = helpers::prepare_destination_write(
         ctx,
@@ -1593,8 +1633,6 @@ fn emit_core_atomic_rmw(
     ordering: AtomicOrdering,
     rmw_kind: AtomicRmwKind,
 ) -> TranslationResult<Ptr<Operation>> {
-    let result_ty = type_info.element_type(ctx);
-
     // Get the pointer (arg 0)
     let (ptr_val, last_op) = rvalue::translate_operand(
         ctx,
@@ -1616,6 +1654,12 @@ fn emit_core_atomic_rmw(
         last_op,
         loc.clone(),
     )?;
+
+    let result_ty = if type_info.is_pointer {
+        val.get_type(ctx)
+    } else {
+        type_info.element_type(ctx)
+    };
 
     let (prepared_destination, last_op) = helpers::prepare_destination_write(
         ctx,
@@ -1680,8 +1724,6 @@ fn emit_core_atomic_cmpxchg(
     success_ordering: AtomicOrdering,
     failure_ordering: AtomicOrdering,
 ) -> TranslationResult<Ptr<Operation>> {
-    let result_ty = type_info.element_type(ctx);
-
     // Get the pointer (arg 0)
     let (ptr_val, last_op) = rvalue::translate_operand(
         ctx,
@@ -1703,6 +1745,12 @@ fn emit_core_atomic_cmpxchg(
         last_op,
         loc.clone(),
     )?;
+
+    let result_ty = if type_info.is_pointer {
+        cmp_val.get_type(ctx)
+    } else {
+        type_info.element_type(ctx)
+    };
 
     // Get the new value (arg 2)
     let (new_val, last_op) = rvalue::translate_operand(
@@ -1797,9 +1845,11 @@ fn emit_core_atomic_cmpxchg(
 #[cfg(test)]
 mod tests {
     use super::{
-        CoreIntrinsicRoute, build_compiler_fence_barrier, core_atomic_width_is_supported,
+        AtomicTypeInfo, CoreIntrinsicRoute, build_compiler_fence_barrier,
+        core_atomic_width_is_supported, intrinsic_op_to_rmw_kind,
         intrinsic_ordering_from_discriminant, parse_core_intrinsic_op, route_core_intrinsic,
     };
+    use dialect_nvvm::ops::atomic::{AtomicRmwKind, AtomicScope};
     use dialect_nvvm::ops::{AtomicOrdering, InlinePtxOp};
     use pliron::common_traits::Verify;
     use pliron::context::Context;
@@ -1952,6 +2002,32 @@ mod tests {
         assert!(core_atomic_width_is_supported(64));
         for width in [8, 16, 128] {
             assert!(!core_atomic_width_is_supported(width));
+        }
+    }
+
+    #[test]
+    fn core_pointer_atomics_only_allow_exchange_rmw() {
+        let info = AtomicTypeInfo {
+            bit_width: 64,
+            is_float: false,
+            is_signed: false,
+            is_pointer: true,
+            scope: AtomicScope::System,
+        };
+
+        assert_eq!(
+            intrinsic_op_to_rmw_kind("xchg", &info),
+            Some(AtomicRmwKind::Xchg)
+        );
+
+        for op in [
+            "xadd", "xsub", "and", "or", "xor", "min", "umin", "max", "umax",
+        ] {
+            assert_eq!(
+                intrinsic_op_to_rmw_kind(op, &info),
+                None,
+                "pointer RMW `{op}` must remain unsupported"
+            );
         }
     }
 

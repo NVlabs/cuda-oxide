@@ -11,6 +11,15 @@ use super::*;
 
 pub(super) const ENCODED_RUSTFLAGS_SEPARATOR: char = '\u{1f}';
 
+/// Internal cfg used only by full-debug builds to outline
+/// `DisjointSlice::get_mut`.
+///
+/// This fixes false CUDA-GDB helper frames without disabling MIR inlining
+/// globally. User-provided copies are stripped so other modes keep their usual
+/// code shape.
+pub(super) const FULL_DEBUG_GET_MUT_OUTLINE_CFG: &str =
+    "cuda_oxide_internal_outline_disjoint_get_mut_v1";
+
 /// Profile-related rustc flags owned by cuda-oxide.
 ///
 /// Backend selection and MIR/symbol invariants are always applied separately.
@@ -20,7 +29,18 @@ pub(super) const ENCODED_RUSTFLAGS_SEPARATOR: char = '\u{1f}';
 pub(super) enum CodegenProfilePolicy {
     CargoSelected,
     ReleaseLike,
+    ReleaseLikeWithDebugAssertions,
     ReleaseLikeWithDebugInfo,
+}
+
+impl CodegenProfilePolicy {
+    pub(super) fn release_like(debug_assertions: bool) -> Self {
+        if debug_assertions {
+            Self::ReleaseLikeWithDebugAssertions
+        } else {
+            Self::ReleaseLike
+        }
+    }
 }
 
 /// Construct boundary-preserving rustc flags for Cargo.
@@ -80,12 +100,22 @@ pub(super) fn build_encoded_rustflags_with_existing(
     flags.push(format!("-Zcodegen-backend={}", backend_so.display()));
     if matches!(
         profile,
-        CodegenProfilePolicy::ReleaseLike | CodegenProfilePolicy::ReleaseLikeWithDebugInfo
+        CodegenProfilePolicy::ReleaseLike
+            | CodegenProfilePolicy::ReleaseLikeWithDebugAssertions
+            | CodegenProfilePolicy::ReleaseLikeWithDebugInfo
     ) {
-        flags.extend([
-            "-Copt-level=3".to_string(),
-            "-Cdebug-assertions=off".to_string(),
-        ]);
+        flags.push("-Copt-level=3".to_string());
+        if profile == CodegenProfilePolicy::ReleaseLikeWithDebugAssertions {
+            // rustc normally enables overflow checks together with debug
+            // assertions. Keep them independent: overflow-check MIR changes
+            // code shape enough to break pattern-sensitive device lowerings.
+            flags.extend([
+                "-Cdebug-assertions=on".to_string(),
+                "-Coverflow-checks=off".to_string(),
+            ]);
+        } else {
+            flags.push("-Cdebug-assertions=off".to_string());
+        }
     }
     flags.extend([
         "-Zmir-enable-passes=-JumpThreading".to_string(),
@@ -115,6 +145,7 @@ fn strip_wrapper_owned_codegen_cfgs(flags: &mut Vec<String>) {
         [
             LEGACY_CODEGEN_FINGERPRINT_CFG,
             LEGACY_MATERIALIZER_PROVENANCE_CFG,
+            FULL_DEBUG_GET_MUT_OUTLINE_CFG,
         ]
         .iter()
         .any(|name| {
@@ -149,6 +180,38 @@ fn strip_wrapper_owned_codegen_cfgs(flags: &mut Vec<String>) {
     *flags = retained;
 }
 
+/// Report the debug policy `CUDA_OXIDE_DEBUG` selects in this environment,
+/// as one lowercase token on stdout.
+///
+/// Tooling that has to know whether a build will be a full-debug build --
+/// `scripts/smoketest.sh` decides that way whether its optimized code-shape
+/// gates apply at all -- would otherwise restate `parse_env_override`'s
+/// alias, case and whitespace rules in another language. A second
+/// implementation of a policy is a second answer waiting to disagree with the
+/// first, and this one is easy to get wrong: `2` is full debug, so is `FULL`,
+/// and so is a value padded with a non-breaking space.
+pub fn print_debug_policy() {
+    println!(
+        "{}",
+        debug_policy_token(std::env::var("CUDA_OXIDE_DEBUG").ok().as_deref())
+    );
+}
+
+/// `None` means the variable is unset, which is not the same as a value the
+/// parser does not recognize: the first leaves the caller's own default in
+/// place, the second is a value someone wrote expecting it to mean something.
+pub(super) fn debug_policy_token(value: Option<&str>) -> &'static str {
+    let Some(value) = value else {
+        return "unset";
+    };
+    match cuda_artifact_finalizer::DebugPolicy::parse_env_override(value) {
+        Some(cuda_artifact_finalizer::DebugPolicy::None) => "none",
+        Some(cuda_artifact_finalizer::DebugPolicy::LineTables) => "line-tables",
+        Some(cuda_artifact_finalizer::DebugPolicy::Full) => "full",
+        None => "unrecognized",
+    }
+}
+
 fn command_requests_full_device_debug_with_env(
     cmd: &Command,
     inherited_debug: Option<&str>,
@@ -162,50 +225,38 @@ fn command_requests_full_device_debug_with_env(
         None => inherited_debug.map(str::to_owned),
     };
 
-    // Shared alias table: the codegen backend parses `CUDA_OXIDE_DEBUG`
-    // with the same function, so every spelling the backend treats as
-    // full debug (including `2`) also selects the full-debug MIR flag here.
+    // The backend and wrapper share this parser, so every full-debug alias
+    // (including `2`) selects the same rustc controls.
     effective_debug.is_some_and(|value| {
         cuda_artifact_finalizer::DebugPolicy::parse_env_override(&value)
             == Some(cuda_artifact_finalizer::DebugPolicy::Full)
     })
 }
 
-/// The MIR passes full device debug turns off.
+/// Rustc controls used only by full device debug.
 ///
-/// Full debug keeps every local in memory so cuda-gdb can inspect it. The
-/// pipeline does that on the LLVM side (no mem2reg, no `opt`, `llc -O0`).
-/// On the MIR side, two rustc passes destroy things the debugger needs and
-/// nothing else does:
-///
-/// ```text
-/// pass                             what it does to a local           debugger sees
-/// ScalarReplacementOfAggregates    splits a closure environment       capture_0 "not inspectable"
-///                                  into per-capture scalars
-/// SingleUseConsts                  turns `let k = 41u32;` into        `k` missing from info locals
-///                                  constant debuginfo with no place   (importer describes places only)
-/// ```
-///
-/// Disabling exactly those two keeps every other MIR optimization (inlining,
-/// const-prop, GVN) on, so the importer sees the same MIR shapes as a
-/// release build.
-///
-/// The previous lever was `-Zmir-opt-level=0`, measured on 2026-09-02:
+/// Full debug keeps imported, non-ZST MIR locals in stack slots by skipping
+/// `mem2reg` and LLVM optimization. It cannot restore locals rustc has already
+/// removed, so two MIR passes are excluded:
 ///
 /// ```text
-/// full-debug MIR flag                        examples that build   closure captures in cuda-gdb
-/// -Zmir-opt-level=0                          145 / 222             visible
-/// (none)                                     201 / 222             not inspectable
-/// -Zmir-enable-passes=-<the two above>       202 / 222             visible
+/// ScalarReplacementOfAggregates -> closure split -> captures disappear
+/// SingleUseConsts                -> local folded  -> local disappears
 /// ```
 ///
-/// The 56 examples level 0 loses are unoptimized MIR shapes the importer
-/// deliberately does not handle: intrinsic operands that are no longer
-/// literals, helper enums that inlining normally dissolves.
-pub(super) const FULL_DEBUG_MIR_RUSTFLAG: &str =
-    "-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts";
+/// Other MIR passes stay enabled:
+///
+/// ```text
+/// ReferencePropagation -> keep debug event -> write a debug-only stack home
+/// MIR inlining         -> enabled, except `DisjointSlice::get_mut`
+/// ```
+///
+/// We avoid `-Zmir-opt-level=0` because its extra MIR shapes do not all import.
+/// These controls affect full-debug builds only.
+pub(super) const FULL_DEBUG_MIR_RUSTFLAGS: &[&str] =
+    &["-Zmir-enable-passes=-ScalarReplacementOfAggregates,-SingleUseConsts"];
 
-pub(super) fn append_full_debug_mir_rustflag(
+pub(super) fn append_full_debug_rustflags(
     encoded: &mut String,
     cmd: &Command,
     inherited_debug: Option<&str>,
@@ -213,10 +264,15 @@ pub(super) fn append_full_debug_mir_rustflag(
     if !command_requests_full_device_debug_with_env(cmd, inherited_debug) {
         return;
     }
-    if !encoded.is_empty() {
-        encoded.push(ENCODED_RUSTFLAGS_SEPARATOR);
+    for flag in ["--cfg", FULL_DEBUG_GET_MUT_OUTLINE_CFG]
+        .into_iter()
+        .chain(FULL_DEBUG_MIR_RUSTFLAGS.iter().copied())
+    {
+        if !encoded.is_empty() {
+            encoded.push(ENCODED_RUSTFLAGS_SEPARATOR);
+        }
+        encoded.push_str(flag);
     }
-    encoded.push_str(FULL_DEBUG_MIR_RUSTFLAG);
 }
 
 fn apply_codegen_rustflags(
@@ -227,7 +283,7 @@ fn apply_codegen_rustflags(
 ) {
     let mut encoded = build_encoded_rustflags(ctx, profile, device_cfgs);
     let inherited_debug = std::env::var("CUDA_OXIDE_DEBUG").ok();
-    append_full_debug_mir_rustflag(&mut encoded, cmd, inherited_debug.as_deref());
+    append_full_debug_rustflags(&mut encoded, cmd, inherited_debug.as_deref());
 
     cmd.env("CARGO_ENCODED_RUSTFLAGS", encoded)
         .env_remove("RUSTFLAGS");
@@ -404,23 +460,29 @@ pub(super) fn apply_interop_device_codegen_options(
     verbose: bool,
     options: InteropDeviceBuildOptions,
 ) {
+    let inherited_debug = std::env::var_os("CUDA_OXIDE_DEBUG");
     apply_interop_device_codegen_options_with_env(
         cmd,
         ctx,
         verbose,
         options,
-        std::env::var_os("CUDA_OXIDE_DEBUG").is_some(),
+        inherited_debug.as_deref(),
     );
 }
 
-/// `apply_interop_device_codegen_options` with the `CUDA_OXIDE_DEBUG` probe
-/// injected, forwarded to `apply_default_sanitizer_line_tables_with_env`.
+/// `apply_interop_device_codegen_options` with the inherited
+/// `CUDA_OXIDE_DEBUG` value injected.
+///
+/// Interop device crates are separate Cargo builds, so resolve their effective
+/// debug policy here in the same order as the regular path: an explicit CLI
+/// level, then the inherited environment, then project configuration. Compute
+/// Sanitizer's line-table policy is only a default after all three.
 pub(super) fn apply_interop_device_codegen_options_with_env(
     cmd: &mut Command,
     ctx: &Context,
     verbose: bool,
     options: InteropDeviceBuildOptions,
-    env_debug_set: bool,
+    inherited_debug: Option<&std::ffi::OsStr>,
 ) {
     apply_common_codegen_env(
         cmd,
@@ -430,8 +492,20 @@ pub(super) fn apply_interop_device_codegen_options_with_env(
         options.unchecked_indexing,
         DeviceDebug::Off,
     );
-    if options.sanitizer_line_tables {
-        apply_default_sanitizer_line_tables_with_env(cmd, ctx, env_debug_set, DeviceDebug::Off);
+
+    let effective_debug = options
+        .device_debug
+        .env_value()
+        .map(std::ffi::OsString::from)
+        .or_else(|| inherited_debug.map(std::ffi::OsStr::to_os_string))
+        .or_else(|| project_config_env(ctx, "CUDA_OXIDE_DEBUG").map(std::ffi::OsString::from))
+        .or_else(|| {
+            options
+                .sanitizer_line_tables
+                .then(|| std::ffi::OsString::from("line-tables"))
+        });
+    if let Some(debug) = effective_debug {
+        cmd.env("CUDA_OXIDE_DEBUG", debug);
     }
 }
 
@@ -527,6 +601,10 @@ pub(super) fn detect_run_target_arch_with_env(
         return None;
     }
 
+    detect_local_device_arch()
+}
+
+pub(super) fn detect_local_device_arch() -> Option<String> {
     query_device_compute_cap().map(format_sm_arch)
 }
 
@@ -623,9 +701,10 @@ pub(super) fn parse_gpu_name_cap_and_driver(stdout: &str) -> Option<(String, (u3
 /// every chip that reports cc ≥ 9.0 *is* the `a`-variant chip in NVIDIA's
 /// lineup (there is no consumer Hopper, no non-`a` sm_100, and so on).
 ///
-/// This helper is only used by [`detect_run_target_arch`] in `cargo oxide
-/// run`, where the local GPU is known exactly and no cross-compile is in
-/// flight. Emitting the `a` form there:
+/// For GPU auto-detection, this formats the compute capability of the first GPU
+/// reported by `nvidia-smi`. `cargo oxide run` uses the result as an advisory
+/// target hint, while `cargo oxide build` may display it for diagnostics without
+/// changing the build target. Emitting the `a` form for a detected GPU:
 ///
 /// - **No false negatives:** kernels that need `tcgen05` / WGMMA compile and
 ///   load on that GPU (was: silent fallback to `sm_100` / `sm_90` and a

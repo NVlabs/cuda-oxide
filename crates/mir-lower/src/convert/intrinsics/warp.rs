@@ -32,6 +32,7 @@
 //! | `MatchAllSyncI64` | `llvm.nvvm.match.all.sync.i64p`   | 64-bit variant               |
 
 use crate::convert::intrinsics::common::*;
+use crate::convert::types::convert_type;
 use llvm_export::types as llvm_types;
 use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
 use pliron::context::{Context, Ptr};
@@ -267,6 +268,11 @@ pub(crate) fn convert_match_any(
 /// collectives), but the LLVM intrinsic signature is `(src, membermask)`, so
 /// we forward the operands flipped as `[value, mask]`. The value and result
 /// types are carried by the dialect record.
+///
+/// The result type is converted to its LLVM form: the op's `ui32`/`si32`
+/// result would otherwise declare the intrinsic as returning a signed or
+/// unsigned integer while its operands are already signless, and a device
+/// function returning the reduction directly fails verification (#811).
 pub(crate) fn convert_redux(
     ctx: &mut Context,
     rewriter: &mut DialectConversionRewriter,
@@ -283,7 +289,9 @@ pub(crate) fn convert_redux(
     let (mask, value) = (operands[0], operands[1]);
 
     let value_ty = value.get_type(ctx);
-    let result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    let mir_result_ty = op.deref(ctx).get_result(0).get_type(ctx);
+    let result_ty =
+        convert_type(ctx, mir_result_ty).map_err(|e| pliron::input_error_noloc!("{}", e))?;
     let func_ty = llvm_types::FuncType::get(ctx, result_ty, vec![value_ty, i32_ty.into()], false);
 
     // LLVM intrinsic wants (src, membermask): flip to [value, mask].

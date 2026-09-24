@@ -198,6 +198,7 @@ mod kernels {
         unsafe {
             DEVICE_COUNTER += 1;
             DEVICE_MARKER = 0x00C0_FFEE;
+            // Both statics are initialized here. CUDA_OXIDE_DEBUG_GLOBAL_BREAKPOINT
             *out = DEVICE_COUNTER ^ (DEVICE_MARKER as u64);
         }
     }

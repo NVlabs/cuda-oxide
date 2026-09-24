@@ -84,10 +84,9 @@ pub fn codegen_show_pipeline(
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--release"]).current_dir(&example_dir);
 
-    // The shared codegen env (including the CLI debug level) must be on the
-    // command before the rustflags decision below: a full-debug request adds
-    // the full-debug MIR flag, and `apply_codegen_rustflags` reads the command's
-    // `CUDA_OXIDE_DEBUG` to see it. This is the same ordering build/run use.
+    // Apply the common codegen environment first. `apply_codegen_rustflags` then
+    // reads the resolved `CUDA_OXIDE_DEBUG` value and adds the full-debug rustc
+    // controls, matching the build/run order.
     apply_common_codegen_env(
         &mut cmd,
         ctx,

@@ -80,6 +80,16 @@ pub(super) struct KernelGridConstants {
     pub(super) positions: Vec<u32>,
 }
 
+/// The by-value storage type is part of a kernel's ABI even though the
+/// compiler's pointer type deliberately erases pointees. Retain it before
+/// exporting any body so forward references see the same signature.
+#[derive(Clone, Copy)]
+pub(super) struct GridConstantParameter {
+    pub(super) index: usize,
+    pub(super) pointee: TypeHandle,
+    pub(super) alignment: u64,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct GlobalSymbolInfo {
     pub(super) value_type: TypeHandle,
@@ -121,6 +131,7 @@ pub(super) struct ModuleExportState<'a> {
     pub(super) retained_globals: Vec<String>,
     /// Emitted function signatures keyed by their final, prefix-stripped name.
     pub(super) function_types: FxHashMap<String, TypeHandle>,
+    pub(super) function_grid_constants: FxHashMap<String, Vec<GridConstantParameter>>,
     /// Original pliron symbol spelling for each final exported function name.
     /// Device-extern declarations can only suppress an exact-name declaration;
     /// a prefixed alias would otherwise emit a second definition/declaration.
@@ -240,6 +251,7 @@ impl<'a> ModuleExportState<'a> {
             public_globals: Vec::new(),
             retained_globals: Vec::new(),
             function_types: FxHashMap::default(),
+            function_grid_constants: FxHashMap::default(),
             function_source_names: FxHashMap::default(),
             function_definitions: HashSet::new(),
             device_externs: FxHashMap::default(),

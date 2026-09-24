@@ -1,0 +1,11 @@
+error: #[grid_constant] storage lives only for this kernel launch; use &T or &'_ T, not a named or 'static lifetime
+ --> tests/compile_fail/grid_constant_named_lifetime.rs:7:54
+  |
+7 | pub fn static_lifetime(#[grid_constant] descriptor: &'static u32) {}
+  |                                                      ^^^^^^^
+
+error: #[grid_constant] storage lives only for this kernel launch; use &T or &'_ T, not a named or 'static lifetime
+  --> tests/compile_fail/grid_constant_named_lifetime.rs:10:57
+   |
+10 | pub fn named_lifetime<'a>(#[grid_constant] descriptor: &'a u32) {}
+   |                                                         ^^

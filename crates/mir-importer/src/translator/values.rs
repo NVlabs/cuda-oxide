@@ -61,6 +61,11 @@ use rustc_public::ty::{ConstantKind, RigidTy, TyKind};
 /// - ZST locals (and the unit return slot) remain `None` in `slots`.
 pub struct ValueMap {
     slots: Vec<Option<Value>>,
+    /// Full-debug-only destinations whose rustc `StmtDebugInfo::AssignRef`
+    /// records may be materialized into their otherwise unused backing slot.
+    /// The body preflight enables a bit only after proving the local has no
+    /// ordinary reachable MIR use and every debug transition is supported.
+    statement_debug_spills: Vec<bool>,
     /// Whether this body is collecting full variable debug metadata.  Keeping
     /// this on the existing per-body translation state lets shared-static
     /// identity resolution stay entirely out of Off/LineTables builds without
@@ -79,6 +84,7 @@ impl ValueMap {
     pub fn new(num_locals: usize) -> Self {
         Self {
             slots: vec![None; num_locals],
+            statement_debug_spills: vec![false; num_locals],
             debug_variables: false,
             unchecked_indexing: false,
         }
@@ -118,6 +124,23 @@ impl ValueMap {
         if idx < self.slots.len() {
             self.slots[idx] = Some(slot);
         }
+    }
+
+    /// Enable or disable the targeted statement-debug spill for `local`.
+    pub(crate) fn set_statement_debug_spill(&mut self, local: mir::Local, enabled: bool) {
+        let idx: usize = local;
+        if let Some(slot) = self.statement_debug_spills.get_mut(idx) {
+            *slot = enabled;
+        }
+    }
+
+    /// Whether `local` passed the statement-debug spill preflight.
+    pub(crate) fn statement_debug_spill_enabled(&self, local: mir::Local) -> bool {
+        let idx: usize = local;
+        self.statement_debug_spills
+            .get(idx)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Emit a `mir.alloca` for `elem_ty` and insert it into `block`.

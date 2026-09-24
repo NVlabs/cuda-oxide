@@ -45,7 +45,7 @@ fn test_standalone_lowering_rejects_builtin_pointer_constant() {
     let pointer_ty =
         MirPtrType::get_generic_with_kind(&mut ctx, u32_ty.into(), true, MirPointerKind::UniqueRef);
     let value = APInt::from_u64(0, NonZeroUsize::new(32).unwrap());
-    let constant = ConstantOp::new(&mut ctx, IntegerAttr::new(u32_ty, value).into());
+    let constant = ConstantOp::new(&mut ctx, Box::new(IntegerAttr::new(u32_ty, value)));
     let result = constant.get_operation().deref(&ctx).get_result(0);
     result.set_type(&ctx, pointer_ty.into());
     constant.get_operation().insert_at_back(block, &ctx);
@@ -821,7 +821,7 @@ fn assert_sreg_lowers_to_inline_asm(
                     continue;
                 };
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 if template.as_deref() != Some(expected_template) {
                     continue;
@@ -830,7 +830,7 @@ fn assert_sreg_lowers_to_inline_asm(
                 matches += 1;
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some(expected_constraints)
@@ -1038,21 +1038,21 @@ fn test_generated_active_mask_libnvvm_uses_convergent_sideeffect_asm() -> Result
 
         found += 1;
         assert_eq!(
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("activemask.b32 $0;")
         );
         assert_eq!(
-            asm.get_attr_inline_asm_constraints(&ctx)
+            asm.get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("=r,~{memory}")
         );
         assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::Convergent);
         assert!(
-            asm.get_attr_inline_asm_convergent(&ctx)
-                .is_some_and(|value| bool::from((*value).clone()))
+            asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
         let asm = op.deref(&ctx);
         assert_eq!(asm.get_num_operands(), 0);
@@ -1288,7 +1288,7 @@ fn test_repeated_location_samples_remain_side_effecting_reads() -> Result<(), an
                     continue;
                 };
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 match template.as_deref() {
                     Some("mov.u32 $0, %warpid;") => warpid_reads += 1,
@@ -1451,22 +1451,22 @@ fn generated_elect_sync_uses_the_selected_backend_route() -> Result<(), anyhow::
             if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_template(&ctx)
+                        .get_attr_llvm_inline_asm_template(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some("{ .reg .pred p; elect.sync $0|p, $2; selp.b32 $1, 1, 0, p; }")
                 );
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some("=r,=r,r")
                 );
                 assert!(
                     inline_asm
-                        .get_attr_inline_asm_convergent(&ctx)
-                        .is_some_and(|value| bool::from((*value).clone()))
+                        .get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent"))
                 );
                 inline_asm_count += 1;
             }
@@ -1579,7 +1579,7 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
                 };
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|s| String::from((*s).clone()))
                         .as_deref(),
                     Some("=l,l,r,r"),
@@ -1587,13 +1587,13 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
                 );
                 assert!(
                     inline_asm
-                        .get_attr_inline_asm_convergent(&ctx)
-                        .is_some_and(|b| bool::from((*b).clone())),
+                        .get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent")),
                     "shfl.b64 inline asm must be convergent"
                 );
                 templates.push(
                     inline_asm
-                        .get_attr_inline_asm_template(&ctx)
+                        .get_attr_llvm_inline_asm_template(&ctx)
                         .map(|s| String::from((*s).clone()))
                         .unwrap_or_default(),
                 );
@@ -1614,5 +1614,171 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
         );
     }
 
+    Ok(())
+}
+
+type ReduxBuild =
+    fn(&mut Context, pliron::value::Value, pliron::value::Value) -> pliron::context::Ptr<Operation>;
+
+/// A device function returning a `redux.sync` result directly:
+/// `fn reduce(mask: u32, value: T) -> T { redux(mask, value) }`, where `T` is
+/// `u32`/`i32` for `Some(signedness)` and `f32` for `None`. Returns the
+/// lowered module after LLVM-dialect verification.
+fn lower_returned_redux(
+    build: ReduxBuild,
+    signedness: Option<pliron::builtin::types::Signedness>,
+) -> Result<(Context, pliron::context::Ptr<Operation>), anyhow::Error> {
+    use pliron::basic_block::BasicBlock;
+    use pliron::builtin::attributes::TypeAttr;
+    use pliron::builtin::types::{FP32Type, FunctionType, IntegerType, Signedness};
+    use pliron::common_traits::Verify;
+
+    let mut ctx = make_test_ctx();
+    let mask_ty = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+    let value_ty = match signedness {
+        Some(signedness) => IntegerType::get(&ctx, 32, signedness).into(),
+        None => FP32Type::get(&ctx).into(),
+    };
+    let module = ModuleOp::new(&mut ctx, "returned_redux".try_into().unwrap());
+    let module_ptr = module.get_operation();
+    let module_block = module_ptr
+        .deref(&ctx)
+        .get_region(0)
+        .deref(&ctx)
+        .iter(&ctx)
+        .next()
+        .unwrap();
+
+    let func_ty = FunctionType::get(&ctx, vec![mask_ty, value_ty], vec![value_ty]);
+    let func_ptr = Operation::new(
+        &mut ctx,
+        mir::MirFuncOp::get_concrete_op_info(),
+        vec![],
+        vec![],
+        vec![],
+        1,
+    );
+    let func = mir::MirFuncOp::new(&mut ctx, func_ptr, TypeAttr::new(func_ty.into()));
+    func.set_symbol_name(&mut ctx, "reduce".try_into().unwrap());
+    let entry = BasicBlock::new(&mut ctx, None, vec![mask_ty, value_ty]);
+    entry.insert_at_back(func.get_operation().deref(&ctx).get_region(0), &ctx);
+    func.get_operation().insert_at_back(module_block, &ctx);
+
+    let mask = entry.deref(&ctx).get_argument(0);
+    let value = entry.deref(&ctx).get_argument(1);
+    let redux = build(&mut ctx, mask, value);
+    redux.insert_at_back(entry, &ctx);
+    let reduced = redux.deref(&ctx).get_result(0);
+    Operation::new(
+        &mut ctx,
+        mir::MirReturnOp::get_concrete_op_info(),
+        vec![],
+        vec![reduced],
+        vec![],
+        0,
+    )
+    .insert_at_back(entry, &ctx);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr).map_err(|e| anyhow::anyhow!("{e}"))?;
+    module_ptr
+        .deref(&ctx)
+        .verify(&ctx)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok((ctx, module_ptr))
+}
+
+/// #811: a redux result returned straight out of a device function must
+/// lower with a signless integer type. The dialect op's `ui32`/`si32` result
+/// used to leak into the intrinsic declaration, so the lowered `llvm.return`
+/// failed verification against the function's `i32` result. The `f32`
+/// variants lower to the same type and are controls.
+#[test]
+fn test_redux_result_returned_from_device_function_verifies() -> Result<(), anyhow::Error> {
+    use pliron::builtin::types::IntegerType;
+    use pliron::builtin::types::Signedness::{self, Signed, Unsigned};
+    use pliron::r#type::Typed;
+
+    let cases: [(&str, ReduxBuild, Option<Signedness>); 16] = [
+        ("add", nvvm::ReduxSyncAddOp::build, Some(Unsigned)),
+        ("and", nvvm::ReduxSyncAndOp::build, Some(Unsigned)),
+        ("or", nvvm::ReduxSyncOrOp::build, Some(Unsigned)),
+        ("xor", nvvm::ReduxSyncXorOp::build, Some(Unsigned)),
+        ("umin", nvvm::ReduxSyncUminOp::build, Some(Unsigned)),
+        ("umax", nvvm::ReduxSyncUmaxOp::build, Some(Unsigned)),
+        ("min", nvvm::ReduxSyncMinOp::build, Some(Signed)),
+        ("max", nvvm::ReduxSyncMaxOp::build, Some(Signed)),
+        ("fmin", nvvm::ReduxSyncFminOp::build, None),
+        ("fmax", nvvm::ReduxSyncFmaxOp::build, None),
+        ("fmin_abs", nvvm::ReduxSyncFminAbsOp::build, None),
+        ("fmax_abs", nvvm::ReduxSyncFmaxAbsOp::build, None),
+        ("fmin_NaN", nvvm::ReduxSyncFminNanOp::build, None),
+        ("fmax_NaN", nvvm::ReduxSyncFmaxNanOp::build, None),
+        ("fmin_abs_NaN", nvvm::ReduxSyncFminAbsNanOp::build, None),
+        ("fmax_abs_NaN", nvvm::ReduxSyncFmaxAbsNanOp::build, None),
+    ];
+
+    for (name, build, signedness) in cases {
+        let (ctx, module_ptr) = lower_returned_redux(build, signedness)
+            .map_err(|e| anyhow::anyhow!("redux_sync_{name}: {e}"))?;
+
+        let module_block = module_ptr
+            .deref(&ctx)
+            .get_region(0)
+            .deref(&ctx)
+            .iter(&ctx)
+            .next()
+            .unwrap();
+        let func = module_block
+            .deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::FuncOp>(op, &ctx))
+            .find(|func| func.get_symbol_name(&ctx).to_string() == "reduce")
+            .expect("lowered reduce function");
+        let calls: Vec<_> = func
+            .get_operation()
+            .deref(&ctx)
+            .get_region(0)
+            .deref(&ctx)
+            .iter(&ctx)
+            .flat_map(|block| block.deref(&ctx).iter(&ctx).collect::<Vec<_>>())
+            .filter_map(|op| Operation::get_op::<llvm::CallOp>(op, &ctx))
+            .collect();
+        assert_eq!(calls.len(), 1, "redux_sync_{name}");
+        let CallOpCallable::Direct(callee) = calls[0].callee(&ctx) else {
+            panic!("redux_sync_{name} must remain a direct intrinsic call");
+        };
+        assert_eq!(callee.to_string(), format!("llvm_nvvm_redux_sync_{name}"));
+        let call = calls[0].get_operation().deref(&ctx);
+        let entry = call.get_parent_block().unwrap();
+        assert_eq!(
+            call.operands().collect::<Vec<_>>(),
+            vec![
+                entry.deref(&ctx).get_argument(1),
+                entry.deref(&ctx).get_argument(0)
+            ],
+            "redux_sync_{name} must pass value before member mask"
+        );
+        assert_eq!(
+            call.get_result(0).get_type(&ctx),
+            entry.deref(&ctx).get_argument(1).get_type(&ctx),
+            "redux_sync_{name} result must retain the converted value type"
+        );
+        if signedness.is_some() {
+            let result_ty = calls[0]
+                .get_operation()
+                .deref(&ctx)
+                .get_result(0)
+                .get_type(&ctx);
+            let integer = result_ty
+                .deref(&ctx)
+                .downcast_ref::<IntegerType>()
+                .map(|integer| (integer.width(), integer.signedness()));
+            assert_eq!(
+                integer,
+                Some((32, Signedness::Signless)),
+                "redux_sync_{name} call result"
+            );
+        }
+    }
     Ok(())
 }

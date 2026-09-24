@@ -23,6 +23,10 @@ pub(super) fn copy_debug_local_variable(
     if let Some(info) = llvm_export::ops::debug_local_variable(ctx, mir_op) {
         llvm_export::ops::set_debug_local_variable(ctx, llvm_op, info);
     }
+    let aliases = llvm_export::ops::debug_whole_variable_aliases(ctx, mir_op);
+    if !aliases.is_empty() {
+        llvm_export::ops::set_debug_whole_variable_aliases(ctx, llvm_op, &aliases);
+    }
     let projected = llvm_export::ops::debug_projected_variables(ctx, mir_op);
     if !projected.is_empty() {
         llvm_export::ops::set_debug_projected_variables(ctx, llvm_op, &projected);

@@ -26,7 +26,7 @@ mod options_storage {
 pub(crate) fn set_lowering_options(ctx: &mut Context, options: LoweringOptions) {
     if let Some(index) = ctx
         .aux_data_map
-        .get(&*options_storage::LOWERING_OPTIONS_KEY)
+        .get(&options_storage::LOWERING_OPTIONS_KEY)
         .copied()
     {
         ctx.aux_data[index] = Box::new(options);
@@ -43,10 +43,33 @@ pub(crate) fn set_lowering_options(ctx: &mut Context, options: LoweringOptions) 
 /// original `lower_mir_to_llvm` entry point.
 pub(crate) fn lowering_options(ctx: &Context) -> LoweringOptions {
     ctx.aux_data_map
-        .get(&*options_storage::LOWERING_OPTIONS_KEY)
+        .get(&options_storage::LOWERING_OPTIONS_KEY)
         .and_then(|index| ctx.aux_data[*index].downcast_ref::<LoweringOptions>())
         .copied()
         .unwrap_or_default()
+}
+
+/// Name for one generated module-scope global of a lowering-owned family
+/// (`__shared_mem`, `__device_global`, `__dynamic_smem`).
+///
+/// `suffix` is what makes the name unique within one module: the per-module
+/// counter for the counter-named families, the owning function's symbol for
+/// the dynamic shared-memory pool. But every module starts its counters at
+/// zero and a helper shared across crates keeps its owner symbol, so two
+/// crates' PTX can define the same name — and `load_all_ptx_bundles_merged`
+/// textually concatenates the bundles, where the duplicate definition fails
+/// driver JIT compilation, or (for the dynamic pool's duplicate extern
+/// declarations) silently keeps whichever alignment came first (#1277).
+///
+/// When the lowering options carry a module disambiguator, it is woven
+/// between family and suffix so the name is unique across every compilation
+/// whose PTX can end up in one merged module; without one, the historical
+/// undecorated name is kept.
+pub(crate) fn module_namespaced_symbol(ctx: &Context, family: &str, suffix: &str) -> String {
+    match lowering_options(ctx).module_disambiguator {
+        Some(disambiguator) => format!("{family}_{disambiguator:016x}_{suffix}"),
+        None => format!("{family}_{suffix}"),
+    }
 }
 
 /// Semantic class of a shared-memory declaration.

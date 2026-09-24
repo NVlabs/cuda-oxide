@@ -48,6 +48,13 @@ const DEBUG_FRAGMENT_FIELDS: &[&str] = &[
     "line",
     "column",
 ];
+const DEBUG_WHOLE_ALIAS_COUNT_KEY: &str = "cuda_oxide_debug_whole_alias_count";
+const DEBUG_WHOLE_ALIAS_FIELDS: &[&str] =
+    &["name", "arg", "type", "scope", "file", "line", "column"];
+const DEBUG_PROJECTED_COUNT_KEY: &str = "cuda_oxide_debug_projected_count";
+const DEBUG_PROJECTED_FIELDS: &[&str] = &[
+    "name", "arg", "type", "deref", "offset", "scope", "file", "line", "column",
+];
 const DEBUG_VALUE_EXPRESSION_KEY: &str = "cuda_oxide_debug_value_expression";
 
 const DEBUG_LOCAL_ATTR_KEYS: &[&str] = &[
@@ -145,11 +152,6 @@ pub(crate) fn debug_value_for_promoted_slot(
     value: Value,
     loc: Location,
 ) -> Option<MirDbgValueOp> {
-    let slot_op = slot.defining_op()?;
-    if !has_debug_local_attrs(ctx, slot_op) {
-        return None;
-    }
-
     // A load-before-store of a debug-tagged slot reaches promotion with the
     // synthesized `undef` default-def (mem2reg's get_or_create_default_def).
     // Recording `dbg.value(undef, var)` would tell the debugger the local is
@@ -158,6 +160,11 @@ pub(crate) fn debug_value_for_promoted_slot(
     if let Some(def) = value.defining_op()
         && Operation::get_opid(def, ctx) == crate::ops::constants::MirUndefOp::get_opid_static()
     {
+        return None;
+    }
+
+    let slot_op = slot.defining_op()?;
+    if !has_debug_local_attrs(ctx, slot_op) {
         return None;
     }
 
@@ -178,13 +185,52 @@ pub(crate) fn debug_value_for_promoted_slot(
     Some(dbg_value)
 }
 
+/// Remove source-variable debug metadata from a local's backing slot.
+///
+/// Use this when a statement-level debug assignment cannot be emitted safely.
+/// It prevents misleading `llvm.dbg.declare` records while keeping the
+/// local-memory metadata used by diagnostics.
+pub fn suppress_debug_local_from_slot(ctx: &mut Context, slot: Value) {
+    let Some(slot_op) = slot.defining_op() else {
+        return;
+    };
+
+    for key in DEBUG_LOCAL_ATTR_KEYS {
+        remove_string_attr(ctx, slot_op, key);
+    }
+    remove_indexed_debug_attrs(
+        ctx,
+        slot_op,
+        DEBUG_WHOLE_ALIAS_COUNT_KEY,
+        DEBUG_WHOLE_ALIAS_FIELDS,
+        debug_whole_alias_key,
+    );
+    remove_indexed_debug_attrs(
+        ctx,
+        slot_op,
+        DEBUG_FRAGMENT_COUNT_KEY,
+        DEBUG_FRAGMENT_FIELDS,
+        debug_fragment_key,
+    );
+    remove_indexed_debug_attrs(
+        ctx,
+        slot_op,
+        DEBUG_PROJECTED_COUNT_KEY,
+        DEBUG_PROJECTED_FIELDS,
+        debug_projected_key,
+    );
+}
+
 fn has_debug_local_attrs(ctx: &Context, op: Ptr<Operation>) -> bool {
     let has_whole_local = get_string_attr(ctx, op, DEBUG_LOCAL_NAME_KEY).is_some()
         && get_string_attr(ctx, op, DEBUG_LOCAL_TYPE_KEY).is_some();
     let has_fragments = get_string_attr(ctx, op, DEBUG_FRAGMENT_COUNT_KEY)
         .and_then(|count| count.parse::<usize>().ok())
         .is_some_and(|count| (1..=1024).contains(&count));
-    has_whole_local || has_fragments
+    let has_whole_aliases = get_string_attr(ctx, op, DEBUG_WHOLE_ALIAS_COUNT_KEY)
+        .and_then(|count| count.parse::<usize>().ok())
+        .is_some_and(|count| (1..=1024).contains(&count));
+    has_whole_local || has_whole_aliases || has_fragments
 }
 
 pub(crate) fn copy_debug_local_attrs(ctx: &mut Context, from: Ptr<Operation>, to: Ptr<Operation>) {
@@ -194,6 +240,14 @@ pub(crate) fn copy_debug_local_attrs(ctx: &mut Context, from: Ptr<Operation>, to
         }
     }
     copy_debug_fragment_attrs(ctx, from, to);
+    copy_indexed_debug_attrs(
+        ctx,
+        from,
+        to,
+        DEBUG_WHOLE_ALIAS_COUNT_KEY,
+        DEBUG_WHOLE_ALIAS_FIELDS,
+        debug_whole_alias_key,
+    );
 }
 
 fn copy_debug_fragment_attrs(ctx: &mut Context, from: Ptr<Operation>, to: Ptr<Operation>) {
@@ -222,6 +276,62 @@ fn debug_fragment_key(index: usize, field: &str) -> String {
     format!("cuda_oxide_debug_fragment_{index}_{field}")
 }
 
+fn debug_projected_key(index: usize, field: &str) -> String {
+    format!("cuda_oxide_debug_projected_{index}_{field}")
+}
+
+fn debug_whole_alias_key(index: usize, field: &str) -> String {
+    format!("cuda_oxide_debug_whole_alias_{index}_{field}")
+}
+
+fn copy_indexed_debug_attrs(
+    ctx: &mut Context,
+    from: Ptr<Operation>,
+    to: Ptr<Operation>,
+    count_key: &str,
+    fields: &[&str],
+    key: fn(usize, &str) -> String,
+) {
+    let Some(count_text) = get_string_attr(ctx, from, count_key) else {
+        return;
+    };
+    let Ok(count) = count_text.parse::<usize>() else {
+        return;
+    };
+    if count == 0 || count > 1024 {
+        return;
+    }
+
+    set_string_attr(ctx, to, count_key, count_text);
+    for index in 0..count {
+        for field in fields {
+            let indexed_key = key(index, field);
+            if let Some(value) = get_string_attr(ctx, from, &indexed_key) {
+                set_string_attr(ctx, to, &indexed_key, value);
+            }
+        }
+    }
+}
+
+fn remove_indexed_debug_attrs(
+    ctx: &mut Context,
+    op: Ptr<Operation>,
+    count_key: &str,
+    fields: &[&str],
+    key: fn(usize, &str) -> String,
+) {
+    let count = get_string_attr(ctx, op, count_key)
+        .and_then(|count| count.parse::<usize>().ok())
+        .filter(|count| *count <= 1024)
+        .unwrap_or(0);
+    remove_string_attr(ctx, op, count_key);
+    for index in 0..count {
+        for field in fields {
+            remove_string_attr(ctx, op, &key(index, field));
+        }
+    }
+}
+
 fn set_string_attr(ctx: &mut Context, op: Ptr<Operation>, key: &str, value: String) {
     let key = Identifier::try_new(key.to_string()).expect("valid identifier");
     op.deref_mut(ctx)
@@ -235,6 +345,11 @@ fn get_string_attr(ctx: &Context, op: Ptr<Operation>, key: &str) -> Option<Strin
         .attributes
         .get::<StringAttr>(&key)
         .map(|a| String::from((*a).clone()))
+}
+
+fn remove_string_attr(ctx: &mut Context, op: Ptr<Operation>, key: &str) {
+    let key = Identifier::try_new(key.to_string()).expect("valid identifier");
+    op.deref_mut(ctx).attributes.0.remove(&key);
 }
 
 fn stamp_declaration_location(ctx: &mut Context, from: Ptr<Operation>, to: Ptr<Operation>) {

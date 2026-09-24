@@ -9,8 +9,6 @@
   </picture>
 </p>
 
-# cuda-oxide
-
 cuda-oxide is a custom rustc backend for compiling GPU kernels in pure Rust.
 The workspace combines:
 
@@ -23,7 +21,7 @@ The workspace combines:
 
 ## Project Status
 
-cuda-oxide is an experimental compiler that demonstrates how CUDA SIMT kernels can be written natively in pure Rust -- no DSLs, no foreign language bindings -- and made available to the broader Rust community. The project is in an early stage (alpha) and under active development: you should expect bugs, incomplete features, and API breakage as we work to improve it. That said, we hope you'll try it in your own work and help shape its direction by sharing feedback on your experience.
+CUDA SIMT kernels can be written natively in pure Rust -- no DSLs, no foreign language bindings -- and made available to the broader Rust community. The project is in an early stage (alpha) and under active development: you should expect bugs, incomplete features, and API breakage as we work to improve it. That said, we hope you'll try it in your own work and help shape its direction by sharing feedback on your experience.
 
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) if you're interested in contributing to the project.
 
@@ -258,6 +256,8 @@ codegen backend. If everything is configured correctly, `cargo oxide run vecadd`
 compiles a Rust kernel to PTX, launches it on the GPU, and prints
 `✓ SUCCESS: All 1024 elements correct!`.
 
+`CUDA_OXIDE_DEVICE_ARCH` accepts only `sm_<capability>` with an optional `a` suffix; `compute_`, `f` family targets, and malformed hints are errors.
+
 ## Examples
 
 **190+ examples** in `crates/rustc-codegen-cuda/examples/`. Highlights:
@@ -319,7 +319,7 @@ cargo oxide run gemm_sol_final
 | `dialect-ptx`        | pliron dialect modelling structured PTX               |
 | `mir-transforms`     | Optimization passes over the MIR dialect (loop unroll, ...) |
 | `nvvm-transforms`    | Target-aware LLVM dialect legalization for NVVM      |
-| `cuda-oxide-codegen` | Experimental rustc-independent PTX backend           |
+| `cuda-oxide-codegen` | Rustc-independent PTX backend                        |
 
 ### Build Tooling
 
@@ -353,7 +353,7 @@ cargo oxide run gemm_sol_final
 - LTOIR generation for Blackwell+ (device-side LTO)
 - Device FFI: Rust <-> C++/CCCL interop via LTOIR
 - MathDx integration: cuFFTDx thread-level FFT, cuBLASDx block-level GEMM
-- Tile interop (experimental): [`cutile_inter_kernel`](crates/rustc-codegen-cuda/examples/cutile_inter_kernel/README.md) chains a cutile-rs Tile kernel and a cuda-oxide SIMT PTX kernel on the same CUDA stream over shared device tensors. Intra-kernel Tile interop is work in progress and tracked in [#96](https://github.com/NVlabs/cuda-oxide/issues/96).
+- Tile interop: [`cutile_inter_kernel`](crates/rustc-codegen-cuda/examples/cutile_inter_kernel/README.md) chains a cutile-rs Tile kernel and a cuda-oxide SIMT PTX kernel on the same CUDA stream over shared device tensors. Intra-kernel Tile interop is work in progress and tracked in [#96](https://github.com/NVlabs/cuda-oxide/issues/96).
 - Host runtime: `cuda-core` (explicit control, pinned host transfers) and `cuda-async` (composable async operations)
 - Canonical Blackwell GEMM SoL example with size-specialized M256xN256/M512xN256 CLC + cta_group::2 kernels and vectorized epilogues (see `gemm_sol_final`)
 

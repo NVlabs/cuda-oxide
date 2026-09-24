@@ -20,7 +20,7 @@
 #
 # It deliberately does NOT match bare `cuda_oxide_`.  That word-space also holds
 # things this crate does not own and must not police: pliron op-attribute keys
-# (`cuda_oxide_asm_kind`, `cuda_oxide_debug_local_*`), rustc `--cfg` names
+# (`cuda_oxide_debug_local_*`), rustc `--cfg` names
 # (`cuda_oxide_internal_backend_identity`), dlopen probe symbols
 # (`cuda_oxide_probe`), and unique temp-directory names.  Those are legitimate
 # local constants, not reserved link symbols.

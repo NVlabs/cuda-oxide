@@ -446,16 +446,24 @@ fn resolve_ptx_target_threads_a_caller_supplied_source_label() {
 }
 
 #[test]
-fn resolve_ptx_target_ignores_compute_spelled_device_hints() {
-    let (target, source) = resolve_ptx_target(
-        None,
-        "CUDA_OXIDE_TARGET",
-        Some("compute_80"),
-        DetectedFeatures::Basic,
-    )
-    .unwrap();
-    assert_eq!(target.sm(), "sm_80");
-    assert_eq!(source, "feature requirement");
+fn valid_device_hints_and_explicit_compute_targets_preserve_selection() {
+    let hint = "sm_120".parse::<cuda_target_spec::DeviceArch>().unwrap();
+    for (explicit, hint, expected, source) in [
+        (None, Some(&hint), "sm_120", "detected GPU"),
+        (None, None, "sm_80", "feature requirement"),
+        (Some("compute_80"), Some(&hint), "sm_80", "test override"),
+        (Some("compute_120f"), None, "sm_120f", "test override"),
+        (Some("sm_120f"), None, "sm_120f", "test override"),
+    ] {
+        let (ptx, provenance) =
+            resolve_ptx_target(explicit, "test override", hint, DetectedFeatures::Basic).unwrap();
+        assert_eq!(ptx.sm(), expected);
+        assert_eq!(provenance, source);
+        let nvvm =
+            crate::export::resolve_nvvm_target(explicit, hint, Some(DetectedFeatures::Basic))
+                .unwrap();
+        assert_eq!(nvvm.sm(), expected);
+    }
 }
 
 #[test]
@@ -488,7 +496,7 @@ fn resolve_ptx_target_failure_does_not_assume_an_env_var_source() {
 }
 
 #[test]
-fn malformed_low_width_targets_keep_override_errors_and_ignore_device_hints() {
+fn malformed_low_width_targets_keep_override_errors() {
     for (spelling, expected_reason) in [
         (
             "sm_05",
@@ -508,15 +516,5 @@ fn malformed_low_width_targets_keep_override_errors_and_ignore_device_hints() {
         .unwrap_err();
         assert!(matches!(explicit, PipelineError::TargetSelection { .. }));
         assert_eq!(explicit.to_string(), expected_reason);
-
-        let (target, source) = resolve_ptx_target(
-            None,
-            "test override",
-            Some(spelling),
-            DetectedFeatures::Basic,
-        )
-        .unwrap();
-        assert_eq!(target.sm(), "sm_80");
-        assert_eq!(source, "feature requirement");
     }
 }

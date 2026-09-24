@@ -7,7 +7,7 @@
 //!
 //! Detects the architecture and PTX-ISA requirements of exported LLVM IR and
 //! selects the minimum `sm_XX` that can lower them. The backend owns this so an
-//! experimental frontend gets the same target selection as the Rust MIR path
+//! standalone frontend gets the same target selection as the Rust MIR path
 //! in `mir-importer`.
 
 mod arch;

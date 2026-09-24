@@ -14,7 +14,7 @@
 :class: only-dark mb-4
 ```
 
-**cuda-oxide** is an experimental Rust-to-CUDA compiler that lets you write (SIMT) GPU kernels in safe(ish), idiomatic Rust. It compiles standard Rust code directly to PTX — no DSLs, no foreign language bindings, just Rust.
+**cuda-oxide** is a Rust-to-CUDA compiler that lets you write (SIMT) GPU kernels in safe(ish), idiomatic Rust. It compiles standard Rust code directly to PTX — no DSLs, no foreign language bindings, just Rust.
 
 :::{note}
 This book assumes familiarity with the Rust programming language, including ownership, traits, and generics. Later chapters on async GPU programming also assume working knowledge of `async`/`.await` and runtimes like tokio.

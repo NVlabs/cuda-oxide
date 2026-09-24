@@ -592,7 +592,8 @@ pub(crate) fn is_kernel_configuration_marker(statement: &Stmt) -> bool {
     let module = &segments[1].ident;
     let marker = &segments[2].ident;
     if unsafe_wrapped {
-        module == "thread" && marker == "__launch_contract_config"
+        module == "thread"
+            && (marker == "__launch_contract_config" || marker == "__grid_constant_config")
     } else {
         (module == "thread"
             && (marker == "__launch_bounds_config"

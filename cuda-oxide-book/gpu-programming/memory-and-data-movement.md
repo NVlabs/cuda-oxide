@@ -190,6 +190,7 @@ primitive values that both sides interpret identically.
 | `&[T]`                         | `ptr: *const T` + `len: u64`   |
 | `DisjointSlice<T>`             | `ptr: *mut T` + `len: u64`     |
 | `T` (scalar)                   | `T` directly                   |
+| `#[grid_constant] value: &T`    | One by-value `T`; device borrows launch storage; host launch is unsafe |
 | Struct `{ a: u32, b: f32 }`    | One byval value (whole struct) |
 | Closure (with N captures)      | One byval value (whole struct) |
 | Zero-sized types               | Stripped entirely              |

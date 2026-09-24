@@ -298,7 +298,7 @@ pub struct CodegenModule {
 }
 
 impl CodegenModule {
-    /// Create a module and register every dialect accepted by experimental v1.
+    /// Create a module and register every dialect accepted by the standalone v1 API.
     pub fn new(name: &str) -> Result<Self, CompileError> {
         let name: Identifier = name
             .try_into()
@@ -677,6 +677,7 @@ impl Compiler {
             llc_override: None,
             opt_override: None,
             mir_pass_pipeline: options.mir_pass_pipeline.clone(),
+            module_disambiguator: None,
         };
         let request = ModulePipelineRequest::for_standalone_ptx(
             &backend_options,
@@ -832,7 +833,7 @@ impl Compilation {
     }
 }
 
-/// Structured failure from the experimental compiler.
+/// Structured failure from the standalone compiler.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CompileError {

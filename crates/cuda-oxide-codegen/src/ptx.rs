@@ -7,6 +7,7 @@ use crate::error::PipelineError;
 use crate::generated::GeneratedModuleRequirements;
 use crate::llvm_tools::LlvmToolchain;
 use crate::options::BackendOptions;
+use crate::pipeline::ValidatedBackendOptions;
 use crate::target::{
     ModuleRequirements, PtxIsaRequirement, detect_module_requirements_in_llvm_file,
     merge_generated_module_requirements, merge_generated_module_requirements_for_target,
@@ -111,7 +112,7 @@ fn link_libdevice(
 /// output (issue #150: an LLVM 22 `opt` emits sizeless
 /// `llvm.lifetime.start/end` intrinsics that an LLVM 21 `llc` rejects).
 ///
-/// Returns the optimized path plus caller-owned diagnostics. Experimental v1
+/// Returns the optimized path plus caller-owned diagnostics. The standalone v1 API
 /// is strict; the legacy rustc path retains its warn-and-continue behavior.
 /// LLVM's verifier prints this when a module's debug metadata is malformed.
 /// It then strips every debug node instead of failing, so `opt` and `llc`
@@ -409,7 +410,7 @@ pub struct GeneratedPtx {
 }
 
 struct PtxBackend<'a> {
-    options: &'a BackendOptions,
+    options: &'a ValidatedBackendOptions<'a>,
     toolchain: &'a LlvmToolchain,
     generated: &'a GeneratedModuleRequirements,
 }
@@ -449,16 +450,16 @@ pub struct PtxModule<'a> {
 pub(crate) fn generate_ptx(
     module: PtxModule<'_>,
     debug_kind: DebugKind,
-    opts: &BackendOptions,
+    validated: &ValidatedBackendOptions<'_>,
     diagnostic_sink: Option<fn(&str)>,
     generated: &GeneratedModuleRequirements,
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
-    let toolchain = discover_llvm_toolchain(opts)?;
+    let toolchain = discover_llvm_toolchain(validated.options())?;
     generate_ptx_discovered(
         module,
         debug_kind,
-        opts,
+        validated,
         &toolchain,
         diagnostic_sink,
         generated,
@@ -494,12 +495,13 @@ pub(crate) fn discover_llvm_toolchain(
 pub(crate) fn generate_ptx_discovered(
     module: PtxModule<'_>,
     debug_kind: DebugKind,
-    opts: &BackendOptions,
+    validated: &ValidatedBackendOptions<'_>,
     toolchain: &LlvmToolchain,
     diagnostic_sink: Option<fn(&str)>,
     generated: &GeneratedModuleRequirements,
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
+    let opts = validated.options();
     let mut diagnostics = toolchain.diagnostics.clone();
     if !opts.no_opt && toolchain.opt.is_none() {
         diagnostics.push(
@@ -525,7 +527,7 @@ pub(crate) fn generate_ptx_discovered(
         module,
         debug_kind,
         PtxBackend {
-            options: opts,
+            options: validated,
             toolchain,
             generated,
         },
@@ -540,12 +542,12 @@ pub(crate) fn generate_ptx_discovered(
 
 /// Generate PTX with an already-resolved toolchain.
 ///
-/// The experimental compiler uses this entry point so discovery is explicit
+/// The standalone compiler uses this entry point so discovery is explicit
 /// and one [`LlvmToolchain`] can be reused across compilations.
 pub(crate) fn generate_ptx_with_toolchain(
     module: PtxModule<'_>,
     debug_kind: DebugKind,
-    opts: &BackendOptions,
+    validated: &ValidatedBackendOptions<'_>,
     toolchain: &LlvmToolchain,
     generated: &GeneratedModuleRequirements,
     libdevice_path: Option<&Path>,
@@ -554,7 +556,7 @@ pub(crate) fn generate_ptx_with_toolchain(
         module,
         debug_kind,
         PtxBackend {
-            options: opts,
+            options: validated,
             toolchain,
             generated,
         },
@@ -573,15 +575,16 @@ fn generate_ptx_impl(
     libdevice_path: Option<&Path>,
 ) -> Result<GeneratedPtx, PipelineError> {
     let PtxBackend {
-        options: opts,
+        options: validated,
         toolchain,
         generated,
     } = backend;
+    let opts = validated.options();
     // Explicit, hard override: `--arch` or a caller-set `opts.target_arch`.
     let explicit_override = opts.target_arch.clone();
     // Advisory hint: the arch of the GPU in this machine, forwarded by
     // `cargo oxide run`. Used only when that GPU can actually run the kernel.
-    let device_hint = opts.device_arch_hint.clone();
+    let device_hint = validated.device_arch();
 
     let requirements = merge_generated_module_requirements(
         detect_module_requirements_in_llvm_file(module.llvm_ir)?,
@@ -601,7 +604,7 @@ fn generate_ptx_impl(
     let (target, target_source) = resolve_ptx_target_with_generated(
         explicit_override.as_deref(),
         opts.target_arch_source,
-        device_hint.as_deref(),
+        device_hint,
         detected,
         generated,
     )?;
@@ -646,12 +649,12 @@ fn generate_ptx_impl(
     // from the exact llc input below because linking and optimization can also
     // introduce backend intrinsics (notably llvm.stacksave/stackrestore).
     //
-    // Full-debug is a `-G`-style build: it keeps every local in memory and
-    // describes it with `llvm.dbg.declare`. Running `opt -O2` would promote
-    // those slots to registers and collapse their live ranges, turning most
-    // in-scope locals into `<optimized out>` under cuda-gdb. So we feed the
-    // unoptimized IR straight to llc when variable info is requested, matching
-    // nvcc `-G`. (llc itself is invoked at `-O0` for the same builds below.)
+    // Full-debug is a `-G`-style build: it keeps eligible imported locals in
+    // memory and describes them with `llvm.dbg.declare`. Running `opt -O2`
+    // would promote those slots to registers and collapse their live ranges,
+    // turning most in-scope locals into `<optimized out>` under cuda-gdb. So we
+    // feed the unoptimized IR straight to llc when variable info is requested,
+    // matching nvcc `-G`. (llc itself uses `-O0` for these builds below.)
     let optimized = if debug_kind.variables_enabled() {
         if opts.verbose {
             record_diagnostic(
@@ -1111,7 +1114,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn legacy_opt_failure_warns_but_experimental_mode_fails() {
+    fn legacy_opt_failure_warns_but_standalone_mode_fails() {
         let opt_path = posix_utility("false");
         let toolchain = LlvmToolchain {
             llc_path: posix_utility("true"),
@@ -1374,7 +1377,7 @@ mod tests {
                 public_symbols: &[],
             },
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             Some(collect_legacy_diagnostic),
             &GeneratedModuleRequirements::default(),
             None,
@@ -1458,7 +1461,7 @@ mod tests {
             let error = generate_ptx(
                 module(),
                 debug_kind,
-                &opts,
+                &ValidatedBackendOptions::for_test(&opts).unwrap(),
                 None,
                 &GeneratedModuleRequirements::default(),
                 None,
@@ -1477,7 +1480,7 @@ mod tests {
         generate_ptx(
             module(),
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             None,
             &GeneratedModuleRequirements::default(),
             None,
@@ -1723,7 +1726,7 @@ mod tests {
                 public_symbols: &["kernel".to_string()],
             },
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             &toolchain,
             &GeneratedModuleRequirements::default(),
             Some(&libdevice),
@@ -1848,7 +1851,7 @@ mod tests {
                 ],
             },
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             &toolchain,
             &GeneratedModuleRequirements::default(),
             None,
@@ -1933,7 +1936,7 @@ mod tests {
                 public_symbols: &["kernel".to_string()],
             },
             DebugKind::Off,
-            &opts,
+            &ValidatedBackendOptions::for_test(&opts).unwrap(),
             &toolchain,
             &GeneratedModuleRequirements::default(),
             Some(&libdevice),

@@ -183,9 +183,20 @@ const_fold_bin!(MirBitXorOp, APInt::xor);
 // Rust panic in debug (and unspecified otherwise), so we do not fold it.
 // ---------------------------------------------------------------------------
 
-/// Reject a shift whose amount is `>= width` (would be a Rust shift overflow).
-fn shift_in_range(value: &APInt, amount: &APInt) -> bool {
-    amount.to_u128() < value.bw() as u128
+/// The shift amount re-expressed at the shifted value's width, or `None` when
+/// it is `>= width` (a Rust shift overflow, not folded).
+///
+/// Rust allows the amount to have any integer type (`u32 << usize`), and the
+/// lowering widens or narrows it to the value's width. `APInt`'s shifts assert
+/// equal widths, so the fold has to do the same. The range check reads the
+/// amount at its own width first, so narrowing never drops a set bit.
+fn shift_amount(value: &APInt, amount: &APInt) -> Option<APInt> {
+    let width = NonZero::new(value.bw())?;
+    let amt = amount.to_u128();
+    if amt >= value.bw() as u128 {
+        return None;
+    }
+    Some(APInt::from_u128(amt, width))
 }
 
 #[op_interface_impl]
@@ -194,10 +205,10 @@ impl ConstFoldInterface for MirShlOp {
         let Some((lhs, rhs)) = int_bin_operands(ops) else {
             return vec![None];
         };
-        if !shift_in_range(&lhs.value(), &rhs.value()) {
+        let Some(amount) = shift_amount(&lhs.value(), &rhs.value()) else {
             return vec![None];
-        }
-        let res = IntegerAttr::new(lhs.get_type(), lhs.value().shl(&rhs.value()));
+        };
+        let res = IntegerAttr::new(lhs.get_type(), lhs.value().shl(&amount));
         vec![Some(Box::new(res) as AttrObj)]
     }
     fn fold_in_place(
@@ -216,13 +227,13 @@ impl ConstFoldInterface for MirShrOp {
         let Some((lhs, rhs)) = int_bin_operands(ops) else {
             return vec![None];
         };
-        if !shift_in_range(&lhs.value(), &rhs.value()) {
+        let Some(amount) = shift_amount(&lhs.value(), &rhs.value()) else {
             return vec![None];
-        }
+        };
         let res = if is_signed(ctx, &lhs) {
-            lhs.value().ashr(&rhs.value())
+            lhs.value().ashr(&amount)
         } else {
-            lhs.value().lshr(&rhs.value())
+            lhs.value().lshr(&amount)
         };
         vec![Some(
             Box::new(IntegerAttr::new(lhs.get_type(), res)) as AttrObj

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-//! Concurrency contract for one reusable experimental compiler.
+//! Concurrency contract for one reusable standalone compiler.
 
 #![cfg(unix)]
 

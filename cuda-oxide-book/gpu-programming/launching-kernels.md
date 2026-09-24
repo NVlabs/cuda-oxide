@@ -135,17 +135,25 @@ mod contracted {
     #[launch_contract(domain = 1, block = (256, 1, 1))]
     pub fn vecadd(a: &[f32], b: &[f32], mut c: DisjointSlice<f32>) {
         let idx = thread::index_1d();
+        let i = idx.get();
+
         if let Some(c_elem) = c.get_mut(idx) {
-            *c_elem = a[idx.get()] + b[idx.get()];
+            *c_elem = a[i] + b[i];
         }
     }
 }
 
-let module = contracted::load(&ctx)?;
+// SAFETY: this package embeds the artifact compiled from this `contracted` module.
+let module = unsafe { contracted::load(&ctx)? };
 let config = LaunchConfig1D::new(4, 256, 0);
 let prepared = module.prepare_vecadd(config)?;
 module.vecadd(&stream, &prepared, &a, &b, &mut c)?;
 ```
+
+Loading a contracted module is unsafe because the caller must ensure the
+selected artifact was compiled from this module. A matching package or kernel
+name alone does not prove that its ABI and launch requirements match. Once the
+correct artifact is loaded, preparation checks its declared launch contract.
 
 `prepare_vecadd` checks the exact block shape, device limits, dynamic shared
 memory, context, and any cluster/cooperative requirements. `LaunchConfig1D`

@@ -21,7 +21,7 @@
 //! - `gemm_sol_persistent` (Phase 4A): Persistent + TMEM accum pipeline
 //! - `gemm_sol_clc` (Phase 4B): CLC tile scheduling (no multicast)
 //! - `gemm_sol_clc_multicast` (Phase 4C): CLC + TMA multicast for B tiles
-//! - `gemm_sol_clc_multicast_4_stage_pipeline` (Phase 4D, experimental): 4 SMEM stages, no MCAST_BAR
+//! - `gemm_sol_clc_multicast_4_stage_pipeline` (Phase 4D): 4 SMEM stages, no MCAST_BAR
 //!
 //! All use:
 //! - K-loop with accumulation (BK=64, 4 MMAs per K-tile)
@@ -3371,7 +3371,7 @@ mod kernels {
         }
     }
 
-    /// Phase 4D (experimental): CLC + TMA multicast with 4 SMEM stages and no MCAST_BAR.
+    /// Phase 4D: CLC + TMA multicast with 4 SMEM stages and no MCAST_BAR.
     ///
     /// Blackwell GEMM kernel: CLC + cta_group::2 + 4-stage SMEM pipeline.
     ///
@@ -4427,7 +4427,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // ── Phase 4D (experimental): 4-stage pipeline + CTA pairs + TMA multicast + CLC + no MCAST_BAR ──
+        // ── Phase 4D: 4-stage pipeline + CTA pairs + TMA multicast + CLC + no MCAST_BAR ──
         println!("\n\n═══════════════════════════════════════════════════════");
         println!("  Phase 4D: CLC + 4-stage multicast (no MCAST_BAR)");
         println!("═══════════════════════════════════════════════════════\n");

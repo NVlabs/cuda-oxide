@@ -98,7 +98,7 @@ pub fn convert_extern_shared_dc(
                 std::num::NonZeroUsize::new(64).unwrap(),
             ),
         );
-        let offset_const = llvm::ConstantOp::new(ctx, offset_attr.into());
+        let offset_const = llvm::ConstantOp::new(ctx, Box::new(offset_attr));
         rewriter.insert_operation(ctx, offset_const.get_operation());
         let offset_value = offset_const.get_operation().deref(ctx).get_result(0);
 

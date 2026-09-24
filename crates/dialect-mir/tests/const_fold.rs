@@ -27,6 +27,7 @@ use pliron::basic_block::BasicBlock;
 use pliron::builtin::attributes::{IntegerAttr, TypeAttr};
 use pliron::builtin::op_interfaces::OperandSegmentInterface;
 use pliron::builtin::types::{FunctionType, IntegerType, Signedness};
+use pliron::common_traits::Verify;
 use pliron::context::{Context, Ptr};
 use pliron::op::{Op, op_cast};
 use pliron::operation::Operation;
@@ -65,37 +66,37 @@ fn int_ty(ctx: &mut Context, width: u32, sign: Signedness) -> TypedHandle<Intege
 }
 
 /// An `IntegerAttr` of `ty` holding `v`, as an `AttrObj` (what `check_fold` takes).
-fn iattr(ctx: &Context, ty: TypedHandle<IntegerType>, v: i64) -> AttrObj {
+fn iattr(ctx: &Context, ty: TypedHandle<IntegerType>, v: impl Into<i128>) -> AttrObj {
     let width = ty.deref(ctx).width() as usize;
     IntegerAttr::new(
         ty,
-        pliron::utils::apint::APInt::from_i64(v, NonZero::new(width).unwrap()),
+        pliron::utils::apint::APInt::from_i128(v.into(), NonZero::new(width).unwrap()),
     )
     .into()
 }
 
-/// Append an `i32` constant (its value is irrelevant: the fold reads the attrs
-/// we pass to `check_fold`, not the operand IR) and return its SSA value, to use
-/// as a placeholder operand when building the op under test.
-fn placeholder(ctx: &mut Context, blk: Ptr<BasicBlock>) -> Value {
-    let ty = int_ty(ctx, 32, Signedness::Signless);
+/// Append a constant with the same type and value as an operand attribute.
+fn constant_operand(ctx: &mut Context, blk: Ptr<BasicBlock>, attr: &AttrObj) -> Value {
+    let attr = attr.downcast_ref::<IntegerAttr>().unwrap().clone();
+    attr.verify(ctx).unwrap();
     let op = Operation::new(
         ctx,
         MirConstantOp::get_concrete_op_info(),
-        vec![ty.into()],
+        vec![attr.get_type().into()],
         vec![],
         vec![],
         0,
     );
-    MirConstantOp::new(op).set_attr_value(
-        ctx,
-        IntegerAttr::new(
-            ty,
-            pliron::utils::apint::APInt::from_i64(0, NonZero::new(32).unwrap()),
-        ),
-    );
+    MirConstantOp::new(op).set_attr_value(ctx, attr);
     op.insert_at_back(blk, ctx);
     op.deref(ctx).get_result(0)
+}
+
+/// A placeholder for tests that pass their constant operands directly to the fold.
+fn placeholder(ctx: &mut Context, blk: Ptr<BasicBlock>) -> Value {
+    let ty = int_ty(ctx, 32, Signedness::Signless);
+    let attr = iattr(ctx, ty, 0);
+    constant_operand(ctx, blk, &attr)
 }
 
 /// Build a two-operand op of `$opty` (result type `$res_ty`), then fold it with
@@ -107,8 +108,8 @@ macro_rules! fold_bin {
         let a_attr = $a;
         let b_attr = $b;
         let res_ty: pliron::r#type::TypeHandle = $res_ty.into();
-        let lv = placeholder($ctx, $blk);
-        let rv = placeholder($ctx, $blk);
+        let lv = constant_operand($ctx, $blk, &a_attr);
+        let rv = constant_operand($ctx, $blk, &b_attr);
         let op = Operation::new(
             $ctx,
             <$opty>::get_concrete_op_info(),
@@ -119,17 +120,19 @@ macro_rules! fold_bin {
         );
         op.insert_at_back($blk, $ctx);
         let op_dyn = Operation::get_op_dyn(op, $ctx);
+        op_dyn.verify($ctx).unwrap();
         let fold = op_cast::<dyn ConstFoldInterface>(op_dyn.as_ref())
             .expect("op implements ConstFoldInterface");
         let out = fold.check_fold($ctx, &[Some(a_attr), Some(b_attr)]);
         assert_eq!(out.len(), 1, "a binary op has exactly one result");
         match &out[0] {
-            Some(attr) => Some(
-                attr.downcast_ref::<IntegerAttr>()
-                    .unwrap()
-                    .value()
-                    .to_i128(),
-            ),
+            Some(attr) => {
+                let attr = attr.downcast_ref::<IntegerAttr>().unwrap();
+                attr.verify($ctx).unwrap();
+                let folded_ty: pliron::r#type::TypeHandle = attr.get_type().into();
+                assert_eq!(folded_ty, res_ty, "fold must preserve the result type");
+                Some(attr.value().to_i128())
+            }
             None => None,
         }
     }};
@@ -289,6 +292,197 @@ fn shifts_fold_and_respect_signedness() {
         ),
         Some(-4)
     );
+}
+
+/// Rust lets the shift amount have a different width from the shifted value
+/// (`u32 << usize`), and the lowering accepts that. After `#[unroll]` turns a
+/// `usize` loop counter into a constant, SCCP hands the fold exactly that pair.
+#[test]
+fn shifts_fold_with_a_shift_amount_of_a_different_width() {
+    let mut ctx = ctx();
+    let (_r, b) = func_with_entry(&mut ctx);
+    let u32t = int_ty(&mut ctx, 32, Signedness::Unsigned);
+    let u64t = int_ty(&mut ctx, 64, Signedness::Unsigned);
+    let i32t = int_ty(&mut ctx, 32, Signedness::Signed);
+    let u8t = int_ty(&mut ctx, 8, Signedness::Unsigned);
+
+    // wider amount: 1u32 << 4usize == 16, result keeps the value's type
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShlOp,
+            u32t,
+            iattr(&ctx, u32t, 1),
+            iattr(&ctx, u64t, 4)
+        ),
+        Some(16)
+    );
+
+    // wider amount, logical: 16u32 >> 2usize == 4
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShrOp,
+            u32t,
+            iattr(&ctx, u32t, 16),
+            iattr(&ctx, u64t, 2)
+        ),
+        Some(4)
+    );
+
+    // wider amount, arithmetic: (-16i32) >> 2usize == -4
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShrOp,
+            i32t,
+            iattr(&ctx, i32t, -16),
+            iattr(&ctx, u64t, 2)
+        ),
+        Some(-4)
+    );
+
+    // narrower amount: 1u64 << 40u8 == 2^40
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShlOp,
+            u64t,
+            iattr(&ctx, u64t, 1),
+            iattr(&ctx, u8t, 40)
+        ),
+        Some(1i128 << 40)
+    );
+
+    // the range check still reads the amount at its own width: 2^32 must not
+    // be truncated to 0 and folded
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShlOp,
+            u32t,
+            iattr(&ctx, u32t, 1),
+            iattr(&ctx, u64t, 1i64 << 32)
+        ),
+        None
+    );
+    assert_eq!(
+        fold_bin!(
+            &mut ctx,
+            b,
+            MirShrOp,
+            u32t,
+            iattr(&ctx, u32t, 1),
+            iattr(&ctx, u64t, 32)
+        ),
+        None
+    );
+}
+
+#[test]
+fn shifts_preserve_128_bit_values_and_reject_invalid_counts() {
+    let mut ctx = ctx();
+    let (_r, b) = func_with_entry(&mut ctx);
+    let u8t = int_ty(&mut ctx, 8, Signedness::Unsigned);
+    let i8t = int_ty(&mut ctx, 8, Signedness::Signed);
+    let u32t = int_ty(&mut ctx, 32, Signedness::Unsigned);
+    let u128t = int_ty(&mut ctx, 128, Signedness::Unsigned);
+    let i128t = int_ty(&mut ctx, 128, Signedness::Signed);
+
+    // Narrow counts cover zero and width - 1. Right-shift signedness comes
+    // from the value, even when the count has the opposite signedness.
+    for amount in [0u32, 127] {
+        assert_eq!(
+            fold_bin!(
+                &mut ctx,
+                b,
+                MirShlOp,
+                u128t,
+                iattr(&ctx, u128t, 1),
+                iattr(&ctx, i8t, amount)
+            ),
+            Some(1i128 << amount)
+        );
+        assert_eq!(
+            fold_bin!(
+                &mut ctx,
+                b,
+                MirShrOp,
+                u128t,
+                iattr(&ctx, u128t, i128::MIN),
+                iattr(&ctx, i8t, amount)
+            ),
+            Some(((1u128 << 127) >> amount) as i128)
+        );
+        assert_eq!(
+            fold_bin!(
+                &mut ctx,
+                b,
+                MirShrOp,
+                i128t,
+                iattr(&ctx, i128t, -16),
+                iattr(&ctx, u8t, amount)
+            ),
+            Some(-16i128 >> amount)
+        );
+    }
+
+    // Check the count before narrowing: bits above 64 must survive the guard.
+    for amount in [32, 33, 128, 1i128 << 64, 1i128 << 96, i128::MIN, -1] {
+        assert_eq!(
+            fold_bin!(
+                &mut ctx,
+                b,
+                MirShlOp,
+                u32t,
+                iattr(&ctx, u32t, 1),
+                iattr(&ctx, u128t, amount)
+            ),
+            None
+        );
+        assert_eq!(
+            fold_bin!(
+                &mut ctx,
+                b,
+                MirShrOp,
+                u32t,
+                iattr(&ctx, u32t, -1),
+                iattr(&ctx, u128t, amount)
+            ),
+            None
+        );
+    }
+
+    // Negative narrow counts must not become valid shifts of a wider value.
+    for amount in [-1, -128] {
+        assert_eq!(
+            fold_bin!(
+                &mut ctx,
+                b,
+                MirShlOp,
+                u128t,
+                iattr(&ctx, u128t, 1),
+                iattr(&ctx, i8t, amount)
+            ),
+            None
+        );
+        assert_eq!(
+            fold_bin!(
+                &mut ctx,
+                b,
+                MirShrOp,
+                i128t,
+                iattr(&ctx, i128t, -16),
+                iattr(&ctx, i8t, amount)
+            ),
+            None
+        );
+    }
 }
 
 #[test]

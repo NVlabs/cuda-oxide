@@ -31,7 +31,7 @@ use pliron::basic_block::BasicBlock;
 use pliron::builtin::op_interfaces::CallOpCallable;
 use pliron::context::{Context, Ptr};
 use pliron::irbuild::dialect_conversion::{DialectConversionRewriter, OperandsInfo};
-use pliron::irbuild::inserter::Inserter;
+use pliron::irbuild::inserter::{Inserter, OpInsertionPoint};
 use pliron::irbuild::rewriter::Rewriter;
 use pliron::op::Op;
 use pliron::operation::Operation;
@@ -191,11 +191,12 @@ pub(crate) fn convert_cond_branch(
     Ok(())
 }
 
-/// Convert `mir.assert` to conditional branch with abort block.
+/// Split at `mir.assert`, continuing on success and trapping on failure.
 ///
-/// MIR assert is converted to:
-/// 1. Create an abort block: `llvm.call @llvm.trap()` + `llvm.unreachable`
-/// 2. `llvm.cond_br` to success block (if true) or abort block (if false)
+/// An assertion can be followed by arbitrary operations after CFG merging:
+/// 1. Move the operations after the assertion into a continuation block.
+/// 2. Create an abort block: `llvm.call @llvm.trap()` + `llvm.unreachable`.
+/// 3. `llvm.cond_br` to the continuation (if true) or abort block (if false).
 ///
 /// The abort block is inserted directly (not through the rewriter), since it's
 /// a new block, not a replacement for anything.
@@ -207,25 +208,21 @@ pub(crate) fn convert_assert(
 ) -> Result<()> {
     let operands: Vec<_> = op.deref(ctx).operands().collect();
 
-    let (cond, args) = match operands.as_slice() {
-        [cond, args @ ..] => (*cond, args),
-        _ => return pliron::input_err_noloc!("Assert requires at least 1 operand"),
+    let cond = match operands.as_slice() {
+        [cond] => *cond,
+        _ => return pliron::input_err_noloc!("Assert requires exactly 1 operand"),
     };
 
-    let successors: Vec<_> = op.deref(ctx).successors().collect();
-    let success_block = match successors.as_slice() {
-        [blk] => *blk,
-        _ => return pliron::input_err_noloc!("Assert requires exactly 1 successor"),
-    };
-
-    let region = match op
+    let block = op
         .deref(ctx)
         .get_parent_block()
-        .and_then(|b| b.deref(ctx).get_parent_region())
-    {
-        Some(r) => r,
-        None => return pliron::input_err_noloc!("Block has no parent region"),
-    };
+        .ok_or_else(|| pliron::input_error_noloc!("Assert has no parent block"))?;
+    let region = block
+        .deref(ctx)
+        .get_parent_region()
+        .ok_or_else(|| pliron::input_error_noloc!("Block has no parent region"))?;
+    let success_block =
+        rewriter.split_block(ctx, block, OpInsertionPoint::AfterOperation(op), None);
 
     let abort_block = BasicBlock::new(ctx, None, vec![]);
     abort_block.insert_at_back(region, ctx);
@@ -242,7 +239,7 @@ pub(crate) fn convert_assert(
     let unreachable = llvm::UnreachableOp::new(ctx).get_operation();
     crate::convert::preserve_location(ctx, op, unreachable).insert_at_back(abort_block, ctx);
 
-    let llvm_br = llvm::CondBrOp::new(ctx, cond, success_block, args.to_vec(), abort_block, vec![]);
+    let llvm_br = llvm::CondBrOp::new(ctx, cond, success_block, vec![], abort_block, vec![]);
     crate::convert::preserve_location(ctx, op, llvm_br.get_operation());
     rewriter.insert_operation(ctx, llvm_br.get_operation());
     rewriter.erase_operation(ctx, op);
@@ -324,7 +321,8 @@ mod tests {
 
     use crate::convert::ops::test_util::*;
     use dialect_mir::ops as mir;
-    use dialect_mir::types::{MirStructType, MirTupleType, StructAbiKind};
+    use dialect_mir::types::{MirPtrType, MirStructType, MirTupleType, StructAbiKind};
+    use llvm_export::op_interfaces::VolatilityOpInterface;
     use llvm_export::ops as llvm;
     use pliron::builtin::op_interfaces::{
         BranchOpInterface, CallOpCallable, CallOpInterface, OperandSegmentInterface,
@@ -627,8 +625,6 @@ mod tests {
         let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty], vec![]);
         let cond = entry.deref(&ctx).get_argument(0);
-        let success = append_block(&mut ctx, entry, vec![]);
-        append_mir_return(&mut ctx, success, vec![]);
         let assert_loc = Location::SrcPos {
             src: Source::new_from_file(&mut ctx, PathBuf::from("kernel.rs")),
             pos: combine::stream::position::SourcePosition {
@@ -637,19 +633,10 @@ mod tests {
             },
         };
 
-        let (operands, segment_sizes) =
-            mir::MirAssertOp::compute_segment_sizes(vec![vec![cond], vec![]]);
-        let assert_op = Operation::new(
-            &mut ctx,
-            mir::MirAssertOp::get_concrete_op_info(),
-            vec![],
-            operands,
-            vec![success],
-            0,
-        );
-        mir::MirAssertOp::new(assert_op).set_operand_segment_sizes(&ctx, segment_sizes);
+        let assert_op = mir::MirAssertOp::new(&mut ctx, cond).get_operation();
         assert_op.deref_mut(&ctx).set_loc(assert_loc.clone());
         assert_op.insert_at_back(entry, &ctx);
+        append_mir_return(&mut ctx, entry, vec![]);
 
         crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
 
@@ -909,29 +896,234 @@ mod tests {
     }
 
     #[test]
-    fn convert_assert_missing_successor_errors() {
+    fn consecutive_asserts_preserve_continuations_and_forwarded_values() {
+        let mut ctx = make_ctx();
+        let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let i32_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Signless).into();
+        let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty, i1_ty, i32_ty], vec![i32_ty]);
+        let first_condition = entry.deref(&ctx).get_argument(0);
+        let second_condition = entry.deref(&ctx).get_argument(1);
+        let input = entry.deref(&ctx).get_argument(2);
+
+        mir::MirAssertOp::new(&mut ctx, first_condition)
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        let doubled = Operation::new(
+            &mut ctx,
+            mir::MirAddOp::get_concrete_op_info(),
+            vec![i32_ty],
+            vec![input, input],
+            vec![],
+            0,
+        );
+        doubled.insert_at_back(entry, &ctx);
+        mir::MirAssertOp::new(&mut ctx, second_condition)
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        let doubled_value = doubled.deref(&ctx).get_result(0);
+        let tripled = Operation::new(
+            &mut ctx,
+            mir::MirAddOp::get_concrete_op_info(),
+            vec![i32_ty],
+            vec![doubled_value, input],
+            vec![],
+            0,
+        );
+        tripled.insert_at_back(entry, &ctx);
+        let result = tripled.deref(&ctx).get_result(0);
+        let exit = append_block(&mut ctx, entry, vec![i32_ty]);
+        let exit_value = exit.deref(&ctx).get_argument(0);
+        append_mir_return(&mut ctx, exit, vec![exit_value]);
+        let goto = Operation::new(
+            &mut ctx,
+            mir::MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![result],
+            vec![exit],
+            0,
+        );
+        goto.insert_at_back(entry, &ctx);
+
+        crate::lower_mir_to_llvm(&mut ctx, module_ptr).expect("lowering failed");
+        pliron::operation::verify_operation(module_ptr, &ctx).expect("invalid lowered SSA");
+        let blocks = kernel_blocks(&ctx, module_ptr);
+        assert_eq!(count_ops::<mir::MirAssertOp>(&ctx, &blocks), 0);
+        assert_eq!(count_ops::<llvm::CondBrOp>(&ctx, &blocks), 2);
+        assert_eq!(count_ops::<llvm::UnreachableOp>(&ctx, &blocks), 2);
+        assert_eq!(count_ops::<llvm::CallOp>(&ctx, &blocks), 2);
+        let adds = find_all::<llvm::AddOp>(&ctx, &blocks);
+        assert_eq!(adds.len(), 2);
+        let branches = find_all::<llvm::CondBrOp>(&ctx, &blocks);
+        for (branch, add) in branches.iter().zip(&adds) {
+            assert_eq!(
+                branch.get_operation().deref(&ctx).get_successor(0),
+                add.get_operation().deref(&ctx).get_parent_block().unwrap(),
+                "the operation after each assertion must be on its success path"
+            );
+        }
+        let final_add = adds[1].get_operation().deref(&ctx).get_result(0);
+        let continuation = adds[1]
+            .get_operation()
+            .deref(&ctx)
+            .get_parent_block()
+            .unwrap();
+        let final_branch = continuation.deref(&ctx).get_terminator(&ctx).unwrap();
+        let final_branch = Operation::get_op::<llvm::BrOp>(final_branch, &ctx).unwrap();
+        assert_eq!(final_branch.successor_operands(&ctx, 0), vec![final_add]);
+    }
+
+    #[test]
+    fn consecutive_asserts_preserve_volatile_store_order_and_loop_backedge() {
+        let mut ctx = make_ctx();
+        let bool_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
+        let value_ty: TypeHandle = IntegerType::get(&ctx, 32, Signedness::Unsigned).into();
+        let pointer_ty = MirPtrType::get_generic(&mut ctx, value_ty, true).into();
+        let (module, entry) = build_kernel(
+            &mut ctx,
+            vec![
+                bool_ty, bool_ty, bool_ty, pointer_ty, value_ty, value_ty, value_ty,
+            ],
+            vec![value_ty],
+        );
+        let first_condition = entry.deref(&ctx).get_argument(0);
+        let second_condition = entry.deref(&ctx).get_argument(1);
+        let repeat = entry.deref(&ctx).get_argument(2);
+        let pointer = entry.deref(&ctx).get_argument(3);
+        let initial = entry.deref(&ctx).get_argument(4);
+        let middle = entry.deref(&ctx).get_argument(5);
+        let final_value = entry.deref(&ctx).get_argument(6);
+        let body = append_block(&mut ctx, entry, vec![value_ty]);
+        let exit = append_block(&mut ctx, entry, vec![value_ty]);
+        let carried = body.deref(&ctx).get_argument(0);
+        let returned = exit.deref(&ctx).get_argument(0);
+        append_mir_return(&mut ctx, exit, vec![returned]);
+        Operation::new(
+            &mut ctx,
+            mir::MirGotoOp::get_concrete_op_info(),
+            vec![],
+            vec![initial],
+            vec![body],
+            0,
+        )
+        .insert_at_back(entry, &ctx);
+
+        // A failed first check must retain only the first store; a failed
+        // second check must retain the first two. Passing both reaches the
+        // third store and the original branch, including its loop argument.
+        for (value, condition) in [
+            (carried, Some(first_condition)),
+            (middle, Some(second_condition)),
+            (final_value, None),
+        ] {
+            let store = Operation::new(
+                &mut ctx,
+                mir::MirStoreOp::get_concrete_op_info(),
+                vec![],
+                vec![pointer, value],
+                vec![],
+                0,
+            );
+            mir::MirStoreOp::new(store).set_volatile(&mut ctx, true);
+            store.insert_at_back(body, &ctx);
+            if let Some(condition) = condition {
+                mir::MirAssertOp::new(&mut ctx, condition)
+                    .get_operation()
+                    .insert_at_back(body, &ctx);
+            }
+        }
+        let (operands, sizes) = mir::MirCondBranchOp::compute_segment_sizes(vec![
+            vec![repeat],
+            vec![final_value],
+            vec![middle],
+        ]);
+        let branch = Operation::new(
+            &mut ctx,
+            mir::MirCondBranchOp::get_concrete_op_info(),
+            vec![],
+            operands,
+            vec![body, exit],
+            0,
+        );
+        mir::MirCondBranchOp::new(branch).set_operand_segment_sizes(&ctx, sizes);
+        branch.insert_at_back(body, &ctx);
+
+        pliron::operation::verify_operation(module, &ctx).expect("invalid input SSA");
+        crate::lower_mir_to_llvm(&mut ctx, module).expect("lowering failed");
+        pliron::operation::verify_operation(module, &ctx).expect("invalid lowered SSA");
+        let blocks = kernel_blocks(&ctx, module);
+        let stores = find_all::<llvm::StoreOp>(&ctx, &blocks);
+        assert_eq!(stores.len(), 3);
+        assert_eq!(count_ops::<mir::MirAssertOp>(&ctx, &blocks), 0);
+        assert_eq!(count_ops::<llvm::CondBrOp>(&ctx, &blocks), 3);
+        for (store, expected) in stores.iter().zip([carried, middle, final_value]) {
+            assert_eq!(store.get_operation().deref(&ctx).get_operand(0), expected);
+            assert!(store.is_volatile(&ctx));
+        }
+        for (index, condition) in [first_condition, second_condition].into_iter().enumerate() {
+            let block = stores[index]
+                .get_operation()
+                .deref(&ctx)
+                .get_parent_block()
+                .unwrap();
+            let terminator = block.deref(&ctx).get_terminator(&ctx).unwrap();
+            let guard = Operation::get_op::<llvm::CondBrOp>(terminator, &ctx).unwrap();
+            assert_eq!(guard.get_operation().deref(&ctx).get_operand(0), condition);
+            assert_eq!(
+                guard.get_operation().deref(&ctx).get_successor(0),
+                stores[index + 1]
+                    .get_operation()
+                    .deref(&ctx)
+                    .get_parent_block()
+                    .unwrap(),
+            );
+            let failure = guard.get_operation().deref(&ctx).get_successor(1);
+            let abort_ops: Vec<_> = failure.deref(&ctx).iter(&ctx).collect();
+            assert_eq!(abort_ops.len(), 2);
+            let trap = Operation::get_op::<llvm::CallOp>(abort_ops[0], &ctx).unwrap();
+            let CallOpCallable::Direct(callee) = trap.callee(&ctx) else {
+                panic!("expected direct trap call");
+            };
+            assert_eq!(callee.to_string(), "llvm_trap");
+            assert!(Operation::get_op::<llvm::UnreachableOp>(abort_ops[1], &ctx).is_some());
+        }
+        let tail = stores[2]
+            .get_operation()
+            .deref(&ctx)
+            .get_parent_block()
+            .unwrap();
+        let terminator = tail.deref(&ctx).get_terminator(&ctx).unwrap();
+        let branch = Operation::get_op::<llvm::CondBrOp>(terminator, &ctx).unwrap();
+        assert_eq!(branch.get_operation().deref(&ctx).get_operand(0), repeat);
+        assert_eq!(branch.get_operation().deref(&ctx).get_successor(0), body);
+        assert_eq!(branch.get_operation().deref(&ctx).get_successor(1), exit);
+        assert_eq!(branch.successor_operands(&ctx, 0), vec![final_value]);
+        assert_eq!(branch.successor_operands(&ctx, 1), vec![middle]);
+    }
+
+    #[test]
+    fn convert_assert_rejects_legacy_successor() {
         let mut ctx = make_ctx();
         let i1_ty: TypeHandle = IntegerType::get(&ctx, 1, Signedness::Signless).into();
         let (module_ptr, entry) = build_kernel(&mut ctx, vec![i1_ty], vec![]);
         let cond = entry.deref(&ctx).get_argument(0);
 
-        let (operands, segment_sizes) =
-            mir::MirAssertOp::compute_segment_sizes(vec![vec![cond], vec![]]);
+        let success = append_block(&mut ctx, entry, vec![]);
+        append_mir_return(&mut ctx, success, vec![]);
         let assert_op = Operation::new(
             &mut ctx,
             mir::MirAssertOp::get_concrete_op_info(),
             vec![],
-            operands,
-            vec![],
+            vec![cond],
+            vec![success],
             0,
         );
-        mir::MirAssertOp::new(assert_op).set_operand_segment_sizes(&ctx, segment_sizes);
         assert_op.insert_at_back(entry, &ctx);
+        append_mir_return(&mut ctx, entry, vec![]);
 
         let err = crate::lower_mir_to_llvm(&mut ctx, module_ptr)
-            .expect_err("assert without successor must fail");
+            .expect_err("assert with a successor must fail");
         assert!(
-            err.err.to_string().contains("exactly 1 successor"),
+            err.err.to_string().contains("no successors"),
             "unexpected error: {}",
             err.err
         );

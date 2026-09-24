@@ -42,7 +42,7 @@ pub fn create_i1_const(
     let const_value = if value { 1i64 } else { 0i64 };
     let apint = APInt::from_i64(const_value, NonZeroUsize::new(1).unwrap());
     let attr = pliron::builtin::attributes::IntegerAttr::new(i1_ty, apint);
-    let const_op = llvm::ConstantOp::new(ctx, attr.into());
+    let const_op = llvm::ConstantOp::new(ctx, Box::new(attr));
     rewriter.insert_operation(ctx, const_op.get_operation());
     const_op.get_operation().deref(ctx).get_result(0)
 }
@@ -56,7 +56,7 @@ pub fn create_i32_const(
     let i32_ty = IntegerType::get(ctx, 32, Signedness::Signless);
     let apint = APInt::from_i64(value as i64, NonZeroUsize::new(32).unwrap());
     let attr = pliron::builtin::attributes::IntegerAttr::new(i32_ty, apint);
-    let const_op = llvm::ConstantOp::new(ctx, attr.into());
+    let const_op = llvm::ConstantOp::new(ctx, Box::new(attr));
     rewriter.insert_operation(ctx, const_op.get_operation());
     const_op.get_operation().deref(ctx).get_result(0)
 }
@@ -70,7 +70,7 @@ pub fn create_i64_const(
     let i64_ty = IntegerType::get(ctx, 64, Signedness::Signless);
     let apint = APInt::from_i64(value, NonZeroUsize::new(64).unwrap());
     let attr = pliron::builtin::attributes::IntegerAttr::new(i64_ty, apint);
-    let const_op = llvm::ConstantOp::new(ctx, attr.into());
+    let const_op = llvm::ConstantOp::new(ctx, Box::new(attr));
     rewriter.insert_operation(ctx, const_op.get_operation());
     const_op.get_operation().deref(ctx).get_result(0)
 }
@@ -450,7 +450,7 @@ mod tests {
             .downcast_ref::<IntegerType>()
             .expect("constant result must have an integer type");
         let value_attr = constant.get_value(ctx);
-        let integer_attr = value_attr
+        let integer_attr = (&*value_attr as &dyn pliron::attribute::Attribute)
             .downcast_ref::<IntegerAttr>()
             .expect("constant value must be an integer attribute");
         let attr_ty: TypeHandle = integer_attr.get_type().into();
@@ -623,21 +623,21 @@ mod tests {
 
         let asm = &asms[0];
         assert_eq!(
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("bar.sync 0;")
         );
         assert_eq!(
-            asm.get_attr_inline_asm_constraints(&ctx)
+            asm.get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("~{memory}")
         );
         assert_eq!(llvm::asm_kind_opt(&ctx, asm), Some(AsmKind::Convergent));
         assert!(
-            asm.get_attr_inline_asm_convergent(&ctx)
-                .is_some_and(|b| bool::from((*b).clone()))
+            asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
     }
 
@@ -682,13 +682,13 @@ mod tests {
 
         let asm = &asms[0];
         assert_eq!(
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("st.global.u32 [$0], $1;")
         );
         assert_eq!(
-            asm.get_attr_inline_asm_constraints(&ctx)
+            asm.get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("l,r,~{memory}")
@@ -702,8 +702,8 @@ mod tests {
         );
         assert_eq!(llvm::asm_kind_opt(&ctx, asm), Some(AsmKind::SideEffect));
         assert!(
-            asm.get_attr_inline_asm_convergent(&ctx)
-                .is_some_and(|b| !bool::from((*b).clone()))
+            !asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
     }
 

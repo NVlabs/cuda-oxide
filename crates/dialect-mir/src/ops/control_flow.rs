@@ -5,7 +5,7 @@
 
 //! MIR control flow operations.
 //!
-//! This module defines terminator and branch operations for the MIR dialect.
+//! This module defines assertions, terminators, and branches for the MIR dialect.
 
 use pliron::{
     builtin::{
@@ -331,34 +331,41 @@ impl BranchOpInterface for MirCondBranchOp {
 
 /// MIR assert operation.
 ///
-/// Assert condition is true, else abort the kernel.
-/// Lowered to a conditional branch whose failure side traps (`llvm.trap` -> PTX `trap`)
+/// Continue when the condition is true; otherwise trap (`llvm.trap` -> PTX `trap`).
+/// This is an effectful operation within a block, not a branch or terminator.
+/// A Rust MIR assert terminator imports as this operation followed by `mir.goto`.
+/// Keeping the check separate from the branch lets generic CFG simplification
+/// merge blocks without erasing the check's observable failure behavior.
+/// LLVM lowering splits the block here to make both outcomes explicit.
 ///
 /// # Operands
 ///
 /// - `cond`: Boolean (i1) condition.
-/// - Variadic operands for successor block arguments.
-///
-/// # Successors
-///
-/// Exactly 1 successor (target block on success).
 ///
 /// # Verification
 ///
-/// - Condition must be `i1`.
-/// - Must have exactly 1 successor.
-/// - Operand types (after condition) must match successor block argument types.
+/// - Exactly one operand, whose type must be `i1`.
+/// - No successors or results.
 #[pliron_op(
     name = "mir.assert",
     format,
-    interfaces = [NResultsInterface<0>, IsTerminatorInterface, OperandSegmentInterface]
+    interfaces = [NResultsInterface<0>]
 )]
 pub struct MirAssertOp;
 
 impl MirAssertOp {
-    /// Create a new MirAssertOp wrapper.
-    pub fn new(op: Ptr<Operation>) -> Self {
-        MirAssertOp { op }
+    /// Check `condition` and trap if it is false.
+    pub fn new(ctx: &mut Context, condition: Value) -> Self {
+        Self {
+            op: Operation::new(
+                ctx,
+                Self::get_concrete_op_info(),
+                vec![],
+                vec![condition],
+                vec![],
+                0,
+            ),
+        }
     }
 }
 
@@ -366,16 +373,14 @@ impl Verify for MirAssertOp {
     fn verify(&self, ctx: &Context) -> Result<(), Error> {
         let op = &*self.get_operation().deref(ctx);
 
-        if op.get_num_successors() != 1 {
-            return verify_err!(op.loc(), "MirAssertOp must have exactly 1 successor");
+        if op.get_num_successors() != 0 {
+            return verify_err!(op.loc(), "MirAssertOp must have no successors");
         }
-        let succ = op.get_successor(0);
-        let succ_block = succ.deref(ctx);
 
-        if op.get_num_operands() < 1 {
+        if op.get_num_operands() != 1 {
             return verify_err!(
                 op.loc(),
-                "MirAssertOp must have at least 1 operand (condition)"
+                "MirAssertOp must have exactly 1 operand (condition)"
             );
         }
         let cond = op.get_operand(0);
@@ -390,49 +395,7 @@ impl Verify for MirAssertOp {
             return verify_err!(op.loc(), "MirAssertOp condition must be integer type");
         }
 
-        if op.get_num_operands() != 1 + succ_block.get_num_arguments() {
-            return verify_err!(
-                op.loc(),
-                "MirAssertOp operand count must match 1 + successor argument count"
-            );
-        }
-
-        for i in 0..succ_block.get_num_arguments() {
-            let arg = succ_block.get_argument(i);
-            let opd = op.get_operand(i + 1);
-            if opd.get_type(ctx) != arg.get_type(ctx) {
-                return verify_err!(
-                    op.loc(),
-                    "MirAssertOp operand type mismatch with successor argument"
-                );
-            }
-        }
-
         Ok(())
-    }
-}
-
-#[op_interface_impl]
-impl BranchOpInterface for MirAssertOp {
-    fn successor_operands(&self, ctx: &Context, succ_idx: usize) -> Vec<Value> {
-        assert!(succ_idx == 0, "MirAssertOp has exactly one successor");
-        // Segment 0 = condition, segment 1 = successor args
-        self.get_segment(ctx, 1)
-    }
-
-    fn add_successor_operand(&self, ctx: &mut Context, succ_idx: usize, operand: Value) -> usize {
-        assert!(succ_idx == 0, "MirAssertOp has exactly one successor");
-        self.push_to_segment(ctx, 1, operand)
-    }
-
-    fn remove_successor_operand(
-        &self,
-        ctx: &mut Context,
-        succ_idx: usize,
-        opd_idx: usize,
-    ) -> Value {
-        assert!(succ_idx == 0, "MirAssertOp has exactly one successor");
-        self.remove_from_segment(ctx, 1, opd_idx)
     }
 }
 

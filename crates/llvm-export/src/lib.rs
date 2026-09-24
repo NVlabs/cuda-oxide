@@ -132,7 +132,7 @@ pub mod attributes {
 }
 
 /// LLVM ops: re-exported from pliron-llvm, plus the builtin `ConstantOp` and
-/// the `AsmKind`-tagged inline-asm builder.
+/// an `AsmKind` convenience builder backed by upstream inline-asm semantics.
 pub mod ops {
     pub use pliron_llvm::ops::*;
 
@@ -159,6 +159,7 @@ pub mod ops {
     };
     use pliron_derive::{pliron_attr, pliron_op};
     use pliron_llvm::attributes::AlignmentAttr;
+    pub use pliron_llvm::llvm_attrs::{LlvmAttrValue, LlvmAttributesAttr};
     pub use pliron_llvm::ops::{GlobalOp, InlineAsmOp};
 
     /// Inline asm semantics for LLVM optimization hints.
@@ -178,7 +179,6 @@ pub mod ops {
     ///
     /// - **`preserves_flags`/`nostack`** are CPU concepts with no PTX
     ///   equivalent.
-    #[pliron_attr(name = "llvm.asm_kind", format, verifier = "succ")]
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub enum AsmKind {
         /// Convergent + side effects. Warp-synchronous operations that
@@ -208,12 +208,107 @@ pub mod ops {
         Pure,
     }
 
-    /// Op-attribute key for the inline-asm kind tag.
-    const ASM_KIND_KEY: &str = "cuda_oxide_asm_kind";
+    /// Kernel-entry parameter validity proven at the Rust MIR import boundary.
+    ///
+    /// Presence proves `nonnull`; the payload is the rustc ABI alignment of
+    /// the pointee represented by this physical LLVM parameter. It deliberately
+    /// carries no aliasing, readonly, or dereferenceability promise.
+    #[pliron_attr(
+        name = "llvm.kernel_reference_param_validity",
+        format = "$0",
+        verifier = "succ"
+    )]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct KernelReferenceParamValidityAttr(pub u64);
 
-    /// Builder extension for `InlineAsmOp` that tags the op with an [`AsmKind`].
+    fn kernel_reference_param_validity_key(index: usize) -> Identifier {
+        Identifier::try_new(reserved_oxide_symbols::kernel_reference_param_validity_key(
+            index,
+        ))
+        .expect("valid kernel reference parameter validity attribute key")
+    }
+
+    /// Attach a proven reference-validity fact to one physical kernel parameter.
+    pub fn set_kernel_reference_param_validity(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        index: usize,
+        validity: KernelReferenceParamValidityAttr,
+    ) {
+        op.deref_mut(ctx)
+            .attributes
+            .set(kernel_reference_param_validity_key(index), validity);
+    }
+
+    /// Collect and structurally validate all physical kernel parameter facts.
+    ///
+    /// Semantic proof is owned by `mir-importer`; this helper only validates
+    /// the transport representation before textual LLVM export.
+    pub fn kernel_reference_param_validity_entries(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Result<Vec<(usize, KernelReferenceParamValidityAttr)>, String> {
+        let operation = op.deref(ctx);
+        let mut result = Vec::new();
+        for (key, _) in &operation.attributes.0 {
+            let key_text = key.to_string();
+            let Some(index_text) =
+                reserved_oxide_symbols::kernel_reference_param_validity_index_text(&key_text)
+            else {
+                continue;
+            };
+            let index = index_text.parse::<usize>().map_err(|_| {
+                format!(
+                    "kernel reference parameter validity attribute `{key_text}` has an invalid parameter index"
+                )
+            })?;
+            let Some(validity) = operation
+                .attributes
+                .get::<KernelReferenceParamValidityAttr>(key)
+                .copied()
+            else {
+                return Err(format!(
+                    "kernel reference parameter validity attribute `{key_text}` has the wrong attribute type"
+                ));
+            };
+            if validity.0 == 0 || !validity.0.is_power_of_two() {
+                return Err(format!(
+                    "kernel reference parameter {index} alignment must be a non-zero power of two, found {}",
+                    validity.0
+                ));
+            }
+            result.push((index, validity));
+        }
+        result.sort_unstable_by_key(|(index, _)| *index);
+        Ok(result)
+    }
+
+    impl AsmKind {
+        /// Build the convenience classification from LLVM's two semantic axes.
+        pub const fn from_semantics(convergent: bool, side_effects: bool) -> Self {
+            match (convergent, side_effects) {
+                (true, true) => Self::Convergent,
+                (true, false) => Self::ConvergentPure,
+                (false, true) => Self::SideEffect,
+                (false, false) => Self::Pure,
+            }
+        }
+
+        /// Whether LLVM must treat this asm call as convergent.
+        pub const fn is_convergent(self) -> bool {
+            matches!(self, Self::Convergent | Self::ConvergentPure)
+        }
+
+        /// Whether LLVM must retain the inline asm for side effects.
+        pub const fn has_side_effects(self) -> bool {
+            matches!(self, Self::Convergent | Self::SideEffect)
+        }
+    }
+
+    /// Builder extension that maps CUDA's four-way convenience classification
+    /// onto Pliron's upstream LLVM inline-asm representation.
     pub trait InlineAsmOpExt {
-        /// Build an `InlineAsmOp` tagged with the given [`AsmKind`].
+        /// Build an `InlineAsmOp` with upstream side-effect and call-site attrs.
         fn build(
             ctx: &mut Context,
             result_ty: TypeHandle,
@@ -233,39 +328,62 @@ pub mod ops {
             constraints: &str,
             kind: AsmKind,
         ) -> Self {
-            let convergent = matches!(kind, AsmKind::Convergent | AsmKind::ConvergentPure);
             let op = InlineAsmOp::new(
                 ctx,
                 result_ty,
                 inputs,
                 asm_template,
                 constraints,
-                convergent,
+                kind.has_side_effects(),
             );
-            let key = Identifier::try_new(ASM_KIND_KEY.to_string()).expect("valid identifier");
-            op.get_operation().deref_mut(ctx).attributes.set(key, kind);
+            if kind.is_convergent() {
+                let mut attrs = LlvmAttributesAttr::new();
+                attrs.set("convergent", LlvmAttrValue::Unit);
+                op.set_attr_llvm_inline_asm_attrs(ctx, attrs);
+            }
             op
         }
     }
 
-    /// Query the [`AsmKind`] stored on an `InlineAsmOp`, if present.
+    /// Derive the CUDA convenience classification from upstream LLVM semantics.
     ///
-    /// Returns `None` for ops that were not built with [`InlineAsmOpExt::build`]
-    /// (e.g., user-written `ptx_asm!` ops, which carry separate sideeffect /
-    /// convergent attributes instead).
+    /// `None` means a semantic attribute is missing, malformed, or unsupported
+    /// by cuda-oxide's exporter. Upstream verification alone does not check the
+    /// supported call-site attribute subset.
     pub fn asm_kind_opt(ctx: &Context, op: &InlineAsmOp) -> Option<AsmKind> {
-        let key = Identifier::try_new(ASM_KIND_KEY.to_string()).expect("valid identifier");
-        op.get_operation()
-            .deref(ctx)
-            .attributes
-            .get::<AsmKind>(&key)
-            .copied()
+        let side_effects = op
+            .get_attr_llvm_inline_asm_side_effects(ctx)
+            .map(|attr| bool::from((*attr).clone()))?;
+        let convergent = inline_asm_convergence(ctx, op).ok()?;
+        Some(AsmKind::from_semantics(convergent, side_effects))
     }
 
-    /// Query the [`AsmKind`] stored on an `InlineAsmOp`.
+    /// The native exporter supports the unit `convergent` call-site attribute.
+    /// Other LLVM attributes must be modeled explicitly before export can
+    /// preserve them; silently dropping one can weaken optimizer restrictions.
+    pub(crate) fn inline_asm_convergence(ctx: &Context, op: &InlineAsmOp) -> Result<bool, String> {
+        let mut convergent = false;
+        if let Some(attrs) = op.get_attr_llvm_inline_asm_attrs(ctx) {
+            for (name, value) in attrs.iter() {
+                match (name, value) {
+                    ("convergent", LlvmAttrValue::Unit) => convergent = true,
+                    ("convergent", _) => {
+                        return Err("LLVM inline asm `convergent` requires a unit attribute".into());
+                    }
+                    _ => {
+                        return Err(format!(
+                            "unsupported LLVM inline asm call-site attribute `{name}`; only unit `convergent` is supported"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(convergent)
+    }
+
+    /// Query the CUDA convenience classification for an `InlineAsmOp`.
     ///
-    /// Returns `AsmKind::SideEffect` if the attribute is missing (safe default:
-    /// assume side effects).
+    /// Malformed unverified IR falls back to side-effecting, non-convergent asm.
     pub fn asm_kind(ctx: &Context, op: &InlineAsmOp) -> AsmKind {
         asm_kind_opt(ctx, op).unwrap_or(AsmKind::SideEffect)
     }
@@ -283,21 +401,6 @@ pub mod ops {
     /// Versioned, length-prefixed pointer-relocation metadata for an initialized
     /// Rust static.
     const GLOBAL_INITIALIZER_RELOCATIONS_KEY: &str = "cuda_oxide_global_initializer_relocations";
-    /// Marks a `GlobalOp` whose storage no code ever writes, so it is exported
-    /// as LLVM `constant` rather than `global`.
-    ///
-    /// Set only for storage this compiler itself materialises from an evaluated
-    /// Rust constant: the initializer is the whole value, no device code holds a
-    /// mutable path to it, and no host setter is generated for its name. A Rust
-    /// `static` / `static mut` never carries this, and neither does anything
-    /// reachable through `#[constant]` or `#[device_global]`, because the host
-    /// writes those by symbol.
-    ///
-    /// This is deliberately a property of the *storage*, not of a pointer's
-    /// `is_mutable` bit: a shared reference to a mutable static is an immutable
-    /// pointer to mutable storage, and #413 records that `MirPtrType::is_mutable`
-    /// must not be read as a promise about the pointee.
-    const GLOBAL_IMMUTABLE_KEY: &str = "cuda_oxide_global_immutable";
     /// Rust path of the shared-memory `static` a generated `__shared_mem_N`
     /// global came from.
     ///
@@ -440,10 +543,11 @@ pub mod ops {
     /// and emitted as `align N` during export.
     const OP_ALIGNMENT_KEY: &str = "cuda_oxide_op_alignment";
 
-    /// Op-attribute key controlling whether an inline asm op is emitted with
-    /// LLVM's `sideeffect` marker. Absent means true, matching the conservative
-    /// default for user-authored inline PTX.
-    const INLINE_ASM_SIDEEFFECT_KEY: &str = "cuda_oxide_inline_asm_sideeffect";
+    // Compatibility accessors below intentionally use Pliron's upstream keys.
+    // They keep existing cuda-oxide callers source-compatible without owning a
+    // duplicate semantic representation.
+    const LLVM_INLINE_ASM_SIDEEFFECT_KEY: &str = "llvm_inline_asm_side_effects";
+    const LLVM_INLINE_ASM_ATTRS_KEY: &str = "llvm_inline_asm_attrs";
 
     /// Op-attribute key marking a function declaration or call as non-returning.
     const OP_NORETURN_KEY: &str = "cuda_oxide_op_noreturn";
@@ -1150,6 +1254,21 @@ pub mod ops {
         pub declaration: Option<DebugSourcePosition>,
     }
 
+    /// An additional whole source variable backed by the same MIR
+    /// storage/value as the primary [`DebugLocalVariableInfo`].
+    ///
+    /// Optimized MIR may deliberately map multiple source bindings to one
+    /// local (for example, after reference propagation).  Each binding keeps
+    /// its own name, type, argument index, scope, and declaration position and
+    /// therefore needs its own `DILocalVariable` rather than being disguised
+    /// as a zero-offset projection.
+    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    pub struct DebugWholeVariableInfo {
+        pub variable: DebugLocalVariableInfo,
+        pub source_scope: Option<u32>,
+        pub declaration: Option<DebugSourcePosition>,
+    }
+
     /// One operation in a multi-value LLVM debug expression.
     ///
     /// `Arg(N)` selects the Nth operand from the `DIArgList`. The remaining
@@ -1246,6 +1365,7 @@ pub mod ops {
     const DEBUG_LOCAL_DECL_COLUMN_KEY: &str = "cuda_oxide_debug_local_decl_column";
     const DEBUG_LOCAL_SCOPE_KEY: &str = "cuda_oxide_debug_local_scope";
     const DEBUG_GLOBAL_INFO_KEY: &str = "cuda_oxide_debug_global_info";
+    const DEBUG_WHOLE_ALIAS_COUNT_KEY: &str = "cuda_oxide_debug_whole_alias_count";
     const DEBUG_PROJECTED_COUNT_KEY: &str = "cuda_oxide_debug_projected_count";
     const DEBUG_FRAGMENT_COUNT_KEY: &str = "cuda_oxide_debug_fragment_count";
     const DEBUG_VALUE_EXPRESSION_KEY: &str = "cuda_oxide_debug_value_expression";
@@ -1262,8 +1382,6 @@ pub mod ops {
     /// static. The exporter resolves this to the one real `DISubprogram` used
     /// by that definition; it never creates a scope-only duplicate.
     const DEBUG_GLOBAL_OWNER_FUNCTION_KEY: &str = "cuda_oxide_debug_global_owner_function";
-    /// Op-attribute key for ordinary volatile `load` / `store` operations.
-    const OP_VOLATILE_KEY: &str = "cuda_oxide_op_volatile";
     /// Op-attribute key for the alignment an address computation guarantees.
     /// Lowering-internal: never exported.
     const ADDRESS_ALIGNMENT_KEY: &str = "cuda_oxide_address_alignment";
@@ -1323,24 +1441,49 @@ pub mod ops {
         set_debug_function_name(ctx, to, &name);
     }
 
-    /// Stamp whether an inline asm op has side effects beyond its operands.
+    /// Set Pliron's upstream inline-asm side-effect attribute.
+    ///
+    /// Kept as a cuda-oxide compatibility helper; it no longer owns a private
+    /// semantic attribute.
     pub fn set_inline_asm_sideeffect(ctx: &mut Context, op: Ptr<Operation>, sideeffect: bool) {
-        let key =
-            Identifier::try_new(INLINE_ASM_SIDEEFFECT_KEY.to_string()).expect("valid identifier");
+        let key = Identifier::try_new(LLVM_INLINE_ASM_SIDEEFFECT_KEY.to_string())
+            .expect("valid upstream inline asm side-effect identifier");
         op.deref_mut(ctx)
             .attributes
             .set(key, BoolAttr::new(sideeffect));
     }
 
-    /// Read whether an inline asm op should be emitted with `sideeffect`.
+    /// Read Pliron's upstream inline-asm side-effect attribute.
     pub fn inline_asm_sideeffect(ctx: &Context, op: Ptr<Operation>) -> bool {
-        let key =
-            Identifier::try_new(INLINE_ASM_SIDEEFFECT_KEY.to_string()).expect("valid identifier");
+        let key = Identifier::try_new(LLVM_INLINE_ASM_SIDEEFFECT_KEY.to_string())
+            .expect("valid upstream inline asm side-effect identifier");
         op.deref(ctx)
             .attributes
             .get::<BoolAttr>(&key)
-            .map(|a| bool::from((*a).clone()))
+            .map(|attr| bool::from((*attr).clone()))
             .unwrap_or(true)
+    }
+
+    /// Set or clear LLVM's upstream `convergent` call-site attribute on inline asm.
+    pub fn set_inline_asm_convergent(ctx: &mut Context, op: Ptr<Operation>, convergent: bool) {
+        let key = Identifier::try_new(LLVM_INLINE_ASM_ATTRS_KEY.to_string())
+            .expect("valid upstream inline asm attrs identifier");
+        let mut attrs = op
+            .deref(ctx)
+            .attributes
+            .get::<LlvmAttributesAttr>(&key)
+            .map(|attrs| (*attrs).clone())
+            .unwrap_or_default();
+        if convergent {
+            attrs.set("convergent", LlvmAttrValue::Unit);
+        } else {
+            attrs.remove("convergent");
+        }
+        if attrs.is_empty() {
+            op.deref_mut(ctx).attributes.0.remove(&key);
+        } else {
+            op.deref_mut(ctx).attributes.set(key, attrs);
+        }
     }
 
     /// Attach source-local debug metadata to a memory slot op.
@@ -1375,6 +1518,117 @@ pub mod ops {
             argument_index,
             ty,
         })
+    }
+
+    /// Attach additional whole-variable identities backed by this slot/value.
+    pub fn set_debug_whole_variable_aliases(
+        ctx: &mut Context,
+        op: Ptr<Operation>,
+        aliases: &[DebugWholeVariableInfo],
+    ) {
+        set_string_attr(
+            ctx,
+            op,
+            DEBUG_WHOLE_ALIAS_COUNT_KEY,
+            aliases.len().to_string(),
+        );
+
+        for (index, info) in aliases.iter().enumerate() {
+            set_string_attr(
+                ctx,
+                op,
+                &debug_whole_alias_key(index, "name"),
+                info.variable.name.clone(),
+            );
+            if let Some(argument_index) = info.variable.argument_index {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_whole_alias_key(index, "arg"),
+                    argument_index.to_string(),
+                );
+            }
+
+            let mut encoded = String::new();
+            serialize_debug_type(&info.variable.ty, &mut encoded);
+            set_string_attr(ctx, op, &debug_whole_alias_key(index, "type"), encoded);
+            if let Some(source_scope) = info.source_scope {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_whole_alias_key(index, "scope"),
+                    source_scope.to_string(),
+                );
+            }
+            if let Some(declaration) = &info.declaration {
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_whole_alias_key(index, "file"),
+                    declaration.file.to_string_lossy().into_owned(),
+                );
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_whole_alias_key(index, "line"),
+                    declaration.line.to_string(),
+                );
+                set_string_attr(
+                    ctx,
+                    op,
+                    &debug_whole_alias_key(index, "column"),
+                    declaration.column.to_string(),
+                );
+            }
+        }
+    }
+
+    /// Read additional whole-variable identities attached to a slot/value.
+    /// Malformed entries are skipped individually and the count is bounded.
+    pub fn debug_whole_variable_aliases(
+        ctx: &Context,
+        op: Ptr<Operation>,
+    ) -> Vec<DebugWholeVariableInfo> {
+        let count = get_string_attr(ctx, op, DEBUG_WHOLE_ALIAS_COUNT_KEY)
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0);
+        if count > 1024 {
+            return Vec::new();
+        }
+
+        let mut aliases = Vec::with_capacity(count);
+        for index in 0..count {
+            let Some(name) = get_string_attr(ctx, op, &debug_whole_alias_key(index, "name")) else {
+                continue;
+            };
+            let argument_index = get_string_attr(ctx, op, &debug_whole_alias_key(index, "arg"))
+                .and_then(|arg| arg.parse::<u16>().ok());
+            let Some(encoded) = get_string_attr(ctx, op, &debug_whole_alias_key(index, "type"))
+            else {
+                continue;
+            };
+            let mut pos = 0;
+            let Some(ty) = deserialize_debug_type(encoded.as_bytes(), &mut pos) else {
+                continue;
+            };
+            if pos != encoded.len() {
+                continue;
+            }
+            let source_scope = get_string_attr(ctx, op, &debug_whole_alias_key(index, "scope"))
+                .and_then(|scope| scope.parse::<u32>().ok());
+            let declaration = debug_whole_alias_declaration(ctx, op, index);
+
+            aliases.push(DebugWholeVariableInfo {
+                variable: DebugLocalVariableInfo {
+                    name,
+                    argument_index,
+                    ty,
+                },
+                source_scope,
+                declaration,
+            });
+        }
+        aliases
     }
 
     /// Attach the source identity and semantic type of a Rust static to an op.
@@ -2111,6 +2365,10 @@ pub mod ops {
         format!("cuda_oxide_debug_projected_{index}_{field}")
     }
 
+    fn debug_whole_alias_key(index: usize, field: &str) -> String {
+        format!("cuda_oxide_debug_whole_alias_{index}_{field}")
+    }
+
     fn debug_fragment_key(index: usize, field: &str) -> String {
         format!("cuda_oxide_debug_fragment_{index}_{field}")
     }
@@ -2129,6 +2387,28 @@ pub mod ops {
             .parse()
             .ok()?;
         let column = get_string_attr(ctx, op, &debug_projected_key(index, "column"))?
+            .parse()
+            .ok()?;
+        if line <= 0 || column <= 0 {
+            return None;
+        }
+        Some(DebugSourcePosition { file, line, column })
+    }
+
+    fn debug_whole_alias_declaration(
+        ctx: &Context,
+        op: Ptr<Operation>,
+        index: usize,
+    ) -> Option<DebugSourcePosition> {
+        let file = PathBuf::from(get_string_attr(
+            ctx,
+            op,
+            &debug_whole_alias_key(index, "file"),
+        )?);
+        let line = get_string_attr(ctx, op, &debug_whole_alias_key(index, "line"))?
+            .parse()
+            .ok()?;
+        let column = get_string_attr(ctx, op, &debug_whole_alias_key(index, "column"))?
             .parse()
             .ok()?;
         if line <= 0 || column <= 0 {
@@ -2251,23 +2531,6 @@ pub mod ops {
         }
     }
 
-    /// Stamp volatile memory semantics onto an ordinary LLVM load/store op.
-    pub fn set_op_volatile(ctx: &mut Context, op: Ptr<Operation>, volatile: bool) {
-        let key = Identifier::try_new(OP_VOLATILE_KEY.to_string()).expect("valid identifier");
-        op.deref_mut(ctx)
-            .attributes
-            .set(key, BoolAttr::new(volatile));
-    }
-
-    /// Read the volatile flag stamped on an ordinary LLVM load/store op.
-    pub fn op_volatile(ctx: &Context, op: Ptr<Operation>) -> bool {
-        let key = Identifier::try_new(OP_VOLATILE_KEY.to_string()).expect("valid identifier");
-        op.deref(ctx)
-            .attributes
-            .get::<BoolAttr>(&key)
-            .is_some_and(|attr| bool::from(attr.clone()))
-    }
-
     /// Alignment helpers re-homed from the pre-migration local `GlobalOp`.
     /// Upstream `GlobalOp` carries type/linkage/addrspace but no alignment, so
     /// we keep the alignment in the op's generic attribute dictionary. Address
@@ -2294,16 +2557,6 @@ pub mod ops {
         fn set_initializer_relocations(&self, ctx: &mut Context, encoded: &str);
         /// Read serialized initializer relocation metadata.
         fn initializer_relocations(&self, ctx: &Context) -> Option<String>;
-        /// Mark this global's storage as never written, so it exports as
-        /// `constant` rather than `global`.
-        ///
-        /// Only storage the compiler materialises from an evaluated constant may
-        /// claim this: the initializer is the whole value, the symbol name is
-        /// generated so no host setter can reach it, and nothing is handed a
-        /// mutable path to it. A Rust `static` never carries it.
-        fn mark_immutable(&self, ctx: &mut Context);
-        /// Whether this global's storage was marked never-written.
-        fn is_immutable(&self, ctx: &Context) -> bool;
         /// Attach the Rust path of the shared-memory `static` this global came from.
         ///
         /// Descriptive only: the exporter renders it as a comment above the
@@ -2397,25 +2650,6 @@ pub mod ops {
                 .attributes
                 .get::<StringAttr>(&key)
                 .map(|attr| String::from((*attr).clone()))
-        }
-
-        fn mark_immutable(&self, ctx: &mut Context) {
-            let key =
-                Identifier::try_new(GLOBAL_IMMUTABLE_KEY.to_string()).expect("valid identifier");
-            self.get_operation()
-                .deref_mut(ctx)
-                .attributes
-                .set(key, pliron::builtin::attributes::UnitAttr);
-        }
-
-        fn is_immutable(&self, ctx: &Context) -> bool {
-            let key =
-                Identifier::try_new(GLOBAL_IMMUTABLE_KEY.to_string()).expect("valid identifier");
-            self.get_operation()
-                .deref(ctx)
-                .attributes
-                .get::<pliron::builtin::attributes::UnitAttr>(&key)
-                .is_some()
         }
 
         fn set_shared_source_name(&self, ctx: &mut Context, source_name: &str) {

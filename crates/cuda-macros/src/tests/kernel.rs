@@ -74,16 +74,15 @@ fn grid_constant_parameter_becomes_one_source_index_marker() {
     let expanded = quote!(#function).to_string().replace(' ', "");
 
     assert!(!expanded.contains("#[grid_constant]"));
-    assert!(
-        expanded
-            .contains("::cuda_device::thread::__grid_constant_config::<1usize>();use_descriptor")
-    );
+    assert!(expanded.contains(
+        "unsafe{::cuda_device::thread::__grid_constant_config::<1usize>();}use_descriptor"
+    ));
 }
 
 #[test]
 fn grid_constant_marker_is_a_forwardable_configuration_marker() {
     let marker: Stmt = parse_quote! {
-        ::cuda_device::thread::__grid_constant_config::<0usize>();
+        unsafe { ::cuda_device::thread::__grid_constant_config::<0usize>(); }
     };
     assert!(is_kernel_configuration_marker(&marker));
     assert!(is_grid_constant_config_marker(&marker));
@@ -97,6 +96,31 @@ fn grid_constant_rejects_mutable_reference() {
 
     let error = inject_grid_constant_markers(&mut function).unwrap_err();
     assert!(error.to_string().contains("read-only"));
+}
+
+#[test]
+fn grid_constant_rejects_lifetimes_that_can_outlive_the_launch() {
+    for source in [
+        "fn copy(#[grid_constant] descriptor: &'static TensorMap) {}",
+        "fn copy<'a>(#[grid_constant] descriptor: &'a TensorMap) {}",
+        "fn copy<'a: 'static>(#[grid_constant] descriptor: &'a TensorMap) {}",
+    ] {
+        let mut function: ItemFn = syn::parse_str(source).unwrap();
+        let error = inject_grid_constant_markers(&mut function).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("lives only for this kernel launch")
+        );
+    }
+}
+
+#[test]
+fn grid_constant_accepts_an_anonymous_lifetime() {
+    let mut function: ItemFn = parse_quote! {
+        fn copy(#[grid_constant] descriptor: &'_ TensorMap) {}
+    };
+    inject_grid_constant_markers(&mut function).unwrap();
 }
 
 #[test]
@@ -416,7 +440,7 @@ fn generic_expansion_confines_unchecked_marker_to_entry_and_hidden_twin() {
 fn generic_expansion_confines_grid_constant_marker_to_entry() {
     let kernel: ItemFn = parse_quote! {
         pub fn read<T: Copy>(descriptor: &Descriptor, out: *mut u32, tag: T) {
-            ::cuda_device::thread::__grid_constant_config::<0usize>();
+            unsafe { ::cuda_device::thread::__grid_constant_config::<0usize>(); }
             work(descriptor, out, tag);
         }
     };
@@ -465,7 +489,7 @@ fn legacy_instantiation_confines_unchecked_marker_to_entry_and_hidden_twin() {
 fn legacy_instantiation_confines_grid_constant_marker_to_entry() {
     let kernel: ItemFn = parse_quote! {
         pub fn read<T: Copy>(descriptor: &Descriptor, tag: T) {
-            ::cuda_device::thread::__grid_constant_config::<0usize>();
+            unsafe { ::cuda_device::thread::__grid_constant_config::<0usize>(); }
             work(descriptor, tag);
         }
     };

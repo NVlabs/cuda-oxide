@@ -53,20 +53,41 @@ pub(super) struct InteropBinaryTarget {
     pub(super) source_path: PathBuf,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum InteropDeviceBuildRoute {
+    Build,
+    Run,
+    Sanitize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct InteropDeviceBuildOptions {
     pub(super) no_fmad: bool,
     pub(super) unchecked_indexing: bool,
+    pub(super) device_debug: DeviceDebug,
     pub(super) sanitizer_line_tables: bool,
+    pub(super) debug_assertions: bool,
 }
 
 impl InteropDeviceBuildOptions {
-    pub(super) fn standard(no_fmad: bool, unchecked_indexing: bool) -> Self {
+    pub(super) fn for_route(
+        route: InteropDeviceBuildRoute,
+        no_fmad: bool,
+        unchecked_indexing: bool,
+        device_debug: DeviceDebug,
+        debug_assertions: bool,
+    ) -> Self {
         Self {
             no_fmad,
             unchecked_indexing,
-            sanitizer_line_tables: false,
+            device_debug,
+            sanitizer_line_tables: route == InteropDeviceBuildRoute::Sanitize,
+            debug_assertions,
         }
+    }
+
+    pub(super) fn codegen_profile(self) -> CodegenProfilePolicy {
+        CodegenProfilePolicy::release_like(self.debug_assertions)
     }
 }
 
@@ -85,6 +106,7 @@ pub(super) fn codegen_run_interop(
     bin: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
     materialization: &MaterializationMode,
     app_args: &[String],
 ) {
@@ -109,7 +131,13 @@ pub(super) fn codegen_run_interop(
         arch,
         detected_device_arch,
         device_features,
-        InteropDeviceBuildOptions::standard(no_fmad, unchecked_indexing),
+        InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Run,
+            no_fmad,
+            unchecked_indexing,
+            device_debug,
+            false,
+        ),
         materialization,
     );
     run_host_cargo(
@@ -137,6 +165,8 @@ pub(super) fn codegen_build_interop(
     device_features: Option<&str>,
     no_fmad: bool,
     unchecked_indexing: bool,
+    device_debug: DeviceDebug,
+    debug_assertions: bool,
     materialization: &MaterializationMode,
 ) {
     reject_interop_output_mode(emit_nvvm_ir, materialization);
@@ -159,7 +189,13 @@ pub(super) fn codegen_build_interop(
         arch,
         None,
         device_features,
-        InteropDeviceBuildOptions::standard(no_fmad, unchecked_indexing),
+        InteropDeviceBuildOptions::for_route(
+            InteropDeviceBuildRoute::Build,
+            no_fmad,
+            unchecked_indexing,
+            device_debug,
+            debug_assertions,
+        ),
         materialization,
     );
     run_host_cargo(
@@ -561,21 +597,18 @@ fn build_interop_device_crate(
     let fingerprint = interop_codegen_fingerprint(
         ctx,
         verbose,
-        options.no_fmad,
-        options.unchecked_indexing,
-        DeviceDebug::Off,
+        options,
         arch,
         detected_device_arch,
         &artifact_dir,
         device_crate.artifact_kind.emits_nvvm_ir(),
         device_features,
-        options.sanitizer_line_tables,
         materialization,
     );
     apply_codegen_configuration_or_exit(
         &mut cmd,
         ctx,
-        CodegenProfilePolicy::ReleaseLike,
+        options.codegen_profile(),
         &[],
         &fingerprint,
     );

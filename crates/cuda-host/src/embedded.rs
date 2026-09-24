@@ -15,14 +15,21 @@ use cuda_core::{CudaContext, CudaModule, DriverError};
 use std::sync::Arc;
 use thiserror::Error;
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod mapped_image;
+
 /// Errors while discovering, building, or loading an embedded CUDA module.
 #[derive(Debug, Error)]
 pub enum EmbeddedModuleError {
+    /// The artifact anchor could not be associated with its original mapped file.
+    #[error("cannot read the binary containing the CUDA artifact anchor: {0}")]
+    MappedImage(#[source] std::io::Error),
+
     /// Reading the embedded artifact section failed.
     #[error(transparent)]
     Core(#[from] cuda_core::EmbeddedModuleError),
 
-    /// The named bundle was not present in the current executable.
+    /// The named bundle was not present in the binary that was read.
     #[error("embedded CUDA module '{name}' was not found")]
     ModuleNotFound { name: String },
 
@@ -66,6 +73,52 @@ pub fn load_embedded_module(
     load_bundle(ctx, &bundle)
 }
 
+/// Load a named artifact bundle from the binary containing `anchor`.
+///
+/// Generated non-generic module loaders borrow their artifact anchor, which
+/// the linker places in the same image as the bundle. This works for both an
+/// executable and a shared library, including a library opened by a relative
+/// path before the working directory changes.
+///
+/// On Linux and Android, this requires readable `/proc/self/maps` and
+/// `/proc/self/map_files`. The original mapped file must still be accessible.
+/// A missing, replaced, deleted or unreadable image is an error; it never
+/// causes a search in another binary. Other operating systems are unsupported.
+/// Payload selection and compilation are identical to [`load_embedded_module`].
+pub fn load_embedded_module_from_anchor(
+    ctx: &Arc<CudaContext>,
+    name: &str,
+    anchor: &u8,
+) -> Result<Arc<CudaModule>, EmbeddedModuleError> {
+    let bundle = artifact_bundles_containing(anchor)?
+        .into_iter()
+        .find(|bundle| bundle.name == name)
+        .ok_or_else(|| EmbeddedModuleError::ModuleNotFound {
+            name: name.to_string(),
+        })?;
+    load_bundle(ctx, &bundle)
+}
+
+fn artifact_bundles_containing(
+    anchor: &u8,
+) -> Result<Vec<OwnedArtifactBundle>, EmbeddedModuleError> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let bytes = mapped_image::read(anchor).map_err(EmbeddedModuleError::MappedImage)?;
+        oxide_artifacts::read_artifact_bundles_from_object_bytes(&bytes)
+            .map_err(cuda_core::EmbeddedModuleError::Artifacts)
+            .map_err(Into::into)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        let _ = anchor;
+        Err(EmbeddedModuleError::MappedImage(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "artifact anchor discovery requires Linux or Android procfs",
+        )))
+    }
+}
+
 /// Merge all PTX bundles from the current executable into a single CUDA module.
 ///
 /// When a generic kernel is monomorphized in a consuming crate, its PTX ends
@@ -82,11 +135,34 @@ pub fn load_all_ptx_bundles_merged(
     ctx: &Arc<CudaContext>,
 ) -> Result<Arc<CudaModule>, EmbeddedModuleError> {
     let bundles = artifact_bundles_from_current_exe()?;
+    let merged = merge_ptx_bundles(&bundles)?;
 
+    let module = ctx.load_module_from_image(merged.as_bytes())?;
+    // Retain the merged module's `.entry` names (a few dozen bytes per
+    // kernel). If a later `_TID_` generic-kernel lookup misses while a
+    // same-base entry exists under a different hash, the launch paths can
+    // then report a host/device type-identity naming divergence instead of an
+    // opaque "named symbol not found". See `crate::entry_registry`.
+    crate::entry_registry::register_merged_module_entries(&module, &merged);
+    Ok(module)
+}
+
+/// Merge the PTX payloads of `bundles`, in iteration order, into one PTX
+/// module string: the first PTX bundle keeps its `.version` / `.target` /
+/// `.address_size` header directives, every later one contributes its body
+/// with those directives stripped. Bundles without a PTX payload are skipped.
+///
+/// This is the pure half of [`load_all_ptx_bundles_merged`], exposed so tests
+/// and examples can check order-dependent merge properties: module-scope
+/// symbol uniqueness and extern alignment must hold for every bundle order,
+/// not just the one the current executable happens to embed (#1277).
+pub fn merge_ptx_bundles<'a>(
+    bundles: impl IntoIterator<Item = &'a OwnedArtifactBundle>,
+) -> Result<String, EmbeddedModuleError> {
     let mut merged = String::new();
     let mut found_any = false;
 
-    for bundle in &bundles {
+    for bundle in bundles {
         if let Some(ptx_bytes) = bundle.payload(ArtifactPayloadKind::Ptx) {
             let ptx_str = std::str::from_utf8(ptx_bytes)
                 .map_err(|_| EmbeddedModuleError::UnsupportedPayload {
@@ -118,15 +194,7 @@ pub fn load_all_ptx_bundles_merged(
     if !found_any {
         return Err(EmbeddedModuleError::NoModules);
     }
-
-    let module = ctx.load_module_from_image(merged.as_bytes())?;
-    // Retain the merged module's `.entry` names (a few dozen bytes per
-    // kernel). If a later `_TID_` generic-kernel lookup misses while a
-    // same-base entry exists under a different hash, the launch paths can
-    // then report a host/device type-identity naming divergence instead of an
-    // opaque "named symbol not found". See `crate::entry_registry`.
-    crate::entry_registry::register_merged_module_entries(&module, &merged);
-    Ok(module)
+    Ok(merged)
 }
 
 fn strip_ptx_module_headers(ptx: &str) -> Result<String, String> {
@@ -264,6 +332,52 @@ mod tests {
         );
     }
 
+    fn ptx_bundle(name: &str, ptx: &str) -> OwnedArtifactBundle {
+        use oxide_artifacts::OwnedArtifactPayload;
+        OwnedArtifactBundle {
+            name: name.to_string(),
+            target: "sm_80".to_string(),
+            compile_options: ArtifactCompileOptions::new(),
+            payloads: vec![OwnedArtifactPayload {
+                kind: ArtifactPayloadKind::Ptx,
+                name: name.to_string(),
+                bytes: ptx.as_bytes().to_vec(),
+            }],
+            entries: Vec::new(),
+        }
+    }
+
+    /// The merge is order-explicit: exactly one header set (the first PTX
+    /// bundle's), every body present in iteration order, non-PTX bundles
+    /// skipped. #1277's collision-free-namespace example checks the same
+    /// function under both bundle orders at runtime.
+    #[test]
+    fn merges_bundles_in_iteration_order_with_one_header_set() {
+        let first = ptx_bundle(
+            "first",
+            ".version 8.9\n.target sm_80\n.address_size 64\n.visible .entry a() { ret; }\n",
+        );
+        let second = ptx_bundle(
+            "second",
+            ".version 8.9\n.target sm_80\n.address_size 64\n.visible .entry b() { ret; }\n",
+        );
+        let skipped = bundle_with_target("sm_80");
+
+        let forward = merge_ptx_bundles([&first, &skipped, &second]).unwrap();
+        assert_eq!(forward.matches(".version").count(), 1);
+        assert_eq!(forward.matches(".target sm_80").count(), 1);
+        assert!(forward.find(".entry a()").unwrap() < forward.find(".entry b()").unwrap());
+
+        let reversed = merge_ptx_bundles([&second, &first]).unwrap();
+        assert_eq!(reversed.matches(".version").count(), 1);
+        assert!(reversed.find(".entry b()").unwrap() < reversed.find(".entry a()").unwrap());
+
+        assert!(matches!(
+            merge_ptx_bundles([&skipped]),
+            Err(EmbeddedModuleError::NoModules)
+        ));
+    }
+
     #[test]
     fn strips_only_structural_ptx_module_headers() {
         let ptx = "\
@@ -322,5 +436,14 @@ mod tests {
     #[test]
     fn target_arch_rejects_malformed_bundle_target() {
         assert!(concrete_bundle_target("sm_90x").is_err());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn bundles_of_an_executable_anchor_match_the_current_exe() {
+        static ANCHOR: u8 = 0;
+        let by_anchor = artifact_bundles_containing(&ANCHOR).unwrap();
+        let by_current_exe = artifact_bundles_from_current_exe().unwrap();
+        assert_eq!(by_anchor, by_current_exe);
     }
 }

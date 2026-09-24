@@ -67,7 +67,7 @@ impl CoreIntrinsic for ArithOffset {
             .into_weighted(&ctx.pt)?;
         let ptr = ctx
             .make_choice_weighted(ptrs.into_iter(), weights, |ppath| {
-                Ok(ppath.to_place(&ctx.pt))
+                Ok(ppath.to_place(&ctx.pt, ctx.current_decls()))
             })
             .ok()?;
 
@@ -84,7 +84,7 @@ impl CoreIntrinsic for ArithOffset {
             }
             _ => PlaceSelector::for_known_val(ctx.tcx.clone())
                 .of_ty(TyCtxt::ISIZE)
-                .into_iter_place(&ctx.pt)
+                .into_iter_place(&ctx.pt, ctx.current_decls())
                 .choose(&mut *rng)
                 .map(Operand::Copy)
                 .unwrap_or_else(|| {
@@ -162,7 +162,7 @@ impl CoreIntrinsic for Transmute {
             .into_weighted(&ctx.pt)?;
         let src = ctx
             .make_choice_weighted(srcs.into_iter(), weights, |ppath| {
-                Ok(ppath.to_place(&ctx.pt))
+                Ok(ppath.to_place(&ctx.pt, ctx.current_decls()))
             })
             .ok()?;
         if src.ty(ctx.current_decls(), &ctx.tcx).is_copy(&ctx.tcx) {

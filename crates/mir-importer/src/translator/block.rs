@@ -22,8 +22,10 @@
 //! (see [`translate_block`]).
 
 use super::statement;
+use super::statement_debug;
 use super::terminator;
 use crate::error::TranslationResult;
+use crate::pipeline::StatementDebugInfoBlock;
 use crate::translator::values::ValueMap;
 use pliron::basic_block::BasicBlock;
 use pliron::context::{Context, Ptr};
@@ -49,6 +51,8 @@ use rustc_public::mir;
 ///   `body::translate_body`'s alloca/store setup (see `emit_entry_allocas`),
 ///   so that statements are appended **after** that setup instead of being
 ///   inserted at the front. For every other block this must be `None`.
+/// * `statement_debug_info` - rustc's debug-only assignments aligned with the
+///   statement boundaries in this block. Present only for full variable debug.
 #[allow(clippy::too_many_arguments)]
 pub fn translate_block(
     ctx: &mut Context,
@@ -61,6 +65,7 @@ pub fn translate_block(
     rustc_mono_successors: &[usize],
     legaliser: &mut Legaliser,
     entry_prev_op: Option<Ptr<Operation>>,
+    statement_debug_info: Option<&StatementDebugInfoBlock>,
 ) -> TranslationResult<()> {
     let mut prev_op: Option<Ptr<Operation>> = entry_prev_op;
 
@@ -83,10 +88,31 @@ pub fn translate_block(
         return Ok(());
     }
 
-    for stmt in &mir_block.statements {
+    for (statement_index, stmt) in mir_block.statements.iter().enumerate() {
+        if let Some(debug_info) = statement_debug_info {
+            prev_op = statement_debug::translate_statement_debug_info(
+                ctx,
+                body,
+                &debug_info.before_statements[statement_index],
+                value_map,
+                block_ptr,
+                prev_op,
+            )?;
+        }
         let op_ptr =
             statement::translate_statement(ctx, body, stmt, value_map, block_ptr, prev_op)?;
         prev_op = op_ptr;
+    }
+
+    if let Some(debug_info) = statement_debug_info {
+        prev_op = statement_debug::translate_statement_debug_info(
+            ctx,
+            body,
+            &debug_info.before_terminator,
+            value_map,
+            block_ptr,
+            prev_op,
+        )?;
     }
 
     let _term_op_ptr = terminator::translate_terminator(

@@ -118,7 +118,7 @@ pub fn create_i1_constant(
     let int_attr = IntegerAttr::new(i1_ty, apint);
 
     // Create and insert the LLVM constant operation
-    let const_op = llvm::ConstantOp::new(ctx, int_attr.into());
+    let const_op = llvm::ConstantOp::new(ctx, Box::new(int_attr));
     const_op.get_operation().insert_at_back(llvm_block, ctx);
 
     // Return the result value
@@ -177,7 +177,7 @@ pub fn create_i32_constant(
     let int_attr = IntegerAttr::new(i32_ty, apint);
 
     // Create and insert the LLVM constant operation
-    let const_op = llvm::ConstantOp::new(ctx, int_attr.into());
+    let const_op = llvm::ConstantOp::new(ctx, Box::new(int_attr));
     const_op.get_operation().insert_at_back(llvm_block, ctx);
 
     // Return the result value
@@ -235,7 +235,7 @@ pub fn create_i64_constant(
     let int_attr = IntegerAttr::new(i64_ty, apint);
 
     // Create and insert the LLVM constant operation
-    let const_op = llvm::ConstantOp::new(ctx, int_attr.into());
+    let const_op = llvm::ConstantOp::new(ctx, Box::new(int_attr));
     const_op.get_operation().insert_at_back(llvm_block, ctx);
 
     // Return the result value

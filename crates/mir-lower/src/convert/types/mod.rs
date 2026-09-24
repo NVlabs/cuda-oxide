@@ -116,8 +116,8 @@ pub(crate) use enum_layout::{
     find_unmodeled_enum_in_abi,
 };
 pub(crate) use func_abi::{
-    TransparentScalarAbiInfo, packed_shared_internal_abi_info, transparent_scalar_abi_info,
-    transparent_scalar_field,
+    TransparentScalarAbiInfo, convert_grid_constant_storage_type, packed_shared_internal_abi_info,
+    transparent_scalar_abi_info, transparent_scalar_field,
 };
 pub use func_abi::{convert_function_type, is_kernel_func};
 // Surface parity with the pre-split `types.rs`: these four are currently

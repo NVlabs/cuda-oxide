@@ -454,11 +454,17 @@ fn generated_cuda_module_api_typechecks() {
 fn concrete_kernel_signature_matches_typed_launcher_arguments() {
     use cuda_host::{CudaKernelArgumentKind as Argument, CudaKernelScalarKind as Scalar};
 
-    let signature = kernels::SCALAR_ARGS_CUDA_SIGNATURE;
+    let signature = kernels::scalar_args_CUDA_SIGNATURE;
     assert_eq!(signature.entry, "scalar_args");
     assert_eq!(signature.arguments.len(), 5);
     assert_eq!(signature.arguments[0].name, "scale");
-    assert_eq!(signature.arguments[0].kind, Argument::Scalar(Scalar::F32));
+    assert_eq!(
+        signature.arguments[0].kind,
+        Argument::Scalar(Scalar::Opaque {
+            size: 4,
+            alignment: 4
+        })
+    );
     assert_eq!(signature.arguments[1].name, "params");
     assert_eq!(
         signature.arguments[1].kind,
@@ -598,4 +604,77 @@ fn ptx_name_helper_preserves_lifetime_bounds() {
 fn generated_names_do_not_capture_user_const_generics() {
     let name = kernels::hygiene_probe_ptx_name::<0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>();
     assert!(is_lowercase_hex_32(split_tid_name(name, "hygiene_probe")));
+}
+
+#[allow(non_camel_case_types, non_snake_case)]
+#[cuda_module]
+mod signature_regressions {
+    use super::*;
+    type f32 = ::core::primitive::u32;
+    type Count = ::core::primitive::u64;
+
+    #[kernel]
+    pub fn step<'a>(shadow: f32, alias: Count, tag: core::marker::PhantomData<&'a ()>) {
+        let _ = (shadow, alias, tag);
+    }
+
+    #[kernel]
+    pub fn STEP(value: ::core::primitive::f32, count: ::std::primitive::u32) {
+        let _ = (value, count);
+    }
+
+    #[kernel]
+    pub fn r#type(value: ::core::primitive::bool) {
+        let _ = value;
+    }
+
+    #[cfg(any())]
+    #[kernel]
+    pub fn disabled(value: MissingType) {}
+
+    pub mod nested {
+        use super::*;
+        #[kernel]
+        pub fn nested_step(value: ::core::primitive::i32) {
+            let _ = value;
+        }
+    }
+}
+
+#[test]
+fn signature_metadata_preserves_aliases_lifetimes_case_and_scope() {
+    use cuda_host::{CudaKernelArgumentKind as Argument, CudaKernelScalarKind as Scalar};
+    let lower = signature_regressions::step_CUDA_SIGNATURE;
+    let upper = signature_regressions::STEP_CUDA_SIGNATURE;
+    assert_ne!(lower.entry, upper.entry);
+    assert_eq!(
+        lower.arguments[0].kind,
+        Argument::Scalar(Scalar::Opaque {
+            size: 4,
+            alignment: 4
+        })
+    );
+    assert_eq!(
+        lower.arguments[1].kind,
+        Argument::Scalar(Scalar::Opaque {
+            size: 8,
+            alignment: 8
+        })
+    );
+    assert_eq!(
+        lower.arguments[2].kind,
+        Argument::Scalar(Scalar::Opaque {
+            size: 0,
+            alignment: 1
+        })
+    );
+    assert_eq!(upper.arguments[0].kind, Argument::Scalar(Scalar::F32));
+    assert_eq!(upper.arguments[1].kind, Argument::Scalar(Scalar::U32));
+    assert_eq!(
+        signature_regressions::type_CUDA_SIGNATURE.arguments[0].kind,
+        Argument::Scalar(Scalar::Bool)
+    );
+    let nested = signature_regressions::nested::nested_step_CUDA_SIGNATURE;
+    assert_ne!(nested.entry, lower.entry);
+    assert_eq!(nested.arguments[0].kind, Argument::Scalar(Scalar::I32));
 }

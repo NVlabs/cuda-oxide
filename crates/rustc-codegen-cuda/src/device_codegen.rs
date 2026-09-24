@@ -451,6 +451,83 @@ fn debug_position_from_span(tcx: TyCtxt<'_>, span: Span) -> Option<DebugSourcePo
     })
 }
 
+/// Rebuild the monomorphized internal MIR used as stable MIR's input.
+///
+/// We only read `StmtDebugInfo`, which contains places. Stable MIR's additional
+/// constant-evaluation walk cannot change these records.
+fn monomorphized_mir_for_statement_debug_info<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+) -> rustc_middle::mir::Body<'tcx> {
+    let instance = match instance.def {
+        InstanceKind::Intrinsic(def_id) => Instance::new_raw(def_id, instance.args),
+        _ => instance,
+    };
+    let body = tcx.instance_mir(instance.def).clone();
+    if !instance.args.is_empty() || tcx.def_kind(instance.def_id()) != DefKind::AnonConst {
+        instance.instantiate_mir_and_normalize_erasing_regions(
+            tcx,
+            TypingEnv::fully_monomorphized(),
+            EarlyBinder::bind(tcx, body),
+        )
+    } else {
+        body
+    }
+}
+
+/// Preserve rustc's debug-only statement assignments across the
+/// rustc-internal to stable-MIR boundary.
+///
+/// Capturing `StmtDebugInfo` directly is intentional: its `AssignRef` place may
+/// contain a runtime `ProjectionElem::Index`, while ordinary
+/// `VarDebugInfoContents::Place` does not permit that projection.
+///
+/// This function must run inside `rustc_internal::run`, so `stable(place)` can
+/// intern every monomorphized projection type in the active bridge tables.
+fn collect_statement_debug_info<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: Instance<'tcx>,
+) -> mir_importer::StatementDebugInfoMap {
+    use rustc_middle::mir::StmtDebugInfo;
+    use rustc_public::rustc_internal;
+
+    fn convert(info: &StmtDebugInfo<'_>) -> mir_importer::StatementDebugInfo {
+        match info {
+            StmtDebugInfo::AssignRef(destination, place) => {
+                mir_importer::StatementDebugInfo::AssignRef {
+                    destination: destination.index(),
+                    place: rustc_internal::stable(*place),
+                }
+            }
+            StmtDebugInfo::InvalidAssign(destination) => {
+                mir_importer::StatementDebugInfo::InvalidAssign {
+                    destination: destination.index(),
+                }
+            }
+        }
+    }
+
+    let body = monomorphized_mir_for_statement_debug_info(tcx, instance);
+    mir_importer::StatementDebugInfoMap {
+        blocks: body
+            .basic_blocks
+            .iter()
+            .map(|block| mir_importer::StatementDebugInfoBlock {
+                before_statements: block
+                    .statements
+                    .iter()
+                    .map(|statement| statement.debuginfos.iter().map(convert).collect())
+                    .collect(),
+                before_terminator: block
+                    .after_last_stmt_debuginfos
+                    .iter()
+                    .map(convert)
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 #[derive(Clone, Debug)]
 struct OwnedStaticDebugIdentity {
     def_id: DefId,
@@ -1070,6 +1147,9 @@ pub fn generate_device_code<'tcx>(
                     // Use rustc_internal::stable() to convert the Instance.
                     // This is the key bridge between rustc_middle and rustc_public types.
                     let stable_instance = rustc_internal::stable(func.instance);
+                    let statement_debug_info = debug_kind
+                        .variables_enabled()
+                        .then(|| collect_statement_debug_info(tcx, func.instance));
 
                     // Skip no-op drop glue: the mir-importer lowers these as
                     // plain branches (via drop_glue_is_noop) and never emits a
@@ -1091,6 +1171,7 @@ pub fn generate_device_code<'tcx>(
                         is_kernel: *is_kernel,
                         export_name: export_name.clone(),
                         debug_source_scopes: Some(debug_source_scopes.clone()),
+                        statement_debug_info,
                         is_inline_always: *is_inline_always,
                     })
                 },
@@ -1111,12 +1192,24 @@ pub fn generate_device_code<'tcx>(
         }
 
         let target_arch = std::env::var("CUDA_OXIDE_TARGET").ok();
-        let device_arch_hint = std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok();
+        let device_arch_hint = mir_importer::pipeline::DeviceArchHint::from_env_value(
+            std::env::var("CUDA_OXIDE_DEVICE_ARCH"),
+        );
         let allow_fma_contraction = std::env::var_os("CUDA_OXIDE_NO_FMA").is_none();
 
         if verbose && !allow_fma_contraction {
             eprintln!("[device_codegen] FMA contraction disabled");
         }
+
+        // This crate's PTX bundle can be textually merged with other crates'
+        // bundles at load time (`load_all_ptx_bundles_merged`), so
+        // counter-named module-scope symbols (`__shared_mem_N`,
+        // `__device_global_N`) must be unique per compilation, not only per
+        // module. The stable crate id hashes the crate name and metadata:
+        // deterministic across rebuilds of one crate, distinct across the
+        // crates of one binary (#1277).
+        let module_disambiguator =
+            Some(tcx.stable_crate_id(rustc_hir::def_id::LOCAL_CRATE).as_u64());
 
         // Create pipeline config
         let pipeline_config = mir_importer::PipelineConfig {
@@ -1132,6 +1225,7 @@ pub fn generate_device_code<'tcx>(
             debug_kind,
             debug_global_variables,
             allow_fma_contraction,
+            module_disambiguator,
         };
 
         // Resolve the lang-item DefIds the type translator compares
@@ -1225,8 +1319,8 @@ fn device_debug_kind_with_override(
     override_value: Option<&str>,
 ) -> llvm_export::export::DebugKind {
     // The alias table lives in cuda-artifact-finalizer so cargo-oxide's
-    // build policy (full debug disables MIR optimization) and this DWARF
-    // emission level can never disagree about what a value means.
+    // selective full-debug build policy and this DWARF emission level can
+    // never disagree about what a value means.
     if let Some(policy) =
         override_value.and_then(cuda_artifact_finalizer::DebugPolicy::parse_env_override)
     {
