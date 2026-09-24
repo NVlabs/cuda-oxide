@@ -662,9 +662,12 @@ fn an_explicit_target_that_cannot_host_the_module_is_refused() {
         .is_err()
     );
 
-    // A malformed *device hint* is the opposite: both stages ignore it. The
-    // hint is advisory, so selection falls through to the feature requirement
-    // and the floor stays at the default, which that fallback satisfies.
+    // A malformed *device hint* is read three ways. The floor resolver and the
+    // PTX selector ignore it -- the hint is advisory, so PTX selection falls
+    // through to the feature requirement and the floor stays at the default,
+    // which that fallback satisfies. The NVVM selector rejects it instead, and
+    // is asserted below: both outcomes are fail-closed, because neither builds
+    // below the floor.
     assert_eq!(
         cuda_target_spec::resolve_sm_floor(None, Some("sm_9")).unwrap(),
         80
@@ -679,5 +682,15 @@ fn an_explicit_target_that_cannot_host_the_module_is_refused() {
     assert_eq!(
         (ignored.sm().as_str(), source),
         ("sm_80", "feature requirement")
+    );
+    assert!(
+        crate::export::resolve_nvvm_target_with_generated(
+            None,
+            Some("sm_9"),
+            Some(DetectedFeatures::Basic),
+            &crate::generated::GeneratedModuleRequirements::default(),
+        )
+        .is_err(),
+        "the NVVM selector rejects a malformed hint rather than ignoring it"
     );
 }
