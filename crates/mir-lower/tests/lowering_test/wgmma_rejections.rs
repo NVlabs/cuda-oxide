@@ -12,8 +12,8 @@ use pliron::operation::Operation;
 
 use crate::common::{append_return, build_test_kernel, make_test_ctx};
 use crate::wgmma_lowering::{
-    append_mir_unsigned_constant, append_pointer_wgmma_mma, append_pointer_wgmma_mma_f16,
-    append_pointer_wgmma_mma_m64n128, append_pointer_wgmma_mma_tf32,
+    append_mir_unsigned_constant, append_pointer_wgmma_mma, append_pointer_wgmma_mma_e4m3,
+    append_pointer_wgmma_mma_f16, append_pointer_wgmma_mma_m64n128, append_pointer_wgmma_mma_tf32,
     append_wgmma_wait_group_constant, build_pointer_form_wgmma_counted_pipeline_case,
     build_wgmma_canonical_pointer_test_kernel, build_wgmma_pointer_test_kernel,
 };
@@ -70,8 +70,15 @@ fn test_pointer_form_wgmma_counted_pipeline_rejects_reused_accumulator_slot() {
     );
 }
 
-#[test]
-fn test_tf32_wgmma_counted_k_loop_remains_unsupported() -> Result<(), anyhow::Error> {
+fn assert_wgmma_counted_k_loop_remains_unsupported(
+    append_mma: fn(
+        &mut Context,
+        pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+        pliron::value::Value,
+        pliron::value::Value,
+        pliron::value::Value,
+    ),
+) -> Result<(), anyhow::Error> {
     use dialect_mir::types::{MirArrayType, MirPtrType};
     use pliron::basic_block::BasicBlock;
     use pliron::builtin::op_interfaces::OperandSegmentInterface;
@@ -168,7 +175,7 @@ fn test_tf32_wgmma_counted_k_loop_remains_unsupported() -> Result<(), anyhow::Er
     branch.insert_at_back(header, &ctx);
 
     // latch: one WGMMA per K iteration and affine descriptor recurrences.
-    append_pointer_wgmma_mma_tf32(&mut ctx, latch, accumulator, desc_a, desc_b);
+    append_mma(&mut ctx, latch, accumulator, desc_a, desc_b);
 
     let one = append_mir_unsigned_constant(&mut ctx, latch, u32_ty, 1);
     let i_next = Operation::new(
@@ -230,6 +237,16 @@ fn test_tf32_wgmma_counted_k_loop_remains_unsupported() -> Result<(), anyhow::Er
 }
 
 #[test]
+fn test_tf32_wgmma_counted_k_loop_remains_unsupported() -> Result<(), anyhow::Error> {
+    assert_wgmma_counted_k_loop_remains_unsupported(append_pointer_wgmma_mma_tf32)
+}
+
+#[test]
+fn test_e4m3_wgmma_counted_k_loop_remains_unsupported() -> Result<(), anyhow::Error> {
+    assert_wgmma_counted_k_loop_remains_unsupported(append_pointer_wgmma_mma_e4m3)
+}
+
+#[test]
 fn test_m64n128_wgmma_noncanonical_accumulator_has_no_pointer_fallback() -> Result<(), anyhow::Error>
 {
     let mut ctx = make_test_ctx();
@@ -288,6 +305,70 @@ fn test_tf32_wgmma_noncanonical_accumulator_has_no_pointer_fallback() -> Result<
         "WGMMA linear full-drain lowering for this variant requires a canonical [[f32; 8]; 4] accumulator",
     );
     Ok(())
+}
+
+#[test]
+fn test_e4m3_wgmma_noncanonical_accumulator_has_no_pointer_fallback() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, desc_a, desc_b, _) =
+        build_wgmma_pointer_test_kernel(&mut ctx, 1, vec![]);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma_e4m3(&mut ctx, entry, accumulators[0], desc_a, desc_b);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA linear full-drain lowering for this variant requires a canonical [[f32; 8]; 4] accumulator",
+    );
+    Ok(())
+}
+
+fn assert_linear_wgmma_full_drain_rejects_mixed_e4m3(
+    append_other: fn(
+        &mut Context,
+        pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+        pliron::value::Value,
+        pliron::value::Value,
+        pliron::value::Value,
+    ),
+) -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, 1, 4);
+    let accumulator = accumulators[0];
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_other(&mut ctx, entry, accumulator, descriptors[0], descriptors[1]);
+    append_pointer_wgmma_mma_e4m3(&mut ctx, entry, accumulator, descriptors[2], descriptors[3]);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "one linear WGMMA full-drain region cannot mix MMA variants or shapes",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_linear_wgmma_full_drain_rejects_mixed_bf16_and_e4m3() -> Result<(), anyhow::Error> {
+    assert_linear_wgmma_full_drain_rejects_mixed_e4m3(append_pointer_wgmma_mma)
+}
+
+#[test]
+fn test_linear_wgmma_full_drain_rejects_mixed_f16_and_e4m3() -> Result<(), anyhow::Error> {
+    assert_linear_wgmma_full_drain_rejects_mixed_e4m3(append_pointer_wgmma_mma_f16)
+}
+
+#[test]
+fn test_linear_wgmma_full_drain_rejects_mixed_tf32_and_e4m3() -> Result<(), anyhow::Error> {
+    assert_linear_wgmma_full_drain_rejects_mixed_e4m3(append_pointer_wgmma_mma_tf32)
 }
 
 #[test]
@@ -391,6 +472,33 @@ fn test_tf32_wgmma_partial_wait_remains_unsupported() -> Result<(), anyhow::Erro
 
     nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
     append_pointer_wgmma_mma_tf32(
+        &mut ctx,
+        entry,
+        accumulators[0],
+        descriptors[0],
+        descriptors[1],
+    );
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 1);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    assert_wgmma_lowering_rejected(
+        &mut ctx,
+        module_ptr,
+        "WGMMA deferred accumulator lowering requires wait_group<0>",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_e4m3_wgmma_partial_wait_remains_unsupported() -> Result<(), anyhow::Error> {
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, 1, 2);
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma_e4m3(
         &mut ctx,
         entry,
         accumulators[0],

@@ -14,6 +14,62 @@ use pliron::r#type::Typed;
 
 use crate::common::{append_return, build_test_kernel, lowered_kernel_body, make_test_ctx};
 
+#[test]
+fn test_wgmma_descriptor_uses_shared_offset_and_nonoverlapping_sw32_stride()
+-> Result<(), anyhow::Error> {
+    use dialect_mir::types::MirPtrType;
+    use pliron::builtin::types::{IntegerType, Signedness};
+
+    for address_space in [0, 3] {
+        let mut ctx = make_test_ctx();
+        let u8_ty = IntegerType::get(&ctx, 8, Signedness::Unsigned);
+        let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+        let ptr_ty = MirPtrType::get(&mut ctx, u8_ty.into(), false, address_space);
+        let (module_ptr, entry) = build_test_kernel(&mut ctx, vec![ptr_ty.into()]);
+        let ptr = entry.deref(&ctx).get_argument(0);
+        Operation::new(
+            &mut ctx,
+            nvvm::WgmmaMakeSmemDescOp::get_concrete_op_info(),
+            vec![u64_ty.into()],
+            vec![ptr],
+            vec![],
+            0,
+        )
+        .insert_at_back(entry, &ctx);
+        append_return(&mut ctx, entry);
+        mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+        let body = lowered_kernel_body(&ctx, module_ptr);
+        assert_eq!(
+            body.iter()
+                .filter(|&&op| Operation::get_op::<llvm::AddrSpaceCastOp>(op, &ctx).is_some())
+                .count(),
+            usize::from(address_space == 0),
+        );
+        let offsets: Vec<_> = body
+            .iter()
+            .filter_map(|&op| Operation::get_op::<llvm::PtrToIntOp>(op, &ctx))
+            .collect();
+        assert_eq!(offsets.len(), 1);
+        let asm = body
+            .iter()
+            .find_map(|&op| Operation::get_op::<llvm::InlineAsmOp>(op, &ctx))
+            .expect("descriptor inline PTX");
+        assert_eq!(
+            asm.get_operation().deref(&ctx).get_operand(0),
+            offsets[0].get_operation().deref(&ctx).get_result(0),
+        );
+        let template =
+            String::from((*asm.get_attr_llvm_inline_asm_template(&ctx).unwrap()).clone());
+        assert!(template.contains("shr.u64 addr, $1, 4;"));
+        assert!(template.contains("and.b64 addr, addr, 0x3FFF;"));
+        assert!(template.contains("or.b64 $0, addr, 0xC000001000010000;"));
+        assert!(!template.contains("cvta"));
+    }
+    Ok(())
+}
+
 pub(super) fn build_wgmma_pointer_test_kernel(
     ctx: &mut Context,
     accumulator_count: usize,
@@ -187,6 +243,24 @@ pub(super) fn append_pointer_wgmma_mma_tf32(
     Operation::new(
         ctx,
         nvvm::WgmmaMmaM64N64K8F32Tf32Op::get_concrete_op_info(),
+        vec![],
+        vec![accumulator, desc_a, desc_b],
+        vec![],
+        0,
+    )
+    .insert_at_back(block, ctx);
+}
+
+pub(super) fn append_pointer_wgmma_mma_e4m3(
+    ctx: &mut Context,
+    block: pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+    accumulator: pliron::value::Value,
+    desc_a: pliron::value::Value,
+    desc_b: pliron::value::Value,
+) {
+    Operation::new(
+        ctx,
+        nvvm::WgmmaMmaM64N64K32F32E4m3Op::get_concrete_op_info(),
         vec![],
         vec![accumulator, desc_a, desc_b],
         vec![],
@@ -708,6 +782,88 @@ fn test_value_form_tf32_wgmma_group_lowers_to_tied_register_inline_ptx() -> Resu
 }
 
 #[test]
+fn test_value_form_e4m3_wgmma_group_chains_two_mmas_in_tied_register_inline_ptx()
+-> Result<(), anyhow::Error> {
+    use pliron::builtin::types::{FP32Type, IntegerType, Signedness};
+
+    const ACCUMULATOR_LEN: usize = 32;
+    const DESCRIPTOR_COUNT: usize = 4;
+
+    let mut ctx = make_test_ctx();
+    let f32_ty = FP32Type::get(&ctx);
+    let u64_ty = IntegerType::get(&ctx, 64, Signedness::Unsigned);
+    let argument_types = (0..ACCUMULATOR_LEN)
+        .map(|_| f32_ty.into())
+        .chain((0..DESCRIPTOR_COUNT).map(|_| u64_ty.into()))
+        .collect::<Vec<pliron::r#type::TypeHandle>>();
+    let (module_ptr, entry) = build_test_kernel(&mut ctx, argument_types);
+
+    let accumulators = (0..ACCUMULATOR_LEN)
+        .map(|index| entry.deref(&ctx).get_argument(index))
+        .collect::<Vec<_>>();
+    let descriptors = (0..DESCRIPTOR_COUNT)
+        .map(|index| entry.deref(&ctx).get_argument(ACCUMULATOR_LEN + index))
+        .collect::<Vec<_>>();
+
+    nvvm::WgmmaMmaGroupValuesM64N64K32F32E4m3Op::build(&mut ctx, accumulators, descriptors)
+        .insert_at_back(entry, &ctx);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let matching = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_llvm_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("m64n64k32.f32.e4m3.e4m3"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+
+    let asm = &matching[0];
+    let template = asm
+        .get_attr_llvm_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("E4M3 value-form WGMMA template");
+    assert_eq!(template.matches("wgmma.mma_async").count(), 2);
+    assert!(template.contains("m64n64k32.f32.e4m3.e4m3"));
+    assert!(!template.contains(".bf16.bf16"));
+    assert!(!template.contains(".f16.f16"));
+    assert!(!template.contains(".tf32.tf32"));
+    assert!(template.contains("$64, $65, 1, 1, 1;"));
+    assert!(template.contains("$66, $67, 1, 1, 1;"));
+    assert!(!template.contains("1, 1, 1, 0, 0;"));
+    assert!(template.contains("wgmma.fence.sync.aligned"));
+    assert!(template.contains("wgmma.commit_group.sync.aligned"));
+    assert!(template.contains("wgmma.wait_group.sync.aligned 0"));
+    assert!(!template.contains("ld.f32"));
+    assert!(!template.contains("st.f32"));
+
+    let constraints = asm
+        .get_attr_llvm_inline_asm_constraints(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("E4M3 value-form WGMMA constraints");
+    assert_eq!(
+        constraints
+            .split(',')
+            .filter(|value| *value == "=f")
+            .count(),
+        32
+    );
+    assert_eq!(
+        constraints.split(',').filter(|value| *value == "l").count(),
+        4
+    );
+    assert!(constraints.ends_with("~{memory}"));
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+
+    Ok(())
+}
+
+#[test]
 fn test_pointer_form_wgmma_sequence_preserves_deferred_fallback() -> Result<(), anyhow::Error> {
     use dialect_mir::types::MirPtrType;
     use pliron::builtin::attributes::IntegerAttr;
@@ -792,8 +948,16 @@ fn test_pointer_form_wgmma_sequence_preserves_deferred_fallback() -> Result<(), 
     Ok(())
 }
 
-#[test]
-fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<(), anyhow::Error> {
+fn assert_pointer_form_wgmma_region_canonicalizes_reborrow_identity(
+    append_mma: fn(
+        &mut Context,
+        pliron::context::Ptr<pliron::basic_block::BasicBlock>,
+        pliron::value::Value,
+        pliron::value::Value,
+        pliron::value::Value,
+    ),
+    mnemonic: &str,
+) -> Result<(), anyhow::Error> {
     use dialect_mir::attributes::{MirCastKindAttr, MirPointerKindAuthorityAttr};
     use dialect_mir::types::{MirArrayType, MirPointerKind, MirPtrType};
     use pliron::builtin::attributes::IntegerAttr;
@@ -842,15 +1006,7 @@ fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<()
     first_retype.insert_at_back(entry, &ctx);
     let first_reborrow = first_retype.deref(&ctx).get_result(0);
 
-    Operation::new(
-        &mut ctx,
-        nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
-        vec![],
-        vec![first_reborrow, desc_a, desc_b],
-        vec![],
-        0,
-    )
-    .insert_at_back(entry, &ctx);
+    append_mma(&mut ctx, entry, first_reborrow, desc_a, desc_b);
 
     let second_retype = Operation::new(
         &mut ctx,
@@ -880,15 +1036,7 @@ fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<()
         "the regression must provide a typed UniqueRef for the linear plan to retain"
     );
 
-    Operation::new(
-        &mut ctx,
-        nvvm::WgmmaMmaM64N64K16F32Bf16Op::get_concrete_op_info(),
-        vec![],
-        vec![second_reborrow, desc_a, desc_b],
-        vec![],
-        0,
-    )
-    .insert_at_back(entry, &ctx);
+    append_mma(&mut ctx, entry, second_reborrow, desc_a, desc_b);
     nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
 
     let zero_attr = IntegerAttr::new(u64_ty, APInt::from_i64(0, NonZeroUsize::new(64).unwrap()));
@@ -915,9 +1063,7 @@ fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<()
         .filter(|asm| {
             asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
-                .is_some_and(|template| {
-                    template.contains("wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16")
-                })
+                .is_some_and(|template| template.contains(mnemonic))
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -935,6 +1081,23 @@ fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<()
         "both reborrows must remain in one fused accumulator region"
     );
     Ok(())
+}
+
+#[test]
+fn test_pointer_form_wgmma_region_canonicalizes_reborrow_identity() -> Result<(), anyhow::Error> {
+    assert_pointer_form_wgmma_region_canonicalizes_reborrow_identity(
+        append_pointer_wgmma_mma,
+        "wgmma.mma_async.sync.aligned.m64n64k16.f32.bf16.bf16",
+    )
+}
+
+#[test]
+fn test_pointer_form_e4m3_wgmma_region_canonicalizes_reborrow_identity() -> Result<(), anyhow::Error>
+{
+    assert_pointer_form_wgmma_region_canonicalizes_reborrow_identity(
+        append_pointer_wgmma_mma_e4m3,
+        "wgmma.mma_async.sync.aligned.m64n64k32.f32.e4m3.e4m3",
+    )
 }
 
 #[test]
@@ -1278,6 +1441,62 @@ fn test_pointer_form_tf32_wgmma_linear_full_drain_uses_value_adapter() -> Result
     assert!(!template.contains("m64n64k16"));
     assert!(template.contains("$64, $65, 1, 1, 1;"));
     assert!(!template.contains("$64, $65, 1, 1, 1, 0, 0;"));
+    assert!(!template.contains("ld.f32"));
+    assert!(!template.contains("st.f32"));
+    assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);
+
+    Ok(())
+}
+
+#[test]
+fn test_pointer_form_e4m3_wgmma_linear_full_drain_uses_value_adapter() -> Result<(), anyhow::Error>
+{
+    let mut ctx = make_test_ctx();
+    let (module_ptr, entry, accumulators, descriptors) =
+        build_wgmma_canonical_pointer_test_kernel(&mut ctx, 1, 2);
+    let accumulator = accumulators[0];
+
+    nvvm::WgmmaFenceSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_pointer_wgmma_mma_e4m3(&mut ctx, entry, accumulator, descriptors[0], descriptors[1]);
+    nvvm::WgmmaCommitGroupSyncAlignedOp::build(&mut ctx).insert_at_back(entry, &ctx);
+    append_wgmma_wait_group_constant(&mut ctx, entry, 0);
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module_ptr)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+    let matching = lowered_kernel_body(&ctx, module_ptr)
+        .into_iter()
+        .filter_map(|operation| Operation::get_op::<llvm::InlineAsmOp>(operation, &ctx))
+        .filter(|asm| {
+            asm.get_attr_llvm_inline_asm_template(&ctx)
+                .map(|value| String::from((*value).clone()))
+                .is_some_and(|template| template.contains("m64n64k32.f32.e4m3.e4m3"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+
+    let asm = &matching[0];
+    let template = asm
+        .get_attr_llvm_inline_asm_template(&ctx)
+        .map(|value| String::from((*value).clone()))
+        .expect("E4M3 pointer-form WGMMA template");
+    assert_eq!(template.matches("wgmma.fence.sync.aligned").count(), 1);
+    assert_eq!(template.matches("wgmma.mma_async").count(), 1);
+    assert_eq!(
+        template.matches("wgmma.commit_group.sync.aligned").count(),
+        1
+    );
+    assert_eq!(
+        template.matches("wgmma.wait_group.sync.aligned 0").count(),
+        1
+    );
+    assert!(template.contains("m64n64k32.f32.e4m3.e4m3"));
+    assert!(!template.contains(".bf16.bf16"));
+    assert!(!template.contains(".f16.f16"));
+    assert!(!template.contains(".tf32.tf32"));
+    assert!(template.contains("$64, $65, 1, 1, 1;"));
+    assert!(!template.contains("1, 1, 1, 0, 0;"));
     assert!(!template.contains("ld.f32"));
     assert!(!template.contains("st.f32"));
     assert_eq!(llvm::asm_kind(&ctx, asm), llvm::AsmKind::Convergent);

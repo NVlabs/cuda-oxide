@@ -35,12 +35,12 @@ mod kernels {
     ///
     /// This tests the basic WGMMA infrastructure:
     /// - make_smem_desc(): Create SMEM descriptor with swizzle
-    /// - wgmma_fence(): Ensure prior memory operations complete
+    /// - wgmma_fence(): Order accumulator register accesses
     /// - wgmma_commit_group(): Commit current instruction group
     /// - wgmma_wait_group::<0>(): Wait for all groups to complete
     #[kernel]
     pub unsafe fn wgmma_sync_test(mut output: DisjointSlice<u64>) {
-        static mut SMEM: SharedArray<u8, 256, 128> = SharedArray::UNINIT;
+        static mut SMEM: SharedArray<u8, 256, 256> = SharedArray::UNINIT;
 
         let tid = thread::threadIdx_x();
         let gid = thread::index_1d();
@@ -141,7 +141,7 @@ fn run_wgmma_sync_test(
     let cfg = LaunchConfig {
         block_dim: (128, 1, 1),
         grid_dim: (1, 1, 1),
-        shared_mem_bytes: 256,
+        shared_mem_bytes: 0,
     };
 
     println!("Launching wgmma_sync_test kernel...");
@@ -154,13 +154,11 @@ fn run_wgmma_sync_test(
 
     println!("SMEM descriptor: 0x{:016x}", host_output[0]);
 
-    // Verify descriptor has expected swizzle bits set (bits 62-63 = 3)
-    let swizzle_bits = (host_output[0] >> 62) & 0x3;
-    if swizzle_bits == 3 {
-        println!("✓ Swizzle mode correct (128B)");
-    } else {
-        println!("✗ Unexpected swizzle mode: {}", swizzle_bits);
+    let desc = host_output[0];
+    if desc & !0x3fff != 0xC000001000010000 || desc & 0xf != 0 {
+        return Err(format!("invalid 32B-swizzled, 256B-aligned descriptor: {desc:#018x}").into());
     }
+    println!("✓ Swizzle mode correct (32B)");
 
     // Verify leading dimension (bits 16-29)
     let leading_dim = (host_output[0] >> 16) & 0x3FFF;
@@ -169,6 +167,7 @@ fn run_wgmma_sync_test(
     // Verify stride (bits 32-45)
     let stride = (host_output[0] >> 32) & 0x3FFF;
     println!("  Stride offset: {} (raw bits)", stride);
+    println!("SUCCESS: WGMMA descriptor fields and alignment verified");
 
     Ok(())
 }
