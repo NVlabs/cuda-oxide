@@ -41,7 +41,9 @@ use cuda_oxide_codegen::__private::{
     BackendOptions, ModuleArtifactKind, ModulePipelineRequest, OutputFiles, PipelineTrace,
     append_to_module, compile_translated_module, verify_operation,
 };
-pub use cuda_oxide_codegen::__private::{DeviceExternAttrs, DeviceExternDecl, PipelineError};
+pub use cuda_oxide_codegen::__private::{
+    DeviceArchHint, DeviceExternAttrs, DeviceExternDecl, PipelineError,
+};
 use llvm_export::export::DebugKind;
 pub use llvm_export::export::DeviceExternType;
 use llvm_export::ops::{DebugGlobalVariableInfo, DebugSourcePosition};
@@ -227,8 +229,9 @@ pub struct PipelineConfig {
     pub target_arch_source: &'static str,
     /// Detected architecture of the local GPU (`CUDA_OXIDE_DEVICE_ARCH`).
     ///
-    /// Used only when no explicit target is provided.
-    pub device_arch_hint: Option<String>,
+    /// Valid hints are used only when no explicit target is provided; invalid
+    /// hints always produce a target-selection error.
+    pub device_arch_hint: Option<DeviceArchHint>,
     /// Device debug metadata tier.
     pub debug_kind: DebugKind,
     /// Source identities and semantic types for device statics,
@@ -246,6 +249,15 @@ pub struct PipelineConfig {
     ///
     /// Explicit fused operations, such as `f32::mul_add`, are unaffected.
     pub allow_fma_contraction: bool,
+    /// Stable per-compilation identity woven into counter-named module-scope
+    /// symbols (`__shared_mem_*`, `__device_global_*`) and the dynamic
+    /// shared-memory pool externs (`__dynamic_smem_*`) during MIR lowering.
+    ///
+    /// The rustc frontend passes the crate's `StableCrateId` hash so that
+    /// bundles from different crates define no common module-scope symbol
+    /// when `load_all_ptx_bundles_merged` concatenates their PTX (#1277).
+    /// `None` keeps the undecorated historical names.
+    pub module_disambiguator: Option<u64>,
 }
 
 impl Default for PipelineConfig {
@@ -263,6 +275,7 @@ impl Default for PipelineConfig {
             debug_kind: DebugKind::Off,
             debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+            module_disambiguator: None,
         }
     }
 }
@@ -424,7 +437,8 @@ fn attach_debug_global_variables(
 /// Environment-derived compatibility options are read once at the rustc
 /// frontend boundary. Explicit pipeline configuration retains precedence.
 fn backend_options_for(config: &PipelineConfig) -> BackendOptions {
-    let mut backend_options = BackendOptions::from_env();
+    let mut backend_options =
+        BackendOptions::from_env_with_device_hint(config.device_arch_hint.clone());
     if config.target_arch.is_some() {
         backend_options.target_arch = config.target_arch.clone();
         // The label travels with the value it describes. Overriding the
@@ -432,11 +446,9 @@ fn backend_options_for(config: &PipelineConfig) -> BackendOptions {
         // every target error blame an env var the caller may never have set.
         backend_options.target_arch_source = config.target_arch_source;
     }
-    if config.device_arch_hint.is_some() {
-        backend_options.device_arch_hint = config.device_arch_hint.clone();
-    }
     backend_options.verbose = backend_options.verbose || config.verbose;
     backend_options.no_fma = !config.allow_fma_contraction;
+    backend_options.module_disambiguator = config.module_disambiguator;
     backend_options
 }
 
@@ -1294,6 +1306,7 @@ fn adversarial_export_name() -> u64 {
             debug_kind: DebugKind::Off,
             debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+            module_disambiguator: None,
         };
         let result = run_pipeline(&[], &[], &config, Default::default()).expect("pipeline run");
 
@@ -1347,6 +1360,7 @@ fn adversarial_export_name() -> u64 {
             debug_kind: DebugKind::Off,
             debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+            module_disambiguator: None,
         };
 
         let result = run_pipeline(&[], &[], &config, Default::default()).expect("pipeline run");
@@ -1438,6 +1452,7 @@ fn adversarial_export_name() -> u64 {
             debug_kind: DebugKind::Off,
             debug_global_variables: BTreeMap::new(),
             allow_fma_contraction: true,
+            module_disambiguator: None,
         };
         let externs = [DeviceExternDecl {
             export_name: "consume_float".to_string(),

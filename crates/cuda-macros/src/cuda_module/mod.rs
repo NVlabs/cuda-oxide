@@ -160,6 +160,27 @@ pub(crate) fn expand_cuda_module_inner(
         .kernels
         .iter()
         .any(|kernel| kernel.launch_contract.is_some());
+    // Read the bundle from the binary the linker placed the artifact anchor
+    // in, so a module compiled into a shared object (a plugin, a Python
+    // extension, an evcxr cell) loads its own artifact instead of searching
+    // the process executable. Without an anchor there is nothing to locate
+    // and the executable stays the only candidate.
+    let embedded_module_loader = quote! {
+        match __cuda_oxide_artifact_anchor {
+            ::core::option::Option::Some(anchor) => {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    ::cuda_host::load_embedded_module_from_anchor(ctx, name, anchor)?
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                {
+                    let _ = anchor;
+                    ::cuda_host::load_embedded_module(ctx, name)?
+                }
+            }
+            ::core::option::Option::None => ::cuda_host::load_embedded_module(ctx, name)?,
+        }
+    };
     let module_loader = if has_generic {
         // A syntactically present generic kernel may be removed by cfg. Make
         // the loader decision under the exact same effective cfg chain as its
@@ -172,12 +193,12 @@ pub(crate) fn expand_cuda_module_inner(
                 let _ = name; // merged load ignores the crate-name hint
                 ::cuda_host::load_all_ptx_bundles_merged(ctx)?
             } else {
-                ::cuda_host::load_embedded_module(ctx, name)?
+                #embedded_module_loader
             };
         }
     } else {
         quote! {
-            let module = ::cuda_host::load_embedded_module(ctx, name)?;
+            let module = #embedded_module_loader;
         }
     };
     let constant_fields = constants.iter().map(generate_cuda_module_constant_field);
@@ -823,9 +844,32 @@ fn cuda_module_path_description(module_path: &[Ident]) -> String {
 /// kernel's effective ancestor-plus-local availability attributes, so a module
 /// containing only nested kernels is still independently loadable while no
 /// anchor is referenced when every concrete kernel is absent.
+///
+/// The anchor's address also tells `load_named()` where the bundle is: the
+/// linker keeps the anchor and the `.oxart` section in the same binary, so
+/// the loader reads that binary rather than the process executable, which
+/// differs whenever the module was compiled into a shared object. Each
+/// reference records the address in `__cuda_oxide_artifact_anchor`; it stays
+/// `None` when no reference is emitted or every concrete kernel is cfg'd out.
 fn cuda_module_artifact_anchor_statements(
     kernels: &[CudaModuleKernel],
 ) -> syn::Result<TokenStream2> {
+    let references = cuda_module_artifact_anchor_references(kernels)?;
+    Ok(quote! {
+        // Keep-alive handshake with the codegen backend: see the macro
+        // crate's `cuda_module_artifact_anchor_statements` for details.
+        #[allow(unused_mut)]
+        let mut __cuda_oxide_artifact_anchor: ::core::option::Option<&::core::primitive::u8> =
+            ::core::option::Option::None;
+        #(#references)*
+    })
+}
+
+/// One guarded anchor reference per concrete kernel, or none when this crate
+/// produces no artifact; see [`cuda_module_artifact_anchor_statements`].
+fn cuda_module_artifact_anchor_references(
+    kernels: &[CudaModuleKernel],
+) -> syn::Result<Vec<TokenStream2>> {
     let (Ok(package_name), Ok(package_version), Ok(crate_name)) = (
         std::env::var("CARGO_PKG_NAME"),
         std::env::var("CARGO_PKG_VERSION"),
@@ -835,7 +879,7 @@ fn cuda_module_artifact_anchor_statements(
         // falls back to crate-name-based bundle naming and we cannot
         // reproduce it exactly, so skip the anchor rather than risk an
         // undefined symbol.
-        return Ok(TokenStream2::new());
+        return Ok(Vec::new());
     };
 
     let owner_filter = proc_macro::tracked::env_var(DEVICE_CODEGEN_CRATE_ENV).ok();
@@ -844,11 +888,11 @@ fn cuda_module_artifact_anchor_statements(
         // The backend deliberately omits this crate's artifact. Omitting the
         // reference as well keeps the host link valid without pretending that
         // a loadable bundle exists.
-        return Ok(TokenStream2::new());
+        return Ok(Vec::new());
     }
 
     if !kernels.iter().any(|kernel| !kernel.is_generic) {
-        return Ok(TokenStream2::new());
+        return Ok(Vec::new());
     }
 
     let binary_name = std::env::var("CARGO_BIN_NAME").ok();
@@ -870,22 +914,24 @@ fn cuda_module_artifact_anchor_statements(
             let cfg_attrs = &kernel.effective_cfg_attrs;
             quote! {
                 #(#cfg_attrs)*
-                let _artifact_anchor: *const ::core::primitive::u8 = {
+                let _ = {
                     unsafe extern "C" {
                         #[link_name = #anchor_name]
                         static CUDA_OXIDE_BUNDLE_ANCHOR: ::core::primitive::u8;
                     }
-                    ::std::hint::black_box(unsafe {
-                        ::core::ptr::addr_of!(CUDA_OXIDE_BUNDLE_ANCHOR)
-                    })
+                    __cuda_oxide_artifact_anchor = ::core::option::Option::Some(
+                        ::std::hint::black_box(unsafe {
+                            // The backend defines this initialized byte in the
+                            // artifact object retained by this image. Borrow it
+                            // only for this loader call; no reference escapes.
+                            &CUDA_OXIDE_BUNDLE_ANCHOR
+                        }),
+                    );
                 };
             }
-        });
-    Ok(quote! {
-        // Keep-alive handshake with the codegen backend: see the macro
-        // crate's `cuda_module_artifact_anchor_statements` for details.
-        #(#references)*
-    })
+        })
+        .collect();
+    Ok(references)
 }
 
 pub(crate) fn device_codegen_owner_selection(raw: Option<&str>, crate_name: &str) -> Option<bool> {

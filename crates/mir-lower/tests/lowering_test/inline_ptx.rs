@@ -77,22 +77,22 @@ fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> 
                     continue;
                 };
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|s| String::from((*s).clone()));
                 match template.as_deref() {
                     Some("add.u32 $0, $1, $1;") => {
                         found_conservative = true;
                         assert_eq!(
                             inline_asm
-                                .get_attr_inline_asm_constraints(&ctx)
+                                .get_attr_llvm_inline_asm_constraints(&ctx)
                                 .map(|s| String::from((*s).clone()))
                                 .as_deref(),
                             Some("=r,r")
                         );
                         assert!(
                             inline_asm
-                                .get_attr_inline_asm_convergent(&ctx)
-                                .is_some_and(|b| bool::from((*b).clone()))
+                                .get_attr_llvm_inline_asm_attrs(&ctx)
+                                .is_some_and(|attrs| attrs.has("convergent"))
                         );
                         assert!(llvm::inline_asm_sideeffect(
                             &ctx,
@@ -103,15 +103,15 @@ fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> 
                         found_register_only = true;
                         assert_eq!(
                             inline_asm
-                                .get_attr_inline_asm_constraints(&ctx)
+                                .get_attr_llvm_inline_asm_constraints(&ctx)
                                 .map(|s| String::from((*s).clone()))
                                 .as_deref(),
                             Some("=r,r")
                         );
                         assert!(
                             inline_asm
-                                .get_attr_inline_asm_convergent(&ctx)
-                                .is_some_and(|b| bool::from((*b).clone()))
+                                .get_attr_llvm_inline_asm_attrs(&ctx)
+                                .is_some_and(|attrs| attrs.has("convergent"))
                         );
                         assert!(!llvm::inline_asm_sideeffect(
                             &ctx,
@@ -122,15 +122,15 @@ fn test_inline_ptx_op_lowers_to_inline_asm_attrs() -> Result<(), anyhow::Error> 
                         found_may_diverge = true;
                         assert_eq!(
                             inline_asm
-                                .get_attr_inline_asm_constraints(&ctx)
+                                .get_attr_llvm_inline_asm_constraints(&ctx)
                                 .map(|s| String::from((*s).clone()))
                                 .as_deref(),
                             Some("=r,r")
                         );
                         assert!(
-                            inline_asm
-                                .get_attr_inline_asm_convergent(&ctx)
-                                .is_some_and(|b| !bool::from((*b).clone()))
+                            !inline_asm
+                                .get_attr_llvm_inline_asm_attrs(&ctx)
+                                .is_some_and(|attrs| attrs.has("convergent"))
                         );
                         assert!(!llvm::inline_asm_sideeffect(
                             &ctx,
@@ -198,14 +198,14 @@ fn test_multi_result_inline_ptx_lowers_to_struct_asm_and_extractvalues() -> Resu
             );
             assert_eq!(
                 inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|s| String::from((*s).clone()))
                     .as_deref(),
                 Some("add.u32 $0, $2, $2; mul.lo.u32 $1, $2, $2;")
             );
             assert_eq!(
                 inline_asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|s| String::from((*s).clone()))
                     .as_deref(),
                 Some("=r,=r,r")
@@ -300,7 +300,7 @@ fn test_inline_ptx_supports_thirty_two_tied_f32_results() -> Result<(), anyhow::
         if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
             assert_eq!(
                 inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .as_deref(),
                 Some(template.as_str()),
@@ -308,7 +308,7 @@ fn test_inline_ptx_supports_thirty_two_tied_f32_results() -> Result<(), anyhow::
 
             assert_eq!(
                 inline_asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .as_deref(),
                 Some(constraints.as_str()),

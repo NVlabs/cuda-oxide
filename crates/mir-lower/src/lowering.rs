@@ -322,8 +322,13 @@ pub fn convert_func(
         };
 
         if let Some(align) = max_align {
+            // The owner suffix keeps the per-function pool symbols apart
+            // within one module; the crate namespace keeps the same owner's
+            // symbol apart across merged bundles, where duplicate extern
+            // declarations with different alignments silently kept whichever
+            // came first (#1277).
             let symbol_name: pliron::identifier::Identifier =
-                format!("__dynamic_smem_{}", func_name_str)
+                crate::context::module_namespaced_symbol(ctx, "__dynamic_smem", &func_name_str)
                     .as_str()
                     .try_into()
                     .expect("Invalid function name for symbol");

@@ -61,9 +61,9 @@ require sm_90+` skip line and exits before launching anything.
 
 | Kernel                     | What it verifies                                                        |
 |:---------------------------|:------------------------------------------------------------------------|
-| `typed_warp32_ballot`      | `WarpTile<32>::ballot` byte-identical to `warp::ballot_sync`            |
+| `typed_warp32_ballot`      | full-warp ballot plus `match_any` / `match_all` fast-path semantics      |
 | `typed_warp16_ballot`      | sub-warp ballot is **tile-relative** (16-bit mask, not 32-bit)          |
-| `typed_warp16_shfl`        | tile-relative broadcast/shuffle boundaries plus sparse even-lane coalesced ballot packing and shuffle sources |
+| `typed_warp16_shfl`        | tile-relative shuffle/match masks plus sparse coalesced ballot/match packing and shuffle sources |
 | `typed_grid_sync`          | `this_grid().sync()` matches the raw `grid::sync()` semantics           |
 | `typed_grid_rank`          | `this_grid().thread_rank()` is the identity permutation `0..total`      |
 
@@ -82,8 +82,10 @@ every (op, lane/thread) pair.
 
 All scans are **inclusive**: thread `i` receives the reduction of
 values from threads `0..=i`. Block-scoped variants take a
-`*mut SharedArray<T, NUM_WARPS>` for warp-totals scratch — the
-demo uses `&raw mut SMEM` so callers don't need an `unsafe` block.
+`*mut SharedArray<T, NUM_WARPS>` for warp-totals scratch. `NUM_WARPS`
+is a capacity: it must be at least `ceil(block_threads / 32)`, and extra
+slots are allowed. Partial final warps are supported. The demo uses
+`&raw mut SMEM` so callers don't need an `unsafe` block.
 
 ## Layout Conventions
 
@@ -118,10 +120,10 @@ Output buffer layout for reduce/scan kernels:
   correctness of the lower powers is covered by the `WarpTile<16>`
   checks in Layer 2 plus the warp-reduce/scan tests in Layer 3 (which
   exercise the same mask machinery at `N = 32`).
-- **General `CoalescedThreads` algorithms** — `typed_warp16_shfl` covers one
-  sparse even-lane group and invalid-source self fallback. Broader divergent
-  layouts remain exercised by `hashmap_v2` and `hashmap_v3`'s typed warp-find
-  paths.
+- **General `CoalescedThreads` algorithms** — `typed_warp16_shfl` covers sparse
+  even-lane and irregular groups, including group-relative ballot/match packing
+  and invalid-source shuffle self fallback. Broader divergent layouts remain
+  exercised by `hashmap_v2` and `hashmap_v3`'s typed warp-find paths.
 
 ## Hardware Requirements
 
@@ -184,3 +186,5 @@ The recipe is identical for every test in the file:
 
 Following this pattern keeps the harness uniform — every check is
 self-contained and the success/fail signal is unambiguous.
+
+Block reductions and scans take an unsafe raw scratch pointer. Every block thread must use the same live shared allocation; no other operation may access it, and a block barrier is required before reuse.

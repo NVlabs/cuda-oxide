@@ -404,7 +404,7 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
     one.get_operation().insert_at_back(entry, &ctx);
     let one_val = one.get_operation().deref(&ctx).get_result(0);
 
-    let tid = AllocaOp::new(&mut ctx, i32_ty.into(), one_val);
+    let tid = AllocaOp::new(&mut ctx, i32_ty.into(), one_val, 0);
     let tid_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 31, 9);
     tid.get_operation().deref_mut(&ctx).set_loc(tid_loc);
     llvm_export::ops::set_debug_local_variable(
@@ -423,7 +423,7 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
     tid.get_operation().insert_at_back(entry, &ctx);
 
     let ptr_ty = PointerType::get(&ctx, 0);
-    let ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val, 0);
     let ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 32, 9);
     ptr.get_operation().deref_mut(&ctx).set_loc(ptr_loc);
     let ptr_debug_ty = DebugLocalTypeKind::TypedPointer {
@@ -478,7 +478,7 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
     );
     ptr.get_operation().insert_at_back(entry, &ctx);
 
-    let nested_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let nested_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val, 0);
     let nested_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 33, 9);
     nested_ptr
         .get_operation()
@@ -507,7 +507,7 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
     );
     nested_ptr.get_operation().insert_at_back(entry, &ctx);
 
-    let array_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let array_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val, 0);
     let array_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 34, 9);
     array_ptr
         .get_operation()
@@ -537,7 +537,7 @@ fn full_debug_metadata_emits_dbg_declare_for_tagged_allocas() {
     );
     array_ptr.get_operation().insert_at_back(entry, &ctx);
 
-    let opaque_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val);
+    let opaque_ptr = AllocaOp::new(&mut ctx, ptr_ty.into(), one_val, 0);
     let opaque_ptr_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 35, 9);
     opaque_ptr
         .get_operation()
@@ -1614,7 +1614,7 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     one.get_operation().insert_at_back(entry, &ctx);
     let one_val = one.get_operation().deref(&ctx).get_result(0);
 
-    let direct = AllocaOp::new(&mut ctx, i64_ty.into(), one_val);
+    let direct = AllocaOp::new(&mut ctx, i64_ty.into(), one_val, 0);
     let direct_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 11, 9);
     direct.get_operation().deref_mut(&ctx).set_loc(direct_loc);
     llvm_export::ops::set_debug_local_variable(
@@ -1659,7 +1659,7 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     );
     direct.get_operation().insert_at_back(entry, &ctx);
 
-    let signed_direct = AllocaOp::new(&mut ctx, i8_ty.into(), one_val);
+    let signed_direct = AllocaOp::new(&mut ctx, i8_ty.into(), one_val, 0);
     let signed_direct_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 12, 9);
     signed_direct
         .get_operation()
@@ -1714,7 +1714,7 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
         .get_operation()
         .insert_at_back(entry, &ctx);
 
-    let signed_scalar = AllocaOp::new(&mut ctx, i8_ty.into(), one_val);
+    let signed_scalar = AllocaOp::new(&mut ctx, i8_ty.into(), one_val, 0);
     let signed_scalar_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 13, 9);
     signed_scalar
         .get_operation()
@@ -1735,7 +1735,7 @@ fn full_debug_metadata_emits_rust_enum_variant_parts() {
     );
     signed_scalar.get_operation().insert_at_back(entry, &ctx);
 
-    let niche = AllocaOp::new(&mut ctx, i64_ty.into(), one_val);
+    let niche = AllocaOp::new(&mut ctx, i64_ty.into(), one_val, 0);
     let niche_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/enum.rs", 14, 9);
     niche.get_operation().deref_mut(&ctx).set_loc(niche_loc);
     llvm_export::ops::set_debug_local_variable(
@@ -1967,7 +1967,7 @@ fn full_debug_metadata_uses_file_scope_for_cross_file_local_variables() {
     one.get_operation().insert_at_back(entry, &ctx);
     let one_val = one.get_operation().deref(&ctx).get_result(0);
 
-    let tid = AllocaOp::new(&mut ctx, i32_ty.into(), one_val);
+    let tid = AllocaOp::new(&mut ctx, i32_ty.into(), one_val, 0);
     let tid_loc = src_location(
         &mut ctx,
         "/tmp/cuda-oxide/crates/cuda-device/src/thread.rs",
@@ -2420,7 +2420,7 @@ fn line_table_debug_metadata_ignores_tagged_alloca_variables() {
     one.get_operation().insert_at_back(entry, &ctx);
     let one_val = one.get_operation().deref(&ctx).get_result(0);
 
-    let local = AllocaOp::new(&mut ctx, i32_ty.into(), one_val);
+    let local = AllocaOp::new(&mut ctx, i32_ty.into(), one_val, 0);
     let local_loc = src_location(&mut ctx, "/tmp/cuda-oxide/tests/kernel.rs", 41, 9);
     local.get_operation().deref_mut(&ctx).set_loc(local_loc);
     llvm_export::ops::set_debug_local_variable(
@@ -2615,7 +2615,7 @@ fn full_debug_metadata_emits_scalarized_fragment_dbg_declares() {
         count: 2,
     };
     for (index, offset_bits) in [0u64, 32].into_iter().enumerate() {
-        let alloca = AllocaOp::new(&mut ctx, i32_ty.into(), one_value);
+        let alloca = AllocaOp::new(&mut ctx, i32_ty.into(), one_value, 0);
         llvm_export::ops::set_debug_fragment_variables(
             &mut ctx,
             alloca.get_operation(),
@@ -2733,7 +2733,7 @@ fn full_debug_metadata_emits_projected_dbg_declares() {
     one.get_operation().insert_at_back(entry, &ctx);
 
     let storage_ty = ArrayType::get(&ctx, i32_ty.into(), 8);
-    let alloca = AllocaOp::new(&mut ctx, storage_ty.into(), one_value);
+    let alloca = AllocaOp::new(&mut ctx, storage_ty.into(), one_value, 0);
     llvm_export::ops::set_debug_projected_variables(
         &mut ctx,
         alloca.get_operation(),

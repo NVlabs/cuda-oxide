@@ -48,6 +48,7 @@ pub(super) fn validate_policy(
     validate_abi_id(&policy.abi_id)?;
     parse_ptx_version(&policy.minimum_ptx, &policy.id)?;
     parse_hardware_target(policy)?;
+    validate_arch_introduction_floor(policy)?;
     policy.expected_ptx.validate().map_err(|reason| {
         anyhow::anyhow!(
             "{} has an invalid expected PTX pattern: {reason}",

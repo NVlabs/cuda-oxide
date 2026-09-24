@@ -11,7 +11,7 @@
   },
   "inputs": {
     "imported_sha256": "3f54245b231a5b6e19f3225710c3865b7e1a106242cce873250ef5fdc32e532e",
-    "overlay_sha256": "2f7afdc14c3a5e35de6296aba09fea8156e9edf4635bb01f4c6b6aed93cce193",
+    "overlay_sha256": "ed02554c2f1ba35741f59133db5599dd62a584ebef506b3f4b31c5bc0a8c9cf8",
     "abi_ledger_sha256": "a34301233f6b8cfda7d876a07377d5478922e85f9ba58bdacd37b676f9f6fba8",
     "evidence_sha256": [
       "cuda-12.0-libnvvm-12.0.140-ex2-f16.json:7102ea7d567ff2d2eb75a0384148d2e5eb6e605c26a5b98c71371fa3c46adef6",
@@ -9222,9 +9222,15 @@
         "execution_scope": "cta"
       },
       "target": {
-        "minimum_ptx": "1.0",
+        "minimum_ptx": "2.0",
         "hardware": {
-          "kind": "all"
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
         },
         "ptx_result": "()",
         "targets": "all",
@@ -9716,9 +9722,15 @@
         "execution_scope": "cta"
       },
       "target": {
-        "minimum_ptx": "1.0",
+        "minimum_ptx": "2.0",
         "hardware": {
-          "kind": "all"
+          "kind": "any_of",
+          "alternatives": [
+            {
+              "kind": "minimum_sm",
+              "sm": 20
+            }
+          ]
         },
         "ptx_result": "()",
         "targets": "all",

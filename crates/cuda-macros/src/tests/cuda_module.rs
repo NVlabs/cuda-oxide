@@ -343,9 +343,54 @@ fn cfg_gated_generic_uses_the_same_gate_for_marker_and_loader() {
         "loader selection must inherit the generic kernel's cfg:\n{expanded}"
     );
     assert!(
-            expanded.contains("if__cuda_oxide_has_enabled_generic_kernel{let_=name;::cuda_host::load_all_ptx_bundles_merged(ctx)?}else{::cuda_host::load_embedded_module(ctx,name)?}"),
+            expanded.contains(&format!("if__cuda_oxide_has_enabled_generic_kernel{{let_=name;::cuda_host::load_all_ptx_bundles_merged(ctx)?}}else{{{ANCHORED_EMBEDDED_LOADER}}}")),
             "loader must fall back to the embedded artifact when no generic kernel is enabled:\n{expanded}"
         );
+}
+
+/// The embedded-artifact loader: read the bundle from the binary that maps
+/// the artifact anchor, or from the executable when no anchor was referenced.
+const ANCHORED_EMBEDDED_LOADER: &str = concat!(
+    "match__cuda_oxide_artifact_anchor{::core::option::Option::Some(anchor)=>{",
+    "#[cfg(any(target_os=\"linux\",target_os=\"android\"))]",
+    "{::cuda_host::load_embedded_module_from_anchor(ctx,name,anchor)?}",
+    "#[cfg(not(any(target_os=\"linux\",target_os=\"android\")))]",
+    "{let_=anchor;::cuda_host::load_embedded_module(ctx,name)?}",
+    "}::core::option::Option::None=>::cuda_host::load_embedded_module(ctx,name)?,}",
+);
+
+#[test]
+fn generated_loader_preserves_other_platform_executable_lookup() {
+    let module: ItemMod = parse_quote! {
+        mod kernels { #[kernel] pub fn plain() {} }
+    };
+    let expanded = expand_to_compact_string(module);
+    assert!(expanded.contains(
+        "#[cfg(not(any(target_os=\"linux\",target_os=\"android\")))]{let_=anchor;::cuda_host::load_embedded_module(ctx,name)?}"
+    ), "{expanded}");
+    assert!(expanded.contains(
+        "#[cfg(any(target_os=\"linux\",target_os=\"android\"))]{::cuda_host::load_embedded_module_from_anchor(ctx,name,anchor)?}"
+    ), "{expanded}");
+}
+
+#[test]
+fn non_generic_cuda_module_loads_from_the_binary_that_maps_its_anchor() {
+    let module: ItemMod = parse_quote! {
+        mod kernels {
+            #[kernel]
+            pub fn plain(output: &mut [u32]) {}
+        }
+    };
+    let expanded = expand_to_compact_string(module);
+
+    assert!(
+        expanded.contains("#[allow(unused_mut)]letmut__cuda_oxide_artifact_anchor:::core::option::Option<&::core::primitive::u8>=::core::option::Option::None;"),
+        "load_named must start without an anchor address:\n{expanded}"
+    );
+    assert!(
+        expanded.contains(&format!("letmodule={ANCHORED_EMBEDDED_LOADER};")),
+        "loader must prefer the binary that maps the anchor:\n{expanded}"
+    );
 }
 
 #[test]

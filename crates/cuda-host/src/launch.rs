@@ -146,7 +146,7 @@ pub fn push_kernel_scalar<T: KernelScalar>(args: &mut Vec<*mut c_void>, value: &
     args.push(value as *mut T as *mut c_void);
 }
 
-/// Returns a Rust-valid data pointer spelling for a kernel slice launch packet.
+/// Returns a Rust-valid data pointer for a kernel slice launch packet.
 ///
 /// `DeviceBuffer` represents a zero-byte allocation with `CUdeviceptr == 0`,
 /// while a Rust slice reference still requires its data pointer to be non-null
@@ -202,7 +202,7 @@ pub fn read_only_device_buffer_arg<T>(
 /// parameters such as `&mut [T]` and `DisjointSlice<T>`.
 ///
 /// `DisjointSlice` shares this host packet helper, so its zero-byte packet gets
-/// the same harmless canonical pointer spelling. That does not derive or imply
+/// the same canonical pointer value. That does not derive or imply
 /// any LLVM reference-validity attribute for `DisjointSlice`.
 ///
 /// # Panics

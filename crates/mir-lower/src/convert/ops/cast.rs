@@ -1039,7 +1039,7 @@ fn emit_transmute_via_memory(
     let storage_ty = if source_is_i1 { byte_ty } else { val_ty };
 
     let one = const_i64(ctx, rewriter, 1);
-    let alloca = llvm::AllocaOp::new(ctx, storage_ty, one);
+    let alloca = llvm::AllocaOp::new(ctx, storage_ty, one, 0);
     llvm_export::ops::set_op_alignment(ctx, alloca.get_operation(), align);
     rewriter.insert_operation(ctx, alloca.get_operation());
     let ptr = alloca.get_operation().deref(ctx).get_result(0);

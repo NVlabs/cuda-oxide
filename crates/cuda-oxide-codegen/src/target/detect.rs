@@ -352,19 +352,20 @@ fn contains_instruction_family_modifier(
                 return false;
             }
 
-            let token_end = following
+            let plain_end = following
                 .char_indices()
                 .find_map(|(offset, ch)| {
                     (ch.is_whitespace() || matches!(ch, '"' | ';')).then_some(offset)
                 })
-                .into_iter()
-                .chain(
-                    ESCAPED_WHITESPACE
-                        .iter()
-                        .filter_map(|escape| following.find(escape)),
-                )
-                .min()
                 .unwrap_or(following.len());
+            // An escape after the first ordinary delimiter cannot end this
+            // token. Searching the whole suffix for every instruction makes
+            // feature detection quadratic on large LLVM modules.
+            let token_end = ESCAPED_WHITESPACE
+                .iter()
+                .filter_map(|escape| following[..plain_end].find(escape))
+                .min()
+                .unwrap_or(plain_end);
             following[..token_end]
                 .split('.')
                 .any(|modifier| modifier == required_modifier)

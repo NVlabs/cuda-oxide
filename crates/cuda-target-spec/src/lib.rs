@@ -90,6 +90,48 @@ impl CudaArch {
     }
 }
 
+/// A device architecture spelled `sm_<capability>` with an optional `a` suffix.
+///
+/// Unlike [`CudaArch`], this type cannot be constructed from a virtual
+/// `compute_` architecture or an `f` family target, which names a compilation
+/// compatibility set rather than the detected GPU. Grammar validation stays
+/// in `CudaArch`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DeviceArch(CudaArch);
+
+impl FromStr for DeviceArch {
+    type Err = CudaArchParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if !value.starts_with("sm_") {
+            return Err(CudaArchParseError::new(
+                value,
+                "device architecture must use the `sm_` prefix",
+            ));
+        }
+        let arch: CudaArch = value.parse()?;
+        if arch.suffix() == Some('f') {
+            return Err(CudaArchParseError::new(
+                value,
+                "a device architecture cannot name an `f` compilation family",
+            ));
+        }
+        Ok(Self(arch))
+    }
+}
+
+impl From<DeviceArch> for CudaArch {
+    fn from(value: DeviceArch) -> Self {
+        value.0
+    }
+}
+
+impl AsRef<CudaArch> for DeviceArch {
+    fn as_ref(&self) -> &CudaArch {
+        &self.0
+    }
+}
+
 fn render_parts(prefix: &str, capability: u32, suffix: Option<char>) -> String {
     match suffix {
         Some(suffix) => format!("{prefix}{capability}{suffix}"),
@@ -151,10 +193,11 @@ impl fmt::Display for CudaArchParseError {
 }
 impl std::error::Error for CudaArchParseError {}
 
-/// One exact CUDA target and its pinned LLVM 23 default PTX ISA.
+/// One exact CUDA target and a recorded PTX ISA floor.
 ///
 /// The suffix is part of the key; consumers must not infer fallback entries
-/// for other suffixes.
+/// for other suffixes. The containing table defines whether the floor is an
+/// ISA introduction or a pinned LLVM backend default.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TargetPtxFloor {
     /// Numeric CUDA compute capability.
@@ -163,6 +206,100 @@ pub struct TargetPtxFloor {
     pub suffix: Option<char>,
     /// PTX ISA encoded as `major * 10 + minor`.
     pub floor: u16,
+}
+
+/// PTX ISA introductions for the hardware floors used by the intrinsic catalog.
+///
+/// This is a lower bound on an authored instruction requirement, not an LLVM
+/// default or a derived instruction floor. Only targets used by top-level
+/// `minimum_sm` or native hardware floors are recorded; backend evidence
+/// targets and architecture/family target matrices are outside this check.
+///
+/// Entries before `sm_75` are pinned from the [PTX ISA release notes]. Entries
+/// from `sm_75` onward were measured with CUDA 13.2 `ptxas` by assembling an
+/// empty kernel at successive `.version` spellings.
+///
+/// [PTX ISA release notes]: https://docs.nvidia.com/cuda/parallel-thread-execution/#release-notes
+pub const ARCH_INTRODUCTION_PTX: &[TargetPtxFloor] = &[
+    TargetPtxFloor {
+        capability: 11,
+        suffix: None,
+        floor: 10,
+    },
+    TargetPtxFloor {
+        capability: 20,
+        suffix: None,
+        floor: 20,
+    },
+    TargetPtxFloor {
+        capability: 30,
+        suffix: None,
+        floor: 30,
+    },
+    TargetPtxFloor {
+        capability: 53,
+        suffix: None,
+        floor: 42,
+    },
+    TargetPtxFloor {
+        capability: 60,
+        suffix: None,
+        floor: 50,
+    },
+    TargetPtxFloor {
+        capability: 61,
+        suffix: None,
+        floor: 50,
+    },
+    TargetPtxFloor {
+        capability: 70,
+        suffix: None,
+        floor: 60,
+    },
+    TargetPtxFloor {
+        capability: 75,
+        suffix: None,
+        floor: 63,
+    },
+    TargetPtxFloor {
+        capability: 80,
+        suffix: None,
+        floor: 70,
+    },
+    TargetPtxFloor {
+        capability: 86,
+        suffix: None,
+        floor: 71,
+    },
+    TargetPtxFloor {
+        capability: 89,
+        suffix: None,
+        floor: 78,
+    },
+    TargetPtxFloor {
+        capability: 90,
+        suffix: None,
+        floor: 78,
+    },
+    TargetPtxFloor {
+        capability: 100,
+        suffix: None,
+        floor: 86,
+    },
+];
+
+/// Return the recorded introduction version for an exact hardware-floor target.
+///
+/// An unrecorded spelling is an error; no nearby target or backend default is
+/// substituted.
+pub fn arch_introduced_ptx(arch: &CudaArch) -> Result<u16, UnsupportedTargetError> {
+    ARCH_INTRODUCTION_PTX
+        .iter()
+        .find(|entry| entry.capability == arch.capability && entry.suffix == arch.suffix)
+        .map(|entry| entry.floor)
+        .ok_or_else(|| UnsupportedTargetError {
+            target: arch.to_string(),
+        })
 }
 
 /// Exact target floors recorded from the pinned LLVM 23 NVPTX backend.
@@ -421,6 +558,32 @@ pub fn spelling_at_least(floor: u16) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn device_arch_requires_sm_spelling_and_reuses_cuda_grammar() {
+        for entry in RECORDED_PTX_FLOORS {
+            let arch = CudaArch::new(entry.capability, entry.suffix).unwrap();
+            let device = arch.sm().parse::<DeviceArch>();
+            if entry.suffix == Some('f') {
+                assert!(device.is_err());
+            } else {
+                assert_eq!(CudaArch::from(device.unwrap()), arch);
+            }
+            assert!(arch.compute().parse::<DeviceArch>().is_err());
+        }
+        for raw in [
+            "compute_120",
+            "sm_",
+            "foo",
+            "sm_05",
+            "sm_9",
+            "sm_90x",
+            "sm_90aa",
+            "sm_4294967296",
+        ] {
+            assert!(raw.parse::<DeviceArch>().is_err(), "{raw}");
+        }
+    }
+
     #[test]
     fn cuda_arch_parses_and_renders_api_specific_spellings() {
         for (input, capability, suffix, sm, compute, legacy) in [

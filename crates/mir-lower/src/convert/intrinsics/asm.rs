@@ -63,11 +63,11 @@ pub(crate) fn convert_inline_ptx(
                 operands,
                 &template,
                 &constraints,
-                convergent,
+                sideeffect,
             );
             let asm_op = inline_asm.get_operation();
             crate::convert::preserve_location(ctx, op, asm_op);
-            llvm::set_inline_asm_sideeffect(ctx, asm_op, sideeffect);
+            llvm::set_inline_asm_convergent(ctx, asm_op, convergent);
             rewriter.insert_operation(ctx, asm_op);
             rewriter.erase_operation(ctx, op);
         }
@@ -85,12 +85,12 @@ pub(crate) fn convert_inline_ptx(
                 operands,
                 &template,
                 &constraints,
-                convergent,
+                sideeffect,
             );
             let asm_op = inline_asm.get_operation();
             // No explicit location copy: `replace_operation` propagates the
             // replaced op's location onto a location-less replacement.
-            llvm::set_inline_asm_sideeffect(ctx, asm_op, sideeffect);
+            llvm::set_inline_asm_convergent(ctx, asm_op, convergent);
             rewriter.insert_operation(ctx, asm_op);
             rewriter.replace_operation(ctx, op, asm_op);
         }
@@ -119,11 +119,11 @@ pub(crate) fn convert_inline_ptx(
                 operands,
                 &template,
                 &constraints,
-                convergent,
+                sideeffect,
             );
             let asm_op = inline_asm.get_operation();
             crate::convert::preserve_location(ctx, op, asm_op);
-            llvm::set_inline_asm_sideeffect(ctx, asm_op, sideeffect);
+            llvm::set_inline_asm_convergent(ctx, asm_op, convergent);
             rewriter.insert_operation(ctx, asm_op);
 
             let aggregate = asm_op.deref(ctx).get_result(0);

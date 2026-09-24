@@ -49,7 +49,7 @@ pub(super) fn spill_enum_value(
     rewriter.insert_operation(ctx, one_const.get_operation());
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
-    let alloca_op = llvm::AllocaOp::new(ctx, llvm_struct_ty, one_val);
+    let alloca_op = llvm::AllocaOp::new(ctx, llvm_struct_ty, one_val, 0);
     rewriter.insert_operation(ctx, alloca_op.get_operation());
     if abi_align > 0 {
         llvm_export::ops::set_op_alignment(ctx, alloca_op.get_operation(), abi_align as u32);

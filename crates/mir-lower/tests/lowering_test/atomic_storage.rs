@@ -358,7 +358,7 @@ fn generic_storage_dispatches_by_address_and_merges_old_values() -> anyhow::Resu
         .iter()
         .filter_map(|&op| Operation::get_op::<llvm::InlineAsmOp>(op, &ctx))
         .find(|asm| {
-            String::from((*asm.get_attr_inline_asm_template(&ctx).unwrap()).clone())
+            String::from((*asm.get_attr_llvm_inline_asm_template(&ctx).unwrap()).clone())
                 .starts_with("st.")
         })
         .unwrap()
@@ -384,7 +384,7 @@ fn generic_storage_dispatches_by_address_and_merges_old_values() -> anyhow::Resu
             incoming.push(op.deref(&ctx).get_operand(0));
         }
         if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx)
-            && String::from((*asm.get_attr_inline_asm_template(&ctx).unwrap()).clone())
+            && String::from((*asm.get_attr_llvm_inline_asm_template(&ctx).unwrap()).clone())
                 .starts_with("fence.")
         {
             fences += 1;
@@ -407,7 +407,7 @@ fn generic_storage_dispatches_by_address_and_merges_old_values() -> anyhow::Resu
         .iter()
         .filter_map(|&op| Operation::get_op::<llvm::InlineAsmOp>(op, &ctx))
         .find(|asm| {
-            String::from((*asm.get_attr_inline_asm_template(&ctx).unwrap()).clone())
+            String::from((*asm.get_attr_llvm_inline_asm_template(&ctx).unwrap()).clone())
                 .starts_with("st.")
         })
         .unwrap()
@@ -558,6 +558,129 @@ fn known_nonlocal_storage_keeps_its_address_space_without_dispatch() -> anyhow::
         assert_eq!(atomic_spaces, [space, space]);
         assert_eq!(accesses, 2);
     }
+    Ok(())
+}
+
+#[test]
+fn shared_storage_preserves_generic_pointer_atomic_values() -> anyhow::Result<()> {
+    let mut ctx = make_test_ctx();
+
+    let pointee: TypeHandle = IntegerType::get(&ctx, 16, Signedness::Unsigned).into();
+    let ty: TypeHandle = MirPtrType::get_generic(&mut ctx, pointee, true).into();
+    let storage = MirPtrType::get_shared(&mut ctx, ty, true);
+
+    let (module, entry) = build_test_kernel(&mut ctx, vec![storage.into(), ty]);
+    let address = entry.deref(&ctx).get_argument(0);
+    let value = entry.deref(&ctx).get_argument(1);
+
+    NvvmAtomicLoadOp::build(
+        &mut ctx,
+        address,
+        ty,
+        AtomicOrdering::Relaxed,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    NvvmAtomicStoreOp::build(
+        &mut ctx,
+        value,
+        address,
+        AtomicOrdering::Relaxed,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    NvvmAtomicRmwOp::build(
+        &mut ctx,
+        address,
+        value,
+        ty,
+        AtomicRmwKind::Xchg,
+        AtomicOrdering::Relaxed,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    NvvmAtomicCmpxchgOp::build(
+        &mut ctx,
+        address,
+        value,
+        value,
+        ty,
+        AtomicOrdering::Acquire,
+        AtomicOrdering::Relaxed,
+        AtomicScope::Device,
+    )
+    .get_operation()
+    .insert_at_back(entry, &ctx);
+
+    append_return(&mut ctx, entry);
+
+    mir_lower::lower_mir_to_llvm(&mut ctx, module).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    module
+        .deref(&ctx)
+        .verify(&ctx)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let body = lowered_kernel_body(&ctx, module);
+
+    let mut atomic_spaces = vec![];
+    let mut accesses = 0;
+
+    for op in body {
+        assert!(
+            Operation::get_op::<llvm::CallOp>(op, &ctx).is_none(),
+            "known shared storage must not require runtime address-space dispatch"
+        );
+
+        if Operation::get_op::<llvm::AtomicRmwOp>(op, &ctx).is_some() {
+            atomic_spaces.push(pointer_space(&ctx, op.deref(&ctx).get_operand(0)));
+
+            assert_eq!(
+                pointer_space(&ctx, op.deref(&ctx).get_operand(1)),
+                0,
+                "atomic exchange value must remain a generic pointer"
+            );
+            assert_eq!(
+                pointer_space(&ctx, op.deref(&ctx).get_result(0)),
+                0,
+                "atomic exchange result must remain a generic pointer"
+            );
+        }
+
+        if Operation::get_op::<llvm::AtomicCmpxchgOp>(op, &ctx).is_some() {
+            atomic_spaces.push(pointer_space(&ctx, op.deref(&ctx).get_operand(0)));
+
+            assert_eq!(
+                pointer_space(&ctx, op.deref(&ctx).get_operand(1)),
+                0,
+                "compare-exchange expected value must remain a generic pointer"
+            );
+            assert_eq!(
+                pointer_space(&ctx, op.deref(&ctx).get_operand(2)),
+                0,
+                "compare-exchange replacement value must remain a generic pointer"
+            );
+        }
+
+        if Operation::get_op::<llvm::InlineAsmOp>(op, &ctx).is_some() {
+            accesses += 1;
+            assert_eq!(
+                pointer_space(&ctx, op.deref(&ctx).get_operand(0)),
+                0,
+                "inline PTX load/store uses the generic address representation"
+            );
+        }
+    }
+
+    assert_eq!(atomic_spaces, [3, 3]);
+    assert_eq!(accesses, 2);
+
     Ok(())
 }
 

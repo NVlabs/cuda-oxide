@@ -778,7 +778,7 @@ impl<'a> ModuleExportState<'a> {
         // Reference validity is transported as a typed LLVM-dialect fact.
         // The exporter does not infer Rust semantics: it only checks that a
         // fact is attached to an in-range pointer parameter of a kernel entry
-        // before spelling the corresponding LLVM attributes.
+        // before emitting the corresponding LLVM attributes.
         let mut reference_param_validities = vec![None; func_ty.arg_types().len()];
         for (index, validity) in
             ops::kernel_reference_param_validity_entries(self.ctx, func.get_operation())?

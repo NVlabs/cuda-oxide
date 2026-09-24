@@ -167,11 +167,11 @@ fn test_stmatrix_libnvvm_uses_exact_convergent_memory_asm() -> Result<(), anyhow
         };
         lowered.push((
             inline_asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .unwrap_or_default(),
             inline_asm
-                .get_attr_inline_asm_constraints(&ctx)
+                .get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .unwrap_or_default(),
             llvm::asm_kind(&ctx, &inline_asm),
@@ -250,10 +250,10 @@ fn test_movmatrix_trans_b16_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
                 };
                 found += 1;
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 let constraints = asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()));
                 assert_eq!(
                     template.as_deref(),
@@ -265,8 +265,8 @@ fn test_movmatrix_trans_b16_lowers_to_inline_asm() -> Result<(), anyhow::Error> 
                     Some(llvm::AsmKind::Convergent)
                 );
                 assert!(
-                    asm.get_attr_inline_asm_convergent(&ctx)
-                        .is_some_and(|value| bool::from((*value).clone()))
+                    asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent"))
                 );
                 assert!(
                     !constraints.as_deref().unwrap().contains("memory"),
@@ -787,11 +787,11 @@ fn test_ldmatrix_libnvvm_uses_exact_convergent_shared_ptx() -> Result<(), anyhow
             };
             lowered.push((
                 inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default(),
                 inline_asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default(),
                 llvm::asm_kind(&ctx, &inline_asm),
@@ -1016,7 +1016,7 @@ fn test_blackwell_ldmatrix_libnvvm_uses_all_exact_convergent_templates_without_e
                 continue;
             };
             let template = asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .unwrap_or_default();
             let index = BLACKWELL_LDMATRIX_CASES
@@ -1026,7 +1026,7 @@ fn test_blackwell_ldmatrix_libnvvm_uses_all_exact_convergent_templates_without_e
             seen[index] += 1;
             let register_count = BLACKWELL_LDMATRIX_CASES[index].3;
             assert_eq!(
-                asm.get_attr_inline_asm_constraints(&ctx)
+                asm.get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .as_deref(),
                 Some(ldmatrix_constraints(register_count))
@@ -1163,7 +1163,7 @@ fn test_classic_ldmatrix_compatibility_ops_keep_exact_lowering() -> Result<(), a
                         continue;
                     };
                     let template = inline_asm
-                        .get_attr_inline_asm_template(&ctx)
+                        .get_attr_llvm_inline_asm_template(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .unwrap_or_default();
                     let index = LDMATRIX_PTX_TEMPLATES
@@ -1173,7 +1173,7 @@ fn test_classic_ldmatrix_compatibility_ops_keep_exact_lowering() -> Result<(), a
                     seen[index] += 1;
                     assert_eq!(
                         inline_asm
-                            .get_attr_inline_asm_constraints(&ctx)
+                            .get_attr_llvm_inline_asm_constraints(&ctx)
                             .map(|value| String::from((*value).clone()))
                             .as_deref(),
                         Some(LDMATRIX_PTX_CONSTRAINTS[index])

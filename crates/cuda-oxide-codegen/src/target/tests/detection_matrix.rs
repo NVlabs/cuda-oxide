@@ -147,6 +147,33 @@ fn f32x2_family_detection_requires_sm100_and_ptx86() {
 }
 
 #[test]
+fn f32x2_family_detection_respects_the_first_token_delimiter() {
+    for operation in ["add", "sub", "mul", "fma"] {
+        for delimiter in [
+            " ", "\t", "\n", "\u{2003}", "\"", ";", "\\09", "\\0A", "\\0B", "\\0C", "\\0D",
+        ] {
+            let present = format!("{operation}.rn.f32x2{delimiter}$0, $1; tail\\09.f32");
+            assert!(contains_f32x2_features(&present), "{present:?}");
+
+            let absent = format!("{operation}.rn.f32{delimiter}.f32x2 tail\\09.f32x2");
+            assert!(!contains_f32x2_features(&absent), "{absent:?}");
+        }
+    }
+}
+
+#[test]
+fn f32x2_family_detection_handles_large_modules_and_late_matches() {
+    // Most tokens have ordinary delimiters and no escaped whitespace in the
+    // remaining module, which used to trigger repeated full-suffix scans.
+    let mut module = "call void asm sideeffect \"add.rn.f32 $0, $1, $2;\", \"\"()\n".repeat(8192);
+    assert!(!contains_f32x2_features(&module));
+    module.push_str("call void asm sideeffect \"fma.rn.f32x2\\09$0, $1, $2, $3;\", \"\"()\n");
+    let requirements = detect_module_requirements_in_llvm_text(&module);
+    assert_eq!(requirements.features, DetectedFeatures::Sm100);
+    assert_eq!(requirements.ptx_isa, PtxIsaRequirement::new(86));
+}
+
+#[test]
 fn dense_bf16_mma_detection_applies_exact_sm80_and_ptx70_floors() {
     let mnemonic = "mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {$0}, {$1}, {$2}, {$3};";
     for spelling in [
@@ -1315,7 +1342,13 @@ fn m8n8k32_int4_mma_requirements_compose_and_are_forward_compatible() {
     }
     assert!(!arch_satisfies(&"sm_72".parse().unwrap(), features));
     assert_eq!(
-        resolve_ptx_target(None, "CUDA_OXIDE_TARGET", Some("sm_120"), features).unwrap(),
+        resolve_ptx_target(
+            None,
+            "CUDA_OXIDE_TARGET",
+            Some(&"sm_120".parse::<cuda_target_spec::DeviceArch>().unwrap()),
+            features
+        )
+        .unwrap(),
         ("sm_120".parse().unwrap(), "detected GPU")
     );
 

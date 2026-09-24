@@ -798,7 +798,7 @@ impl<'a> ModuleExportState<'a> {
         let res = op_ref.get_result(0);
         let res_name = value_names.get(&res).unwrap();
         let elem_ty = op
-            .get_attr_alloca_element_type(self.ctx)
+            .get_attr_llvm_alloca_element_type(self.ctx)
             .expect("Missing alloca_element_type");
 
         let elem_llvm_ty = elem_ty.get_type(self.ctx);
@@ -1159,7 +1159,7 @@ impl<'a> ModuleExportState<'a> {
         let res_name = value_names.get(&res).unwrap();
         let ptr = op_ref.get_operand(0);
         let elem_ty = op
-            .get_attr_gep_src_elem_type(self.ctx)
+            .get_attr_llvm_gep_src_elem_type(self.ctx)
             .expect("Missing gep_src_elem_type")
             .get_type(self.ctx);
         let base_type = ptr.get_type(self.ctx);
@@ -1214,7 +1214,7 @@ impl<'a> ModuleExportState<'a> {
             self.export_value(ptr, value_names, output)?;
         }
 
-        for idx_attr in &op.get_attr_gep_indices(self.ctx).unwrap().0 {
+        for idx_attr in &op.get_attr_llvm_gep_indices(self.ctx).unwrap().0 {
             write!(output, ", ").unwrap();
             match idx_attr {
                 GepIndexAttr::Constant(val) => {
@@ -1844,27 +1844,13 @@ impl<'a> ModuleExportState<'a> {
         output: &mut String,
     ) -> Result<(), String> {
         let op_ref = op.get_operation().deref(self.ctx);
-        let asm_template = read_string_attr(op.get_attr_inline_asm_template(self.ctx));
-        let constraints = read_string_attr(op.get_attr_inline_asm_constraints(self.ctx));
-        // NVVM-dialect ops carry an AsmKind tag (set by InlineAsmOpExt::build).
-        // User-written ptx_asm! ops carry separate sideeffect/convergent attrs.
-        // Resolve both into (has_sideeffect, is_convergent).
-        let kind = ops::asm_kind_opt(self.ctx, op);
-        let (has_sideeffect, is_convergent) = match kind {
-            Some(ops::AsmKind::Convergent) => (true, true),
-            Some(ops::AsmKind::ConvergentPure) => (false, true),
-            Some(ops::AsmKind::SideEffect) => (true, false),
-            Some(ops::AsmKind::Pure) => (false, false),
-            None => {
-                // ptx_asm! path: read the individual attributes.
-                let se = ops::inline_asm_sideeffect(self.ctx, op.get_operation());
-                let cv = op
-                    .get_attr_inline_asm_convergent(self.ctx)
-                    .map(|a| bool::from((*a).clone()))
-                    .unwrap_or(false);
-                (se, cv)
-            }
-        };
+        let asm_template = read_string_attr(op.get_attr_llvm_inline_asm_template(self.ctx));
+        let constraints = read_string_attr(op.get_attr_llvm_inline_asm_constraints(self.ctx));
+        let has_sideeffect = op
+            .get_attr_llvm_inline_asm_side_effects(self.ctx)
+            .map(|attr| bool::from((*attr).clone()))
+            .unwrap_or(true);
+        let is_convergent = ops::inline_asm_convergence(self.ctx, op)?;
 
         // pliron-llvm always stores a single result slot (a void result for
         // no-value asm), so decide void vs valued by the result *type*, not the

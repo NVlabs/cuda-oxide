@@ -147,7 +147,7 @@ pub(crate) fn convert_extract_array_element(
         const_op.get_operation().deref(ctx).get_result(0)
     };
 
-    let alloca_op = llvm::AllocaOp::new(ctx, llvm_array_ty.into(), one_val);
+    let alloca_op = llvm::AllocaOp::new(ctx, llvm_array_ty.into(), one_val, 0);
     rewriter.insert_operation(ctx, alloca_op.get_operation());
     if let Some(align) = abi_align {
         llvm_export::ops::set_op_alignment(ctx, alloca_op.get_operation(), align as u32);

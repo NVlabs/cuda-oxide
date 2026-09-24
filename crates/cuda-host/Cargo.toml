@@ -18,12 +18,21 @@ cuda-core = { workspace = true }
 cuda-artifact-finalizer = { workspace = true }
 ptx-parse = { workspace = true }
 sha2 = { workspace = true }
+oxide-artifacts = { workspace = true, features = ["object-read"] }
 thiserror = { workspace = true }
 cuda-async = { workspace = true, optional = true }
+
+# Platform-correct flags and device identity for cache and mapped-image reads.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "0.2"
 
 [features]
 default = []
 async = ["dep:cuda-async", "cuda-macros/async"]
 
 [dev-dependencies]
+libloading = { workspace = true }
 cuda-device = { workspace = true }
+# The crates.io release cuda-core re-exports bundle types from; tests
+# construct payloads with it so they use the same crate instance.
+oxide-artifacts = { workspace = true }

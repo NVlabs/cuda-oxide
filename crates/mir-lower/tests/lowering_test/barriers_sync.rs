@@ -101,7 +101,7 @@ fn test_generated_basic_mbarrier_uses_shared_lowering_on_both_backends() -> Resu
 
             if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 let index = expected_asm
                     .iter()
@@ -111,7 +111,7 @@ fn test_generated_basic_mbarrier_uses_shared_lowering_on_both_backends() -> Resu
                 asm_counts[index] += 1;
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some(constraints)
@@ -257,7 +257,7 @@ fn generated_cluster_barriers_lower_exactly_on_both_backends() -> Result<(), any
             }
             if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 if let Some(index) = recipes
                     .iter()
@@ -266,7 +266,7 @@ fn generated_cluster_barriers_lower_exactly_on_both_backends() -> Result<(), any
                     asm[index] += 1;
                     assert_eq!(
                         inline_asm
-                            .get_attr_inline_asm_constraints(&ctx)
+                            .get_attr_llvm_inline_asm_constraints(&ctx)
                             .map(|value| String::from((*value).clone()))
                             .as_deref(),
                         Some("~{memory}")
@@ -396,7 +396,7 @@ fn test_cluster_mbarrier_and_fences_lower_to_exact_inline_ptx() -> Result<(), an
                     continue;
                 };
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 let Some(index) = expected.iter().position(|(expected_template, _)| {
                     template.as_deref() == Some(*expected_template)
@@ -407,7 +407,7 @@ fn test_cluster_mbarrier_and_fences_lower_to_exact_inline_ptx() -> Result<(), an
                 matches[index] += 1;
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some(expected[index].1)
@@ -458,7 +458,7 @@ fn test_compiler_fence_encoding_lowers_to_empty_sideeffect_asm() -> Result<(), a
         found_barrier = true;
 
         let template = inline_asm
-            .get_attr_inline_asm_template(&ctx)
+            .get_attr_llvm_inline_asm_template(&ctx)
             .map(|s| String::from((*s).clone()));
         assert_eq!(
             template.as_deref(),
@@ -467,7 +467,7 @@ fn test_compiler_fence_encoding_lowers_to_empty_sideeffect_asm() -> Result<(), a
         );
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_constraints(&ctx)
+                .get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("~{memory}"),
@@ -478,9 +478,9 @@ fn test_compiler_fence_encoding_lowers_to_empty_sideeffect_asm() -> Result<(), a
             "compiler fence must stay side-effecting so the optimizer cannot drop it"
         );
         assert!(
-            inline_asm
-                .get_attr_inline_asm_convergent(&ctx)
-                .is_some_and(|b| !bool::from((*b).clone())),
+            !inline_asm
+                .get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent")),
             "compiler fence must not be convergent"
         );
         // The zero-result lowering path models the void call as a single
@@ -531,7 +531,7 @@ fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), an
         .filter_map(|op| Operation::get_op::<llvm::InlineAsmOp>(op, &ctx))
         .filter_map(|asm| {
             let template = asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))?;
             (template.contains("%clusterid") || template.contains("%nclusterid"))
                 .then_some((template, asm))
@@ -548,7 +548,7 @@ fn test_cluster_grid_compatibility_ops_keep_original_lowering() -> Result<(), an
     }));
     for (_, asm) in lowered {
         assert_eq!(
-            asm.get_attr_inline_asm_constraints(&ctx)
+            asm.get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("=r")
@@ -648,14 +648,14 @@ fn test_sync_threads_libnvvm_uses_exact_convergent_inline_ptx() -> Result<(), an
         };
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("bar.sync 0;")
         );
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_constraints(&ctx)
+                .get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("~{memory}")

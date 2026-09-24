@@ -132,7 +132,7 @@ pub mod attributes {
 }
 
 /// LLVM ops: re-exported from pliron-llvm, plus the builtin `ConstantOp` and
-/// the `AsmKind`-tagged inline-asm builder.
+/// an `AsmKind` convenience builder backed by upstream inline-asm semantics.
 pub mod ops {
     pub use pliron_llvm::ops::*;
 
@@ -159,6 +159,7 @@ pub mod ops {
     };
     use pliron_derive::{pliron_attr, pliron_op};
     use pliron_llvm::attributes::AlignmentAttr;
+    pub use pliron_llvm::llvm_attrs::{LlvmAttrValue, LlvmAttributesAttr};
     pub use pliron_llvm::ops::{GlobalOp, InlineAsmOp};
 
     /// Inline asm semantics for LLVM optimization hints.
@@ -178,7 +179,6 @@ pub mod ops {
     ///
     /// - **`preserves_flags`/`nostack`** are CPU concepts with no PTX
     ///   equivalent.
-    #[pliron_attr(name = "llvm.asm_kind", format, verifier = "succ")]
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub enum AsmKind {
         /// Convergent + side effects. Warp-synchronous operations that
@@ -283,12 +283,32 @@ pub mod ops {
         Ok(result)
     }
 
-    /// Op-attribute key for the inline-asm kind tag.
-    const ASM_KIND_KEY: &str = "cuda_oxide_asm_kind";
+    impl AsmKind {
+        /// Build the convenience classification from LLVM's two semantic axes.
+        pub const fn from_semantics(convergent: bool, side_effects: bool) -> Self {
+            match (convergent, side_effects) {
+                (true, true) => Self::Convergent,
+                (true, false) => Self::ConvergentPure,
+                (false, true) => Self::SideEffect,
+                (false, false) => Self::Pure,
+            }
+        }
 
-    /// Builder extension for `InlineAsmOp` that tags the op with an [`AsmKind`].
+        /// Whether LLVM must treat this asm call as convergent.
+        pub const fn is_convergent(self) -> bool {
+            matches!(self, Self::Convergent | Self::ConvergentPure)
+        }
+
+        /// Whether LLVM must retain the inline asm for side effects.
+        pub const fn has_side_effects(self) -> bool {
+            matches!(self, Self::Convergent | Self::SideEffect)
+        }
+    }
+
+    /// Builder extension that maps CUDA's four-way convenience classification
+    /// onto Pliron's upstream LLVM inline-asm representation.
     pub trait InlineAsmOpExt {
-        /// Build an `InlineAsmOp` tagged with the given [`AsmKind`].
+        /// Build an `InlineAsmOp` with upstream side-effect and call-site attrs.
         fn build(
             ctx: &mut Context,
             result_ty: TypeHandle,
@@ -308,39 +328,62 @@ pub mod ops {
             constraints: &str,
             kind: AsmKind,
         ) -> Self {
-            let convergent = matches!(kind, AsmKind::Convergent | AsmKind::ConvergentPure);
             let op = InlineAsmOp::new(
                 ctx,
                 result_ty,
                 inputs,
                 asm_template,
                 constraints,
-                convergent,
+                kind.has_side_effects(),
             );
-            let key = Identifier::try_new(ASM_KIND_KEY.to_string()).expect("valid identifier");
-            op.get_operation().deref_mut(ctx).attributes.set(key, kind);
+            if kind.is_convergent() {
+                let mut attrs = LlvmAttributesAttr::new();
+                attrs.set("convergent", LlvmAttrValue::Unit);
+                op.set_attr_llvm_inline_asm_attrs(ctx, attrs);
+            }
             op
         }
     }
 
-    /// Query the [`AsmKind`] stored on an `InlineAsmOp`, if present.
+    /// Derive the CUDA convenience classification from upstream LLVM semantics.
     ///
-    /// Returns `None` for ops that were not built with [`InlineAsmOpExt::build`]
-    /// (e.g., user-written `ptx_asm!` ops, which carry separate sideeffect /
-    /// convergent attributes instead).
+    /// `None` means a semantic attribute is missing, malformed, or unsupported
+    /// by cuda-oxide's exporter. Upstream verification alone does not check the
+    /// supported call-site attribute subset.
     pub fn asm_kind_opt(ctx: &Context, op: &InlineAsmOp) -> Option<AsmKind> {
-        let key = Identifier::try_new(ASM_KIND_KEY.to_string()).expect("valid identifier");
-        op.get_operation()
-            .deref(ctx)
-            .attributes
-            .get::<AsmKind>(&key)
-            .copied()
+        let side_effects = op
+            .get_attr_llvm_inline_asm_side_effects(ctx)
+            .map(|attr| bool::from((*attr).clone()))?;
+        let convergent = inline_asm_convergence(ctx, op).ok()?;
+        Some(AsmKind::from_semantics(convergent, side_effects))
     }
 
-    /// Query the [`AsmKind`] stored on an `InlineAsmOp`.
+    /// The native exporter supports the unit `convergent` call-site attribute.
+    /// Other LLVM attributes must be modeled explicitly before export can
+    /// preserve them; silently dropping one can weaken optimizer restrictions.
+    pub(crate) fn inline_asm_convergence(ctx: &Context, op: &InlineAsmOp) -> Result<bool, String> {
+        let mut convergent = false;
+        if let Some(attrs) = op.get_attr_llvm_inline_asm_attrs(ctx) {
+            for (name, value) in attrs.iter() {
+                match (name, value) {
+                    ("convergent", LlvmAttrValue::Unit) => convergent = true,
+                    ("convergent", _) => {
+                        return Err("LLVM inline asm `convergent` requires a unit attribute".into());
+                    }
+                    _ => {
+                        return Err(format!(
+                            "unsupported LLVM inline asm call-site attribute `{name}`; only unit `convergent` is supported"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(convergent)
+    }
+
+    /// Query the CUDA convenience classification for an `InlineAsmOp`.
     ///
-    /// Returns `AsmKind::SideEffect` if the attribute is missing (safe default:
-    /// assume side effects).
+    /// Malformed unverified IR falls back to side-effecting, non-convergent asm.
     pub fn asm_kind(ctx: &Context, op: &InlineAsmOp) -> AsmKind {
         asm_kind_opt(ctx, op).unwrap_or(AsmKind::SideEffect)
     }
@@ -500,10 +543,11 @@ pub mod ops {
     /// and emitted as `align N` during export.
     const OP_ALIGNMENT_KEY: &str = "cuda_oxide_op_alignment";
 
-    /// Op-attribute key controlling whether an inline asm op is emitted with
-    /// LLVM's `sideeffect` marker. Absent means true, matching the conservative
-    /// default for user-authored inline PTX.
-    const INLINE_ASM_SIDEEFFECT_KEY: &str = "cuda_oxide_inline_asm_sideeffect";
+    // Compatibility accessors below intentionally use Pliron's upstream keys.
+    // They keep existing cuda-oxide callers source-compatible without owning a
+    // duplicate semantic representation.
+    const LLVM_INLINE_ASM_SIDEEFFECT_KEY: &str = "llvm_inline_asm_side_effects";
+    const LLVM_INLINE_ASM_ATTRS_KEY: &str = "llvm_inline_asm_attrs";
 
     /// Op-attribute key marking a function declaration or call as non-returning.
     const OP_NORETURN_KEY: &str = "cuda_oxide_op_noreturn";
@@ -1397,24 +1441,49 @@ pub mod ops {
         set_debug_function_name(ctx, to, &name);
     }
 
-    /// Stamp whether an inline asm op has side effects beyond its operands.
+    /// Set Pliron's upstream inline-asm side-effect attribute.
+    ///
+    /// Kept as a cuda-oxide compatibility helper; it no longer owns a private
+    /// semantic attribute.
     pub fn set_inline_asm_sideeffect(ctx: &mut Context, op: Ptr<Operation>, sideeffect: bool) {
-        let key =
-            Identifier::try_new(INLINE_ASM_SIDEEFFECT_KEY.to_string()).expect("valid identifier");
+        let key = Identifier::try_new(LLVM_INLINE_ASM_SIDEEFFECT_KEY.to_string())
+            .expect("valid upstream inline asm side-effect identifier");
         op.deref_mut(ctx)
             .attributes
             .set(key, BoolAttr::new(sideeffect));
     }
 
-    /// Read whether an inline asm op should be emitted with `sideeffect`.
+    /// Read Pliron's upstream inline-asm side-effect attribute.
     pub fn inline_asm_sideeffect(ctx: &Context, op: Ptr<Operation>) -> bool {
-        let key =
-            Identifier::try_new(INLINE_ASM_SIDEEFFECT_KEY.to_string()).expect("valid identifier");
+        let key = Identifier::try_new(LLVM_INLINE_ASM_SIDEEFFECT_KEY.to_string())
+            .expect("valid upstream inline asm side-effect identifier");
         op.deref(ctx)
             .attributes
             .get::<BoolAttr>(&key)
-            .map(|a| bool::from((*a).clone()))
+            .map(|attr| bool::from((*attr).clone()))
             .unwrap_or(true)
+    }
+
+    /// Set or clear LLVM's upstream `convergent` call-site attribute on inline asm.
+    pub fn set_inline_asm_convergent(ctx: &mut Context, op: Ptr<Operation>, convergent: bool) {
+        let key = Identifier::try_new(LLVM_INLINE_ASM_ATTRS_KEY.to_string())
+            .expect("valid upstream inline asm attrs identifier");
+        let mut attrs = op
+            .deref(ctx)
+            .attributes
+            .get::<LlvmAttributesAttr>(&key)
+            .map(|attrs| (*attrs).clone())
+            .unwrap_or_default();
+        if convergent {
+            attrs.set("convergent", LlvmAttrValue::Unit);
+        } else {
+            attrs.remove("convergent");
+        }
+        if attrs.is_empty() {
+            op.deref_mut(ctx).attributes.0.remove(&key);
+        } else {
+            op.deref_mut(ctx).attributes.set(key, attrs);
+        }
     }
 
     /// Attach source-local debug metadata to a memory slot op.

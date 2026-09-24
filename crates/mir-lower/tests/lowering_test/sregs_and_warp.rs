@@ -821,7 +821,7 @@ fn assert_sreg_lowers_to_inline_asm(
                     continue;
                 };
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 if template.as_deref() != Some(expected_template) {
                     continue;
@@ -830,7 +830,7 @@ fn assert_sreg_lowers_to_inline_asm(
                 matches += 1;
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some(expected_constraints)
@@ -1038,21 +1038,21 @@ fn test_generated_active_mask_libnvvm_uses_convergent_sideeffect_asm() -> Result
 
         found += 1;
         assert_eq!(
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("activemask.b32 $0;")
         );
         assert_eq!(
-            asm.get_attr_inline_asm_constraints(&ctx)
+            asm.get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("=r,~{memory}")
         );
         assert_eq!(llvm::asm_kind(&ctx, &asm), llvm::AsmKind::Convergent);
         assert!(
-            asm.get_attr_inline_asm_convergent(&ctx)
-                .is_some_and(|value| bool::from((*value).clone()))
+            asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
         let asm = op.deref(&ctx);
         assert_eq!(asm.get_num_operands(), 0);
@@ -1288,7 +1288,7 @@ fn test_repeated_location_samples_remain_side_effecting_reads() -> Result<(), an
                     continue;
                 };
                 let template = inline_asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()));
                 match template.as_deref() {
                     Some("mov.u32 $0, %warpid;") => warpid_reads += 1,
@@ -1451,22 +1451,22 @@ fn generated_elect_sync_uses_the_selected_backend_route() -> Result<(), anyhow::
             if let Some(inline_asm) = Operation::get_op::<llvm::InlineAsmOp>(body_op, &ctx) {
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_template(&ctx)
+                        .get_attr_llvm_inline_asm_template(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some("{ .reg .pred p; elect.sync $0|p, $2; selp.b32 $1, 1, 0, p; }")
                 );
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some("=r,=r,r")
                 );
                 assert!(
                     inline_asm
-                        .get_attr_inline_asm_convergent(&ctx)
-                        .is_some_and(|value| bool::from((*value).clone()))
+                        .get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent"))
                 );
                 inline_asm_count += 1;
             }
@@ -1579,7 +1579,7 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
                 };
                 assert_eq!(
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|s| String::from((*s).clone()))
                         .as_deref(),
                     Some("=l,l,r,r"),
@@ -1587,13 +1587,13 @@ fn test_shuffle_i64_lowers_to_inline_asm() -> Result<(), anyhow::Error> {
                 );
                 assert!(
                     inline_asm
-                        .get_attr_inline_asm_convergent(&ctx)
-                        .is_some_and(|b| bool::from((*b).clone())),
+                        .get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent")),
                     "shfl.b64 inline asm must be convergent"
                 );
                 templates.push(
                     inline_asm
-                        .get_attr_inline_asm_template(&ctx)
+                        .get_attr_llvm_inline_asm_template(&ctx)
                         .map(|s| String::from((*s).clone()))
                         .unwrap_or_default(),
                 );

@@ -11,8 +11,8 @@ use llvm_export::{
     },
     op_interfaces::{CastOpInterface, VolatilityOpInterface},
     ops::{
-        AddrSpaceCastOp, AllocaOp, BitcastOp, ConstantOp, FuncOp, GepIndex, GetElementPtrOp,
-        InlineAsmOp, LoadOp, ReturnOp, SelectOp, StoreOp,
+        AddrSpaceCastOp, AllocaOp, AsmKind, BitcastOp, ConstantOp, FuncOp, GepIndex,
+        GetElementPtrOp, InlineAsmOp, InlineAsmOpExt, LoadOp, ReturnOp, SelectOp, StoreOp,
     },
     types::{FuncType, PointerType, VoidType},
 };
@@ -206,10 +206,7 @@ fn legacy_alloca_rejects_a_non_default_result_address_space() {
     let one = ConstantOp::new(&mut ctx, Box::new(one_attr));
     let one_value = one.get_operation().deref(&ctx).get_result(0);
     one.get_operation().insert_at_back(entry, &ctx);
-    let alloca = AllocaOp::new(&mut ctx, i32_ty.into(), one_value);
-    let alloca_result = alloca.get_operation().deref(&ctx).get_result(0);
-    let shared_pointer = PointerType::get(&ctx, 3);
-    alloca_result.set_type(&ctx, shared_pointer.into());
+    let alloca = AllocaOp::new(&mut ctx, i32_ty.into(), one_value, 3);
     alloca.get_operation().insert_at_back(entry, &ctx);
     ReturnOp::new(&mut ctx, None)
         .get_operation()
@@ -220,7 +217,7 @@ fn legacy_alloca_rejects_a_non_default_result_address_space() {
         .get_operation()
         .deref(&ctx)
         .verify(&ctx)
-        .expect("upstream verification currently does not enforce alloca result AS0");
+        .expect("upstream alloca accepts an explicit non-default result address space");
     let error = export_module_to_string_with_config(
         &ctx,
         &module,
@@ -472,7 +469,7 @@ fn legacy_pointer_slot_is_recursively_canonical() {
     let one_value = one.get_operation().deref(&ctx).get_result(0);
     one.get_operation().insert_at_back(entry, &ctx);
 
-    let slot = AllocaOp::new(&mut ctx, ptr_ty.into(), one_value);
+    let slot = AllocaOp::new(&mut ctx, ptr_ty.into(), one_value, 0);
     let slot_value = slot.get_operation().deref(&ctx).get_result(0);
     slot.get_operation().insert_at_back(entry, &ctx);
     StoreOp::new(&mut ctx, incoming, slot_value)
@@ -500,7 +497,7 @@ fn legacy_pointer_slot_is_recursively_canonical() {
 }
 
 #[test]
-fn export_inline_asm_respects_sideeffect_marker() {
+fn export_inline_asm_respects_upstream_semantics() {
     let mut ctx = Context::new();
 
     let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
@@ -512,11 +509,24 @@ fn export_inline_asm_respects_sideeffect_marker() {
     let func = FuncOp::new(&mut ctx, "has_inline_asm".try_into().unwrap(), func_ty);
     let entry = func.get_or_create_entry_block(&mut ctx);
 
-    let default_asm = InlineAsmOp::new(&mut ctx, void_ty.into(), vec![], "bar.sync 0;", "", false);
+    let default_asm = InlineAsmOp::build(
+        &mut ctx,
+        void_ty.into(),
+        vec![],
+        "bar.sync 0;",
+        "",
+        AsmKind::Convergent,
+    );
     default_asm.get_operation().insert_at_back(entry, &ctx);
 
-    let register_only_asm = InlineAsmOp::new(&mut ctx, void_ty.into(), vec![], "nop;", "", true);
-    llvm_export::ops::set_inline_asm_sideeffect(&mut ctx, register_only_asm.get_operation(), false);
+    let register_only_asm = InlineAsmOp::build(
+        &mut ctx,
+        void_ty.into(),
+        vec![],
+        "nop;",
+        "",
+        AsmKind::ConvergentPure,
+    );
     register_only_asm
         .get_operation()
         .insert_at_back(entry, &ctx);
@@ -529,8 +539,8 @@ fn export_inline_asm_respects_sideeffect_marker() {
     let ir = export_module_to_string(&ctx, &module).expect("export succeeds");
 
     assert!(
-        ir.contains("call void asm sideeffect \"bar.sync 0;\", \"\"()"),
-        "inline asm without an explicit marker should remain conservative:\n{ir}"
+        ir.contains("call void asm sideeffect \"bar.sync 0;\", \"\"() #0"),
+        "side-effecting inline asm should emit the LLVM sideeffect marker:\n{ir}"
     );
     assert!(
         ir.contains("call void asm \"nop;\", \"\"() #0"),
@@ -540,6 +550,65 @@ fn export_inline_asm_respects_sideeffect_marker() {
         ir.contains("attributes #0 = { convergent }"),
         "convergent inline asm must emit the convergent attr group:\n{ir}"
     );
+}
+
+#[test]
+fn export_inline_asm_checks_the_supported_attribute_subset() {
+    use llvm_export::ops::{LlvmAttrValue, LlvmAttributesAttr};
+    let export = |side_effects: bool, attribute: Option<(&str, LlvmAttrValue)>| {
+        let mut ctx = Context::new();
+        let module = ModuleOp::new(&mut ctx, "test_module".try_into().unwrap());
+        let module_block = module_top_block(&mut ctx, &module);
+        let void_ty = VoidType::get(&ctx);
+        let func_ty = FuncType::get(&ctx, void_ty.to_handle(), vec![], false);
+        let func = FuncOp::new(&mut ctx, "attributes".try_into().unwrap(), func_ty);
+        let entry = func.get_or_create_entry_block(&mut ctx);
+        let asm = InlineAsmOp::new(&mut ctx, void_ty.into(), vec![], "nop;", "", side_effects);
+        if let Some((name, value)) = attribute {
+            let mut attrs = LlvmAttributesAttr::new();
+            attrs.set(name, value);
+            asm.set_attr_llvm_inline_asm_attrs(&ctx, attrs);
+        }
+        // Upstream accepts arbitrary LLVM attributes; export must preserve
+        // their semantics or explain that the attribute is unsupported.
+        asm.verify(&ctx).unwrap();
+        asm.get_operation().insert_at_back(entry, &ctx);
+        ReturnOp::new(&mut ctx, None)
+            .get_operation()
+            .insert_at_back(entry, &ctx);
+        func.get_operation().insert_at_back(module_block, &ctx);
+        export_module_to_string(&ctx, &module)
+    };
+    for side_effects in [false, true] {
+        for convergent in [false, true] {
+            let ir = export(
+                side_effects,
+                convergent.then_some(("convergent", LlvmAttrValue::Unit)),
+            )
+            .unwrap();
+            let sideeffect = if side_effects { " sideeffect" } else { "" };
+            let attribute = if convergent { " #0" } else { "" };
+            assert!(
+                ir.contains(&format!(
+                    "call void asm{sideeffect} \"nop;\", \"\"(){attribute}\n"
+                )),
+                "{ir}"
+            );
+            if convergent {
+                assert!(ir.contains("attributes #0 = { convergent }"), "{ir}");
+            }
+        }
+        assert_eq!(
+            export(side_effects, Some(("noduplicate", LlvmAttrValue::Unit))).unwrap_err(),
+            "unsupported LLVM inline asm call-site attribute `noduplicate`; only unit `convergent` is supported"
+        );
+        for value in [LlvmAttrValue::Int(0), LlvmAttrValue::Str("false".into())] {
+            assert_eq!(
+                export(side_effects, Some(("convergent", value))).unwrap_err(),
+                "LLVM inline asm `convergent` requires a unit attribute"
+            );
+        }
+    }
 }
 
 #[test]
@@ -565,7 +634,7 @@ fn export_inline_asm_escapes_llvm_string_literals() {
         vec![],
         "mov.u32 $0, %laneid;\n// \"quoted\" \\22",
         "~{memory}\\raw",
-        false,
+        true,
     );
     asm.get_operation().insert_at_back(entry, &ctx);
 

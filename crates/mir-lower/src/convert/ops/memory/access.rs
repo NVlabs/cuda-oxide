@@ -166,7 +166,7 @@ pub(crate) fn convert_alloca(
     rewriter.insert_operation(ctx, one_const.get_operation());
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
-    let alloca = llvm::AllocaOp::new(ctx, llvm_pointee, one_val);
+    let alloca = llvm::AllocaOp::new(ctx, llvm_pointee, one_val, 0);
     // The allocated type's ABI alignment comes from this op's own result
     // pointee, which is still the MIR type at rewrite time.
     if let Some(align) = mir_type_abi_align(ctx, mir_pointee) {
@@ -204,7 +204,7 @@ pub(crate) fn convert_ref(
     rewriter.insert_operation(ctx, one_const.get_operation());
     let one_val = one_const.get_operation().deref(ctx).get_result(0);
 
-    let alloca = llvm::AllocaOp::new(ctx, operand_ty, one_val);
+    let alloca = llvm::AllocaOp::new(ctx, operand_ty, one_val, 0);
     // Honour the referent's repr(align(N)) ABI alignment. Without this, the
     // synthesised alloca would be under-aligned relative to any loads/stores
     // that claim the struct's true alignment.

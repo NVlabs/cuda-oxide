@@ -5,7 +5,7 @@
 
 //! Conversion of `mir.global_alloc` to device globals, including relocated initializers.
 
-use super::common::anyhow_to_pliron;
+use super::common::{anyhow_to_pliron, counter_named_global};
 use crate::context::{DeviceGlobalDeclaration, DeviceGlobalRecord, DeviceGlobalsMap};
 use crate::convert::types::{
     convert_type, llvm_type_size_align, validate_initialized_global_layout,
@@ -245,7 +245,9 @@ fn create_device_global(
         } else {
             let counter = *next_device_global_index;
             *next_device_global_index += 1;
-            format!("__device_global_{counter}").try_into().unwrap()
+            counter_named_global(ctx, "__device_global", counter)
+                .try_into()
+                .unwrap()
         };
 
     let global_op = if alignment > 0 {

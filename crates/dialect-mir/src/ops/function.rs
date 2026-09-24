@@ -163,10 +163,11 @@ impl Printable for MirFuncOp {
             .get_operation()
             .deref(ctx)
             .attributes
-            .clone_skip_outlined();
+            .clone_skip_outlined(ctx);
+
         attributes_to_print_separately
             .0
-            .retain(|key, _| key != &*ATTR_KEY_MIR_FUNC_TYPE && key != &*ATTR_KEY_SYM_NAME);
+            .retain(|key, _| key != &*ATTR_KEY_MIR_FUNC_TYPE && key != &ATTR_KEY_SYM_NAME);
 
         if !attributes_to_print_separately.0.is_empty() {
             indented_block!(state, {

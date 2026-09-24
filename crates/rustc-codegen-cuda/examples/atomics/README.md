@@ -79,7 +79,26 @@ CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 | 11 | `atomic_bitwise_test`            | fetch_and, fetch_or, fetch_xor (`.b32` PTX types)                          |
 | 12 | `atomic_swap_test`               | swap (`atom.exch`) with sentinel 0xDEADBEEF                                |
 | 13 | `atomic_minmax_test`             | AtomicI32 fetch_min/fetch_max (signed `.s32`, range -128..+127)            |
-| 14 | `atomic_f32_fetch_add_test`      | AtomicF32 -- hardware `atom.add.f32` via `atomicrmw fadd`                  |
+| 14 | `atomic_f32_fetch_add_test`      | AtomicF32 fetch_add via `atomicrmw fadd`; see the lowering note below |
+
+### Floating-point add lowering
+
+With the pinned `nightly-2026-08-28` toolchain's LLVM 23 NVPTX defaults,
+`atomic_f32_fetch_add_test` uses a compare-and-swap (CAS) loop for global memory.
+Generic-address-space `f32` adds also use a loop; shared `f32` and `f64` adds
+still use native instructions on supported targets. For example:
+
+```text
+global f32: add.f32 + atom.relaxed.gpu.global.cas.b32 + retry
+shared f32: atom.relaxed.gpu.shared.add.f32
+```
+
+This is a property of that LLVM snapshot and its options, not every LLVM 23
+build or the separate libNVVM backend. Native global `atom.add.f32` flushes
+subnormal inputs and results to zero; the loop preserves them under the default
+floating-point mode. Switching instructions therefore changes numerical
+behavior, not just performance. See [#1234](https://github.com/NVlabs/cuda-oxide/issues/1234)
+for the investigation.
 
 ### Phase 3: Remaining types, scopes, and coverage
 
@@ -93,15 +112,22 @@ CUDA_OXIDE_VERBOSE=1 cargo oxide run atomics
 
 ### Phase 4: Standard library atomics (`core::sync::atomic`)
 
-| #  | Test                         | What it verifies                                                        |
-|----|------------------------------|-------------------------------------------------------------------------|
-| 20 | `core_atomic_fetch_add_test` | `core::sync::atomic::AtomicU32` fetch_add (system scope, Relaxed)        |
-| 21 | `core_atomic_ptr_test`       | `core::sync::atomic::AtomicPtr<u16>` load/store/swap/compare_exchange   |
-| 22 | `core_atomic_local_test`     | Private pointer/integer atomics, helper calls and wrapping arithmetic |
+| #  | Test                                  | What it verifies                                                        |
+|----|---------------------------------------|-------------------------------------------------------------------------|
+| 20 | `core_atomic_fetch_add_test`          | `core::sync::atomic::AtomicU32` fetch_add (system scope, Relaxed)       |
+| 21 | `core_atomic_ptr_test`                | `core::sync::atomic::AtomicPtr<u16>` load/store/swap/compare_exchange   |
+| 22 | `core_atomic_local_test`              | Private pointer/integer atomics, helper calls and wrapping arithmetic   |
+| 23 | `core_atomic_ptr_shared_value_test`   | AtomicPtr round-trip of a shared-memory pointer value                   |
+| 24 | `core_atomic_ptr_shared_storage_test` | AtomicPtr storage backed by shared memory                               |
 
 The pointer test gives each thread a distinct mutable storage slot and checks
 both successful and failed compare-exchange, then reads through the loaded
 pointer. The local test calls the same pointer helper with per-thread storage.
+The shared-value test round-trips a pointer originating in shared memory
+through AtomicPtr load/store/swap/compare_exchange and dereferences the final
+pointer. The shared-storage test places the AtomicPtr backing storage in shared
+memory and exercises the same pointer operations from device code.
+
 Pointer types survive compiler lowering; legacy NVVM uses scoped PTX for
 pointer exchange and compare-exchange. Private atomic storage uses ordinary
 accesses because no other thread can observe it.
@@ -194,7 +220,13 @@ standard-library atomic ordering coverage.
 --- Test 22: core_atomic_local_test ---
   all 256 threads passed private pointer and integer atomic operations
 
-=== SUCCESS: All 22 runtime atomic tests passed! ===
+--- Test 23: core_atomic_ptr_shared_value_test ---
+  all 256 threads passed shared-pointer AtomicPtr load/store/swap/CAS/deref
+
+--- Test 24: core_atomic_ptr_shared_storage_test ---
+  all 256 threads passed shared-storage AtomicPtr load/store/swap/CAS
+
+=== SUCCESS: All 24 runtime atomic tests passed! ===
 ```
 
 ## Available Atomic Types
@@ -213,7 +245,7 @@ All types are defined in `cuda_device::atomic`:
 |--------------------|------------------------------------------------------|------------------------------|
 | `load`             | Yes                                                  | Yes                          |
 | `store`            | Yes                                                  | Yes                          |
-| `fetch_add`        | Yes                                                  | Yes (`atom.add.f32/f64`)     |
+| `fetch_add`        | Yes                                                  | Yes (native or a CAS loop; see the lowering note above) |
 | `fetch_sub`        | Yes                                                  | --                           |
 | `fetch_and`        | Yes                                                  | --                           |
 | `fetch_or`         | Yes                                                  | --                           |

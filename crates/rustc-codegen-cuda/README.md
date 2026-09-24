@@ -148,6 +148,7 @@ The `examples/` directory contains standalone kernel crates that exercise differ
 | `async_vecadd`               | Async CUDA streams with `cuda-async`                       |
 | `async_mlp`                  | Multi-layer perceptron using async streams                 |
 | `sharedmem`                  | Shared memory usage                                        |
+| `image_convolution`          | 2D Gaussian convolution: naive global reads vs shared-memory tiling |
 | `dynamic_smem`               | Dynamic shared memory allocation                           |
 | `barrier`                    | `__syncthreads` and barrier semantics                      |
 | `atomics`                    | Atomic operations on device                                |

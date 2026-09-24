@@ -73,7 +73,7 @@ fn test_packed_atomic_add_lowers_to_exact_side_effecting_ptx() -> Result<(), any
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default();
                 assert!(
@@ -85,7 +85,7 @@ fn test_packed_atomic_add_lowers_to_exact_side_effecting_ptx() -> Result<(), any
                 }
                 lowered.push((
                     template,
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .unwrap_or_default(),
                     llvm::asm_kind(&ctx, &asm),
@@ -153,12 +153,12 @@ fn test_generated_packed_atomic_add_libnvvm_route_is_exact() -> Result<(), anyho
         .filter_map(|op| {
             let asm = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx)?;
             let template = asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))?;
             template.starts_with("atom.global.add.noftz.").then(|| {
                 (
                     template,
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone())),
                     llvm::asm_kind(&ctx, &asm),
                 )
@@ -294,7 +294,7 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default();
                 if !template.starts_with("ld.") && !template.starts_with("st.") {
@@ -302,7 +302,7 @@ fn test_scoped_atomic_load_store_lower_to_inline_ptx() -> Result<(), anyhow::Err
                 }
                 lowered.push((
                     template,
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .unwrap_or_default(),
                     llvm::asm_kind(&ctx, &asm),
@@ -400,7 +400,7 @@ fn test_pointer_atomic_load_store_use_b64_pointer_registers() -> Result<(), anyh
         };
 
         let template = asm
-            .get_attr_inline_asm_template(&ctx)
+            .get_attr_llvm_inline_asm_template(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
 
@@ -409,7 +409,7 @@ fn test_pointer_atomic_load_store_use_b64_pointer_registers() -> Result<(), anyh
         }
 
         let constraints = asm
-            .get_attr_inline_asm_constraints(&ctx)
+            .get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
 
@@ -586,10 +586,10 @@ fn test_seqcst_atomic_load_store_fuse_fence_into_template() -> Result<(), anyhow
                 continue;
             };
             lowered.push((
-                asm.get_attr_inline_asm_template(&ctx)
+                asm.get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default(),
-                asm.get_attr_inline_asm_constraints(&ctx)
+                asm.get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default(),
             ));
@@ -683,11 +683,11 @@ fn test_float_atomic_load_store_bitcast_through_integer_registers() -> Result<()
         for op in lowered_kernel_body(&ctx, module_ptr) {
             if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default();
                 let constraints = asm
-                    .get_attr_inline_asm_constraints(&ctx)
+                    .get_attr_llvm_inline_asm_constraints(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .unwrap_or_default();
                 if template.starts_with("ld.") {
@@ -803,7 +803,7 @@ fn test_fence_uses_membar_intrinsic_only_for_seqcst() -> Result<(), anyhow::Erro
             }
             if let Some(asm) = Operation::get_op::<llvm::InlineAsmOp>(op, &ctx) {
                 let t = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|v| String::from((*v).clone()))
                     .unwrap_or_default();
                 if t.starts_with("fence.") {
@@ -872,12 +872,12 @@ fn test_first_class_atomic_fence_lowers_at_system_scope() -> Result<(), anyhow::
                 continue;
             };
             let template = asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .unwrap_or_default();
             if template.starts_with("fence.") {
                 assert_eq!(
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone()))
                         .as_deref(),
                     Some("~{memory}")

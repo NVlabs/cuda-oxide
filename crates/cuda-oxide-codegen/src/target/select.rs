@@ -155,7 +155,7 @@ pub fn validate_target_features(
 pub fn resolve_ptx_target(
     explicit_override: Option<&str>,
     explicit_override_source: &'static str,
-    device_hint: Option<&str>,
+    device_hint: Option<&cuda_target_spec::DeviceArch>,
     detected: DetectedFeatures,
 ) -> Result<(CudaArch, &'static str), PipelineError> {
     resolve_ptx_target_with_generated(
@@ -170,10 +170,11 @@ pub fn resolve_ptx_target(
 pub(crate) fn resolve_ptx_target_with_generated(
     explicit_override: Option<&str>,
     explicit_override_source: &'static str,
-    device_hint: Option<&str>,
+    device_hint: Option<&cuda_target_spec::DeviceArch>,
     detected: DetectedFeatures,
     generated: &GeneratedModuleRequirements,
 ) -> Result<(CudaArch, &'static str), PipelineError> {
+    let device_hint = device_hint.map(AsRef::as_ref);
     if let Some(target) = explicit_override {
         let parsed =
             target
@@ -199,17 +200,10 @@ pub(crate) fn resolve_ptx_target_with_generated(
         return Ok((parsed, explicit_override_source));
     }
 
-    if let Some(device) = device_hint
-        // Preserve the legacy PTX-path behavior: device hints used to pass
-        // through an `sm_`-only parser, while NVVM accepts and normalizes
-        // `compute_` spellings at its separate boundary.
-        .filter(|target| target.starts_with("sm_"))
-        .and_then(|target| target.parse::<CudaArch>().ok())
-        .filter(|target| {
-            arch_satisfies(target, detected) && generated_target_satisfied(target, generated)
-        })
-    {
-        return Ok((device, "detected GPU"));
+    if let Some(device) = device_hint.filter(|target| {
+        arch_satisfies(target, detected) && generated_target_satisfied(target, generated)
+    }) {
+        return Ok((device.clone(), "detected GPU"));
     }
 
     let target =

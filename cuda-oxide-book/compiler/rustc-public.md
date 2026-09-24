@@ -112,8 +112,8 @@ split build system.
 ### Entering the stable MIR context
 
 Inside `codegen_crate`, cuda-oxide receives `rustc_middle` types -- the
-internal, unstable kind. But the `mir-importer` crate, which does the actual
-MIR-to-Pliron-IR translation, is built entirely on `rustc_public` types. To
+internal, unstable kind. The `mir-importer` crate, which does the actual
+MIR-to-Pliron-IR translation, uses `rustc_public` as its main MIR interface. To
 cross the boundary, cuda-oxide uses the bridge:
 
 ```rust
@@ -139,41 +139,42 @@ contact with `rustc_middle` needed.
 You might wonder why the bridge needs a special `run()` scope instead of just
 passing a context object around. The answer is lifetime entanglement.
 
-`TyCtxt<'tcx>` borrows data from the compiler's arena allocator. The `'tcx`
-lifetime is tied to the compilation session, and it cannot escape the arena's
-scope. You cannot store a `TyCtxt` in a struct, return it from a function, or
-send it to another thread. The compiler's solution is **scoped thread-local
-storage**: the context is available only while you are inside the scope, and
-the type system (plus runtime checks) prevents it from leaking out.
+`TyCtxt<'tcx>` borrows data from the compiler's arena allocator. It can be
+stored in a struct or passed between functions, but its `'tcx` lifetime must
+remain within the compiler session. `rustc_public` uses **scoped thread-local
+storage** so its public query methods can find the current context without
+requiring a `TyCtxt` argument on every call.
 
-The bridge sets up two nested thread-local variables (TLVs):
+The bridge sets up a thread-local variable (TLV):
 
-| TLV                       | Type                     | Purpose                                                                      |
-| :------------------------ | :----------------------- | :--------------------------------------------------------------------------- |
-| `compiler_interface::TLV` | `&dyn CompilerInterface` | High-level queries: `local_crate()`, `all_local_items()`, entry point lookup |
-| `rustc_internal::TLV`     | `&Container`             | Stable-to-internal type translation via the `Tables` mapping                 |
+| TLV                       | Stored value        | Purpose                                                   |
+| :------------------------ | :------------------ | :-------------------------------------------------------- |
+| `compiler_interface::TLV` | `Cell<*const ()>`    | Scoped access to the current `CompilerInterface` reference |
 
-Both point to the same underlying `Container` struct, but provide different
-access patterns:
+The pointer is erased internally; `compiler_interface::with()` recovers the
+`CompilerInterface` reference for queries such as `local_crate()` and
+`all_local_items()`. Conversions such as `rustc_internal::stable(instance)`
+use `with_bridge()`, which accesses the same interface through `with()` and
+borrows its translation tables. There is no second thread-local context.
 
-- **`with()`** accesses the outer TLV for making high-level compiler queries.
-- **`with_container()`** accesses the inner TLV for converting between stable
-  and internal types.
+For example, converting an instance and then asking for its MIR body uses
+one context throughout:
 
-This two-level design keeps the query interface separate from the raw
-translation machinery, so code that only needs to ask "give me all functions
-in the local crate" does not have to know about internal ID mappings.
+```text
+rustc_internal::run(tcx, || {
+    stable_instance = stable(instance) -> with_bridge() -> with() -> tables
+    stable_instance.body() -----------------------------> with() -> query
+})
+```
 
-If you have ever used a web framework's request-scoped context (think Actix's
-`web::Data` or Axum's extractors), the mental model is similar: the data
-exists for the duration of the request (here, the compilation), and the
-framework makes it available without you having to thread it through every
-function signature.
+Queries outside an active scope panic; starting a nested `run()` returns an
+error. The current design replaced the old `Container` and two-context
+implementation in [rust-lang/rust#147923](https://github.com/rust-lang/rust/pull/147923).
 
 ## The bridge pattern
 
-At the heart of the `Container` sits a **`Tables`** struct -- a bidirectional
-mapping between `rustc`'s internal IDs and the stable API's types. When you
+The `CompilerInterface` owns a **`Tables`** struct -- a bidirectional mapping
+between `rustc`'s internal IDs and the stable API's types. When you
 call `rustc_internal::stable(instance)`, the bridge looks up (or creates) the
 corresponding stable ID in the tables. When the stable API needs to query the
 compiler on your behalf -- say, to fetch a function's MIR body -- it goes
@@ -193,22 +194,22 @@ through the tables in the opposite direction to recover the internal type.
 
 A few implementation details worth knowing:
 
-- **Interior mutability** -- `Tables` uses `RefCell` because multiple parts
-  of the codebase need mutable access to the mapping during a single
-  translation pass. This is safe because access is single-threaded
-  (guaranteed by the thread-local storage).
+- **Interior mutability** -- `CompilerInterface` holds the tables and
+  compiler context in `RefCell`s. Each query borrows them on the current
+  thread; overlapping mutable borrows are rejected at runtime.
 - **Caching** -- once a type or instance is translated, the result is stored
   in the tables. Repeated lookups hit the cache instead of recomputing.
-- **Automatic cleanup** -- when `rustc_internal::run()` returns, the
-  thread-local storage is torn down and the tables are dropped. No manual
-  cleanup required, no stale references possible.
+- **Automatic cleanup** -- when `rustc_internal::run()` returns, the scoped
+  thread-local value is unset and the interface and its tables are dropped.
+  Stable IDs refer to these tables; do not reuse them in a later context.
 
-From cuda-oxide's perspective, the bridge is invisible. The `mir-importer`
-crate only ever sees `rustc_public` types -- it never imports `rustc_middle`,
-never deals with `'tcx` lifetimes, and never touches the `Tables` directly.
-All of that complexity is encapsulated behind `rustc_internal::run()` and
-`rustc_internal::stable()`, which live in the `rustc-codegen-cuda` crate at
-the boundary between the compiler and cuda-oxide's pipeline.
+The driver in `rustc-codegen-cuda` opens the scope with
+`rustc_public::rustc_internal::run()` and converts instances with `stable()`.
+The `mir-importer` translator primarily consumes `rustc_public` types, but
+some checks still consult `rustc_middle` through the bridge. For example,
+grid-constant validation reads declared reference lifetimes and inlining
+ownership from the compiler's internal representation. The importer does
+not manage the bridge tables itself.
 
 ## What MIR looks like
 

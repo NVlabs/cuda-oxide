@@ -559,6 +559,87 @@ fn shared_and_device_global_indices_are_per_module_not_process_global() {
     }
 }
 
+/// Per-module counters restart at zero in every module, so two crates'
+/// modules both define `__shared_mem_0` / `__device_global_0`, and the
+/// textual PTX bundle merge in `load_all_ptx_bundles_merged` fails driver
+/// JIT compilation on the duplicate definition (#1277). A caller whose
+/// output can be merged passes a per-compilation disambiguator; the name
+/// must then be a pure function of (disambiguator, family, module-local
+/// counter) — deterministic for one crate, distinct across crates.
+#[test]
+fn module_disambiguator_separates_counter_named_globals_across_modules() {
+    let lower_one_module = |disambiguator: Option<u64>| -> Vec<String> {
+        let mut ctx = make_ctx();
+        let (module_ptr, block) = build_kernel(&mut ctx, vec![], vec![]);
+        append_shared_alloc(&mut ctx, block, "k", 64);
+        append_global_alloc(&mut ctx, block, "ordinary_static", false);
+        append_extern_shared(&mut ctx, block, 16, 0);
+        append_mir_return(&mut ctx, block, vec![]);
+
+        crate::lower_mir_to_llvm_with_options(
+            &mut ctx,
+            module_ptr,
+            crate::LoweringOptions {
+                module_disambiguator: disambiguator,
+                ..Default::default()
+            },
+        )
+        .expect("lowering failed");
+
+        let top = module_top_block(&ctx, module_ptr);
+        top.deref(&ctx)
+            .iter(&ctx)
+            .filter_map(|op| Operation::get_op::<llvm::GlobalOp>(op, &ctx))
+            .map(|g| g.get_symbol_name(&ctx).to_string())
+            .collect()
+    };
+
+    // The exact shape is part of the cross-crate uniqueness contract: the
+    // disambiguator sits between family and counter, zero-padded to the full
+    // u64 width so no (disambiguator, counter) pair can collide with another
+    // by concatenation.
+    let crate_a = lower_one_module(Some(0x00c0_ffee));
+    for expected in [
+        "__shared_mem_0000000000c0ffee_0",
+        "__device_global_0000000000c0ffee_0",
+        // The dynamic pool symbol keeps its owner suffix: within one module
+        // the owner keeps per-function pools apart, and the crate namespace
+        // keeps the same owner's declarations apart across merged bundles,
+        // whose alignments would otherwise silently resolve by bundle order.
+        "__dynamic_smem_0000000000c0ffee_kernel_func",
+    ] {
+        assert!(
+            crate_a.iter().any(|n| n == expected),
+            "expected {expected} among disambiguated globals (got {crate_a:?})"
+        );
+    }
+
+    // The same module lowered under a different crate identity shares no
+    // module-scope symbol with the first: this is the #1277 merge invariant.
+    let crate_b = lower_one_module(Some(0xdead_beef));
+    for name in &crate_b {
+        assert!(
+            !crate_a.contains(name),
+            "module-scope symbol {name} collides across differently \
+             disambiguated modules (a: {crate_a:?}, b: {crate_b:?})"
+        );
+    }
+
+    // No disambiguator keeps the historical undecorated names.
+    let undecorated = lower_one_module(None);
+    for expected in [
+        "__shared_mem_0",
+        "__device_global_0",
+        "__dynamic_smem_kernel_func",
+    ] {
+        assert!(
+            undecorated.iter().any(|n| n == expected),
+            "expected historical name {expected} without a disambiguator \
+             (got {undecorated:?})"
+        );
+    }
+}
+
 /// Append a `mir.extern_shared` (dynamic shared memory) to `block` with the
 /// given launch-contract alignment and byte offset into the pool.
 fn append_extern_shared(

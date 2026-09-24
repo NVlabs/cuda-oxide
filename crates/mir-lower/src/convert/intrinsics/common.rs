@@ -623,21 +623,21 @@ mod tests {
 
         let asm = &asms[0];
         assert_eq!(
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("bar.sync 0;")
         );
         assert_eq!(
-            asm.get_attr_inline_asm_constraints(&ctx)
+            asm.get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("~{memory}")
         );
         assert_eq!(llvm::asm_kind_opt(&ctx, asm), Some(AsmKind::Convergent));
         assert!(
-            asm.get_attr_inline_asm_convergent(&ctx)
-                .is_some_and(|b| bool::from((*b).clone()))
+            asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
     }
 
@@ -682,13 +682,13 @@ mod tests {
 
         let asm = &asms[0];
         assert_eq!(
-            asm.get_attr_inline_asm_template(&ctx)
+            asm.get_attr_llvm_inline_asm_template(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("st.global.u32 [$0], $1;")
         );
         assert_eq!(
-            asm.get_attr_inline_asm_constraints(&ctx)
+            asm.get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|s| String::from((*s).clone()))
                 .as_deref(),
             Some("l,r,~{memory}")
@@ -702,8 +702,8 @@ mod tests {
         );
         assert_eq!(llvm::asm_kind_opt(&ctx, asm), Some(AsmKind::SideEffect));
         assert!(
-            asm.get_attr_inline_asm_convergent(&ctx)
-                .is_some_and(|b| !bool::from((*b).clone()))
+            !asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
     }
 

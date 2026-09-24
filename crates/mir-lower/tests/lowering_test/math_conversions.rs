@@ -237,24 +237,23 @@ fn test_ex2_approx_f16_uses_exact_pure_i16_inline_ptx_on_both_backends() -> Resu
         let inline_asm = &inline_asm[0];
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("ex2.approx.f16 $0, $1;")
         );
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_constraints(&ctx)
+                .get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("=h,h")
         );
         assert_eq!(llvm::asm_kind(&ctx, inline_asm), llvm::AsmKind::Pure);
-        assert_eq!(
-            inline_asm
-                .get_attr_inline_asm_convergent(&ctx)
-                .map(|value| bool::from((*value).clone())),
-            Some(false)
+        assert!(
+            !inline_asm
+                .get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
 
         let op = inline_asm.get_operation().deref(&ctx);
@@ -473,13 +472,13 @@ fn test_dot_product_libnvvm_uses_exact_pure_inline_ptx() -> Result<(), anyhow::E
         };
         inline_ptx.push(
             inline_asm
-                .get_attr_inline_asm_template(&ctx)
+                .get_attr_llvm_inline_asm_template(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .unwrap_or_default(),
         );
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_constraints(&ctx)
+                .get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("=r,r,r,r")
@@ -613,7 +612,7 @@ fn test_prmt_libnvvm_uses_exact_pure_inline_ptx() -> Result<(), anyhow::Error> {
             continue;
         };
         let template = inline_asm
-            .get_attr_inline_asm_template(&ctx)
+            .get_attr_llvm_inline_asm_template(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
         let Some((_, expected_constraints, expected_arity)) = PRMT_INLINE_PTX
@@ -624,7 +623,7 @@ fn test_prmt_libnvvm_uses_exact_pure_inline_ptx() -> Result<(), anyhow::Error> {
         };
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_constraints(&ctx)
+                .get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some(*expected_constraints)
@@ -808,17 +807,17 @@ fn test_generated_packed_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<
                 let result_count = inline_asm_op.deref(&ctx).get_num_results();
                 lowered.push((
                     inline_asm
-                        .get_attr_inline_asm_template(&ctx)
+                        .get_attr_llvm_inline_asm_template(&ctx)
                         .map(|s| String::from((*s).clone()))
                         .expect("packed inline asm must have a template"),
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|s| String::from((*s).clone()))
                         .expect("packed inline asm must have constraints"),
                     llvm::asm_kind_opt(&ctx, &inline_asm),
                     inline_asm
-                        .get_attr_inline_asm_convergent(&ctx)
-                        .map(|b| bool::from((*b).clone())),
+                        .get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent")),
                     operand_count,
                     result_count,
                 ));
@@ -844,7 +843,7 @@ fn test_generated_packed_arithmetic_lowers_to_exact_pure_inline_asm() -> Result<
         let (_, constraints, kind, convergent, operand_count, result_count) = matches[0];
         assert_eq!(constraints, expected_constraints, "{expected_template}");
         assert_eq!(*kind, Some(llvm::AsmKind::Pure), "{expected_template}");
-        assert_eq!(*convergent, Some(false), "{expected_template}");
+        assert!(!*convergent, "{expected_template}");
         assert_eq!(
             *operand_count, expected_operand_count,
             "{expected_template} input arity"
@@ -943,17 +942,17 @@ fn test_generated_integer_minmax_lowers_to_exact_pure_inline_asm() -> Result<(),
                 let result_count = inline_asm_op.deref(&ctx).get_num_results();
                 lowered.push((
                     inline_asm
-                        .get_attr_inline_asm_template(&ctx)
+                        .get_attr_llvm_inline_asm_template(&ctx)
                         .map(|s| String::from((*s).clone()))
                         .expect("integer min/max inline asm must have a template"),
                     inline_asm
-                        .get_attr_inline_asm_constraints(&ctx)
+                        .get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|s| String::from((*s).clone()))
                         .expect("integer min/max inline asm must have constraints"),
                     llvm::asm_kind_opt(&ctx, &inline_asm),
                     inline_asm
-                        .get_attr_inline_asm_convergent(&ctx)
-                        .map(|b| bool::from((*b).clone())),
+                        .get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent")),
                     operand_count,
                     result_count,
                 ));
@@ -979,7 +978,7 @@ fn test_generated_integer_minmax_lowers_to_exact_pure_inline_asm() -> Result<(),
         let (_, constraints, kind, convergent, operand_count, result_count) = matches[0];
         assert_eq!(constraints, "=r,r,r", "{expected_template}");
         assert_eq!(*kind, Some(llvm::AsmKind::Pure), "{expected_template}");
-        assert_eq!(*convergent, Some(false), "{expected_template}");
+        assert!(!*convergent, "{expected_template}");
         assert_eq!(*operand_count, 2, "{expected_template} input arity");
         assert_eq!(*result_count, 1, "{expected_template} result arity");
     }
@@ -1060,7 +1059,7 @@ fn test_generated_packed_conversions_lower_to_exact_pure_inline_asm() -> Result<
                     continue;
                 };
                 let template = asm
-                    .get_attr_inline_asm_template(&ctx)
+                    .get_attr_llvm_inline_asm_template(&ctx)
                     .map(|value| String::from((*value).clone()))
                     .expect("packed conversion must have an asm template");
                 if !template.starts_with("cvt.") {
@@ -1068,10 +1067,10 @@ fn test_generated_packed_conversions_lower_to_exact_pure_inline_asm() -> Result<
                 }
                 lowered.push((
                     template,
-                    asm.get_attr_inline_asm_constraints(&ctx)
+                    asm.get_attr_llvm_inline_asm_constraints(&ctx)
                         .map(|value| String::from((*value).clone())),
-                    asm.get_attr_inline_asm_convergent(&ctx)
-                        .map(|value| bool::from((*value).clone())),
+                    asm.get_attr_llvm_inline_asm_attrs(&ctx)
+                        .is_some_and(|attrs| attrs.has("convergent")),
                     llvm::asm_kind_opt(&ctx, &asm),
                     asm.get_operation().deref(&ctx).operands().count(),
                     asm.get_operation().deref(&ctx).get_num_results(),
@@ -1101,7 +1100,7 @@ fn test_generated_packed_conversions_lower_to_exact_pure_inline_asm() -> Result<
             Some("=r,f,f"),
             "{expected_template}"
         );
-        assert_eq!(*convergent, Some(false), "{expected_template}");
+        assert!(!*convergent, "{expected_template}");
         assert_eq!(*kind, Some(llvm::AsmKind::Pure), "{expected_template}");
         assert_eq!(*operands, 2, "{expected_template} input arity");
         assert_eq!(*results, 1, "{expected_template} result arity");
@@ -1225,7 +1224,7 @@ fn test_fp8_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), anyhow
             continue;
         };
         let template = inline_asm
-            .get_attr_inline_asm_template(&ctx)
+            .get_attr_llvm_inline_asm_template(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
         if !FP8_CONVERSION_PTX.contains(&template.as_str()) {
@@ -1233,17 +1232,16 @@ fn test_fp8_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), anyhow
         }
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_constraints(&ctx)
+                .get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("=h,f,f")
         );
         assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
-        assert_eq!(
-            inline_asm
-                .get_attr_inline_asm_convergent(&ctx)
-                .map(|value| bool::from((*value).clone())),
-            Some(false)
+        assert!(
+            !inline_asm
+                .get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
         let asm_op = inline_asm.get_operation();
         assert_eq!(asm_op.deref(&ctx).get_num_operands(), 2);
@@ -1460,7 +1458,7 @@ fn test_scalar_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), any
             continue;
         };
         let template = inline_asm
-            .get_attr_inline_asm_template(&ctx)
+            .get_attr_llvm_inline_asm_template(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
         assert!(
@@ -1469,18 +1467,17 @@ fn test_scalar_conversions_libnvvm_use_exact_pure_inline_ptx() -> Result<(), any
         );
         assert_eq!(
             inline_asm
-                .get_attr_inline_asm_constraints(&ctx)
+                .get_attr_llvm_inline_asm_constraints(&ctx)
                 .map(|value| String::from((*value).clone()))
                 .as_deref(),
             Some("=r,f"),
             "{template}"
         );
         assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
-        assert_eq!(
-            inline_asm
-                .get_attr_inline_asm_convergent(&ctx)
-                .map(|value| bool::from((*value).clone())),
-            Some(false),
+        assert!(
+            !inline_asm
+                .get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent")),
             "{template}"
         );
 
@@ -1627,19 +1624,18 @@ fn test_scalar_arithmetic_llvm_uses_inline_ptx_only_for_saturation() -> Result<(
             continue;
         };
         let template = inline_asm
-            .get_attr_inline_asm_template(&ctx)
+            .get_attr_llvm_inline_asm_template(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
         let constraints = inline_asm
-            .get_attr_inline_asm_constraints(&ctx)
+            .get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
         assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);
-        assert_eq!(
-            inline_asm
-                .get_attr_inline_asm_convergent(&ctx)
-                .map(|value| bool::from((*value).clone())),
-            Some(false)
+        assert!(
+            !inline_asm
+                .get_attr_llvm_inline_asm_attrs(&ctx)
+                .is_some_and(|attrs| attrs.has("convergent"))
         );
         inline_ptx.push((template, constraints));
     }
@@ -1686,11 +1682,11 @@ fn test_scalar_arithmetic_libnvvm_uses_exact_inline_ptx() -> Result<(), anyhow::
             continue;
         };
         let template = inline_asm
-            .get_attr_inline_asm_template(&ctx)
+            .get_attr_llvm_inline_asm_template(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
         let constraints = inline_asm
-            .get_attr_inline_asm_constraints(&ctx)
+            .get_attr_llvm_inline_asm_constraints(&ctx)
             .map(|value| String::from((*value).clone()))
             .unwrap_or_default();
         assert_eq!(llvm::asm_kind(&ctx, &inline_asm), llvm::AsmKind::Pure);

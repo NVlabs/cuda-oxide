@@ -1192,12 +1192,24 @@ pub fn generate_device_code<'tcx>(
         }
 
         let target_arch = std::env::var("CUDA_OXIDE_TARGET").ok();
-        let device_arch_hint = std::env::var("CUDA_OXIDE_DEVICE_ARCH").ok();
+        let device_arch_hint = mir_importer::pipeline::DeviceArchHint::from_env_value(
+            std::env::var("CUDA_OXIDE_DEVICE_ARCH"),
+        );
         let allow_fma_contraction = std::env::var_os("CUDA_OXIDE_NO_FMA").is_none();
 
         if verbose && !allow_fma_contraction {
             eprintln!("[device_codegen] FMA contraction disabled");
         }
+
+        // This crate's PTX bundle can be textually merged with other crates'
+        // bundles at load time (`load_all_ptx_bundles_merged`), so
+        // counter-named module-scope symbols (`__shared_mem_N`,
+        // `__device_global_N`) must be unique per compilation, not only per
+        // module. The stable crate id hashes the crate name and metadata:
+        // deterministic across rebuilds of one crate, distinct across the
+        // crates of one binary (#1277).
+        let module_disambiguator =
+            Some(tcx.stable_crate_id(rustc_hir::def_id::LOCAL_CRATE).as_u64());
 
         // Create pipeline config
         let pipeline_config = mir_importer::PipelineConfig {
@@ -1213,6 +1225,7 @@ pub fn generate_device_code<'tcx>(
             debug_kind,
             debug_global_variables,
             allow_fma_contraction,
+            module_disambiguator,
         };
 
         // Resolve the lang-item DefIds the type translator compares

@@ -5,7 +5,7 @@
 
 //! Conversion of `mir.shared_alloc` to static shared-memory globals.
 
-use super::common::anyhow_to_pliron;
+use super::common::{anyhow_to_pliron, counter_named_global};
 use crate::context::{
     SharedGlobalDeclaration, SharedGlobalKind, SharedGlobalRecord, SharedGlobalsMap,
 };
@@ -215,8 +215,9 @@ fn create_shared_global(
 
     let counter = *next_shared_mem_index;
     *next_shared_mem_index += 1;
-    let name: pliron::identifier::Identifier =
-        format!("__shared_mem_{counter}").try_into().unwrap();
+    let name: pliron::identifier::Identifier = counter_named_global(ctx, "__shared_mem", counter)
+        .try_into()
+        .unwrap();
 
     let global_op = if spec.alignment > 0 {
         llvm::GlobalOp::new_with_alignment(ctx, name.clone(), array_type.into(), spec.alignment)
