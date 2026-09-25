@@ -449,6 +449,7 @@ cp_async_bulk_commit_group();
 | Function                                      | Description                          |
 |:----------------------------------------------|:-------------------------------------|
 | `cp_async_bulk_tensor_{1..5}d_g2s(...)`       | Global → shared async bulk copy      |
+| `cp_async_bulk_tensor_{1..5}d_g2s_cta(...)`   | Global → this CTA's `SharedPtr`      |
 | `cp_async_bulk_tensor_{1..5}d_s2g(...)`       | Shared → global async bulk copy      |
 | `cp_async_bulk_tensor_2d_g2s_multicast(...)`  | Multicast to all CTAs in cluster     |
 | `cp_async_bulk_commit_group()`                | Commit outstanding copies            |
