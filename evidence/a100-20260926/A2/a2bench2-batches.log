@@ -1,0 +1,73 @@
+===== batch 1 : sm_80 (redux) =====
+correctness api_chain: matches host
+correctness shuffle_chain: matches host
+correctness api_independent: non-zero
+correctness shuffle_independent: non-zero
+| kernel | median ms | ns per reduction |
+|---|---|---|
+| api_chain | 1.731 | 10.8 |
+| shuffle_chain | 5.599 | 35.0 |
+| api_independent | 2.384 | 3.7 |
+| shuffle_independent | 7.718 | 12.1 |
+SUCCESS: warp_reduce_redux_bench finished
+===== batch 1 : sm_75 (butterfly) =====
+correctness api_chain: matches host
+correctness shuffle_chain: matches host
+correctness api_independent: non-zero
+correctness shuffle_independent: non-zero
+| kernel | median ms | ns per reduction |
+|---|---|---|
+| api_chain | 4.350 | 27.2 |
+| shuffle_chain | 4.350 | 27.2 |
+| api_independent | 5.995 | 9.4 |
+| shuffle_independent | 5.996 | 9.4 |
+SUCCESS: warp_reduce_redux_bench finished
+===== batch 2 : sm_80 (redux) =====
+correctness api_chain: matches host
+correctness shuffle_chain: matches host
+correctness api_independent: non-zero
+correctness shuffle_independent: non-zero
+| kernel | median ms | ns per reduction |
+|---|---|---|
+| api_chain | 1.346 | 8.4 |
+| shuffle_chain | 4.349 | 27.2 |
+| api_independent | 1.853 | 2.9 |
+| shuffle_independent | 5.995 | 9.4 |
+SUCCESS: warp_reduce_redux_bench finished
+===== batch 2 : sm_75 (butterfly) =====
+correctness api_chain: matches host
+correctness shuffle_chain: matches host
+correctness api_independent: non-zero
+correctness shuffle_independent: non-zero
+| kernel | median ms | ns per reduction |
+|---|---|---|
+| api_chain | 4.349 | 27.2 |
+| shuffle_chain | 4.349 | 27.2 |
+| api_independent | 5.995 | 9.4 |
+| shuffle_independent | 5.995 | 9.4 |
+SUCCESS: warp_reduce_redux_bench finished
+===== batch 3 : sm_80 (redux) =====
+correctness api_chain: matches host
+correctness shuffle_chain: matches host
+correctness api_independent: non-zero
+correctness shuffle_independent: non-zero
+| kernel | median ms | ns per reduction |
+|---|---|---|
+| api_chain | 1.732 | 10.8 |
+| shuffle_chain | 5.599 | 35.0 |
+| api_independent | 2.384 | 3.7 |
+| shuffle_independent | 7.718 | 12.1 |
+SUCCESS: warp_reduce_redux_bench finished
+===== batch 3 : sm_75 (butterfly) =====
+correctness api_chain: matches host
+correctness shuffle_chain: matches host
+correctness api_independent: non-zero
+correctness shuffle_independent: non-zero
+| kernel | median ms | ns per reduction |
+|---|---|---|
+| api_chain | 4.350 | 27.2 |
+| shuffle_chain | 4.350 | 27.2 |
+| api_independent | 5.996 | 9.4 |
+| shuffle_independent | 5.996 | 9.4 |
+SUCCESS: warp_reduce_redux_bench finished
+=== A2BENCH2_DONE ===

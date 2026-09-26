@@ -1,0 +1,135 @@
+### head
+cf4c55c38615d973cebf059211ab0d4624881bda
+### list
+  ],
+  "schema_version": 1
+}
+### run sm_80 (redux fast path)
+   Compiling cuda-core v0.3.1
+   Compiling reserved-oxide-symbols v0.2.1 (/workspace/0z5a/oxide-1305/crates/reserved-oxide-symbols)
+   Compiling ptx-parse v0.1.0 (/workspace/0z5a/oxide-1305/crates/ptx-parse)
+   Compiling libloading v0.8.9
+   Compiling itertools v0.12.1
+   Compiling hashbrown v0.15.5
+   Compiling cuda-device v0.2.1 (/workspace/0z5a/oxide-1305/crates/cuda-device)
+   Compiling generic-array v0.14.7
+   Compiling nom v7.1.3
+   Compiling clang-sys v1.8.1
+   Compiling indexmap v2.14.0
+   Compiling regex-automata v0.4.14
+   Compiling syn v2.0.117
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling cexpr v0.6.0
+   Compiling which v4.4.2
+   Compiling regex v1.12.3
+   Compiling oxide-artifacts v0.2.1
+   Compiling thiserror-impl v2.0.18
+   Compiling zerocopy-derive v0.8.52
+   Compiling serde_derive v1.0.228
+   Compiling cuda-macros v0.2.1 (/workspace/0z5a/oxide-1305/crates/cuda-macros)
+   Compiling cuda-core-derive v0.3.1
+   Compiling nvjitlink-sys v0.2.1 (/workspace/0z5a/oxide-1305/crates/nvjitlink-sys)
+   Compiling libnvvm-sys v0.2.1 (/workspace/0z5a/oxide-1305/crates/libnvvm-sys)
+   Compiling cuda-artifact-finalizer v0.2.1 (/workspace/0z5a/oxide-1305/crates/cuda-artifact-finalizer)
+   Compiling cuda-bindings v0.3.1
+   Compiling half v2.7.1
+   Compiling cuda-host v0.2.1 (/workspace/0z5a/oxide-1305/crates/cuda-host)
+   Compiling warp_reduce_redux v0.1.0 (/workspace/0z5a/oxide-1305/crates/rustc-codegen-cuda/examples/warp_reduce_redux)
+    Finished `release` profile [optimized] target(s) in 21.70s
+     Running `target/release/warp_reduce_redux`
+=== warp_reduce: single-instruction form and its controls ===
+
+GPU Compute Capability: sm_80
+
+--- Test 1: warp_reduce over u32, all six ops ---
+[sum, min, max, and, or, xor] = [496, 0, 31, 0, 4294967295, 4294967295]
+expected                      = [496, 0, 31, 0, 4294967295, 4294967295]
+✓ every u32 reduction correct
+
+--- Test 2: warp_reduce over i32, values -16..=15 ---
+[sum, min, max] = [-16, -16, 15]
+expected        = [-16, -16, 15]   (unsigned min/max would read 0 / 4294967295)
+✓ signed reductions correct
+
+--- Test 3: control, f32 keeps the butterfly ---
+[sum, min, max] = [496.0, 0.0, 31.0]
+expected        = [496.0, 0.0, 31.0]
+✓ f32 reductions correct
+
+--- Test 4: control, WarpTile<16> reduces only its own lanes ---
+per-tile sums = [120, 120]
+expected      = [120, 120]   (a whole-warp reduction would read 496)
+✓ sub-warp tiles reduce independently
+
+SUCCESS: warp_reduce is correct in both forms
+### run sm_75 build (shuffle path, compiled only)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running `target/debug/cargo-oxide build warp_reduce_redux --arch sm_75`
+Building rustc-codegen-cuda backend...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+✓ Backend built: /workspace/0z5a/oxide-1305/crates/rustc-codegen-cuda/target/x86_64-unknown-linux-gnu/debug/librustc_codegen_cuda.so
+=========================================
+RUSTC-CODEGEN-CUDA BUILD: warp_reduce_redux
+=========================================
+
+Building warp_reduce_redux...
+
+   Compiling cuda-device v0.2.1 (/workspace/0z5a/oxide-1305/crates/cuda-device)
+   Compiling warp_reduce_redux v0.1.0 (/workspace/0z5a/oxide-1305/crates/rustc-codegen-cuda/examples/warp_reduce_redux)
+    Finished `release` profile [optimized] target(s) in 2.02s
+### sanitize memcheck
+--- Test 1: warp_reduce over u32, all six ops ---
+[sum, min, max, and, or, xor] = [496, 0, 31, 0, 4294967295, 4294967295]
+expected                      = [496, 0, 31, 0, 4294967295, 4294967295]
+✓ every u32 reduction correct
+
+--- Test 2: warp_reduce over i32, values -16..=15 ---
+[sum, min, max] = [-16, -16, 15]
+expected        = [-16, -16, 15]   (unsigned min/max would read 0 / 4294967295)
+✓ signed reductions correct
+
+--- Test 3: control, f32 keeps the butterfly ---
+[sum, min, max] = [496.0, 0.0, 31.0]
+expected        = [496.0, 0.0, 31.0]
+✓ f32 reductions correct
+
+--- Test 4: control, WarpTile<16> reduces only its own lanes ---
+per-tile sums = [120, 120]
+expected      = [120, 120]   (a whole-warp reduction would read 496)
+✓ sub-warp tiles reduce independently
+
+SUCCESS: warp_reduce is correct in both forms
+========= ERROR SUMMARY: 0 errors
+
+Compute Sanitizer completed with exit code 0.
+Inspect the sanitizer report above; exit status alone is not a clean-report assertion.
+### sanitize synccheck
+--- Test 1: warp_reduce over u32, all six ops ---
+[sum, min, max, and, or, xor] = [496, 0, 31, 0, 4294967295, 4294967295]
+expected                      = [496, 0, 31, 0, 4294967295, 4294967295]
+✓ every u32 reduction correct
+
+--- Test 2: warp_reduce over i32, values -16..=15 ---
+[sum, min, max] = [-16, -16, 15]
+expected        = [-16, -16, 15]   (unsigned min/max would read 0 / 4294967295)
+✓ signed reductions correct
+
+--- Test 3: control, f32 keeps the butterfly ---
+[sum, min, max] = [496.0, 0.0, 31.0]
+expected        = [496.0, 0.0, 31.0]
+✓ f32 reductions correct
+
+--- Test 4: control, WarpTile<16> reduces only its own lanes ---
+per-tile sums = [120, 120]
+expected      = [120, 120]   (a whole-warp reduction would read 496)
+✓ sub-warp tiles reduce independently
+
+SUCCESS: warp_reduce is correct in both forms
+========= ERROR SUMMARY: 0 errors
+
+Compute Sanitizer completed with exit code 0.
+Inspect the sanitizer report above; exit status alone is not a clean-report assertion.
+=== A2_DONE ===
