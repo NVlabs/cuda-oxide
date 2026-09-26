@@ -11,6 +11,10 @@ matrix workload.
 
 ## Run
 
+For the complete H100/H200 evidence collection, follow [the short handoff](HOPPER_VALIDATION.md).
+The runner's failure handling can be tested without a GPU from the repo root:
+`python3 scripts/test-fp8-wgmma-runner.py`.
+
 ```bash
 cargo oxide run wgmma_mma_fp8 --arch sm_90a
 ```
@@ -18,6 +22,9 @@ cargo oxide run wgmma_mma_fp8 --arch sm_90a
 Execution requires an H100 or H200. On another architecture the binary checks
 the generated PTX for the FP8 and BF16 instructions and exits without printing
 the runtime `SUCCESS` marker.
+
+Pass `-- --check-only` to run the all-output checks and one launch of each
+benchmark kernel, without warmups or timing. This mode fails on a non-Hopper GPU.
 
 ## Numeric checks
 
@@ -64,6 +71,7 @@ checksums must agree before timing begins.
 Timing uses 8192 CTAs, 10 alternating warmups, and 11 alternating samples of
 100 CUDA-event-timed launches. The report uses the median average launch time
 and counts `2 * 64 * 64 * 64` operations per CTA for both variants.
+Raw sample times are printed, and every CTA's checksum is rechecked after timing.
 
 Expected final marker:
 
