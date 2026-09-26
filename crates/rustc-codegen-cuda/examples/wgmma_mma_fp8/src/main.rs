@@ -348,7 +348,7 @@ fn check_values(
         )
         .into());
     }
-    println!("{label}: checked {} values", actual.len());
+    println!("{label}: checked {} values; max abs error: 0", actual.len());
     Ok(())
 }
 
@@ -444,6 +444,7 @@ fn median(mut values: Vec<f64>) -> f64 {
     values[values.len() / 2]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_benchmark(
     stream: &Arc<CudaStream>,
     module: &kernels::LoadedModule,
@@ -452,6 +453,7 @@ fn run_benchmark(
     bf16_a: &DeviceBuffer<u8>,
     bf16_b: &DeviceBuffer<u8>,
     inputs: &Inputs,
+    check_only: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = LaunchConfig {
         grid_dim: (BENCH_BLOCKS, 1, 1),
@@ -483,6 +485,16 @@ fn run_benchmark(
         &expected_checksum,
     )?;
 
+    // Exercise both chained-MMA kernels under sanitizer without timing them.
+    if check_only {
+        return Ok(());
+    }
+
+    println!(
+        "Tile microbenchmark: {M}x{N}x{BENCH_EFFECTIVE_K}, {BENCH_BLOCKS} CTAs, \
+         {THREADS} threads/CTA, {SMEM_BYTES} shared bytes/CTA; \
+         {BENCH_WARMUPS} warmups, {BENCH_SAMPLES} samples, {BENCH_LAUNCHES} launches/sample"
+    );
     for warmup in 0..BENCH_WARMUPS {
         if warmup % 2 == 0 {
             unsafe { module.fp8_benchmark(stream.as_ref(), cfg, fp8_a, fp8_b, &mut fp8_checksum) }?;
@@ -538,6 +550,15 @@ fn run_benchmark(
         }
     }
 
+    if fp8_ms
+        .iter()
+        .chain(&bf16_ms)
+        .any(|ms| !ms.is_finite() || *ms <= 0.0)
+    {
+        return Err("CUDA event timing must be finite and positive".into());
+    }
+    println!("FP8 sample mean launch times (ms): {fp8_ms:.6?}");
+    println!("BF16 sample mean launch times (ms): {bf16_ms:.6?}");
     let fp8_median_ms = median(fp8_ms);
     let bf16_median_ms = median(bf16_ms);
     let flops = BENCH_BLOCKS as f64 * 2.0 * M as f64 * N as f64 * BENCH_EFFECTIVE_K as f64;
@@ -545,15 +566,35 @@ fn run_benchmark(
     let bf16_tflops = flops / (bf16_median_ms / 1000.0) / 1.0e12;
     println!("BF16 m64n64k16 x4: {bf16_median_ms:.4} ms, {bf16_tflops:.2} TFLOPS");
     println!("FP8  m64n64k32 x2: {fp8_median_ms:.4} ms, {fp8_tflops:.2} TFLOPS");
+    check_values(
+        "FP8 post-timing checksum",
+        &fp8_checksum.to_host_vec(stream)?,
+        &expected_checksum,
+    )?;
+    check_values(
+        "BF16 post-timing checksum",
+        &bf16_checksum.to_host_vec(stream)?,
+        &expected_checksum,
+    )?;
     Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    let check_only = match args.as_slice() {
+        [] => false,
+        [arg] if arg == "--check-only" => true,
+        _ => return Err("usage: wgmma_mma_fp8 [--check-only]".into()),
+    };
     println!("=== FP8 WGMMA e4m3 x e4m3 -> f32 ===");
     let context = CudaContext::new(0)?;
+    println!("GPU: {}", context.device_name()?);
     let (major, minor) = context.compute_capability()?;
     println!("GPU Compute Capability: sm_{major}{minor}");
     if major != 9 {
+        if check_only {
+            return Err("runtime validation requires an H100/H200 (sm_90a)".into());
+        }
         return verify_ptx_only();
     }
 
@@ -566,7 +607,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bf16_b = DeviceBuffer::from_host(&stream, &inputs.bf16_b)?;
 
     run_correctness(&stream, &module, &fp8_a, &fp8_b, &bf16_a, &bf16_b, &inputs)?;
-    run_benchmark(&stream, &module, &fp8_a, &fp8_b, &bf16_a, &bf16_b, &inputs)?;
+    run_benchmark(
+        &stream, &module, &fp8_a, &fp8_b, &bf16_a, &bf16_b, &inputs, check_only,
+    )?;
     println!("SUCCESS: FP8 WGMMA numeric check and BF16 comparison passed");
     Ok(())
 }
